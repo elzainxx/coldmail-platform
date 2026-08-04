@@ -1,0 +1,208 @@
+{
+ "module": "Module 2 \u2014 sender (shared SMTP pool)",
+ "repo_path": "D:/Mnfi/Codmailling 2",
+ "categories": [
+  {
+   "number": 1,
+   "name": "PLATFORM-FACING ROUTES",
+   "findings_markdown": "All four platform routes are registered in `services/brain/internal/platformapi/server.go:56-60` on a dedicated `http.ServeMux`, each wrapped in `s.requireAuth(...)`:\n\n```go\ns.mux.HandleFunc(\"POST /v1/quote\", s.requireAuth(s.handleQuote))\ns.mux.HandleFunc(\"POST /v1/run\", s.requireAuth(s.handleRun))\ns.mux.HandleFunc(\"GET /v1/report\", s.requireAuth(s.handleReport))\ns.mux.HandleFunc(\"GET /v1/describe\", s.requireAuth(s.handleDescribe))\n```\nMounted explicitly (not path-prefix) onto the Brain's health-server mux in `services/brain/internal/httpapi/health.go:40-47`.\n\n### POST /v1/quote \u2014 `handleQuote`, `handlers.go:53-93`\n```go\ntype quoteReq struct {\n    RecipientCount *int `json:\"recipient_count\"`\n}\n```\n`recipient_count`: `*int`, REQUIRED (nil \u2192 `validation_failed`/`required`), must be `>=0` (negative \u2192 `validation_failed`/`out_of_range`), `0` valid. Response: `recipient_count`(int),`cost`(int),`currency`(literal `\"credits\"`),`unit_price_credits`(int, live),`tier`(string, always `\"shared\"`).\n\n### POST /v1/run \u2014 `handleRun`, `handlers.go:102-155`\n```go\ntype runReq struct {\n    JobItemID string `json:\"job_item_id\"`\n    UserID    string `json:\"user_id\"`\n}\n```\nBoth REQUIRED UUIDs (regex `uuidRe`, `handlers.go:45`). Response `202`: `{\"job_id\":uuid,\"state\":\"queued\"}`; duplicate \u2192 `200`: `{\"job_id\":uuid,\"state\":<current>}`.\n\n### GET /v1/report \u2014 `handleReport`, `handlers.go:159-242` + `campaign_report.go`\nQuery: `job_id`/`job_item_id`/`campaign_id` (one required) + `user_id` (REQUIRED). Single-job response: `job_id`,`state`,`attempt_count` always; `provider_message_id`/`completed_at` only when non-null. Campaign response (`campaign_report.go:93-107`): `campaign_id`,`dispatch_paused`,`totals{total,sent,bounced,failed,in_flight,pending,waiting_for_capacity}`,`progress{terminal,fraction_complete,is_complete}`,`items{results[],next_cursor,page_size}`.\n\n### GET /v1/describe \u2014 `handleDescribe`, `handlers.go:252-274`\nNo params. Response: `module`,`api_version`,`capabilities{...}`,`pricing{currency,model,unit_price_credits,tiers[]}`.\n\nAll bodies decoded via `decodeStrict` (`handlers.go:300-327`) with `DisallowUnknownFields()`.",
+   "evidence": [
+    "services/brain/internal/platformapi/server.go:56-60",
+    "services/brain/internal/httpapi/health.go:40-47",
+    "services/brain/internal/platformapi/handlers.go:49-93",
+    "services/brain/internal/platformapi/handlers.go:97-155",
+    "services/brain/internal/platformapi/handlers.go:159-242",
+    "services/brain/internal/platformapi/campaign_report.go:37-107",
+    "services/brain/internal/platformapi/handlers.go:252-274",
+    "services/brain/internal/platformapi/handlers.go:300-327"
+   ]
+  },
+  {
+   "number": 2,
+   "name": "ERROR ENVELOPE",
+   "findings_markdown": "Single uniform shape, `errors.go`:\n```go\ntype errorEnvelope struct { Error errorBody `json:\"error\"` }\ntype errorBody struct {\n    Code      string        `json:\"code\"`\n    Message   string        `json:\"message\"`\n    Details   []fieldDetail `json:\"details,omitempty\"`\n    RequestID string        `json:\"request_id\"`\n}\n```\nChoke point: `newErr` builds it, `writeError` (`errors.go:95-110`) is the ONLY serializer, invoked via every handler's `s.fail` (`auth.go:87-91`) \u2014 uniform across ALL routes, no hand-rolled shape found.\n\nCodes/status (`errors.go:11-17,36-42`): `validation_failed`\u2192400, `unauthenticated`\u2192401, `not_found`\u2192404, `conflict`\u2192409, `internal_error`\u2192500. Issue slugs (`errors.go:21-26`): `required`,`malformed`,`out_of_range`,`not_found`.\n\nInternal-reason literals (never serialized): `recipient_count_required`,`recipient_count_negative`,`job_item_id_required`,`user_id_required`,`user_id_malformed`,`job_id_or_job_item_id_or_campaign_id_required`,`job_id_malformed`,`job_item_id_malformed`,`job_not_found`,`report_query_failed`,`campaign_id_malformed`,`cursor_malformed`,`job_item_not_found`,`user_campaign_active`,`job_item_invalid`,`job_item_already_accepted`,`create_job_failed`,`begin_tx_failed`,`set_actor_failed`,`advisory_lock_failed`,`read_job_item_failed`,`campaign_check_failed`,`commit_failed`,`service_token_invalid_or_missing`,`panic_recovered`,`malformed_json:...`.\n\nAdmin surface (`internal/adminapi/errors.go`) has a byte-identical envelope but a superset of codes (`config_ordering_violation`,`forbidden`,`unprocessable`,`rate_limited`) never used by platform.",
+   "evidence": [
+    "services/brain/internal/platformapi/errors.go:11-17",
+    "services/brain/internal/platformapi/errors.go:21-26",
+    "services/brain/internal/platformapi/errors.go:36-42",
+    "services/brain/internal/platformapi/errors.go:61-63",
+    "services/brain/internal/platformapi/errors.go:70-93",
+    "services/brain/internal/platformapi/errors.go:95-110",
+    "services/brain/internal/platformapi/auth.go:87-91",
+    "services/brain/internal/adminapi/errors.go:20-66"
+   ]
+  },
+  {
+   "number": 3,
+   "name": "AUTH MECHANISM",
+   "findings_markdown": "Header `Authorization`, scheme `Bearer <token>` (case-insensitive), extracted by `bearerToken` (`auth.go:50-61`).\n\nStorage: bcrypt hashes only (`Authenticator.keyHashes`), sourced from env `PLATFORM_TOKEN_HASHES` (comma-separated, `internal/config/config.go:99-100`). No DB table.\n\nComparison: `bcrypt.CompareHashAndPassword` looped over all hashes with no early return so timing doesn't reveal the matching index (`auth.go:37-48`). Fail-closed on empty hash set or empty bearer.\n\nMiddleware `requireAuth` (`auth.go:65-84`): failure \u2192 `codeUnauthenticated`/`service_token_invalid_or_missing`\u2192401; installs `defer recover()` for clean 500 on panic.\n\nExactly one credential type (bearer service token). Distinct from operator admin key (`internal/adminapi/auth.go`) \u2014 separate `Authenticator` type/instance + env var, never shared (Rule 6, `server.go:1-9`).",
+   "evidence": [
+    "services/brain/internal/platformapi/auth.go:13-30",
+    "services/brain/internal/platformapi/auth.go:37-48",
+    "services/brain/internal/platformapi/auth.go:50-61",
+    "services/brain/internal/platformapi/auth.go:65-84",
+    "services/brain/internal/config/config.go:93-100",
+    "services/brain/internal/platformapi/server.go:1-9",
+    "services/brain/internal/adminapi/auth.go:15-19"
+   ]
+  },
+  {
+   "number": 4,
+   "name": "VERSIONING SCHEME",
+   "findings_markdown": "URL prefix `/v1/` for all four routes (`server.go:56-59`). No version header used. `handleDescribe` echoes `\"api_version\":\"v1\"` as a response field (`handlers.go:258`), informational only, not negotiated.\n\nAdditive-only discipline enforced in code by `tests/harness/checks/contract_drift.sh` (BLOCKING, `.github/workflows/real-infra.yml:40-42`): probes unauthenticated, asserts each of the 4 routes returns `401` (proving mounted, `contract_drift.sh:74-92`), an undocumented path returns `404` (`contract_drift.sh:94-96`), and each served path literally appears in `Docs/api-contract.md` (`contract_drift.sh:98-105`). No Go-level route-registry-freeze test exists inside `platformapi` \u2014 enforcement is this CI probe only.",
+   "evidence": [
+    "services/brain/internal/platformapi/server.go:56-60",
+    "services/brain/internal/platformapi/handlers.go:258",
+    "tests/harness/checks/contract_drift.sh:74-105",
+    ".github/workflows/real-infra.yml:40-42"
+   ]
+  },
+  {
+   "number": 5,
+   "name": "TENANT SCOPING",
+   "findings_markdown": "Field `user_id`, string UUID. Body for `run` (`runReq.UserID`), query string for `report` (`handlers.go:163`). Never derived from the auth credential \u2014 caller-supplied (OD-25, `server.go:11-17`).\n\nSQL WHERE-clause scoping (exact text):\n- `store.go:63`: `SELECT campaign_id FROM public.job_items WHERE id = $1 AND user_id = $2`\n- `store.go:73-76`: `SELECT EXISTS (SELECT 1 FROM sender.jobs WHERE user_id = $1 AND campaign_id <> $2 AND state IN ('queued','assigned','sending'))`\n- `store.go:88-94`: `... FROM public.job_items ji WHERE ji.id = $1 AND ji.user_id = $2 RETURNING id`\n- `store.go:124-125`: `SELECT id FROM sender.jobs WHERE job_item_id = $1 AND user_id = $2`\n- `store.go:163-171`: single-job report lookups by `id`/`job_item_id` AND `user_id`\n- `campaign_report.go:135`,`199`: campaign items/totals scoped by `campaign_id`/`user_id`\n\nCross-tenant: single-job \u2014 zero rows \u2192 identical 404 `not_found` as a nonexistent id, never 403 (`handlers.go:203-227`, `store.go:107-112`). Campaign-scoped \u2014 clean empty aggregate (`total:0`), not 404 (`campaign_report.go:47-54`). Proven by `tenancy_test.go` and `campaign_report_test.go`'s `TestCampaignReport_CrossTenantIsEmptyNotLeaked`.",
+   "evidence": [
+    "services/brain/internal/platformapi/store.go:63",
+    "services/brain/internal/platformapi/store.go:73-76",
+    "services/brain/internal/platformapi/store.go:88-94",
+    "services/brain/internal/platformapi/store.go:124-125",
+    "services/brain/internal/platformapi/store.go:163-171",
+    "services/brain/internal/platformapi/campaign_report.go:135",
+    "services/brain/internal/platformapi/campaign_report.go:199",
+    "services/brain/internal/platformapi/handlers.go:203-227",
+    "services/brain/internal/platformapi/tenancy_test.go:112-184",
+    "services/brain/internal/platformapi/campaign_report_test.go:211"
+   ]
+  },
+  {
+   "number": 6,
+   "name": "STATUS / STATE VOCABULARY",
+   "findings_markdown": "Primary state machine \u2014 Postgres enum `sender.job_state` (`db/migrations/sender_0003_create_enums.up.sql:7-14`): `'queued','assigned','sending','sent','failed','bounced'`. These literal strings appear via `state::text` on `/v1/report` and campaign items.\n\nAggregate-only distinction in campaign report only, NOT a new per-job enum value (`campaign_report.go:9-14`): `waiting_for_capacity`,`pending`,`in_flight`,`sent`,`bounced`,`failed`,`total` \u2014 SQL `COUNT(*) FILTER(...)` (`campaign_report.go:143-153`).\n\nOther enums exist but never cross the platform boundary: `sender.error_class` (`bounce_permanent,transport_4xx,auth_failure,throttle,timeout,unknown`, `sender_0003...up.sql:16-23`) feeds only the admin `errors_last_window`. `sender.pool_kind` (`shared,dedicated`) surfaces only as the `tier` string. `routing_strategy`,`box_status`,`event_actor`,`pause_reason` are internal/admin-only.\n\nA job WAITING for capacity reads `state:\"queued\"` (never `failed`), per `campaign_report.go:9-14` and `Docs/api-contract.md:289`.",
+   "evidence": [
+    "db/migrations/sender_0003_create_enums.up.sql:7-14",
+    "db/migrations/sender_0003_create_enums.up.sql:16-23",
+    "services/brain/internal/platformapi/campaign_report.go:9-14",
+    "services/brain/internal/platformapi/campaign_report.go:143-153",
+    "services/brain/internal/platformapi/handlers.go:230-241",
+    "Docs/api-contract.md:289"
+   ]
+  },
+  {
+   "number": 7,
+   "name": "COST / FEASIBILITY EXPRESSION",
+   "findings_markdown": "Pre-flight verb exists: `POST /v1/quote` (`handlers.go:53-93`) \u2014 pure, side-effect-free, idempotent, proven zero-job-created by `quote_test.go:36-42`.\n\nFields: `recipient_count`(int),`cost`(int = recipient_count\u00d7unit),`currency`(hardcoded literal `\"credits\"`, `handlers.go:83`),`unit_price_credits`(int, live-read from `sender.config` via `readUnitPriceCredits`, `handlers.go:282-294`, fallback `defaultQuoteUnitCredits=1` at `handlers.go:21`),`tier`(string, always `\"shared\"`, `handlers.go:31`).\n\nNo feasibility/capacity check from `quote` itself \u2014 no tenant/pool context in request (`handlers.go:23-30`). Capacity signal appears only post-hoc via the campaign report's `waiting_for_capacity`/`dispatch_paused` (`campaign_report.go:93-107`).\n\nUnits: integer credits only, no float, no ISO-4217 code, flat per-recipient pricing (`handlers.go:267-273`).",
+   "evidence": [
+    "services/brain/internal/platformapi/handlers.go:21",
+    "services/brain/internal/platformapi/handlers.go:31",
+    "services/brain/internal/platformapi/handlers.go:53-93",
+    "services/brain/internal/platformapi/handlers.go:267-273",
+    "services/brain/internal/platformapi/handlers.go:282-294",
+    "services/brain/internal/platformapi/campaign_report.go:93-107",
+    "services/brain/internal/platformapi/quote_test.go:19-43"
+   ]
+  },
+  {
+   "number": 8,
+   "name": "ADMIN SURFACE + ITS AUTH",
+   "findings_markdown": "21 operator routes registered `internal/adminapi/server.go:45-73`, all behind `s.requireAuth(...)` (separate `Authenticator`): accounts CRUD+events (6), account lifecycle transitions quarantine/unquarantine/disable/enable/pause/unpause (6), pools CRUD (5), config list/get/put (3), health (1).\n\n(`contract_drift.sh:69` echoes \"22 routes gated\" but its own `ADMIN_ROUTES` map and `server.go` both enumerate exactly 21 \u2014 minor internal inconsistency, flagged not silently fixed.)\n\nAuth: operator bearer key, bcrypt-hashed, env `ADMIN_API_KEY_HASHES` \u2014 distinct `Authenticator` type/instance from platform's, never shared.\n\nParallel write path: admin accounts routes are the ONLY writer of `sender.accounts.credential_ciphertext` (Encrypt-only, `internal/adminapi/crypto.go`); platform has no credential write path. Admin's pause/unpause/quarantine/disable mutate columns the platform's `campaignEligibleAccountsSubquery` (`campaign_report.go:174-192`) reads for `waiting_for_capacity`. `PUT /v1/admin/config/{key}` is the only writer of `sender.config`, read live by both surfaces.",
+   "evidence": [
+    "services/brain/internal/adminapi/server.go:45-73",
+    "tests/harness/checks/contract_drift.sh:41-69",
+    "services/brain/internal/adminapi/auth.go:15-19",
+    "services/brain/internal/adminapi/crypto.go:10-24",
+    "services/brain/internal/platformapi/campaign_report.go:174-192"
+   ]
+  },
+  {
+   "number": 9,
+   "name": "HEALTH / OBSERVABILITY",
+   "findings_markdown": "Liveness `GET /healthz` (`internal/httpapi/health.go:56-58`): unauthenticated, always 200, `{\"status\":\"ok\",\"at\":<timestamp>}`.\n\nReadiness `GET /readyz` (`health.go:62-79`): unauthenticated, checks `db.Pool.Ping` AND `guard.Healthy`; `{\"status\":\"ready\"|\"not_ready\",\"db\":bool,\"singleton_lock\":bool,\"at\":<timestamp>}`; 200 if both true else 503.\n\nOperator-only `GET /v1/admin/health` (`internal/adminapi/health_handler.go:13-60`), key-gated: `generated_at`,`window_sec`,`dispatch{...}`,`queue{queued,assigned,sending,sent,failed,bounced,waiting_for_capacity}`,`boxes{active,stale,disabled,oldest_active_heartbeat_age_sec}`,`accounts{healthy,paused,quarantined,disabled,at_daily_limit}`,`pools[]`,`errors_last_window{class:count}`,`shadow{...}`,`active_conditions[]`.\n\nNo `/metrics`, no Prometheus (grep over Go tree returned zero hits).\n\nLogging: stdlib `log.Printf`, not structured JSON (`internal/adminapi/logger.go`, `internal/platformapi/auth.go:95-101`). `rid`/`request_id` on every log line, minted by `newRequestID()` (`errors.go:81-87`), echoed to caller.",
+   "evidence": [
+    "services/brain/internal/httpapi/health.go:56-79",
+    "services/brain/internal/adminapi/health_handler.go:13-60",
+    "services/brain/internal/platformapi/auth.go:95-101",
+    "services/brain/internal/adminapi/logger.go:16-44",
+    "services/brain/internal/platformapi/errors.go:81-87"
+   ]
+  },
+  {
+   "number": 10,
+   "name": "DB BOUNDARY",
+   "findings_markdown": "Schema `sender` (`db/migrations/sender_0000_bootstrap.up.sql:26`). Owning role `sender_owner` \u2014 NOLOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB. App/login role `sender_module` \u2014 LOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB, password out-of-band.\n\nRLS enabled on ALL `sender.*` tables, `FORCE`d additionally on `sender.accounts` only (`sender_0012_grants_and_rls.up.sql:38-45`). `sender_module` gets one permissive `USING(true) WITH CHECK(true)` policy per table \u2014 backstop, not the tenant-scoping mechanism.\n\nGrants per-table ENUMERATED explicitly: full DML on `pools,accounts,boxes,jobs,config`; `job_events` SELECT+INSERT only; `send_logs` SELECT+INSERT+DELETE (`sender_0012_grants_and_rls.up.sql:18-26`). Bootstrap's default privileges key on CREATOR and do NOT fire for admin-created-then-reowned tables \u2014 documented ADR-0008 trap (`sender_0012...up.sql:3-11`).\n\nPlatform-table access: `sender_module` gets `GRANT SELECT` ONLY on `public.users`/`public.job_items` (`sender_0000_bootstrap.up.sql:49-50`).\n\nOnly the Brain connects to Postgres; the box ships NO DB driver/KMS SDK (`services/box/package.json` `dependencies:{}` with explicit forbidding comment).",
+   "evidence": [
+    "db/migrations/sender_0000_bootstrap.up.sql:15-27",
+    "db/migrations/sender_0000_bootstrap.up.sql:42-53",
+    "db/migrations/sender_0012_grants_and_rls.up.sql:3-60",
+    "services/box/package.json"
+   ]
+  },
+  {
+   "number": 11,
+   "name": "CONFIG APPROACH",
+   "findings_markdown": "DB rows in `sender.config` (`db/migrations/sender_0010_create_config_and_seed.up.sql:8-41`), JSONB-wrapped `{\"v\":...}`, `default_value` never mutated post-seed. Total 53 keys per `Docs/config-manifest.txt` (14+3+2+6+17+11 across Phase1/5/6/7/8/9.5 migrations).\n\nLoad path: `dispatch.LoadConfig` (`services/brain/internal/dispatch/config.go:189-362`) re-reads ALL keys every dispatch tick; `platformapi` reads fresh per-request (`readUnitPriceCredits` `handlers.go:282-294`, `readDispatchPaused` `campaign_report.go:250-262`) \u2014 hot-reloadable, no caching.\n\nEnv-var exception: `internal/config/config.go:1-8` \u2014 Phase-0 process-wiring only (`DATABASE_URL`,`PLATFORM_TOKEN_HASHES`,`ADMIN_API_KEY_HASHES`), never behavioral dials.\n\nCI gates: `config_drift.sh` (BLOCKING) \u2014 live==manifest==config-reference.md both directions. `config_consumption.sh` (BLOCKING) \u2014 every key needs a real grep-verifiable consumer or explicit RESERVED marker.\n\nHardcoded tuning literals found: `handlers.go:21` `defaultQuoteUnitCredits=1` (fallback only); `handlers.go:31` `defaultQuoteTier=\"shared\"`; and `campaign_report.go:322-323` `defaultPageSize=100`/`maxPageSize=200` in `parseReportPageSize` \u2014 genuine runtime-behavior-governing literals NOT backed by a seeded config row, a drift candidate against Rule 1.",
+   "evidence": [
+    "db/migrations/sender_0010_create_config_and_seed.up.sql:8-41",
+    "Docs/config-manifest.txt:1-80",
+    "services/brain/internal/dispatch/config.go:189-362",
+    "services/brain/internal/config/config.go:1-8",
+    "tests/harness/checks/config_drift.sh:29-40",
+    "tests/harness/checks/config_consumption.sh:39-59",
+    "services/brain/internal/platformapi/handlers.go:21,31",
+    "services/brain/internal/platformapi/campaign_report.go:322-323"
+   ]
+  },
+  {
+   "number": 12,
+   "name": "MIGRATION CONVENTIONS",
+   "findings_markdown": "Naming: `sender_NNNN_<desc>.up.sql`/`.down.sql`, regex-enforced `^sender_([0-9]{4})_(.+)\\.up\\.sql$` (`tests/harness/checks/migration_lint.sh:22`). Chain `sender_0000_bootstrap`\u2192`sender_0024_job_events_fk_carveout` (50 files, 25 pairs).\n\nUp/down pairing required (`migration_lint.sh:29`).\n\nRunner: custom Go binary `tools/sender-migrate`. Tracking table `sender.schema_migrations(version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ)` (`sender_0000_bootstrap.up.sql:31-37`) \u2014 each migration file self-inserts its version; each down self-deletes.\n\nContiguity enforced (`migration_lint.sh:33-38`). BLOCKING CI gate (`real-infra.yml:44-46`), also cross-checks newest version literal appears in `tools/sender-migrate/runner_integration_test.go`'s `wantChain` (`migration_lint.sh:54-81`).",
+   "evidence": [
+    "db/migrations/sender_0000_bootstrap.up.sql:31-37",
+    "tests/harness/checks/migration_lint.sh:8-84",
+    ".github/workflows/real-infra.yml:44-46"
+   ]
+  },
+  {
+   "number": 13,
+   "name": "KILL SWITCHES AND SHADOW MODES",
+   "findings_markdown": "Five kill switches, all Phase-9.5/`sender_0021`-seeded, read every tick via `dispatch.LoadConfig`:\n- `dispatch_enabled` bool, default `true` (`dispatch/config.go:319`; consumed `dispatch/dispatch.go:248`, `dispatch/loop.go:67`) \u2014 halts dispatch cleanly.\n- `autoquarantine_mode` string enum `off|shadow|enforce`, default `shadow` (`dispatch/config.go:322`; consumed `dispatch/account_effect.go:70`, unrecognized defaults to shadow at `account_effect.go:75`) \u2014 the one graduated 3-level ladder, shadow-by-default.\n- `autopause_enabled` bool, default `true` (`dispatch/config.go:325`; consumed `dispatch/account_effect.go:99`).\n- `variation_enabled` bool, default `true` (`dispatch/config.go:328`; consumed `dispatch/variation.go:22`, bypasses entire variation layer).\n- `alert_webhook_url` string URL or `\"\"`, default `\"\"` (`dispatch/config.go:331`; consumed `adminapi/health_handler.go:123,128`).\n\nStructural (non-config-table) switch: `brain_singleton_acquire_timeout_sec` (also sender_0021) bounds startup wait for the Postgres advisory lock (`internal/singleton/singleton.go`, read `cmd/brain/main.go:66,303-328`); SIGKILL auto-releases.",
+   "evidence": [
+    "services/brain/internal/dispatch/config.go:97-107,319-333",
+    "services/brain/internal/dispatch/dispatch.go:178,248",
+    "services/brain/internal/dispatch/loop.go:67",
+    "services/brain/internal/dispatch/account_effect.go:70-99",
+    "services/brain/internal/dispatch/variation.go:17-22",
+    "services/brain/cmd/brain/main.go:66,303-328"
+   ]
+  },
+  {
+   "number": 14,
+   "name": "LOGGING DISCIPLINE",
+   "findings_markdown": "Rule stated in code: `internal/adminapi/logger.go:8-13` \u2014 admin service \"NEVER logs request bodies... the smtp_secret and the ciphertext bytes structurally cannot appear in a log line (tests T1/T3 assert zero occurrences...)\". Matching comment `internal/platformapi/auth.go:63-64` (\"The token is NEVER logged\").\n\nCI gate: `tests/harness/checks/no_secret_leak.sh` (BLOCKING, `real-infra.yml:56-58`) greps ALL service docker-compose logs for the dev box token plaintext + bcrypt hash (and a second box's if provisioned), fails on any match (`no_secret_leak.sh:28-38`). Its header notes scope: covers box-registration token only; SMTP-credential leak scan lives separately in `tests/harness/phase3_send.sh`.\n\nDirect inspection: every log call site read (`platformapi/auth.go:95-101`, `adminapi/logger.go:16-44`) logs only `rid`, method, sanitized path, `code`, curated `internalReason`, log level \u2014 no body/token/credential/ciphertext/raw pg error found. Not a 100%-exhaustive scan of every log line in the repo.",
+   "evidence": [
+    "services/brain/internal/adminapi/logger.go:8-13",
+    "services/brain/internal/platformapi/auth.go:63-64,95-101",
+    "tests/harness/checks/no_secret_leak.sh:1-42",
+    ".github/workflows/real-infra.yml:56-58"
+   ]
+  },
+  {
+   "number": 15,
+   "name": "TESTS",
+   "findings_markdown": "Real Postgres + real HTTP, not mocks \u2014 stated explicitly `platformapi/quote_test.go:5-6` (\"Real Postgres, real HTTP against the actual production Server (CLAUDE.md Rule 3) \u2014 no mocks\"). `newTestEnv` (`harness_test.go`) stands up the real `platformapi.Server` with a live `pgxpool.Pool` (`e.admin`), used directly in assertions (`quote_test.go:37`, `tenancy_test.go:171`).\n\nTest files: `quote_test.go`,`quote_validation_test.go`,`campaign_test.go`,`campaign_report_test.go`,`unitprice_test.go`,`tenancy_test.go`,`report_notfound_selector_test.go`,`harness_test.go`.\n\nPaired positive/negative control: `tenancy_test.go:112-153` (`TestTenancy_CrossTenantReportIsNotFound`) \u2014 positive: A reads A's job \u2192 200; negative: B reads A's job \u2192 404, plus the cross-tenant 404 is asserted byte-identical in code to a genuinely-nonexistent-id's 404. If tenant scoping were removed, `requireStatus(t,404)` at lines 136/141 would fail immediately.\n\nAnother paired control: `quote_test.go:19-43` asserts `cost==250` (positive) AND `jobCount==0` after quote (negative, side-effect-free).\n\nAuth/tenancy separation control: `tenancy_test.go:213-235` (`TestTenancy_Unauthenticated`) omits Authorization header, asserts 401 distinct from the 404 tenancy tests.",
+   "evidence": [
+    "services/brain/internal/platformapi/quote_test.go:5-6,19-43",
+    "services/brain/internal/platformapi/tenancy_test.go:112-153,213-235",
+    "services/brain/internal/platformapi/campaign_report_test.go:211",
+    "services/brain/internal/platformapi/harness_test.go"
+   ]
+  }
+ ],
+ "uncertainties": [
+  "contract_drift.sh's echo string at line 69 says \"22 routes gated\" for the admin surface, but counting the ADMIN_ROUTES map entries in the same script (and the routes() registration in adminapi/server.go) yields 21 distinct method+path entries \u2014 a minor internal inconsistency in the gate's own log message, flagged rather than silently corrected.",
+  "The 'currency' field on /v1/quote is a hardcoded string literal 'credits' (handlers.go:83) rather than a config-driven or ISO-4217 value \u2014 this module's cost model is an abstract integer-credit unit, not real-world money, which could matter for a cross-module compatibility audit expecting a currency code.",
+  "I did not open Docs/config-consumers.txt to quote unit_price_credits' exact consumer-pattern regex; the reader call sites in handlers.go/campaign_report.go were verified directly in code instead.",
+  "I did not exhaustively grep every single log call site in the entire services/brain tree (e.g. every dispatch/*.go file, boxlink package) for a literal credential/body leak \u2014 spot-checked platformapi/adminapi loggers plus a few dispatch config log lines only.",
+  "The single-job report's completed_at (rep.completedAt.UTC(), Go default time.Time JSON marshaling) and the campaign-scoped report's CompletedAt (*string, explicitly formatted '2006-01-02T15:04:05Z') appear to use different timestamp serialization code paths \u2014 noticed but not confirmed whether the two ultimately produce identical wire output or a format inconsistency between the two report shapes.",
+  "quote's response is built via a Go map[string]any (handlers.go:80), so JSON key order on the wire relies on encoding/json's alphabetical map-key sort rather than an explicit struct field order \u2014 not a correctness issue but worth noting if a consumer audit checks for stable key ordering."
+ ]
+}
