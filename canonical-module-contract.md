@@ -197,6 +197,15 @@ A module with no per-unit charge reports `unit_price_credits: 0` and `cost: 0`. 
 retains the fields for compatibility — the right call, and the contract should bless it explicitly so it does
 not read as an oversight.
 
+**BLESSED, with the gap D22 identified closed (fix-plan 5b, landed 2026-08-04).** Reporting `0` is correct;
+leaving the caller to *infer* what the `0` means is not. A structurally-zero cost and a broken price lookup
+are byte-identical on the wire, and both return `200` — so a module whose cost half is inert **MUST declare
+it** on `describe` as `pricing.cost_fields_inert` (bool). M3 now does. **The declaration MUST be derived from
+the live unit price, never a literal:** `unit_price_credits` is live-retunable in both senders, so a
+hardcoded `true` becomes false-and-costly the first time an operator retunes — a client told the cost half is
+inert while the module charges. A client rendering a price MUST branch on `cost_fields_inert`, not on
+`cost == 0`.
+
 **OPTIONAL response — the feasibility half.** M3's block, verbatim in shape, is the reference:
 `feasible` (bool), `reasons[{code, limit, requested, cap_name}]`, `caps{}`, `capacity{}`,
 `warnings[{code, …}]`. A module that cannot assess feasibility omits the whole block; it MUST NOT report
