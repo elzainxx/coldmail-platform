@@ -7,7 +7,7 @@ as provenance; **this file is the record.** Two things live here and nowhere els
 1. **Every deferral**, with what blocks it and — where the deferral was itself mis-recorded — what the
    corrected premise is.
 2. **The false-green classes** found across this work, each with a citation to the artifact that
-   demonstrates it. There are **seventeen**, up from the fourteen named at the start of Chunk 4.
+   demonstrates it. There are **eighteen**, up from the fourteen named at the start of Chunk 4.
 
 The organising claim, stated once: **a green signal is evidence only if something about it could have
 been red.** Every class below is a way that stopped being true while the signal kept its colour.
@@ -148,11 +148,14 @@ unclosable; the plumbing to record it is merely unbuilt.**
 
 ---
 
-## 6. The seventeen false-green classes
+## 6. The eighteen false-green classes
 
 Each is a distinct mechanism by which a passing signal stopped being evidence. Fourteen were known
-entering Chunk 4; **three were found during it** (15, 16, 17). Citations are to the artifact that
+entering Chunk 4; **four were found during it** (15, 16, 17, 18). Citations are to the artifact that
 demonstrates the class, so each row is checkable rather than a claim.
+
+**§7 below predicted an eighteenth. It arrived before this file was finished** — during the final
+verification runs, in the verification tooling itself, which is where the last four all came from.
 
 | # | Class | Where it was demonstrated |
 |---|---|---|
@@ -168,18 +171,52 @@ demonstrates the class, so each row is checkable rather than a claim.
 | 10 | **The reject-case fixture that also fails for an unrelated reason** | `FW-M2-D`: a dead container made `exec` return rc≠0, so SUITE 5's **negative** KMS check passed as "path absent" |
 | 11 | **The window-based gate crediting a NEIGHBOURING call's fix** | A scrub gate whose match window spanned an adjacent, already-fixed call site |
 | 12 | **The counterweight test whose FIXTURE SHAPE dodges the bug** | The pgx DSN trigger differs by version: `sslmode=bogusmode` fires at v5.7.4 where M1's `pool_max_conns=notanumber` does not. **Porting M1's test verbatim would have been vacuous** (N1) |
-| 13 | **The green earned by a stale gitignored build artifact** | A `bin/` present on the dev host and absent on every fresh checkout — the reason M3's runner now deletes it and proves the absence first |
+| 13 | **The green earned by a stale build artifact** | Two instances. **(a)** A `bin/` present on the dev host and absent on every fresh checkout — the reason M3's runner now deletes it and proves the absence first. **(b) OBSERVED LIVE 2026-08-07, not inferred:** M1's Door-5 `docker build` failed (a Windows path-form error in my own runner), and the rspec leg on the next line still reported **`71 examples, 0 failures`, rc=0** — against a **three-day-old** image sitting under the same `truemail-verifier-node:ci` tag. Two steps red, the suite they depend on green, asserting a property of a three-day-old `Gemfile.lock`. Fixed by `docker rmi -f` on the tag before building, which makes "the build worked" a precondition rather than an assumption |
 | 14 | **The ADR that names a bug then falsely claims the mechanism prevents it** | An over-suppression defect described accurately in an ADR whose stated mechanism did not prevent it |
 | 15 | **The anti-vacuity check that is FLAKY IN THE PASSING DIRECTION** ← *new* | My own worker check, state-only form (`running=true && RestartCount=0`). The register reject lands **~1s after start**, so a sample taken the instant `up` returns reads clean on a doomed worker. Reproduced deliberately: **4 unseeded attempts — attempt 1 PASSED (false green), 2–4 failed. 1 in 4.** Fixed in both senders with log-based assertions on terminal, monotonic lines; re-verified M3 4/4 RED + 3/3 GREEN, M2 3/3 RED + 3/3 GREEN |
 | 16 | **The report that TRUNCATES ITS OWN EVIDENCE** ← *new* | `m2run.sh` piped per-package `counts:` lines through `tail -30`, keeping only the **last** package's arithmetic. A `declared>ran` shortfall in any earlier package would have been absent from the pasted evidence while the run still read ALL GREEN. **A report that truncates its evidence is indistinguishable from one with nothing to report.** Fixed to print all lines and to *assert* `declared==ran && declared>0`; break-verified on synthetic inputs including a shortfall in first position |
 | 17 | **The mis-recorded deferral** ← *new* | §4 above, in both directions: two items recorded as OPEN in a file they never lived in (both actually FIXED, in `ae9f2a7` and `29e3bcb`), two ids cited but **never defined at all**, and one ruled *"register it"* whose registration never happened. **A deferral ledger is an artifact, and nothing was checking it** |
+| 18 | **The check whose PATTERN MATCHES NOTHING, so its subject is empty and its arithmetic passes** ← *new* | This file's own citation checker, `_verify/cprun.sh` step 4, written to verify that every commit sha cited here is real. Its extraction used `` \` `` where `` [\`] `` was required; `grep -E` reads the escaped form as a literal backslash-plus-backtick, so it matched **zero of the 22 ids present** and the check reported *"0 of 0 cited shas resolve"*. **Only the nonzero floor turned that into a red** — the floor from class 8, added days earlier for a different reason, catching a defect in the tool that was auditing this document. Related but distinct from 8: there the subject vanished from the system under test; here the **instrument never found it**, and a green would have certified 22 unchecked provenance claims |
 
-**What the three new ones have in common, and why it is worth saying.** All three are failures in the
-**verification apparatus**, not in the systems under test — a flaky check, a truncating report, and a
-rotten register. Classes 1–14 were mostly found by pointing tools at the repos. **These were found by
-pointing them at the tools.** Class 15 in particular was my own fix from earlier in the same work, and
-it passed 1 time in 4 on a stack that was definitively broken; had I run it once and moved on, it would
-have shipped as a control that certified the exact defect it was written to catch.
+**What the four new ones have in common, and why it is worth saying.** All four are failures in the
+**verification apparatus**, not in the systems under test — a flaky check, a truncating report, a
+rotten register, and an instrument whose pattern matched nothing. Classes 1–14 were mostly found by
+pointing tools at the repos. **These were found by pointing them at the tools.** Class 15 in particular
+was my own fix from earlier in the same work, and it passed 1 time in 4 on a stack that was definitively
+broken; had I run it once and moved on, it would have shipped as a control that certified the exact
+defect it was written to catch. **Class 18 is the sharpest of the four**, because it was caught by
+another class's fix: the nonzero floor built for class 8, in a different repo, days earlier, is the
+only reason a checker that examined **zero of 22** citations reported red instead of green. A control
+built for one hole caught a different hole in a different tool. That is the argument for floors over
+comments, made by the artifacts rather than by me.
+
+**Instance (b) of class 13 is a fourth apparatus failure, and it is filed under 13 rather than as its
+own class on purpose.** It was found the same way — in my own M1 runner, on its first execution. It is
+not a new mechanism: it is the *same* one as the stale `bin/`, which is why it belongs there. What it
+adds is that the class had been **inferred** from a gitignored directory and is now **observed**, with
+two red steps sitting directly above a green suite that depended on them. The sharper lesson is about
+ORDER: the runner recorded the build as FAILED, correctly, and then ran the next step anyway. **A step
+that depends on a previous step's artifact must either check that the artifact is fresh or refuse to
+run** — recording the dependency as failed is not the same as declining to trust it. Both halves were
+fixed (`docker rmi -f` on the tag, plus an explicit refusal when the build is red) and break-verified
+in `_verify/.breakverify-m1-guard.sh`: build-failed now yields RED / RED / suite-not-invoked.
+
+**Two more findings from that same break-verify, kept because they are instructive and not because
+they were consequential.** Both happened *inside* a control written to catch class 13:
+
+- **The break-verify's reject case first passed FOR THE WRONG REASON — class 10, inside a class-13
+  control.** The probe tag was `_bv_should_not_exist:x`, and Docker rejects a leading underscore as an
+  invalid reference *before* it ever resolves the context path. The case went red on tag validation
+  while the thing it meant to exercise was never reached; it would have read OK forever. What caught
+  it was printing the actual failure line and requiring it to **match the expected signature** rather
+  than merely being a failure. **A reject case must fail for the reason it names**, and the only way
+  to know it does is to look at the reason.
+- **Fixing that exposed a MISDIAGNOSIS in my own fix comment.** I had recorded the cause as the
+  `/d/...` path *form*. It is not: Git Bash auto-converts that form for the Docker CLI and the bare
+  path builds fine. The real cause is `MSYS_NO_PATHCONV=1` **suppressing** the conversion — correct
+  for `-v`, wrong for a build context. Measured both ways, which is the only reason the cause is now
+  stated correctly. **A fix that works can still be recorded with the wrong cause**, and the wrong
+  cause is what the next person reasons from.
 
 ---
 
@@ -188,7 +225,13 @@ have shipped as a control that certified the exact defect it was written to catc
 - **Anything already recorded in a repo's own docs** — M1's rollback posture, M2's and M3's R2-5
   rulings, the per-repo future-work registers. This file points at them; it does not restate them.
 - **The task list.** Reconciled separately at the close of PASS 3.
-- **A claim of completeness about the seventeen classes.** They are the ones **found**, each with a
-  citation. An eighteenth is likely, and the useful thing this list provides is not a count but a set of
-  questions to ask of the next green signal: *could this have been red? did anything verify the
-  verifier? is the evidence complete or truncated? is the subject still there?*
+- **A claim of completeness about the eighteen classes.** They are the ones **found**, each with a
+  citation. The useful thing this list provides is not a count but a set of questions to ask of the next
+  green signal: *could this have been red? did anything verify the verifier? is the evidence complete or
+  truncated? is the subject still there? did the instrument actually find it?*
+
+  **This section previously read "an eighteenth is likely."** It arrived within the hour, in the tool
+  written to check this file — class 18. The prediction is left standing rather than edited away,
+  because it is now evidence for the claim it was making: **a nineteenth is likely too.** The count is
+  a running tally of what has been looked for, not a measure of what is there. Treat any future green
+  in this body of work as provisional in exactly the way each of these eighteen turned out to be.
