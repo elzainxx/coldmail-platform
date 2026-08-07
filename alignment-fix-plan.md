@@ -3,13 +3,24 @@
 **Companion to** `module-comparison-report.md` (the audit and its evidence) and
 `canonical-module-contract.md` (the target state).
 
-> ## THIS PLAN HAS NOT BEEN PERFORMED
+> ## THIS PLAN HAS NOW BEEN PERFORMED — 17 of 21 items DONE, 1 partial, 3 deferred
 >
-> The audit was **audit-only**: nothing in any repo was created, edited, or deleted. **Every item below is a
-> RECOMMENDATION for a separate fix pass.** No code, migration, test, or document has been changed. Items are
-> ordered so the pass can be executed top-down, but the decision to execute any of them is the user's.
+> **Superseded 2026-08-07.** This banner previously read *"THIS PLAN HAS NOT BEEN PERFORMED — every item
+> below is a RECOMMENDATION."* That was true when the audit closed on 2026-08-04 and became false over the
+> four execution chunks that followed. It is replaced rather than deleted because **the stale version is the
+> exact hazard this repo documents**: a confident claim, prominently placed, that a reader has no reason to
+> doubt and every reason to act on. It survived four passes of work that falsified it.
+>
+> **Per-item status now lives in two places:** a `STATUS:` line directly under each item heading, and the
+> reconciled [Ordered summary](#ordered-summary) table at the end. Both were established from the three
+> module repos' commit histories and the trees themselves, not from this document's own prior text.
+>
+> What has **not** changed: the *recommendations* below are the originals, including the ones later found to
+> rest on a wrong premise (items 3/15's shared-work discount, D10's site count). They are left as written so
+> the reasoning can be audited against what actually shipped. Where a recommendation was overtaken, the
+> STATUS line says so.
 
-**Date:** 2026-08-04.
+**Date:** 2026-08-04. **Reconciled against the shipped repos:** 2026-08-07.
 
 ### How to read this
 
@@ -35,6 +46,8 @@ These four are defects with no upside. None depends on a platform decision. None
 is worth doing even if the platform decides never to unify the three modules.**
 
 ### 1. M1: scope job reads to the authenticated caller — **BLOCKS-PLATFORM-INTEGRATION**
+
+**STATUS: DONE — `29e6204` (M1).** The follow-up `88b6dd0` fixed a cross-package test-isolation defect that commit introduced.
 
 - **Finding:** D1. Contract §1.4.
 - **Severity:** **MEDIUM as shipped, HIGH the moment a second key is issued** (revised 2026-08-04 by the
@@ -71,6 +84,8 @@ is worth doing even if the platform decides never to unify the three modules.**
 
 ### 2. M1: make the test suite able to catch item 1's regression
 
+**STATUS: DONE — `29e6204` (M1).** The control is a real-Postgres cross-tenant test, not an assertion on mocked rows.
+
 - **Finding:** §8.3, and the mechanism behind D1.
 - **What:** M1's route-level tests inject `Verifier`/`CallerAuth`/`BulkSubmitter`/`JobReader` over an
   in-memory store. **With a fake store there is no SQL for a missing tenant predicate to be visible in** —
@@ -84,6 +99,8 @@ is worth doing even if the platform decides never to unify the three modules.**
   not after — a fix whose regression cannot be caught is half a fix.
 
 ### 3. M1: connect grant-enforcement tests as `cp_runtime`, or delete the false claim
+
+**STATUS: DONE — `29e6204` (M1), via `SET LOCAL ROLE` from the existing session.** It therefore did **not** require a connectable `cp_runtime`, which retires the "shared work with item 15" premise recorded below — see [`deferrals-and-false-greens.md`](deferrals-and-false-greens.md).
 
 - **Finding:** D13. Contract §1.10.6.
 - **Severity:** MEDIUM — false assurance, which is the dangerous kind.
@@ -101,6 +118,8 @@ is worth doing even if the platform decides never to unify the three modules.**
   D2: a control that will be trusted because something says it works.
 
 ### 4. M1: wire `accept_and_defer`, or reject it at load
+
+**STATUS: DONE — `29e6204` (M1), wired (not rejected).** Control: `control-plane/internal/api/frontdoor_defer_test.go`.
 
 - **Finding:** D2. Contract §1.11.1, §1.11.5.
 - **Severity:** MEDIUM — safety.
@@ -125,6 +144,8 @@ M2 and M3 — three of the four core routes are already uniform (`run` and `repo
 
 ### 5. M2: accept an optional `user_id` on `/v1/quote` — **BLOCKS-PLATFORM-INTEGRATION**
 
+**STATUS: DONE — `ba9312a` (M2).** Accepted and **inert** in M2, which is the shape that lets one client body serve both senders.
+
 - **Finding:** D4. Contract §1.6.
 - **What:** M2's `quoteReq{RecipientCount}` and M3's `quoteReq{RecipientCount, UserID}` both decode with
   `DisallowUnknownFields()`. So `{recipient_count}` → M2 OK / M3 rejects; `{recipient_count, user_id}` → M3
@@ -142,6 +163,8 @@ M2 and M3 — three of the four core routes are already uniform (`run` and `repo
   supposed to be uniform — the exact special-casing this audit exists to eliminate.
 
 ### 5b. M3: resolve `quote`'s always-zero cost — **BLOCKS-PLATFORM-INTEGRATION**
+
+**STATUS: DONE — ruled (b), then implemented in BOTH senders: `4abd8eb` (M3) + `0b42e1b` (M2).** `describe` now declares the cost fields inert rather than reporting a silent 0; `148f63f` (M3) had already zeroed the flat-subscription pricing. The M2 commit exists because the same ambiguity is present there with the **opposite** literal — a fix in one sender would have left the other misleading in the mirror direction.
 
 - **Finding:** **D22** (added 2026-08-04 by the refutation pass; report §0b.7, §7.1).
 - **Severity:** **higher than D4**, because it is silent. D4 returns a detectable 400; this returns **200 with
@@ -161,6 +184,8 @@ M2 and M3 — three of the four core routes are already uniform (`run` and `repo
 
 ### 6. Declare `pricing.model`'s value set — **BLOCKS-PLATFORM-INTEGRATION**
 
+**STATUS: DONE — `dde94e0` (M2), `3595117` (M3).**
+
 - **Finding:** classification 7.4. Contract §1.7.
 - **What:** M2 reports `flat_per_recipient`, M3 `flat_subscription`, with **no enum declaring what values
   exist.** A client switching on it must already know both.
@@ -171,6 +196,8 @@ M2 and M3 — three of the four core routes are already uniform (`run` and `repo
 
 ### 7. Contract clause: clients MUST tolerate unknown error codes
 
+**STATUS: DONE — [`canonical-module-contract.md`](canonical-module-contract.md) §1.3.6 clause 6.** Additive-only, with a mapping rule for codes a client does not recognise.
+
 - **Finding:** classification 2.5. Contract §1.3.6.
 - **What:** M2 implements five error codes, M3 seven (`unprocessable` 422, `rate_limited` 429), at the same
   `/v1`. Additive within M3, divergent across modules.
@@ -180,6 +207,8 @@ M2 and M3 — three of the four core routes are already uniform (`run` and `repo
 - **Risk if skipped:** a client with an exhaustive switch over M2's set breaks on M3's 422/429.
 
 ### 7b. All three: route mux-level 405/404 through the error envelope
+
+**STATUS: DONE — `e3fee99` + `de01752` (M2), `5924fbc` (M3), `29caf15` (M1).** In M1 the defect was found *by* item 14's route-drift gate, which is the one place in this plan where two items caught each other.
 
 - **Finding:** **D17** (added 2026-08-04 by the one adversarial verification that completed — see report
   §0a.1). Contract §1.3.3.
@@ -211,6 +240,8 @@ known internally by each module — this tier exposes what exists rather than de
 
 ### 8. All three: enrich `describe` with `vocabularies{}`, `error_codes[]`, declared `pricing.model` — **BLOCKS-PLATFORM-INTEGRATION**
 
+**STATUS: DONE — `dde94e0` (M2), `3595117` (M3).** All three lists are **derived from the served surface**, never hand-maintained, so they cannot drift from it.
+
 - **Finding:** UI questions 1–4. Contract §1.7.
 - **What:** no module exposes its enum value sets or error codes programmatically, so a UI hardcodes three
   vocabularies from documentation — per-module special-casing by definition.
@@ -226,6 +257,8 @@ known internally by each module — this tier exposes what exists rather than de
 
 ### 9. M3: add a notifications read route
 
+**STATUS: DONE — `1d9a042` (M3).**
+
 - **Finding:** D5, UI question 13. Contract §1.9.5.
 - **What:** `notifications` (migrations 0033/0047) has two INSERT sites and is read only by
   `dispatch/notify.go` for webhook egress. **No platform or admin route reads it.** The module records
@@ -239,6 +272,8 @@ known internally by each module — this tier exposes what exists rather than de
 
 ### 10. All three: uniform `/readyz`, and make M1's readiness check the database
 
+**STATUS: DONE — `bcf6324` (M1), `9c74fa8` (M2), `1df98b0` (M3).** M1's readiness now measures the database; the senders answer in the platform envelope without breaking the monitor already reading them.
+
 - **Finding:** classification 9.2/9.3, D-list. UI questions 18–19. Contract §1.9.1-2.
 - **What:** **not one field name is shared** across the three readiness bodies. Worse, M1's checks only that
   the pepper secret loaded — not the DB — so it can report `ready: true` while `POST /v1/verify` 503s for a
@@ -251,6 +286,8 @@ known internally by each module — this tier exposes what exists rather than de
   whether it can serve — which orchestrators act on.
 
 ### 11. M3: pick one null convention for the five widened report fields
+
+**STATUS: DONE — `22b6c9d` (M3).** The finding on landing: the convention was **documented and not enforced**, so the divergence could have returned silently. It is now under test.
 
 - **Finding:** classification 9.8, UI question 12.
 - **What:** `account_id`, `account_username`, `smtp_response`, `error_class`, `failed_at` serialize as
@@ -270,6 +307,8 @@ known internally by each module — this tier exposes what exists rather than de
 
 ### 12. Senders: adopt a graduated kill-switch ladder for dispatch
 
+**STATUS: DONE — `e939c4f` + `c4b2086` (M3), `5af51f8` (M2), `9741986` (M1's half of the shared `paused` code).** `c4b2086` is worth reading: the first assertion scanned the whole **file** and therefore proved nothing about the **function**.
+
 - **Finding:** classification 13.1, §7.4. Contract §1.11.1.
 - **What:** `dispatch_enabled` is binary — dispatch runs or stops entirely. During a partial incident (one
   provider degrading, a suspected bad config, one user's accounts misbehaving) the only available action
@@ -286,6 +325,8 @@ known internally by each module — this tier exposes what exists rather than de
 
 ### 13. Senders: shadow-mode-by-default for every autonomous mutator
 
+**STATUS: DONE — `c300fe6` + `0e4d398` (M2), `ac70c38` (M3).** **Came in HIGH against this MEDIUM estimate** — four dials per sender, plus a sweep of every assertion that had assumed the mutators ran unconditionally. This overrun is what triggered the §15b re-estimate below.
+
 - **Finding:** classification 13.3. Contract §1.11.3.
 - **What:** M1 has four independent mutators all defaulting to `recommend_only`, with the recommend-only path
   proven to produce `Action{Apply:false, Recommend:…}` and zero live mutation. The senders retrofitted one
@@ -296,6 +337,8 @@ known internally by each module — this tier exposes what exists rather than de
 - **Risk if skipped:** a new autonomous behaviour ships enforcing on day one, with no observation period.
 
 ### 14. Senders: adopt M1's in-code response-version assertion; M1: adopt the senders' route-drift gate
+
+**STATUS: DONE — `0cacc36` + `29caf15` (M1), `80f3a69` (M2), `9988e53` (M3).** `api_version` is now derived from the served route table and the service refuses to boot without one. `80f3a69` also closed 15b's route-miscount row (D11).
 
 - **Finding:** classification 4.2/4.3. Contract §1.1.3-4.
 - **What:** each side has half the mechanism. M1 asserts `r.APIVersion == APIVersion` before every sync write
@@ -308,6 +351,8 @@ known internally by each module — this tier exposes what exists rather than de
 - **Risk if skipped:** contract drift goes undetected in the half each module lacks.
 
 ### 15. M1: package the control-plane
+
+**STATUS: DEFERRED — nothing built.** `coldmail-verify` has no `Dockerfile` and no compose file; verified by inspection at the close of Chunk 4, not inferred. This is the one deferral genuinely blocked on missing infrastructure rather than on a ruling: **M1's request-path secret-leak scan cannot run until this compose stack exists.** Note that the "shares work with item 3" discount written above is **false** — item 3 shipped via `SET LOCAL ROLE` and never needed a connectable `cp_runtime`.
 
 - **Finding:** D15. Contract §1.12.
 - **What:** verified by `find` — the **only** Docker artifacts in the repo are under `verifier-node/`. There
@@ -329,6 +374,8 @@ known internally by each module — this tier exposes what exists rather than de
   question returns a plain no.
 
 ### 15b. Lower-priority parity items
+
+**STATUS: PARTIAL — 5 of 16 rows closed, the rest DEFERRED.** Closed: `d481c97` (M1, Bearer scheme mandatory, row 11), `80f3a69` (M2, route miscount D11), `29e6204` (M1, D12 DSN leak), `abc86c5` (M2) + `b457748` (M3) (N1, the same leak in both senders), and `check-no-secret-leak.sh` (row 14.4). See the re-estimate below for why "LOW each" was wrong about the remainder.
 
 Grouped because each is LOW cost and none blocks anything:
 
@@ -435,6 +482,8 @@ instead of two" is yes. **It is a phase of work, not a fix pass.**
 
 ### 16. M1: implement `quote` / `run` / `report` / `describe` — **BLOCKS-PLATFORM-INTEGRATION**
 
+**STATUS: DEFERRED — Tier 4, ruled out of scope.** Not a technical blocker and not an oversight: a deliberate boundary, recorded in [`deferrals-and-false-greens.md`](deferrals-and-false-greens.md).
+
 - **Finding:** §1 (the confirmed hypothesis), classifications 1.1, 1.7, 7.1. Contract §1.5.
 - **What:** M1 implements **no part** of the uniform verb set — zero occurrences of quote/run/report/describe
   anywhere in its Go tree or its docs. It implements a disjoint set (`POST /v1/verify`,
@@ -455,6 +504,8 @@ instead of two" is yes. **It is a phase of work, not a fix pass.**
 
 ### 17. M1: a cost or feasibility verb — **BLOCKS-PLATFORM-INTEGRATION** (part of 16)
 
+**STATUS: DEFERRED — Tier 4, with item 16.**
+
 - **Finding:** classification 7.1, UI questions 15-16. Contract §1.6.
 - **What:** M1 has no cost verb, field, or dry-run. Verified across every request/response struct: cost is
   discoverable **only by submitting real work.** The one `cost_units` in the codebase is on the internal
@@ -468,6 +519,8 @@ instead of two" is yes. **It is a phase of work, not a fix pass.**
   work.
 
 ### 18. M1: coded error envelope with `request_id` — **BLOCKS-PLATFORM-INTEGRATION**
+
+**STATUS: DONE — `cc3ce0e` (M1)**, with a scan that makes a 27th unenveloped site impossible rather than a list of the 26 that were fixed. One sub-question is **separately deferred**: whether `request_id` must appear on every log line. That deferral is on a **contract contradiction**, not on remaining work.
 
 - **Finding:** D3, classifications 2.1-2.4, 2.7. UI questions 5-7. Contract §1.3.
 - **What:** ~25 hand-rolled `{"error":"<free text>"}` sites, no codes, **no `request_id` in any error body**,
@@ -486,28 +539,61 @@ instead of two" is yes. **It is a phase of work, not a fix pass.**
 
 ## Ordered summary
 
-| # | Item | Module | Cost | Blocks integration |
-|---|---|---|---|---|
-| **1** | Scope job reads to the authenticated caller (D1) | M1 | MEDIUM | **YES** |
-| **2** | Real-PG cross-tenant test for item 1 | M1 | LOW | no |
-| **3** | ~~Grant tests as `cp_runtime`, or drop the CI claim (D13)~~ **DONE, `29e6204`** — via `SET LOCAL ROLE` from the existing session, so it did NOT require a connectable `cp_runtime`; item 15 shares no work with it | M1 | LOW | no |
-| **4** | Wire or reject `accept_and_defer` (D2) | M1 | LOW–MED | no |
-| **5** | Accept optional `user_id` on `quote` (D4) | M2 | **LOW** | **YES** |
-| **6** | Declare `pricing.model`'s value set | M2+M3 | LOW | **YES** |
-| **7** | Client tolerates unknown error codes | *platform* | LOW | no |
-| **7b** | Route mux-level 405/404 through the envelope (**D17**) | all | LOW | no |
-| **8** | `describe`: vocabularies + error codes + pricing set | all | **LOW** | **YES** |
-| **9** | Notifications read route (D5) | M3 | **LOW** | no |
-| **10** | Uniform `/readyz`; M1 readiness checks the DB | all | LOW | no |
-| **11** | One null convention for the five widened fields | M3 | LOW | no |
-| **12** | Graduated kill-switch ladder for dispatch | M2+M3 | MEDIUM | no |
-| **13** | Shadow-mode-by-default for autonomous mutators | M2+M3 | MEDIUM | no |
-| **14** | Response-version assertion ↔ route-drift gate | all | LOW–MED | no |
-| **15** | Package the control-plane (D15) | M1 | MEDIUM | no |
-| **15b** | Sixteen lower-priority parity items — **4 now closed; re-estimated 2026-08-07 to ~133–140h as written (~17 days), ~5 days after deferring the 7 ruling-blocked rows.** "LOW each" was wrong: four LOWs are HIGHs and five would WEAKEN an existing control | all | ~~LOW each (one HIGH)~~ **see §15b re-estimate** | no |
-| **16** | Implement quote/run/report/describe | M1 | **HIGH** | **YES** |
-| **17** | A cost or feasibility verb | M1 | MED–HIGH | **YES** |
-| **18** | Coded error envelope with `request_id` (D3) | M1 | MEDIUM | **YES** |
+**RECONCILED AGAINST THE SHIPPED REPOS 2026-08-07, at the close of Chunk 4.** Every status below was
+established from the module repos' commit histories and, where a claim was checkable, from the tree
+itself — not from this document's own prior text. That distinction matters here: **the item bodies
+above carry no status markers at all**, so before this reconciliation the only way to learn what had
+shipped was to read three git logs. A plan that cannot tell you its own state is the planning form of
+the unwired test.
+
+The sha in each row is the commit that closed it, and every one of them is checked by
+`_verify/cprun.sh` step 4 to be a real commit in the repo it is attributed to.
+
+| # | Item | Module | Cost | Blocks integration | Status |
+|---|---|---|---|---|---|
+| **1** | Scope job reads to the authenticated caller (D1) | M1 | MEDIUM | **YES** | **DONE** `29e6204` |
+| **2** | Real-PG cross-tenant test for item 1 | M1 | LOW | no | **DONE** `29e6204` (isolation defect it introduced fixed in `88b6dd0`) |
+| **3** | Grant tests as `cp_runtime`, or drop the CI claim (D13) | M1 | LOW | no | **DONE** `29e6204` — via `SET LOCAL ROLE` from the existing session, so it did **not** require a connectable `cp_runtime`; **item 15 shares no work with it** |
+| **4** | Wire or reject `accept_and_defer` (D2) | M1 | LOW–MED | no | **DONE** `29e6204` — the rung is real; `internal/api/frontdoor_defer_test.go` is the control |
+| **5** | Accept optional `user_id` on `quote` (D4) | M2 | **LOW** | **YES** | **DONE** `ba9312a` |
+| **5b** | M3: resolve `quote`'s always-zero cost | M3 | LOW | **YES** | **DONE** `4abd8eb` (M3) + `0b42e1b` (**M2**) — closed by declaring the cost fields INERT in `describe`, in both senders. The ruling was (b): the field stays, `describe` declares it inert. `148f63f` had already zeroed the flat-subscription pricing |
+| **6** | Declare `pricing.model`'s value set | M2+M3 | LOW | **YES** | **DONE** `dde94e0` (M2), `3595117` (M3) |
+| **7** | Client tolerates unknown error codes | *platform* | LOW | no | **DONE** — `canonical-module-contract.md:119` clause 6, additive-only with a mapping rule |
+| **7b** | Route mux-level 405/404 through the envelope (**D17**) | all | LOW | no | **DONE** `e3fee99`+`de01752` (M2), `5924fbc` (M3), `29caf15` (M1, where the route-drift gate found the defect) |
+| **8** | `describe`: vocabularies + error codes + pricing set | all | **LOW** | **YES** | **DONE** `dde94e0` (M2), `3595117` (M3) — all three DERIVED, never hand-listed |
+| **9** | Notifications read route (D5) | M3 | **LOW** | no | **DONE** `1d9a042` |
+| **10** | Uniform `/readyz`; M1 readiness checks the DB | all | LOW | no | **DONE** `bcf6324` (M1), `9c74fa8` (M2), `1df98b0` (M3) |
+| **11** | One null convention for the five widened fields | M3 | LOW | no | **DONE** `22b6c9d` — the divergence was DOCUMENTED, not enforced; now tested |
+| **12** | Graduated kill-switch ladder for dispatch | M2+M3 | MEDIUM | no | **DONE** `e939c4f`+`c4b2086` (M3), `5af51f8` (M2), `9741986` (M1's half of the shared error code) |
+| **13** | Shadow-mode-by-default for autonomous mutators | M2+M3 | MEDIUM | no | **DONE** `c300fe6`+`0e4d398` (M2), `ac70c38` (M3). Came in **HIGH against a MEDIUM estimate** — the trigger for §15b's re-estimate |
+| **14** | Response-version assertion ↔ route-drift gate | all | LOW–MED | no | **DONE** `0cacc36`+`29caf15` (M1), `80f3a69` (M2), `9988e53` (M3) |
+| **15** | Package the control-plane (D15) | M1 | MEDIUM | no | **DEFERRED** — nothing built; no Dockerfile and no compose file exist in `coldmail-verify`. Blocks the M1 request-path leak scan, which is the one item genuinely blocked on infrastructure |
+| **15b** | Sixteen lower-priority parity items | all | ~~LOW each~~ **see §15b re-estimate** | no | **PARTIAL — 5 closed** (`d481c97` Bearer scheme, `80f3a69` route miscount D11, `29e6204` D12 M1 DSN leak, `abc86c5`/`b457748` N1 sender DSN leak, `check-no-secret-leak.sh` 14.4). **Rest DEFERRED**, re-estimated to ~133–140h as written / ~5 days after deferring the 7 ruling-blocked rows |
+| **16** | Implement quote/run/report/describe | M1 | **HIGH** | **YES** | **DEFERRED — Tier 4, ruled out of scope by the brief.** Not a technical finding: a deliberate boundary |
+| **17** | A cost or feasibility verb | M1 | MED–HIGH | **YES** | **DEFERRED — Tier 4**, with 16 |
+| **18** | Coded error envelope with `request_id` (D3) | M1 | MEDIUM | **YES** | **DONE** `cc3ce0e` — with a scan that makes a 27th unenveloped site impossible. Note the `request_id`-in-every-log-line scope question is **separately deferred on a contract contradiction**, not on work |
+
+**Where that leaves the plan: 17 of 21 items DONE, 1 partial (15b), 3 deferred (15, 16, 17).** Twenty-one,
+not eighteen, because 5b, 7b and 15b were added after the audit closed — 5b and 7b by the refutation pass
+that went looking for the audit's own errors, which is the only reason either exists. The three deferrals
+plus 15b's remainder are each recorded in
+[`deferrals-and-false-greens.md`](deferrals-and-false-greens.md) with what blocks them — including the
+two whose *premises* were wrong (15-C's shared-work discount, which did not exist, and D10's 1-vs-42
+site count).
+
+**Also delivered, and NOT in this table because the plan never contained them.** **40 commits** of gate,
+harness and CI work across the three repos since this plan was written — 8 in M1, 16 in M2, 16 in M3
+(`git log --since=2026-08-04 -- scripts/ .github/workflows/ tests/`, so the figure is re-derivable rather
+than asserted). The audit did not anticipate any of it, because the audit was looking at the modules and
+these are defects in the things that were *checking* the modules: six unwired test packages, three gates
+satisfied by prose or by a commented-out step, a gate inheriting its verdict from the previous commit, a
+0-of-0 comparison passing as green, an anti-vacuity check flaky in the **passing** direction, and a report
+that truncated its own evidence.
+
+**Eighteen false-green classes; this plan predicted none of them.** Out of 66 post-audit commits total,
+40 are apparatus. That ratio is the single most useful thing to carry out of this arc: the fix list was
+substantially right about the systems and had nothing at all to say about the machinery that was supposed
+to prove the systems right — which is where most of the real defects turned out to live.
 
 ### The shape of it
 
@@ -545,8 +631,17 @@ M3's 17 `/v1/byosmtp/*` extension routes · M3's `quote` as feasibility rather t
 IP reputation, warmup, quarantine, and audit state · the three different status vocabularies · M1's
 `caller_ref` as an opaque platform correlation echo · M3's admin-only quarantine verbs · M3's split
 user-writable/admin-only settings tables · campaign-scoped reports returning an empty aggregate rather than
-404 · M1's forward-only migrations (the *absence of a ledger* is item 15b, not the convention) · M1's bulk
-results omitting `email` (plaintext purged on settle, a deliberate privacy property).
+404 · M1's forward-only migrations (the *absence of a ledger* is item 15b row 13, not the convention) ·
+M1's bulk results omitting `email` (plaintext purged on settle, a deliberate privacy property).
+
+> **One correction to that first entry, added 2026-08-07.** Calling M1's forward-only migrations
+> deliberate-and-correct is right about the *convention* and was incomplete about its *consequence*. M1 has
+> **zero `.down.sql` files and no down-migration mechanism at all**, and `0013_job_owner.sql` contains a
+> `REVOKE` on `api_callers` that **`git revert` cannot undo** — reverting the commit removes the SQL, not its
+> effect on the live database. So M1 has no rollback path for a bad deploy, which is a go-live blocker that
+> this section's phrasing would have let a reader classify as a settled design choice. Recorded in
+> [`../coldmail-verify/Docs/go-live-rollback-posture.md`](../coldmail-verify/Docs/go-live-rollback-posture.md).
+> The convention is still deliberate; what was missing was anyone having written down what it costs.
 
 Also not in this plan: the credential-hash choice (bcrypt vs sha256-indexed-lookup are both correct for their
 access patterns), and RLS for M1 — classified **GAP-OPTIONAL** because in the senders RLS is an explicit

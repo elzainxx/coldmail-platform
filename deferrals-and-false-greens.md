@@ -7,7 +7,7 @@ as provenance; **this file is the record.** Two things live here and nowhere els
 1. **Every deferral**, with what blocks it and — where the deferral was itself mis-recorded — what the
    corrected premise is.
 2. **The false-green classes** found across this work, each with a citation to the artifact that
-   demonstrates it. There are **eighteen**, up from the fourteen named at the start of Chunk 4.
+   demonstrates it. There are **nineteen**, up from the fourteen named at the start of Chunk 4.
 
 The organising claim, stated once: **a green signal is evidence only if something about it could have
 been red.** Every class below is a way that stopped being true while the signal kept its colour.
@@ -148,14 +148,15 @@ unclosable; the plumbing to record it is merely unbuilt.**
 
 ---
 
-## 6. The eighteen false-green classes
+## 6. The nineteen false-green classes
 
 Each is a distinct mechanism by which a passing signal stopped being evidence. Fourteen were known
-entering Chunk 4; **four were found during it** (15, 16, 17, 18). Citations are to the artifact that
+entering Chunk 4; **five were found during it** (15, 16, 17, 18, 19). Citations are to the artifact that
 demonstrates the class, so each row is checkable rather than a claim.
 
-**§7 below predicted an eighteenth. It arrived before this file was finished** — during the final
-verification runs, in the verification tooling itself, which is where the last four all came from.
+**§7 below predicted an eighteenth, then a nineteenth. Both arrived** — 18 before this file was first
+finished, 19 during the task-list reconciliation immediately after. Both were in the verification
+tooling itself, which is where all five of Chunk 4's new classes came from.
 
 | # | Class | Where it was demonstrated |
 |---|---|---|
@@ -177,10 +178,12 @@ verification runs, in the verification tooling itself, which is where the last f
 | 16 | **The report that TRUNCATES ITS OWN EVIDENCE** ← *new* | `m2run.sh` piped per-package `counts:` lines through `tail -30`, keeping only the **last** package's arithmetic. A `declared>ran` shortfall in any earlier package would have been absent from the pasted evidence while the run still read ALL GREEN. **A report that truncates its evidence is indistinguishable from one with nothing to report.** Fixed to print all lines and to *assert* `declared==ran && declared>0`; break-verified on synthetic inputs including a shortfall in first position |
 | 17 | **The mis-recorded deferral** ← *new* | §4 above, in both directions: two items recorded as OPEN in a file they never lived in (both actually FIXED, in `ae9f2a7` and `29e3bcb`), two ids cited but **never defined at all**, and one ruled *"register it"* whose registration never happened. **A deferral ledger is an artifact, and nothing was checking it** |
 | 18 | **The check whose PATTERN MATCHES NOTHING, so its subject is empty and its arithmetic passes** ← *new* | This file's own citation checker, `_verify/cprun.sh` step 4, written to verify that every commit sha cited here is real. Its extraction used `` \` `` where `` [\`] `` was required; `grep -E` reads the escaped form as a literal backslash-plus-backtick, so it matched **zero of the 22 ids present** and the check reported *"0 of 0 cited shas resolve"*. **Only the nonzero floor turned that into a red** — the floor from class 8, added days earlier for a different reason, catching a defect in the tool that was auditing this document. Related but distinct from 8: there the subject vanished from the system under test; here the **instrument never found it**, and a green would have certified 22 unchecked provenance claims |
+| 19 | **The check whose ASSERTION IS NARROWER THAN THE CLAIM ITS GREEN INVITES** ← *new* | The same checker, one step later. `cprun.sh` step 4 asserts a cited sha is a real commit in **some** sibling repo; it never checked **which**. During the 2026-08-07 task-list reconciliation I wrote `` `0b42e1b` `` (M3) into `alignment-fix-plan.md` — a real commit, in **M2**. Step 4 passed it, correctly by its own definition, and printed **"43 of 43 cited shas resolve to a real commit."** Nobody reads that and concludes *"…though possibly attributed to the wrong module"* — yet in a document whose entire value is per-module provenance, the module is the load-bearing half. The misattribution was caught only because I happened to re-derive all 24 rows by hand against each named repo; nothing in the tooling would have. Fixed by **adding step 4b** (attribution, where the text states a repo) rather than widening 4, since attribution is only checkable where it is claimed — 24 of 43 shas carry an explicit repo, and that ratio is now printed so the unchecked remainder stays visible instead of hiding inside a green. Break-verified by re-injecting the exact real mistake: RED, naming where the sha actually lives; GREEN on restore |
 
-**What the four new ones have in common, and why it is worth saying.** All four are failures in the
+**What the five new ones have in common, and why it is worth saying.** All five are failures in the
 **verification apparatus**, not in the systems under test — a flaky check, a truncating report, a
-rotten register, and an instrument whose pattern matched nothing. Classes 1–14 were mostly found by
+rotten register, an instrument whose pattern matched nothing, and an instrument whose green overstated
+itself. Classes 1–14 were mostly found by
 pointing tools at the repos. **These were found by pointing them at the tools.** Class 15 in particular
 was my own fix from earlier in the same work, and it passed 1 time in 4 on a stack that was definitively
 broken; had I run it once and moved on, it would have shipped as a control that certified the exact
@@ -190,7 +193,7 @@ only reason a checker that examined **zero of 22** citations reported red instea
 built for one hole caught a different hole in a different tool. That is the argument for floors over
 comments, made by the artifacts rather than by me.
 
-**Instance (b) of class 13 is a fourth apparatus failure, and it is filed under 13 rather than as its
+**Instance (b) of class 13 is a further apparatus failure, and it is filed under 13 rather than as its
 own class on purpose.** It was found the same way — in my own M1 runner, on its first execution. It is
 not a new mechanism: it is the *same* one as the stale `bin/`, which is why it belongs there. What it
 adds is that the class had been **inferred** from a gitignored directory and is now **observed**, with
@@ -225,13 +228,26 @@ they were consequential.** Both happened *inside* a control written to catch cla
 - **Anything already recorded in a repo's own docs** — M1's rollback posture, M2's and M3's R2-5
   rulings, the per-repo future-work registers. This file points at them; it does not restate them.
 - **The task list.** Reconciled separately at the close of PASS 3.
-- **A claim of completeness about the eighteen classes.** They are the ones **found**, each with a
+- **A claim of completeness about the nineteen classes.** They are the ones **found**, each with a
   citation. The useful thing this list provides is not a count but a set of questions to ask of the next
   green signal: *could this have been red? did anything verify the verifier? is the evidence complete or
-  truncated? is the subject still there? did the instrument actually find it?*
+  truncated? is the subject still there? did the instrument actually find it? **and does its green mean
+  as much as it sounds like it means?***
 
-  **This section previously read "an eighteenth is likely."** It arrived within the hour, in the tool
-  written to check this file — class 18. The prediction is left standing rather than edited away,
-  because it is now evidence for the claim it was making: **a nineteenth is likely too.** The count is
-  a running tally of what has been looked for, not a measure of what is there. Treat any future green
-  in this body of work as provisional in exactly the way each of these eighteen turned out to be.
+  **This section has now made the same prediction twice and been right twice.** It first read *"an
+  eighteenth is likely"*; class 18 arrived within the hour, in the tool written to check this file. It
+  was then edited to read *"a nineteenth is likely too"* — and **class 19 arrived during the very next
+  task**, in the same tool, one step further along, and was caught by hand rather than by any control.
+  Both predictions are left standing rather than smoothed away, because two-for-two is a stronger
+  statement than either was alone: **a twentieth is likely.** The count is a running tally of what has
+  been looked for, not a measure of what is there. Treat any future green in this body of work as
+  provisional in exactly the way each of these nineteen turned out to be.
+
+  **The sharpest thing class 19 adds is a question the first eighteen do not ask.** Classes 4, 8 and 18
+  are all *"the check did not run on its subject."* Class 19 is different and harder: the check ran, on
+  the right subject, and **its assertion was true** — `43 of 43` was an accurate sentence. The defect
+  was the gap between what it asserted and what its wording invited a reader to conclude. That cannot be
+  closed by a floor or a break-verify, because there is nothing broken to break. It is closed only by
+  **reading your own green out loud and asking what a reasonable person would take it to mean** — which
+  is why step 4b's output now prints `24 of 43 carry an explicit repo`, making the unchecked 19 part of
+  the result instead of part of the silence.

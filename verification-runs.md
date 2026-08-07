@@ -17,7 +17,7 @@ evidence — a green from it would be the absence of an execution, not the succe
 |---|---|---|---|---|
 | **coldmail-verify** (M1) | `c3f4d7d` | 18 steps, 0 failed, ALL GREEN | 18 steps, 0 failed, ALL GREEN | `golang:1.26` (CI pin) + `postgres:16-alpine` + the real node image |
 | **coldmail-send-managed** (M2) | `9d7bba0` | 16 steps, 0 failed, ALL GREEN | 17 steps, 0 failed, ALL GREEN | `golang:1.23` (CI pin) + full compose stack |
-| **coldmail-send-byo** (M3) | `b6db9e6` | 18 steps, 0 failed, ALL GREEN | 19 steps, 0 failed, ALL GREEN | `golang:1.23` (CI pin) + full compose stack |
+| **coldmail-send-byo** (M3) | `b6db9e6`, then **re-run at HEAD `7805a1c`** | 18 steps → **19 steps** at HEAD, 0 failed, ALL GREEN | 19 steps → **19 steps** at HEAD, 0 failed, ALL GREEN | `golang:1.23` (CI pin) + full compose stack |
 | **coldmail-platform** | `f2db5e5` | 4 checks, 0 failed, ALL GREEN | 4 checks, 0 failed, ALL GREEN | none required (docs only — see below) |
 
 **On the differing step counts between RUN 1 and RUN 2 for M2 and M3:** the runner gained a step
@@ -25,6 +25,51 @@ between the two runs — the per-package `declared==ran && declared>0` assertion
 later run is the stronger one. This is noted rather than smoothed over, because two runs reporting
 different step counts is exactly the kind of discrepancy that should not be left for a reader to
 wonder about.
+
+### The commit column is the commit RUN AT, not each repo's current HEAD
+
+**Stated because the difference is exactly the kind of thing this file exists to prevent someone
+assuming.** After these runs, each repo took one further docs-only commit closing its decision ledger,
+so three of the four HEADs have moved past the verified commit:
+
+| Repo | Verified at | HEAD after the ledger-close commit |
+|---|---|---|
+| M1 | `c3f4d7d` | `c3f4d7d` — **same**, the ledger close *is* this commit |
+| M2 | `9d7bba0` | `9d7bba0` — **same** |
+| M3 | `b6db9e6` | **`7805a1c`** — moved |
+| platform | `f2db5e5` | moved (this file and its siblings are the reason) |
+
+For M3 that drift is real and was **not** cosmetic bookkeeping: `7805a1c` was sitting uncommitted in the
+working tree during both runs, so the runs did cover its content — but they were recorded against the
+prior sha, and "the runs covered content that was uncommitted at the time" is a weaker and much less
+checkable statement than a sha. **So M3 was re-run at `7805a1c` rather than argued about.** Both runs,
+`dirty=0`, step-for-step identical:
+
+```
+HEAD: 7805a1c Ledger close: rule R2-5, register three ids that were ruled but never filed   dirty=0
+  tools/send-byo-migrate/bin present? no
+  gofmt + go vet (4 modules)                                 rc=0  OK
+  go build tools/send-byo-migrate                            rc=0  OK
+  scripts/dev.sh certs                                       rc=0  OK
+  scripts/dev.sh reset (postgres->migrate->seed->rest)       rc=0  OK
+  worker registered cleanly on FIRST attempt                 rc=0  OK
+  scripts/dev.sh test (real-infra harness)                   rc=0  OK
+        HARNESS RESULT: 100 passed, 0 failed
+  per-package arithmetic: declared==ran, declared>0 (12 pkgs) rc=0  OK
+  checks/config_drift.sh · contract_drift · migration_lint · config_consumption (+selftest)
+  test_enumeration (+selftest) · drain_grace · no_secret_leak · dsn_scrub_wiring · user_output_scrub
+                                                             all rc=0  OK
+  scripts/dev.sh down                                        rc=0  OK
+================ M3 SUMMARY ================
+  19 steps, 0 failed
+  ALL GREEN
+```
+
+RUN 1 and RUN 2 produced byte-identical step lists and both cleared the worker check on the **first**
+attempt — the class-15 flake point, which passes 1-in-4 in its old state, so two clean first-attempts is
+a weak but real signal on top of the fix's own break-verification.
+
+The platform repo is re-verified by `cprun.sh` on every change; its latest run is in its section below.
 
 ---
 
@@ -80,17 +125,26 @@ referent here, and reporting *verified* because nothing failed would be the empt
 whole body of work — **a pass earned by the absence of anything that could fail.** So the property
 being checked is stated instead of assumed. This repo's distinguishing feature is that it **cites the
 other three**, and a citation to a path that no longer exists is the documentation form of the unwired
-test: it reads as evidence and is not. Four checks, in `_verify/cprun.sh`:
+test: it reads as evidence and is not. Four checks at the time of these runs, five now, in
+`_verify/cprun.sh`:
 
 1. **Every JSON artifact parses** — 3 files.
 2. **Internal markdown links resolve** — 5 relative targets.
 3. **Cross-repo citations resolve** — 3 `../coldmail-*/…` targets. The property most likely to be
    false, because it depends on three other repos' trees and nothing in any of them would notice this
    file going stale. Two of the four broken links found during C4.5 were rename fallout of this kind.
-4. **Every cited commit sha is a real commit** — **14 of 14 resolve**, including `ae9f2a7` and
-   `29e3bcb`, the two fix claims that `deferrals-and-false-greens.md` §4 makes about M2. A provenance
-   claim is the one kind of claim here that can be flatly fabricated and the one a reader is least
-   able to check by eye.
+4. **Every cited commit sha is a real commit** — **14 of 14 resolved** at the time of these runs,
+   including `ae9f2a7` and `29e3bcb`, the two fix claims that `deferrals-and-false-greens.md` §4 makes
+   about M2. A provenance claim is the one kind of claim here that can be flatly fabricated and the one
+   a reader is least able to check by eye.
+5. **Every sha attributed to a NAMED repo is in that repo** — added after these runs, during the
+   task-list reconciliation, because step 4 had checked existence and not attribution and a real
+   misattribution passed it. See class 19.
+
+**Re-run 2026-08-07 after the reconciliation:** 5 checks, 0 failed, **43 of 43 shas resolve** (8 agent
+ids excluded) and **24 of 24 repo-attributed shas are in the named repo**. The sha count tripled because
+the reconciliation added a shipping commit to every item row — which is the point of check 4 existing:
+the reconciliation's whole value is those citations, and they are now the most-checked claims here.
 
 **A green here means its citations resolve. It does not mean its prose is correct** — and the file says
 so in its own summary output, so the limit travels with the result.
@@ -119,7 +173,7 @@ were found by pointing tools at the tools.**
 
 - **That the systems are correct.** It claims a specific set of suites and gates executed at a specific
   commit and reported green, in a container, twice.
-- **That the gates are sufficient.** Eighteen false-green classes are recorded next door precisely
+- **That the gates are sufficient.** Nineteen false-green classes are recorded next door precisely
   because green has repeatedly meant less than it appeared to.
 - **That a re-run today would reproduce these numbers.** It should, and the runners are kept outside
   the repos so they can be re-run without altering what they verify — but that is a prediction, and
