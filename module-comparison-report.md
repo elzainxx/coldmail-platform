@@ -572,7 +572,7 @@ because M1's internal error information already exists — it is simply not shap
 | | M1 | M2 | M3 |
 |---|---|---|---|
 | Header | `Authorization` | `Authorization` | `Authorization` |
-| Scheme | `Bearer <t>` **or bare token** (`trimBearer`, `helpers.go:20-28`) | `Bearer` only, case-insensitive | `Bearer` only, case-insensitive |
+| Scheme | ~~`Bearer <t>` **or bare token** (`trimBearer`, `helpers.go:20-28`)~~ → **`Bearer` only, case-insensitive** (`bearerToken`, `helpers.go:34-41`; fixed `d481c97`) | `Bearer` only, case-insensitive | `Bearer` only, case-insensitive |
 | Credential | per-caller key (DB) + legacy static token (env) + dev-open | one flat bearer set (env) | one flat bearer set (env) |
 | Storage | `sha256` digest in `api_callers.key_sha256` | **bcrypt** hashes, `PLATFORM_TOKEN_HASHES` | **bcrypt** hashes, `PLATFORM_TOKEN_HASHES` |
 | Compare | indexed SQL equality on digest; static token via `subtle.ConstantTimeCompare` (`api.go:402`) | all hashes, no early return (`auth.go:37-48`) | byte-identical to M2 |
@@ -584,11 +584,14 @@ M2↔M3 `auth.go` is **byte-identical** (`diff` → no output). **Weak evidence:
 
 Three genuine divergences worth the platform's attention:
 
-- **M1 accepts a bare token with no scheme.** `trimBearer` strips an optional `"Bearer "` prefix and
-  otherwise returns the header verbatim; a missing scheme is not rejected. The senders require the scheme.
-  A single platform HTTP client sending `Bearer <t>` works against all three — so this is a permissiveness
-  asymmetry, not a blocker — but it means M1 will also accept malformed headers the senders reject, which is
-  a laxness worth closing rather than relying on.
+- ~~**M1 accepts a bare token with no scheme.**~~ **FIXED 2026-08-07 (`coldmail-verify@d481c97`); this row
+  is now a convergence.** `trimBearer` stripped an optional `"Bearer "` prefix and otherwise returned the
+  header verbatim, so a missing scheme was not rejected. **The audit found one direction and missed the
+  other:** M1 was ALSO the only module rejecting `bearer <t>` lower-case, a request RFC 9110 §11.1 makes
+  conforming and both senders accept (`strings.EqualFold`). So the divergence was two-way, and a fix that
+  only closed the laxness would have hardened the second half into a permanent asymmetry. `bearerToken`
+  closes both. Recorded because "M1 is more permissive here" was the wrong frame — it was more permissive
+  about the token and stricter about the scheme, and only reading both senders' code showed the second.
 - **M1 has caller identity; the senders do not.** M1 resolves a `caller_id` per key with validity windows and
   rotation overlap. The senders have a flat token set with no per-caller notion at all — tenancy travels
   entirely in the request body/query as `user_id`, explicitly never derived from the credential. **M1's model
@@ -829,11 +832,19 @@ canonical contract:
 **M1's lack of a dedicated schema is a real divergence.** Its tables are created unqualified
 (`CREATE TABLE IF NOT EXISTS verifications`), landing in whatever `search_path` yields — `public` in
 practice. Both senders own a named schema with `REVOKE ALL ON SCHEMA … FROM PUBLIC`. Since the senders'
-own FKs point into `public`, M1's 22 unqualified tables share the namespace the platform owns and the
-senders read. Verified M1 table list: `api_callers, cache, calibration, catchall_domains, disposable_domains,
-external_calls, jobs, node_audits, node_warmup, nodes, outcome_ingest_cursor, policies, rate_budgets,
-recalibration_runs, send_outcomes, spam_trap_domains, verification_outcomes, verification_raw, verifications,
-work_item_attempts, work_items`. **`public.jobs` and `public.users` are exactly the kind of names a platform
+own FKs point into `public`, M1's unqualified tables share the namespace the platform owns and the
+senders read. Verified M1 table list — **21 base tables**, recounted 2026-08-07: `api_callers, cache,
+calibration, catchall_domains, disposable_domains, external_calls, jobs, node_audits, node_warmup, nodes,
+outcome_ingest_cursor, policies, rate_budgets, recalibration_runs, send_outcomes, spam_trap_domains,
+verification_outcomes, verification_raw, verifications, work_item_attempts, work_items`, **plus 3 monthly
+partitions** of `verification_raw` (`verification_raw_2026_07|_08|_09`, `0001_verifications.sql:124-130`),
+so 24 relations in `public` in total.
+
+**The "22" this paragraph used to claim was never right, and it contradicted the list printed immediately
+below it** — which has always had 21 names. The likely origin is a `grep -c 'CREATE TABLE'` that counted
+the truncated partition prefix `verification_raw_` as a 22nd distinct table. Recorded rather than silently
+edited: a count stated next to the enumeration that disproves it is a small instance of the shape this
+audit exists to find, and it survived because nobody counted the list. **`public.jobs` and `public.users` are exactly the kind of names a platform
 is likely to want** — a live collision risk in a shared database, and the reason this is classified
 structural rather than cosmetic.
 
@@ -1003,12 +1014,17 @@ never a value. The senders state the rule in code and enforce it in CI.
 
 **CI enforcement differs sharply — this is a GAP, not a difference:**
 
-- **M1** — no automated log-scanning gate of any kind exists. Verified: no `no_secret_leak`-style script
-  anywhere. Discipline is by convention and review only. One residual risk the M1 inventory flagged and I am
-  reporting as unresolved rather than dismissing: `main.go:113` logs a store-open error via `%v`, which for a
-  connection failure *could* in principle include DSN fragments. pgx v5 typically does not embed the
-  password, but this was **not verified against pgx's actual error formatting**, so it stands as an
-  unverified residual risk, not a confirmed leak.
+- **M1** — ~~no automated log-scanning gate of any kind exists~~ **BOTH HALVES OF THIS ARE NOW OUT OF DATE
+  (2026-08-07), and the residual risk resolved the WRONG WAY from what this paragraph guessed.**
+  `scripts/check-no-secret-leak.sh` now exists and is wired at `ci.yml:145`: it boots the real binary with
+  canary secrets and scans the process log, rather than grepping source — because the leak had no
+  credential-looking token in the source at all. **The "unverified residual risk" was a REAL LEAK.** pgx
+  v5.10.0 embeds the whole connection string, password included, in its parse error, so
+  `log.Printf("%v", err)` on the store-open path printed it. Fixed at the source in `29e6204`
+  (`store.OpenPG` wraps both returns in `scrubDSNError`). **The hedge "pgx v5 typically does not embed the
+  password" was wrong, and it was wrong in the direction that reads as reassurance** — worth recording,
+  because that sentence is why the item sat at LOW/unverified for a whole audit. **The same defect is
+  UNFIXED in both senders at pgx v5.7.4 (fix-plan N1).**
 - **M2** — `no_secret_leak.sh` (blocking): greps running service logs for the dev box token plaintext and its
   bcrypt hash. Explicitly scoped to the box token; the SMTP-credential scan lives separately in the send
   harness.
@@ -1101,12 +1117,12 @@ Reported as findings, **not fixed**. Each was verified first-hand in the tree.
 | D4 | M2+M3 | **MEDIUM (integration)** | `/v1/quote` request bodies mutually rejecting under `DisallowUnknownFields` | M2 `handlers.go:49-51,302`; M3 `handlers.go:52-55,374` |
 | D5 | M3 | **MEDIUM (design intent)** | `notifications` is write-only — no platform or admin route reads it | migrations 0033/0047; only reader is `dispatch/notify.go` |
 | D6 | M1 | **LOW-MED (operability)** | Migrations have no tracking table; re-apply safety rests on per-file idempotence guards | `ci.yml:44-51`; no `schema_migrations` in any migration |
-| D7 | M1 | **LOW-MED (isolation)** | No dedicated schema; 22 tables in `public`, including `jobs` — collision risk with platform | verified table list |
+| D7 | M1 | **LOW-MED (isolation)** | No dedicated schema; **21 base tables + 3 partitions** in `public`, including `jobs` — collision risk with platform (count corrected 2026-08-07) | verified table list |
 | D8 | M1 | **LOW (auth)** | Per-caller key miss falls through to legacy static token on the sync path | `api.go:399-407` |
 | D9 | M2 | **LOW (correctness)** | `parseReportPageSize` default/max (100/200) are hardcoded, not seeded config | `campaign_report.go:322-323` |
 | D10 | M3 | **LOW (rule violation)** | Bare `10*time.Second` DB timeout with no config key, unlike every comparable timeout | `server.go:156-158`, `adminapi/server.go:170-172` |
-| D11 | M2 | **COSMETIC** | `contract_drift.sh` logs "22 routes gated"; registration and probe map are both 21 | `contract_drift.sh:69` vs `server.go:43-74` |
-| D12 | M1 | **UNVERIFIED RISK** | `main.go:113` logs a store-open error via `%v`; whether pgx v5 can embed DSN fragments was not verified | flagged, not confirmed |
+| D11 | M2 | ~~COSMETIC~~ **FIXED** | `contract_drift.sh` logged "22 routes gated"; registration and probe map are both 21. Corrected in `coldmail-send-managed@80f3a69` | `contract_drift.sh:69` vs `server.go:43-74` |
+| D12 | M1 | ~~UNVERIFIED RISK~~ **CONFIRMED LEAK, FIXED** | pgx v5.10.0 embeds the whole connection string (password included) in its parse error, and `main.go` logged it verbatim. Fixed at the source in `29e6204`: `store.OpenPG` wraps both returns in `scrubDSNError` (`postgres.go:52,56`). `main.go:113` is now a comment; the live log site is `:115`. **The same defect is UNFIXED in both senders at pgx v5.7.4 — see fix-plan item N1** | verified by measurement, not flagged |
 
 D1 and D2 are the two that would change a deployment decision. D4 is the one that blocks a shared platform
 client for the two senders today.
@@ -1259,7 +1275,7 @@ is genuinely irreconcilable.~~
 | # | Difference | Class | Notes |
 |---|---|---|---|
 | 3.1 | `Authorization` header in all three | **IDENTICAL** [3-way] | Strong. |
-| 3.2 | M1 accepts a bare token without the `Bearer` scheme | **COSMETIC** [1v2] | A platform client sending `Bearer <t>` works on all three, so it blocks nothing. It is a laxness to close, not a divergence to accommodate. |
+| 3.2 | ~~M1 accepts a bare token without the `Bearer` scheme~~ **FIXED `d481c97`** | ~~COSMETIC~~ **[now 3-way IDENTICAL]** | The COSMETIC rating missed that the divergence was two-way: M1 was also the only module REJECTING lower-case `bearer`, which RFC 9110 §11.1 makes conforming. Both closed. |
 | 3.3 | Credential storage: M1 sha256-in-DB + env static token; senders bcrypt-in-env | **DELIBERATE** [1v2] | Both are defensible. sha256 is correct for a high-rate lookup by index; bcrypt is correct for a small compared set. Neither is wrong. |
 | 3.4 | M1 has per-caller identity (`api_callers`); senders have a flat token set with none | **STRUCTURAL** [1v2] | M1's model is *better* and is the one the contract should require — but see 5.2: M1 is also the one that fails to use it. |
 | 3.5 | Senders separate platform-token and admin-key credentials structurally | **IDENTICAL** [2v3 — weak] | M1 has no admin surface, so the property is vacuous there rather than violated. |
@@ -1339,7 +1355,7 @@ is genuinely irreconcilable.~~
 | 10.2 | The worker holds no DB credential — enforced structurally by shipping no driver | **IDENTICAL** [3-way] | **The strongest architectural agreement in the audit**, independently arrived at. Lock it. |
 | 10.3 | Append-only enforced by grant revocation (M1 `verifications`, senders `job_events`) | **IDENTICAL** [3-way] | Strong. |
 | 10.4 | Non-login owner role distinct from the login runtime role, in all three | **IDENTICAL** [3-way] | Strong. |
-| 10.5 | M1 has no dedicated schema — 22 tables in `public`, including `jobs` | **STRUCTURAL** [1v2] | `public.jobs` and `public.users` are names a platform is likely to want, and the senders already FK into `public`. Live collision risk in a shared database. |
+| 10.5 | M1 has no dedicated schema — **21 base tables + 3 partitions** in `public`, including `jobs` (count corrected 2026-08-07) | **STRUCTURAL** [1v2] | `public.jobs` and `public.users` are names a platform is likely to want, and the senders already FK into `public`. Live collision risk in a shared database. |
 | 10.6 | Senders hard-FK into `public.users` (7 FKs) and `public.job_items` (1); M1 references neither | **STRUCTURAL** [1v2] | The senders cannot start without the platform schema; M1 is fully standalone. Two different deployment couplings. |
 | 10.7 | Platform-table shape is assumed, never verified — preflight checks existence only, by design | **GAP — REQUIRED (of the platform, not the modules)** [2v3] | The senders read 7 named `job_items` columns. A platform rename breaks both at runtime and the preflight will not catch it. Belongs in the assumptions register. |
 | 10.8 | User deletion: 6 FKs `CASCADE` into module data, 1 `RESTRICT`s the delete outright | **STRUCTURAL** [2v3] | Platform user-deletion semantics are partly dictated by module migrations, inconsistently between the two. |
@@ -1597,10 +1613,13 @@ deliberate and well-documented — the encryption key is *separate* from the pep
 the key is recoverable while losing the pepper de-joins history forever (`secrets.go:43-46`). That is
 better reasoning than most modules apply to key custody.
 
-**One unverified residual risk carried forward honestly:** `main.go:113` logs a store-open error via `%v`.
-Whether pgx v5 can embed DSN fragments (including a password) in that error was **not verified against
-pgx's actual error formatting**. It stands as an unverified risk (D12), not a confirmed leak — and M1 has
-no CI leak gate that would catch it if it were.
+~~**One unverified residual risk carried forward honestly:**~~ **RESOLVED 2026-08-07 — it was a CONFIRMED
+LEAK, and both hedges in the original sentence were wrong.** `main.go` logged the store-open error via `%v`;
+pgx v5.10.0 embeds the whole connection string, password included, in its parse error. Fixed at the source
+in `29e6204` (`store.OpenPG` → `scrubDSNError`, `postgres.go:52,56`; the live log site is now `main.go:115`),
+and M1 now DOES have a CI leak gate (`scripts/check-no-secret-leak.sh`, wired at `ci.yml:145`) which boots
+the binary and scans its log rather than grepping source. **The same defect is unfixed in both senders at
+pgx v5.7.4 — fix-plan N1.**
 
 ### 8.5 Append-only audit
 

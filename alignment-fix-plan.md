@@ -315,7 +315,15 @@ known internally by each module — this tier exposes what exists rather than de
   Terraform, no Helm, no manifest. CI builds it with `go build ./...` and never packages it.
 - **Recommendation:** a Dockerfile for the control-plane and a compose file standing up Postgres +
   control-plane + verifier-node, and make CI use it — the senders' dev==CI loop. Include the migration/runtime
-  role split (item 3 needs `cp_runtime` to be connectable anyway, so these two items share work).
+  role split.
+- ~~item 3 needs `cp_runtime` to be connectable anyway, so these two items share work~~ — **THIS
+  PREMISE IS FALSE, corrected 2026-08-07.** Item 3 shipped in `29e6204` using `SET LOCAL ROLE
+  cp_runtime` inside the *existing* superuser test session (`control-plane/internal/store/pg_grants_test.go`,
+  helper `asRuntime`), so `cp_runtime` never had to be a connectable login role at all. The two items
+  share no work, and item 15's cost estimate must not be discounted against item 3. **Worse, the role
+  split as written would make the item-3 control VACUOUS:** from a session already connected *as*
+  `cp_runtime`, `SET LOCAL ROLE cp_runtime` is a no-op, so `TestPGGrants_RoleSwitchActuallyBites`
+  would pass in both directions while proving nothing about a privilege drop. See the 15-C row below.
 - **Cost:** MEDIUM.
 - **Risk if skipped:** **M1 is not independently deployable** — the one place the brief's deployability
   question returns a plain no.
@@ -328,25 +336,95 @@ Grouped because each is LOW cost and none blocks anything:
 |---|---|---|---|
 | M1: `DisallowUnknownFields()` on request decode | 1.6 | Strict decode is what makes additive contracts enforceable; today a client typo is accepted and dropped | LOW |
 | M1: `request_id` in every log line | D3, 14.2 | Compounds with item 18; do them together | LOW |
-| M1: reject bare tokens without the `Bearer` scheme | 3.2 | `trimBearer` accepts a scheme-less header | LOW |
+| ~~M1: reject bare tokens without the `Bearer` scheme~~ | 3.2 | ~~`trimBearer` accepts a scheme-less header~~ — **DONE 2026-08-07, `coldmail-verify@d481c97`.** `bearerToken` replaces `trimBearer`; the scheme is mandatory and matched case-INSENSITIVELY (RFC 9110 §11.1, which both senders already honour and M1 alone violated — the estimate missed that this was TWO properties, not one). 3 tests / 9 cases, break-verified B110–B113. Estimate LOW, actual LOW: the only correct one in this table so far | ~~LOW~~ **DONE** |
 | M1: remove the per-caller→static-token fallthrough | D8 | Revoking a per-caller key does not fully revoke sync access while any static token exists | LOW |
 | M1: migration tracking table | D6 | Re-apply safety rests entirely on per-file idempotence guards; nothing records what ran | LOW-MED |
-| M1: move tables into a dedicated schema | D7 | 22 tables in `public` incl. `jobs`; the senders already FK into `public`. **Collision risk in a shared DB** | MEDIUM |
+| M1: move tables into a dedicated schema | D7 | **21 base tables + 3 monthly partitions** in `public` incl. `jobs`; the senders already FK into `public`. **Collision risk in a shared DB** (count corrected 2026-08-07 — see note below) | MEDIUM |
 | M1: expose `internal/metrics` over HTTP | D16 | It computes block/unknown/cache rates and latency p50/95/99 with **no exposure and no caller** | LOW |
 | M2: seed `page_size` default/max as config | D9 | 100/200 hardcoded in `parseReportPageSize` — **governs a platform-visible response** | LOW |
 | M3: seed the bare `10*time.Second` DB timeout | D10 | Every comparable timeout is a config key; this one is not | LOW |
-| M2: fix `contract_drift.sh`'s "22 routes gated" log | D11 | Registration and probe map are both 21. Cosmetic; the probe map is correct | LOW |
-| M1: verify whether pgx v5 can embed DSN fragments in the error logged at `main.go:113` | D12 | **Unverified risk, not a confirmed leak.** M1 has no CI leak gate that would catch it | LOW |
+| ~~M2: fix `contract_drift.sh`'s "22 routes gated" log~~ | D11 | ~~Registration and probe map are both 21~~ — **DONE, `coldmail-send-managed@80f3a69`** (landed as part of item 14's cross-module sweep). A success line that miscounts what it checked is the same family as a gate whose canaries are unreachable while its log claims otherwise | ~~LOW~~ **DONE** |
+| ~~M1: verify whether pgx v5 can embed DSN fragments in the error logged at `main.go:113`~~ | D12 | ~~Unverified risk~~ — **VERIFIED AND FIXED in `29e6204`. It was a REAL LEAK, not a risk:** pgx v5.10.0 embeds the whole connection string, password included, in its parse error. Fixed at the SOURCE (`store.OpenPG` wraps both returns in `scrubDSNError`, `postgres.go:52,56`) rather than at the log call. `main.go:113` is now a comment; the live log site is `:115`. Unit-tested in `internal/store/dsn_redaction_test.go` | ~~LOW~~ **DONE** |
 | All three: `/metrics` in Prometheus format | 9.5 | No module has one | MEDIUM total |
-| M1: adopt a `no_secret_leak`-style CI gate | 14.4 | No automated log-scanning gate exists | LOW |
+| ~~M1: adopt a `no_secret_leak`-style CI gate~~ | 14.4 | ~~No automated log-scanning gate exists~~ — **DONE. `scripts/check-no-secret-leak.sh` exists and is WIRED (`.github/workflows/ci.yml:145`).** It boots the real binary with canary secrets and scans the process log, rather than grepping source — deliberately, because the leak it had to catch had no credential-looking token in the source at all. Scope is stated honestly in the gate itself: BOOT path only, since M1 has no compose stack to drive request traffic against (that is item 15) | ~~LOW~~ **DONE** |
 | Senders: adopt M1's `Dial{Value,Set}` unset-vs-zero distinction | 11.4 | Consuming code returns a do-nothing zero rather than inventing a value | LOW |
-| M3: read `account_cap_race_test.go` / `account_unquarantine_race_test.go` bodies | §8.7 | **Not verified in this audit** whether they meet M3's own scoped-`pg_stat_activity` contention requirement | LOW |
+| ~~M3: read `account_cap_race_test.go` / `account_unquarantine_race_test.go` bodies~~ | §8.7 | ~~Not verified in this audit~~ — **CLOSED BY VERIFICATION, no code change needed.** Both bodies read; both DO meet M3's scoped-`pg_stat_activity` contention requirement. This row was an unread-file placeholder, not a defect | ~~LOW~~ **CLOSED** |
 | M1: prove GAP-37 (exactly-once under slow-holder + TTL reclaim) | D14 | Scaffold names the right five scenarios and `t.Skip`s. No singleton guard exists, so the property rests entirely on `SKIP LOCKED` + CAS | **HIGH** |
 
 **On the last row:** D14 is LOW-priority-by-order but HIGH-cost, and it is the item most likely to be
 mis-sized. The design is present and reasonable; what is missing is proof. Tolerating a second instance via
 `SKIP LOCKED` + CAS is arguably more robust than forbidding it with a lock — **but it is exactly the property
 GAP-37 was written to prove and does not.**
+
+**Re-estimated 2026-08-07 to MEDIUM–HIGH, and the reason is structural.** M3's anti-vacuity harness for
+its own race tests counts blocked backends in `pg_stat_activity` to prove two workers genuinely contended.
+That instrument **cannot be ported here**: `FOR UPDATE SKIP LOCKED` (`postgres.go:709-725`) never
+lock-waits — the loser skips the row and returns empty, so there is nothing blocked to observe. Proving
+two workers raced one ready row needs a different instrument entirely (advisory-lock choreography or a
+committed-state differential), which is the part the HIGH estimate was hiding.
+
+**Two claimed defects in this area were investigated and REJECTED.** The hardcoded `WorkerID:
+"drainer-1"` (`main.go:229`) and the per-batch `locked_at` cannot fire in the shipped topology: there is
+exactly one sequential drain goroutine (`drainer.go:145`; the only `go func` in `main.go` is at `:77` and
+is not the drainer), reclaim runs only at the top of `drainTick`, and multi-drainer coordination is an
+explicit documented deferral (`phase-5-queue-spec.md:425` GAP-34, `arc-closing.md:56`,
+`config-manifest.md:276`, GAP-25/OQ-P4-8). The load-bearing CAS clause is `AND status='in_flight'`.
+**This is a test-strength defect, not a production one** — which is what the row should have said.
+
+### 15b, re-estimated — what the LOW column got wrong
+
+Requested before item 15 opened, because item 13 came in HIGH against a MEDIUM estimate. As written this
+table is **~133–140h (~17 working days)**, not "LOW each". After deferring the 7 rows that are blocked on
+a ruling rather than on work, **~5 days**. Item 15 A+B is **14–17h (~2–2.5 days)**; 15-C is MEDIUM but
+ruling-blocked. C3's trimmed remainder is **~52–55h (~7–8 days)**.
+
+**Four rows marked LOW are really HIGH.** Worst is M3's bare DB timeout (row `D10`): the plan names one
+site; there are **42**, an ~8× miss.
+
+**Five planned fixes would WEAKEN an existing control if done as written.** These are the ones that
+matter, because each trades a real proof for a nominal improvement:
+
+1. **`DisallowUnknownFields()` (row 1).** Strict decode would destroy
+   `control-plane/internal/api/pg_tenancy_test.go:287-293`, which proves a forged `user_id` /
+   `owner_user_id` / `owner` in the request body is IGNORED rather than honoured. That test submits the
+   forged fields and requires **202** (`submitAs` does `t.Fatalf` on anything else, `:146`). Under strict
+   decode the request 400s, the test goes red, and the obvious "fix" is to stop sending the forged
+   fields — which deletes the proof that forging them is harmless. The tenancy property is strictly more
+   valuable than the typo-rejection property; sequence this so the forged-owner case is re-expressed
+   FIRST (assert the stored owner, not the status code), or it will be quietly discarded.
+2. **15-C, the migration/runtime role split.** Makes `TestPGGrants_RoleSwitchActuallyBites` vacuous —
+   from a session connected as `cp_runtime`, `SET LOCAL ROLE cp_runtime` is a no-op and BOTH directions
+   still pass. See the corrected note under item 15 above.
+3. **`request_id` in every log line.** Not one estimate but two, and **which one applies is a ruling, not
+   a measurement**: `canonical-module-contract.md:297` says "**Every** log line carries the
+   `request_id`", while `:74` says "at least **one**". M1 satisfies the narrow clause today and fails the
+   broad one at **47 sites** plus a Ruby half with 2 logger references. LOW vs HIGH turns entirely on
+   which clause governs. **Do not start this until that is decided.**
+4. **Dedicated schema (D7)** and **migration tracking (D6)** — both interact with the fact that M1 has
+   **no down-migration mechanism at all** (zero `.down.sql`, forward-only). A tracking table that records
+   what ran, in a system that cannot un-run anything, records a fact nobody can act on; that is a design
+   question, not a LOW chore.
+
+**Three rows closed for free** (verification, not work): `dsn-in-error` (D12), `m3-race-tests` (§8.7),
+`m2-contract-drift-log` (D11). All three were "unverified" placeholders that turned out already true or
+already fixed.
+
+### THE STOP BOUNDARY, and why it is here
+
+**B0 = this plan-truth commit + the bearer fix + filing the new items below — landed BEFORE item 15
+opens.** The reason is not tidiness. A half-landed item 15 falsifies five statements already in the
+trees, and **no gate objects to any of them**: `ci.yml:138`, `check-no-secret-leak.sh:18`,
+`Docs/api-contract.md:25`, `ADR-0016:124`, `routes_contract_test.go:12`. Each currently says, correctly,
+"M1 has no compose stack". The moment one exists and the work stops mid-flight, all five are lies that
+CI reports green.
+
+### NEW ITEMS FOUND WHILE VERIFYING, 2026-08-07
+
+| # | Item | Module | Cost | Note |
+|---|---|---|---|---|
+| **N1** | **Senders leak the DSN in a pool-open error — the SAME defect as M1's D12, unfixed** | M2+M3 | LOW | `services/control/internal/db/db.go:21-23` returns `fmt.Errorf("parse dsn: %w", err)` unscrubbed, and `cmd/control/main.go:50` logs it. Both pin pgx **v5.7.4**. **MEASURED LEAK=true**, not inferred. M1's fix (`store.scrubDSNError`) is the template. **The fixture trigger DIFFERS at 5.7.4** — use `sslmode=bogusmode`, NOT `pool_max_conns=notanumber`; a naive port of M1's test would be VACUOUS (it would assert on an error that never carries the DSN at this pin). Neither sender has a boot-path leak gate, though both have a live-log `no_secret_leak.sh` for request traffic |
+| **N2** | **`check-docs-updated` inherits its green from the PREVIOUS commit** | M1 | LOW | With no `origin/main`, `base=HEAD~1` and the gate diffs `$base...HEAD` UNIONed with the working tree. **Measured:** with `Docs/api-contract.md` reverted so the tree touched NO doc, the gate still printed `docs-updated: ok (code_changed=true docs_changed=true)`, rc=0 — because HEAD `0cacc36` had touched a doc. On a remote-less clone this gate is satisfied by whatever the previous commit happened to touch. Fix: when there is no upstream, diff the WORKING TREE + INDEX only and drop the base-ref union |
+| **N3** | **The Windows host silently does not execute freshly-built Go test binaries** | infra | — | `check-test-execution-selftest` failed 3 of 10 on the host (cases 2, 3, 9) with `exit 0, want 1`, and in each the just-appended fixture package was **absent from the gate's output entirely** (declared=0). Same three pass in Docker; `scripts/` unmodified. This is the Norton interference in a quieter form than hanging — not a timeout, a silent non-execution that reads as "nothing declared". **Consequence for C4: every run must go through the Docker toolchain.** A host run can produce a green that means nothing |
 
 ---
 
@@ -412,7 +490,7 @@ instead of two" is yes. **It is a phase of work, not a fix pass.**
 |---|---|---|---|---|
 | **1** | Scope job reads to the authenticated caller (D1) | M1 | MEDIUM | **YES** |
 | **2** | Real-PG cross-tenant test for item 1 | M1 | LOW | no |
-| **3** | Grant tests as `cp_runtime`, or drop the CI claim (D13) | M1 | LOW | no |
+| **3** | ~~Grant tests as `cp_runtime`, or drop the CI claim (D13)~~ **DONE, `29e6204`** — via `SET LOCAL ROLE` from the existing session, so it did NOT require a connectable `cp_runtime`; item 15 shares no work with it | M1 | LOW | no |
 | **4** | Wire or reject `accept_and_defer` (D2) | M1 | LOW–MED | no |
 | **5** | Accept optional `user_id` on `quote` (D4) | M2 | **LOW** | **YES** |
 | **6** | Declare `pricing.model`'s value set | M2+M3 | LOW | **YES** |
@@ -426,7 +504,7 @@ instead of two" is yes. **It is a phase of work, not a fix pass.**
 | **13** | Shadow-mode-by-default for autonomous mutators | M2+M3 | MEDIUM | no |
 | **14** | Response-version assertion ↔ route-drift gate | all | LOW–MED | no |
 | **15** | Package the control-plane (D15) | M1 | MEDIUM | no |
-| **15b** | Sixteen lower-priority parity items | all | LOW each (one HIGH) | no |
+| **15b** | Sixteen lower-priority parity items — **4 now closed; re-estimated 2026-08-07 to ~133–140h as written (~17 days), ~5 days after deferring the 7 ruling-blocked rows.** "LOW each" was wrong: four LOWs are HIGHs and five would WEAKEN an existing control | all | ~~LOW each (one HIGH)~~ **see §15b re-estimate** | no |
 | **16** | Implement quote/run/report/describe | M1 | **HIGH** | **YES** |
 | **17** | A cost or feasibility verb | M1 | MED–HIGH | **YES** |
 | **18** | Coded error envelope with `request_id` (D3) | M1 | MEDIUM | **YES** |

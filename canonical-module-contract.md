@@ -43,8 +43,16 @@ Clauses 3 and 4 are two halves of one property, and **no module currently has bo
 
 **REQUIRED:**
 
-1. `Authorization: Bearer <token>`. **The scheme is mandatory** — a bare token MUST be rejected. (M1 accepts
-   a bare token today; that is a laxness to close, not a variation to accommodate.)
+1. `Authorization: Bearer <token>`. **The scheme is mandatory** — a bare token MUST be rejected. **The
+   scheme NAME is matched case-INSENSITIVELY** (RFC 9110 §11.1 makes it so, and a conforming client may
+   send `bearer`); the TOKEN remains case-sensitive. ~~(M1 accepts a bare token today; that is a laxness to
+   close, not a variation to accommodate.)~~ **All three modules now conform** — M1 closed the laxness in
+   `coldmail-verify@d481c97`; the senders already used `strings.EqualFold`.
+
+   *The case-insensitivity half was added to this clause on 2026-08-07, discovered while closing M1's
+   laxness: M1 was the only module REJECTING a conforming lower-case scheme, so the clause as originally
+   written could be satisfied by a fix that introduced a fresh divergence in the opposite direction. A
+   contract clause naming one module's violation is worth re-reading for the violation it does not name.*
 2. Comparison MUST be constant-time with respect to which credential matched. Both patterns in use qualify:
    bcrypt looped over all hashes with no early return (senders), or an indexed lookup on a digest plus
    `crypto/subtle.ConstantTimeCompare` for any direct comparison (M1).
@@ -303,9 +311,10 @@ GET /readyz   → 200|503 {"status":"ready"|"not_ready","checks":{"<name>":bool}
 
 These are the audit's most reassuring convergences. Lock them permanently.
 
-1. **A dedicated, named schema per module.** Never bare `public`. M1 violates this — 22 unqualified tables
-   including `jobs`, in the same namespace the platform owns and the senders FK into. In a shared database
-   `public.jobs` and `public.users` are names a platform is likely to want.
+1. **A dedicated, named schema per module.** Never bare `public`. M1 violates this — **21 unqualified base
+   tables plus 3 partitions** (count corrected 2026-08-07) including `jobs`, in the same namespace the
+   platform owns and the senders FK into. In a shared database `public.jobs` and `public.users` are names a
+   platform is likely to want.
 2. **A non-login owner role, distinct from a login runtime role.** All three do this.
 3. **Per-table enumerated grants. Never blanket default privileges** — they key on the creator and silently
    do not fire for a table created by an admin and then reowned.
