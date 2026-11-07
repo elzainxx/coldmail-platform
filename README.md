@@ -12,9 +12,9 @@ repository with its own history, its own `CLAUDE.md` / `PROJECT_RULES.md`, and i
 | `coldmail-send-managed` | M2 | sending on operator-managed SMTP infrastructure |
 | `coldmail-send-byo` | M3 | sending on a user's own (BYO) SMTP credentials; forked from M2 |
 
-> Those are the **target** directory names. Until the rename pass lands they are still
-> `Codmailling`, `Codmailling 2`, and `Codmailling 3`. This table is the mapping, not a claim
-> that the rename has happened — check the directory listing, not this file.
+> The rename pass **has landed**: these are the real directory (and repository) names, and the three module
+> repositories sit beside this one as siblings. The module table above is kept for orientation; the directory
+> listing is still the authority.
 
 ## What is here
 
@@ -50,5 +50,9 @@ module's rules and gates.
    or reopen a deferred item, start here instead of at 1.
 5. `verification-runs.md` — the executions behind the word "verified"
 
-The parent `coldmail/` directory is **not** a git repository and must not become one: it sits
-inside a folder holding unrelated projects, so initialising it would sweep them in.
+The local working folder `coldmail/` is **not** a git repository and must not become one: it sits inside a folder
+holding unrelated projects, so initialising it would sweep them in. The four repositories are published as
+`elzainxx/coldmail-verify`, `coldmail-send-managed`, `coldmail-send-byo` and `coldmail-platform`, and a separate parent
+repository, `elzainxx/coldmail`, pins them as git submodules — it was created in its **own fresh directory**, not
+in place, for exactly that reason. Clone the whole set with
+`git clone --recurse-submodules https://github.com/elzainxx/coldmail.git`.
