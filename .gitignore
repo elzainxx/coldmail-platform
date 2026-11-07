@@ -1,0 +1,29 @@
+# coldmail-platform holds documents and the evidence behind them -- never code, never credentials.
+# This file exists so that stays true when someone drops a stray file into the working tree.
+# NOTE: scratch/ is TRACKED on purpose (the raw per-module inventories the audit was built from, kept
+# so a conclusion's inputs can be re-checked). Do not ignore it.
+
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Local agent / editor state
+.claude/
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Output of verification runners run against this repo (the runners themselves live outside it)
+*.log
+*.tmp
