@@ -100,14 +100,31 @@ citations resolve, **not** that the prose is correct.
 - **Runner-process hygiene.** An earlier runner survived a `pkill` and started a second, concurrent M3 run; both were
   stopped and the affected runs redone from clean directories. Their output is not counted anywhere above.
 
+- **GitHub Actions: red, and it has never been green.** Publishing the repos ran their workflows for the first time on a
+  real Linux runner (identical results on the first push and on the final one). At `b212524` / `8afd970` / `99e51ae`:
+  - **M1:** 4 of 6 jobs pass — docs-updated + config-reference freshness, no-secret-leak, **control-plane Go build + vet +
+    test against real Postgres** (so the partition fix holds on a runner dated after the cliff), and the code-reviewer
+    placeholder. The two `verifier-node` jobs fail: `FROM ruby:3.2.0-slim` is a Debian 11 (bullseye) image whose
+    `debian-security` repository has been removed, so `apt-get install` returns 404 on a from-scratch build. Local runs reused
+    cached image layers and never reached it — a second date-triggered defect of the same family as the partition cliff.
+  - **M2 / M3:** 17 and 20 steps pass (lint, vet, certs, image build, and in M3 the new `postgres_durability` gate) and 3 fail,
+    all downstream of one cause: the Control exits with `FATAL kms load … /secrets/kms/dev-master.key: permission denied`.
+    `gen-secrets.sh` / `gen-certs.sh` deliberately `chmod 600` the dev keys; Docker Desktop's bind mounts hide that and a Linux
+    runner enforces it against the non-root Control.
+  - **Pre-existing, not introduced by this pass:** the original `zexSites/codmailling-module-3` repository's `real-infra` workflow
+    failed on all four of its runs on 2026-07-31. Every green in this record is a local Docker Desktop run.
+  - **Not fixed here, on purpose.** The M2/M3 fix is small to write but can only be verified on a runner, and more Linux-only
+    failures probably sit behind it; the M1 fix replaces the base image of the component that holds Door 5 (the pinned engine).
+    Both are owner decisions, recorded here so they are not discovered a third time.
 ### What this section does not claim
 
 - **That the campaign-expiry gap the local test run recorded is closed.** Its evidence is in none of the four
   repositories, so it could not be located. `campaign_expiry_mode` defaults to `shadow`, so expiry does not enforce until promoted.
 - **That a real provider works.** Nothing here touched one. The real-provider smoke test (M3 go-live §11) is still ahead.
 - **That module 2 has #131 fixed.** It does not; it is registered in `coldmail-send-managed/Docs/future-work.md`.
-- **That the CI workflows were run.** No GitHub Actions run happened; the *steps* of each were run locally in Docker.
-  M1's `code-review` job is a placeholder that is not locally executable.
+- **That GitHub's CI is green.** It is not (see "GitHub Actions: red" above). The local runs execute each workflow's steps in
+  Docker on a Windows host; a real runner is a different environment, and these workflows had never passed on one. M1's
+  `code-review` job is a placeholder that is not locally executable.
 - **That the secret sweep proves absence.** Two independent scanners (gitleaks, and a hand-written pattern sweep with its
   own planted-secret control) found nothing in the full history of any repo, except four lines of vendored upstream sample
   text in M1, accepted by exact fingerprint in `.gitleaksignore`. Pattern scanners do not find every secret.
