@@ -31,10 +31,20 @@ evidence is false-green **class 20** in [`deferrals-and-false-greens.md`](deferr
 | repo | commit | GitHub Actions run | result |
 |---|---|---|---|
 | `coldmail-verify` (M1) | `c58dd3f` | [42433757109](https://github.com/elzainxx/coldmail-verify/actions/runs/42433757109) | **success** — 7 of 7 jobs, none skipped, including the two that had never passed and the new base-image gate |
-| `coldmail-send-managed` (M2) | `50d33db` | [42437412115](https://github.com/elzainxx/coldmail-send-managed/actions/runs/42437412115) | **success** — 27 steps succeeded, 1 skipped (`Diagnostics on failure`, `if: failure()`); harness `62 passed, 0 failed`; 80 worker unit tests |
-| `coldmail-send-byo` (M3) | `c1e4eb5` (code) · `40a2478` (docs only) | [42437413708](https://github.com/elzainxx/coldmail-send-byo/actions/runs/42437413708) | **FAILURE** — harness `99 passed, 1 failed`; the one red is `TestEvaluate_T5_TimeoutServfailVsNXDOMAIN`. Every gate, incl. `config_consumption` (89 keys), passed. Run [42438687947](https://github.com/elzainxx/coldmail-send-byo/actions/runs/42438687947) is the docs-only follow-up `40a2478` (same code) and was still in progress when this was written |
+| `coldmail-send-managed` (M2) | `098427e` (head) | [42439729294](https://github.com/elzainxx/coldmail-send-managed/actions/runs/42439729294) | **success** — 27 steps succeeded, 1 skipped (`Diagnostics on failure`, `if: failure()`); harness `62 passed, 0 failed`; 80 worker unit tests. **Second consecutive green**: the previous head `50d33db` is [42437412115](https://github.com/elzainxx/coldmail-send-managed/actions/runs/42437412115), also success |
+| `coldmail-send-byo` (M3) | `e53f263` (head) | [42439730973](https://github.com/elzainxx/coldmail-send-byo/actions/runs/42439730973) | **FAILURE** — harness `99 passed, 1 failed`; the one red is `TestEvaluate_T5_TimeoutServfailVsNXDOMAIN`. Every gate, incl. `config_consumption` (89 keys) and `go_suite_selftest` (7 assertions), passed |
 
-**Module 3 is red, deliberately, and this is not a flake.** The failure is reproducible by changing one line of
+**Module 3's CI history, all runs of code since the fixes — stated in full because one of them is unexplained:**
+`c1e4eb5` [42437413708](https://github.com/elzainxx/coldmail-send-byo/actions/runs/42437413708) **failure, 99/1** (T5);
+`40a2478` (docs only) [42438687947](https://github.com/elzainxx/coldmail-send-byo/actions/runs/42438687947) **failure, 98/2** — T5 *and*
+`Phase 3 dispatch`, a package that failed with all 231 of 231 tests having run and **no `--- FAIL` line**, so no test failed and
+the package still did; `e53f263` (above) **failure, 99/1** (T5 only). So the dispatch failure appeared in **one of three** runs of
+the same code: it is **intermittent and its cause is unknown**. It did not occur in three full local rehearsals. The harness
+could not explain it (its failure-detail printer, then, showed passing-test chatter and stopped short of the end of the output);
+that printer is now fixed and proven on a fixture of exactly that shape, so **the next occurrence will say what it was**. Nothing
+is claimed about its cause or about whether it is related to T5.
+
+**Module 3's T5 is red, deliberately, and this is not a flake.** The failure is reproducible by changing one line of
 `/etc/resolv.conf` (a `search` domain, which a runner has and the dev host does not), and it is a property of the
 **product's** From-gate, not of the test: a DNS SERVFAIL can be rewritten into an NXDOMAIN and treated as "no records". It
 is recorded as `M3-CI-OD-1` in module 3's open-decisions ledger and left for a ruling; the test was neither loosened nor
@@ -60,6 +70,7 @@ was fixed) and failed only on the next layer: the consumption gate's broken pipe
 | `grep -c` killed a `bash -e` step on its healthy path | M2, M3 | found by the replica; `|| true` with the reason |
 | `sed \| grep -q` under pipefail: consumption gate false red (15/24, 11/24 runs under contention → 0/24) | M2, M3 | new `config_consumption_selftest` case — exit 1 against the old gate |
 | `go_suite` could record a failing Go package as PASSING on large output (latent; none found in the green logs) | M2, M3 | `go_suite_selftest.sh` — 3 of 5 assertions fail against the old `run.sh` |
+| a failing Go package printed only its verdict line; then my first fix for that printed the wrong lines (passing-test chatter, cut off before the end) and could not explain a package that failed with every test passing | M2, M3 | `go_suite_selftest.sh`, now 7 assertions: reverting `go_fail_detail` to the first version fails exactly the explanation assertion |
 | #131 ported: RAM-Postgres opt-in in `dev.sh` | M2 | `postgres_durability.sh` |
 | the From-gate's DNS fail-closed property depends on the host's resolver search domain | M3 | **none yet — open: `M3-CI-OD-1`** |
 
