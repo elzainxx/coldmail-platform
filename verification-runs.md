@@ -11,14 +11,108 @@ evidence — a green from it would be the absence of an execution, not the succe
 
 ---
 
-> **Three records live in this file.** The section directly below is the **current** one (2026-11-08, GitHub Actions
-> as the source of truth). Under it, the 2026-11-07 section describes **local** Docker Desktop runs and is kept as
-> written — read it as a record of what ran locally, **not** of what is green. Everything from "The four repos" onward is
-> the **August 2026 record, kept as written**: its commit hashes and counts describe the trees as they were on 2026-08-07.
+> **Four records live in this file.** The section directly below is the **current** one (2026-11-08, second pass: all three
+> code repositories green on GitHub Actions). Under it, the *first pass* of the same day (module 3 still red) is kept as
+> written, as is the 2026-11-07 section, which describes **local** Docker Desktop runs — read that one as a record of what ran
+> locally, **not** of what is green. Everything from "The four repos" onward is the **August 2026 record, kept as written**:
+> its commit hashes and counts describe the trees as they were on 2026-08-07.
 
 ---
 
-## Re-verification, 2026-11-08 — GitHub Actions is the source of truth
+## Second pass, 2026-11-08 — all three code repositories green on GitHub Actions
+
+**The result.** Every head below was checked against GitHub for its commit and conclusion. "Green" is a GitHub Actions run on a
+real runner; a local run and the Linux replica are rehearsal.
+
+| repo | head | GitHub Actions run | result |
+|---|---|---|---|
+| `coldmail-verify` (M1) | `82644ae` | [42498731680](https://github.com/elzainxx/coldmail-verify/actions/runs/42498731680) | **success, 9 of 9 jobs** — incl. `verifier-node (RSpec)` and `Door 5` on an image built from scratch with `--pull --no-cache` against the **frozen `Gemfile.lock`**, the new `gemfile-lock` gate, and the `control-plane DNS` search-domain fixture |
+| `coldmail-send-managed` (M2) | `51e081d` | [42502196556](https://github.com/elzainxx/coldmail-send-managed/actions/runs/42502196556) | **success** — harness `62 passed, 0 failed`; 29 steps succeeded, 1 skipped (`Diagnostics on failure`, `if: failure()`); `image_pins OK` |
+| `coldmail-send-byo` (M3) | `9aad2db` | [42502198054](https://github.com/elzainxx/coldmail-send-byo/actions/runs/42502198054) | **success** — harness `100 passed, 0 failed`; 33 steps succeeded, 1 skipped (`Diagnostics on failure`); `image_pins OK`; the search-domain fixture and its mutant control both pass |
+
+Module 3 is therefore **no longer red**: the first pass's single failing test (`TestEvaluate_T5…`) was a real defect in the
+From-gate, ruled (M3-CI-OD-1) and fixed — not loosened, not skipped.
+
+### C1 — M3-CI-OD-1 ruled and fixed (module 3)
+
+Every From-gate lookup is made for a fully-qualified name (trailing dot), so Go's resolver never applies the `resolv.conf` search
+list; "no record" is a narrow door (`IsNotFound` and neither timeout nor temporary); SERVFAIL, timeout and every other error are
+`indeterminate / from_dns_unavailable` and are never negative-cached. Two lookups that bypassed the rule were brought under it: the
+self-hosted exception's MX check (a second implementation called `net.DefaultResolver` directly and mapped every failure to "not
+self-hosted") and SPF's `a:`/`mx:` void-target lookup (which swallowed a SERVFAIL as "not void").
+- **Proof it reds without the fix, on the literal pre-fix code (Linux, search domain injected):** T5 *passes* with no search domain
+  (3.00 s — why every local green hid it) and *fails* with one, with the exact message the GitHub runner printed.
+- **Permanent CI fixture:** `dns_search_domain.sh` runs all 34 fromgate tests in a digest-pinned container whose `resolv.conf` has a
+  `search` line; on the runner it reported `canary: search list [search-domain.test] is live`. The paired `…_selftest.sh` builds a
+  mutant with rooting disabled and requires T5 to fail with the collapse signature while the canary passes.
+- **One interpretation, recorded in the ledger:** "only a genuine NXDOMAIN" is implemented as genuine *not-found* (NXDOMAIN or NODATA),
+  because Go cannot tell them apart and M3-P4-OD-13 depends on NODATA being absence.
+
+### C2 — the same class in module 1 (the bigger risk) and the audit
+
+M1's `NetResolver` used `net.DefaultResolver` with unrooted names and `asDNSNotFound` returned `IsNotFound` alone. On a host with a
+search domain a SERVFAIL for the user's domain was overwritten by the suffixed name's NXDOMAIN, `resolveMX` returned `mxNone`, and
+the policy said **`invalid / no_mx`: our DNS outage stated as a fact about the user's address**. Fixed (ADR-0019): rooted names, the
+narrow door, and a permanent search-domain fixture (real DNS protocol over loopback from inside the test binary — nothing to start,
+nothing skips) with a canary and a MUTANT control (mutant: 3 failures incl. the SERVFAIL case, canary green; old non-strict door
+restored: `TestAsDNSNotFound_IsTheNarrowDoor` fails on its two OLD-BUG rows). **GitHub's own runner has an Azure search domain**: even
+the plain, fixture-less `go test` in the `control-plane` job printed `canary: search list [….internal.cloudapp.net] is live`.
+
+Audit results: the Go layers are the only explicit DNS in M1's control plane. **The Ruby node** (`truemail` 3.3.1, read but never
+changed — Door 5) resolves with `Resolv`, measured: it returns `[]` for NXDOMAIN, SERVFAIL and timeout alike; with only `dns:`
+servers configured it derives a search list from the container's hostname; an unrooted nonexistent name followed by a wildcard under
+the search domain resolved **another domain's MX** (Ruby falls through on NXDOMAIN, not on SERVFAIL). It cannot mint an `invalid`
+(a response with no SMTP transcript classifies `unknown / connection_failed`), so the residue is deployment hygiene (no search
+domain, no dotted hostname) — recorded as a Stage 0 item, not changed. **M2 has no explicit DNS lookups**; its worker's implicit
+dial error becomes `connect_refused` → `classTimeout` (requeue, no penalty).
+
+**Found, NOT fixed, needs a ruling:** M1 reports a domain with an **A record and no MX** as `invalid / no_mx`. `resolveMX` stops at
+the first not-found MX and never reaches the A/AAAA implicit-MX fallback its comments describe; Go reports NODATA on an MX query as a
+not-found error, so the fallback is dead code against real DNS (measured through the production layers). It changes which real
+domains are called invalid, so it was not folded into a hygiene fix. (Null-MX detection was probed and works.)
+
+### C3 — the paused work, the pins, and the lockfile
+
+- **Pins:** Mailpit (`v1.33.1`), CoreDNS (`1.15.0`) and the DNS black-hole fixture (`python 3.15.2-alpine`) are pinned by digest;
+  `grep ':latest'` over every compose, Dockerfile and workflow in the three code repos is empty (the replica tooling's `yq` too).
+  The `image_pins` gate keeps it so; its 13-case selftest rejects each way a pin can be lost. Builder/base tags (postgres, golang,
+  alpine, node) are tagged but not digest-pinned — reported on every run, by decision (pinning a builder freezes its security patches).
+- **`Gemfile.lock`:** committed for M1's verifier node, generated in the image's own Ruby; the Dockerfile installs it frozen, runs no
+  `bundle lock`, and pins bundler to the lock's `BUNDLED WITH`. `assert-gem-unmodified.sh` passes unchanged (Door 5), and the new
+  `check-gemfile-lock.sh` (14-case selftest) additionally asserts the lock's `truemail` equals the Gemfile's exact pin.
+- **Default-mode harness and the real `docker stop postgres` drill, on BOTH senders, on a real runner** (the local VM could not hold
+  them — Claude Code reaped the local runs twice for host memory, and they were **not** restarted; they moved to GitHub via the
+  on-demand `outage-drill` workflow):
+
+| | whole harness, default (non-RAM) mode | drill (`tests/harness/drills/postgres_outage.sh`) | snapshot before the plug (jobs / events / send_logs / max(seq)) | after recovery | run |
+|---|---|---|---|---|---|
+| M2 | **62 passed, 0 failed** | **22 passed, 0 failed** | 6 / 22 / 4 / 22 | 6 / 22 / 4 / 22 | [42499590634](https://github.com/elzainxx/coldmail-send-managed/actions/runs/42499590634) |
+| M3 | **100 passed, 0 failed** | **22 passed, 0 failed** | 8 / 28 / 5 / 28 | 8 / 28 / 5 / 28 | [42500897743](https://github.com/elzainxx/coldmail-send-byo/actions/runs/42500897743) |
+
+In both: a job genuinely **in flight** (worker paused) when Postgres was stopped for 50 s; the Control stayed running with **0
+restarts**; health and `run` **failed closed** with only `{code, message, request_id}` and no leaked detail; a bounded `loops remain
+PAUSED, no state invented` backoff (8 lines in 50 s); `db outage RESOLVED after 55 s / 54 s`; **nothing invented** — jobs, events and
+`max(seq)` unchanged, the run refused during the outage left no job behind, and the in-flight job stayed `sending` while its worker
+was frozen; then, once the worker was released, the job was delivered **exactly once** (one `send_logs` row, one new message) and the
+retried request went through once. M3's first drill run ([42499593300](https://github.com/elzainxx/coldmail-send-byo/actions/runs/42499593300))
+failed at *fixtures* — the drill reused the system user, who already had an account, and module 3 allows one per user — and was fixed
+(`00b780b`); it never reached Postgres, and it is a defect in the script, not in the product.
+
+### Standing instructions, and what was NOT done
+
+- **The unexplained `Phase 3 dispatch` red (231/231 tests, no `--- FAIL`, run 42438687947) was not chased,** as instructed. It has not
+  recurred in the seven M3 harness runs since (five CI runs, two drill runs). **If it recurs, check the `go_suite` SIGPIPE race first**
+  (`go_suite_selftest.sh` pins that class: an early `--- FAIL` followed by >64 KB of output, and a package that fails with every test
+  passing).
+- **The Ruby 3.3/3.4 move was not attempted** — a separate decision tied to M1's go-live (ADR-0018 reports what it would take).
+- **Open, needing a ruling:** M1's A-only-domain `invalid / no_mx` (above); the Ruby 3.2 end-of-life decision; the node's resolver
+  hygiene as a deployment rule.
+
+---
+
+## Re-verification, 2026-11-08 (first pass) — GitHub Actions is the source of truth
+
+> *Superseded by the second pass above; kept as written. In this pass module 3 was still red on `TestEvaluate_T5…`.*
 
 **Why this section exists.** The 2026-11-07 section below says the published commits were green. That was true of a
 **local Docker Desktop run on a Windows host** and of nothing else: the first runs of those same commits on real GitHub
