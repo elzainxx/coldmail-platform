@@ -24,7 +24,7 @@ repository with its own history, its own `CLAUDE.md` / `PROJECT_RULES.md`, and i
 | `canonical-module-contract.md` | The shape a coldmail module is supposed to have: naming, routes, roles, schema layout, gate set. What the alignment work is aligning *to*. |
 | `alignment-fix-plan.md` | The tiered fix list derived from the report, with cost estimates. The execution plan works through this. |
 | `pass-1-findings.md` | What the first execution pass found, including the `FW-M2-*` headings that turned out to exist only here — see `deferrals-and-false-greens.md` §4. |
-| `deferrals-and-false-greens.md` | **The permanent record.** Every deferral with what blocks it, every deferral that was itself mis-recorded with the corrected premise, and the **nineteen false-green classes** with a citation each. Read this before trusting any green in this body of work. |
+| `deferrals-and-false-greens.md` | **The permanent record.** Every deferral with what blocks it, every deferral that was itself mis-recorded with the corrected premise, and the **twenty false-green classes** with a citation each (the twentieth, *the environment-masked green*, is the one to read first: it is why a run on the developer's machine no longer counts as green). Read this before trusting any green in this body of work. |
 | `verification-runs.md` | What was actually executed at the close of Chunk 4 — which commit, which container, what it produced, twice per repo. The evidence behind the word "verified". |
 | `scratch/` | The raw per-module interface inventories the audit was built from (`_inv_*`). Kept because a conclusion whose inputs were thrown away cannot be re-checked — not because anyone should read them straight through. Also `_deferrals.md`, the working notes that fed `deferrals-and-false-greens.md`. |
 
@@ -45,7 +45,7 @@ module's rules and gates.
 1. `canonical-module-contract.md` — what the target shape is
 2. `alignment-fix-plan.md` — what is being changed, in what order
 3. `module-comparison-report.md` — the evidence, when you need to check a specific claim
-4. `deferrals-and-false-greens.md` — what was deliberately **not** done and why, and the nineteen ways
+4. `deferrals-and-false-greens.md` — what was deliberately **not** done and why, and the twenty ways
    a green signal in this work turned out not to be evidence. If you are about to trust a passing gate
    or reopen a deferred item, start here instead of at 1.
 5. `verification-runs.md` — the executions behind the word "verified"

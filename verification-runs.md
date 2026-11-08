@@ -11,13 +11,71 @@ evidence — a green from it would be the absence of an execution, not the succe
 
 ---
 
-> **Two records live in this file.** The section directly below is the **current** one (2026-11-07, after the
-> fix-and-publish pass). Everything from "The four repos" onward is the **August 2026 record, kept as written**:
-> it is history, and its commit hashes and counts describe the trees as they were on 2026-08-07.
+> **Three records live in this file.** The section directly below is the **current** one (2026-11-08, GitHub Actions
+> as the source of truth). Under it, the 2026-11-07 section describes **local** Docker Desktop runs and is kept as
+> written — read it as a record of what ran locally, **not** of what is green. Everything from "The four repos" onward is
+> the **August 2026 record, kept as written**: its commit hashes and counts describe the trees as they were on 2026-08-07.
 
 ---
 
-## Re-verification, 2026-11-07 — after the fix-and-publish pass
+## Re-verification, 2026-11-08 — GitHub Actions is the source of truth
+
+**Why this section exists.** The 2026-11-07 section below says the published commits were green. That was true of a
+**local Docker Desktop run on a Windows host** and of nothing else: the first runs of those same commits on real GitHub
+runners were **red in all three code repos**. From this date, **a result counts only if it is a GitHub Actions run**; a
+local run, and the Linux replica of the runner (`tools/ci-replica.sh`), are rehearsal. Why local green stopped being
+evidence is false-green **class 20** in [`deferrals-and-false-greens.md`](deferrals-and-false-greens.md).
+
+### The result — and it is not "all green"
+
+| repo | commit | GitHub Actions run | result |
+|---|---|---|---|
+| `coldmail-verify` (M1) | `c58dd3f` | [42433757109](https://github.com/elzainxx/coldmail-verify/actions/runs/42433757109) | **success** — 7 of 7 jobs, none skipped, including the two that had never passed and the new base-image gate |
+| `coldmail-send-managed` (M2) | `50d33db` | [42437412115](https://github.com/elzainxx/coldmail-send-managed/actions/runs/42437412115) | **success** — 27 steps succeeded, 1 skipped (`Diagnostics on failure`, `if: failure()`); harness `62 passed, 0 failed`; 80 worker unit tests |
+| `coldmail-send-byo` (M3) | `c1e4eb5` (code) · `40a2478` (docs only) | [42437413708](https://github.com/elzainxx/coldmail-send-byo/actions/runs/42437413708) | **FAILURE** — harness `99 passed, 1 failed`; the one red is `TestEvaluate_T5_TimeoutServfailVsNXDOMAIN`. Every gate, incl. `config_consumption` (89 keys), passed. Run [42438687947](https://github.com/elzainxx/coldmail-send-byo/actions/runs/42438687947) is the docs-only follow-up `40a2478` (same code) and was still in progress when this was written |
+
+**Module 3 is red, deliberately, and this is not a flake.** The failure is reproducible by changing one line of
+`/etc/resolv.conf` (a `search` domain, which a runner has and the dev host does not), and it is a property of the
+**product's** From-gate, not of the test: a DNS SERVFAIL can be rewritten into an NXDOMAIN and treated as "no records". It
+is recorded as `M3-CI-OD-1` in module 3's open-decisions ledger and left for a ruling; the test was neither loosened nor
+skipped. **The brief's goal — all three code repos green on GitHub Actions — is therefore met for two of three.**
+
+For the record, the runs of the commits published on 2026-11-07, all **failure**: M1 `b212524`
+[42391530406](https://github.com/elzainxx/coldmail-verify/actions/runs/42391530406), M2 `8afd970`
+[42391533710](https://github.com/elzainxx/coldmail-send-managed/actions/runs/42391533710), M3 `99e51ae`
+[42391536944](https://github.com/elzainxx/coldmail-send-byo/actions/runs/42391536944). In between: M2 `4d0f62c`
+[42433760361](https://github.com/elzainxx/coldmail-send-managed/actions/runs/42433760361) and M3 `03ec161`
+[42433763630](https://github.com/elzainxx/coldmail-send-byo/actions/runs/42433763630) got the stack up (the original failure
+was fixed) and failed only on the next layer: the consumption gate's broken pipe (M2, M3) and T5 (M3).
+
+### What was found and fixed (each with a control that fails when the property breaks)
+
+| finding | repo | control |
+|---|---|---|
+| dev keys mode 600 but owned by the host user; the Control (uid 10001) cannot read its KMS key on Linux — fixed by **ownership**, never by loosening | M2, M3 | `secret_ownership.sh` (fails if a key is loosened or the worker uid can read the KMS key) |
+| `ruby:3.2.0-slim` = Debian 11, security repo gone, `apt-get` 404 on a cold build — rebuilt on `3.2.11-slim-bookworm` pinned by digest, built `--pull --no-cache` (ADR-0018; Door 5 untouched) | M1 | `check-base-image-pinned.sh` + an 11-case selftest |
+| test SMTP sink greeted twice after STARTTLS; 10 worker tests (S1/S3 credential-scrub among them) failed on Linux, Node 20 and 24 | M2, M3 | `sink_fidelity.test.mjs` — 93 pass / 11 fail on the old sink, 104 / 0 on the fixed |
+| `node --test "glob"` ran zero tests on Node 20; CI now pins Node 20 | M2, M3 | the existing zero-test guard (it is what caught it) |
+| header checks assumed LF, Mailpit returns CRLF | M2, M3 | the T1 check now names the condition that tripped and dumps `cat -A` |
+| `grep -c` killed a `bash -e` step on its healthy path | M2, M3 | found by the replica; `|| true` with the reason |
+| `sed \| grep -q` under pipefail: consumption gate false red (15/24, 11/24 runs under contention → 0/24) | M2, M3 | new `config_consumption_selftest` case — exit 1 against the old gate |
+| `go_suite` could record a failing Go package as PASSING on large output (latent; none found in the green logs) | M2, M3 | `go_suite_selftest.sh` — 3 of 5 assertions fail against the old `run.sh` |
+| #131 ported: RAM-Postgres opt-in in `dev.sh` | M2 | `postgres_durability.sh` |
+| the From-gate's DNS fail-closed property depends on the host's resolver search domain | M3 | **none yet — open: `M3-CI-OD-1`** |
+
+### What was rehearsed, and what was NOT run
+
+Rehearsal on the Linux replica (**not** citations): M3 real-infra `100 passed, 0 failed`; M2 `62 passed, 0 failed`; M1's
+`base-image-pinned`, `door5-gem-unmodified`, `verifier-node-rspec` (71 examples, 0 failures, built with `--pull --no-cache`)
+and `no-secret-leak` all SUCCESS. **Both sender modules passed the replica and then failed on the real runner** (see class 20).
+
+**Not run, because the host ran low on memory partway through and the sequence was stopped:** M2's full harness in the
+*default* (non-RAM) Postgres mode, and a real `docker stop postgres` survival drill (both recorded as open in M2's
+`future-work.md`); and the Ruby 3.3/3.4 build experiment (ADR-0018 says so). None of these is claimed anywhere as done.
+
+---
+
+## Re-verification, 2026-11-07 — after the fix-and-publish pass (LOCAL runs; see the section above)
 
 **Why this section exists.** Three months after the August record, the audit re-ran everything and found one
 suite red for a reason that had nothing to do with any change: `coldmail-verify`'s raw-sidecar table had
@@ -294,7 +352,7 @@ were found by pointing tools at the tools.**
 
 - **That the systems are correct.** It claims a specific set of suites and gates executed at a specific
   commit and reported green, in a container, twice.
-- **That the gates are sufficient.** Nineteen false-green classes are recorded next door precisely
+- **That the gates are sufficient.** Twenty false-green classes are recorded next door precisely
   because green has repeatedly meant less than it appeared to.
 - **That a re-run today would reproduce these numbers.** It should, and the runners are kept outside
   the repos so they can be re-run without altering what they verify — but that is a prediction, and

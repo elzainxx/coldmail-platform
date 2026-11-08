@@ -7,7 +7,8 @@ as provenance; **this file is the record.** Two things live here and nowhere els
 1. **Every deferral**, with what blocks it and — where the deferral was itself mis-recorded — what the
    corrected premise is.
 2. **The false-green classes** found across this work, each with a citation to the artifact that
-   demonstrates it. There are **nineteen**, up from the fourteen named at the start of Chunk 4.
+   demonstrates it. There are **twenty**, up from the fourteen named at the start of Chunk 4 (the twentieth was added
+   2026-11-08, from the first real GitHub Actions runs — see class 20).
 
 The organising claim, stated once: **a green signal is evidence only if something about it could have
 been red.** Every class below is a way that stopped being true while the signal kept its colour.
@@ -148,15 +149,16 @@ unclosable; the plumbing to record it is merely unbuilt.**
 
 ---
 
-## 6. The nineteen false-green classes
+## 6. The twenty false-green classes
 
 Each is a distinct mechanism by which a passing signal stopped being evidence. Fourteen were known
-entering Chunk 4; **five were found during it** (15, 16, 17, 18, 19). Citations are to the artifact that
-demonstrates the class, so each row is checkable rather than a claim.
+entering Chunk 4; **five were found during it** (15, 16, 17, 18, 19); **one more on 2026-11-08** (20).
+Citations are to the artifact that demonstrates the class, so each row is checkable rather than a claim.
 
-**§7 below predicted an eighteenth, then a nineteenth. Both arrived** — 18 before this file was first
-finished, 19 during the task-list reconciliation immediately after. Both were in the verification
-tooling itself, which is where all five of Chunk 4's new classes came from.
+**§7 below predicted an eighteenth, then a nineteenth, then a twentieth. All three arrived** — 18 before this
+file was first finished, 19 during the task-list reconciliation immediately after, and 20 three months later, from
+outside the verification tooling: from running the same repos on a machine that was not the developer's. The first
+five of Chunk 4's new classes all came from the tooling itself; class 20 did not, which is part of what it adds.
 
 | # | Class | Where it was demonstrated |
 |---|---|---|
@@ -179,8 +181,34 @@ tooling itself, which is where all five of Chunk 4's new classes came from.
 | 17 | **The mis-recorded deferral** ← *new* | §4 above, in both directions: two items recorded as OPEN in a file they never lived in (both actually FIXED, in `ae9f2a7` and `29e3bcb`), two ids cited but **never defined at all**, and one ruled *"register it"* whose registration never happened. **A deferral ledger is an artifact, and nothing was checking it** |
 | 18 | **The check whose PATTERN MATCHES NOTHING, so its subject is empty and its arithmetic passes** ← *new* | This file's own citation checker, `_verify/cprun.sh` step 4, written to verify that every commit sha cited here is real. Its extraction used `` \` `` where `` [\`] `` was required; `grep -E` reads the escaped form as a literal backslash-plus-backtick, so it matched **zero of the 22 ids present** and the check reported *"0 of 0 cited shas resolve"*. **Only the nonzero floor turned that into a red** — the floor from class 8, added days earlier for a different reason, catching a defect in the tool that was auditing this document. Related but distinct from 8: there the subject vanished from the system under test; here the **instrument never found it**, and a green would have certified 22 unchecked provenance claims |
 | 19 | **The check whose ASSERTION IS NARROWER THAN THE CLAIM ITS GREEN INVITES** ← *new* | The same checker, one step later. `cprun.sh` step 4 asserts a cited sha is a real commit in **some** sibling repo; it never checked **which**. During the 2026-08-07 task-list reconciliation I wrote `` `0b42e1b` `` (M3) into `alignment-fix-plan.md` — a real commit, in **M2**. Step 4 passed it, correctly by its own definition, and printed **"43 of 43 cited shas resolve to a real commit."** Nobody reads that and concludes *"…though possibly attributed to the wrong module"* — yet in a document whose entire value is per-module provenance, the module is the load-bearing half. The misattribution was caught only because I happened to re-derive all 24 rows by hand against each named repo; nothing in the tooling would have. Fixed by **adding step 4b** (attribution, where the text states a repo) rather than widening 4, since attribution is only checkable where it is claimed — 24 of 43 shas carry an explicit repo, and that ratio is now printed so the unchecked remainder stays visible instead of hiding inside a green. Break-verified by re-injecting the exact real mistake: RED, naming where the sha actually lives; GREEN on restore |
+| 20 | **The environment-masked green** ← *new, 2026-11-08* | A green earned on the wrong machine. Until this date "green" in all three code repos had only ever meant *a run on the Windows developer host with Docker Desktop*; the first run on a real GitHub Actions runner was **red in all three**, and each layer peeled off showed another, every one invisible locally because the dev environment differed from a Linux runner in a way that decided the outcome — and every one in the **passing** direction. Measured, not inferred: **(a) bind-mount ownership** — Docker Desktop ignores POSIX ownership, so keys that were mode 600 and owned by the host user were unreadable to the Control's uid 10001 on Linux (`FATAL kms load … permission denied`); **(b) a warm cache over a dead base** — `ruby:3.2.0-slim` is Debian 11, whose security repository is gone, so `apt-get` 404s on any cold build, and every local build reused a layer; **(c) a host-timing race** — the test SMTP sink greeted twice after STARTTLS, which the Windows host happened to swallow; on Linux (Node 20 *and* 24, 3/3 runs each) it shifted every reply by one and 10 worker tests failed, the S1/S3 credential-scrub tests among them; **(d) shell semantics** — Windows bash strips `\r` from `$(…)`, so header checks written `^…$` passed there and could never match Mailpit's CRLF; **(e) `bash -e`** — `grep -c` exits 1 on zero matches and killed a CI step on its *healthy* path; **(f) toolchain version** — `node --test "glob"` expands only on Node ≥ 21, so on Node 20 the worker unit suite ran **zero** tests; **(g) a SIGPIPE race** — `sed \| grep -q` under `pipefail` made the consumption gate call keys that are plainly read "ONLY INSIDE COMMENTS" (the committed gate failed 15/24 runs in M3 and 11/24 in M2 under CPU contention, the fixed gate 0/24), and the same pattern in the harness's `go_suite` could record a failing Go package as PASSING once its output outgrew a pipe buffer (demonstrated on a throwaway package; none found in the green logs); **(h) a resolver search domain** — the From-gate's DNS-failure handling depends on the host's `/etc/resolv.conf`: a runner (which has a `search` line) fails `TestEvaluate_T5…`, the dev host and the replica (which have none) pass; reproduced by changing that one line. **(h) is the one that is not a test artefact — it is a property of the product gate** (M3-CI-OD-1; open; module 3's CI is left red on it). |
 
-**What the five new ones have in common, and why it is worth saying.** All five are failures in the
+**What class 20 adds, and what now controls it (2026-11-08).** Classes 15–19 are failures *in the verification
+apparatus*. This one is different: the apparatus was sound and ran correctly — on a machine that is not the one the claim is
+about. The question it adds is *where did this green run?* Four things are worth stating, each from this work and not
+from theory:
+
+- **The investigator's own tools shared the mask.** The first diagnosis of (d) ruled CRLF *out*, because host-side `sed` and
+  `awk` strip `\r` when they read a file, so the failing log looked LF-only; `tr -cd '\r' < file` printed 15 (one per header
+  line) and was misread as unrelated; and a "replay" built to confirm the check passed for the same reason, because its input
+  had been rebuilt through the same tools. Only `cat -A` run *inside a Linux container* showed `^M` on every line. The wrong
+  diagnosis cost a CI cycle.
+- **A rehearsal that passes is not a pass.** A Linux replica of the runner (uid 1001, the repo on the VM's own ext4,
+  `tools/ci-replica.sh` in the parent repo) found (a)–(f) in minutes, then passed modules 2 and 3 outright — and both then
+  failed on the real runner, for (g) and (h). The replica is worth having and is **rehearsal only**; the GitHub Actions run is
+  the only citation.
+- **Controls, each shown to fail when its property is broken:** CI on a real runner as the source of truth; base images
+  pinned by digest and built `--pull --no-cache` (`check-base-image-pinned.sh` + an 11-case selftest); `secret_ownership.sh`
+  (fails if a key is loosened or the worker uid can read the KMS key); `sink_fidelity.test.mjs` (93 pass / 11 fail on the old
+  sink, 104 / 0 on the fixed); a new `config_consumption_selftest` case (exit 1 against the old gate); `go_suite_selftest.sh`
+  (3 of 5 assertions fail against the old `run.sh`); the T1 header check now names the condition that tripped and dumps
+  `cat -A`; a failing Go package now prints its assertion text instead of only its verdict.
+- **Not controlled — stated so it is not mistaken for coverage:** Mailpit and CoreDNS are `:latest` and the DNS-blackhole
+  fixture's `python:3-alpine` floats, so any cold pull is a moving target (the replica held CoreDNS 1.14.6; a runner pulled
+  1.15.0 — not shown to matter here, but not controlled); there is no committed `Gemfile.lock`, so transitive gems float on
+  every build; Ruby 3.2 is past end-of-life (M1 ADR-0018); and (h) is open for a ruling.
+
+**What the five new ones from Chunk 4 have in common, and why it is worth saying.** All five are failures in the
 **verification apparatus**, not in the systems under test — a flaky check, a truncating report, a
 rotten register, an instrument whose pattern matched nothing, and an instrument whose green overstated
 itself. Classes 1–14 were mostly found by
@@ -228,7 +256,7 @@ they were consequential.** Both happened *inside* a control written to catch cla
 - **Anything already recorded in a repo's own docs** — M1's rollback posture, M2's and M3's R2-5
   rulings, the per-repo future-work registers. This file points at them; it does not restate them.
 - **The task list.** Reconciled separately at the close of PASS 3.
-- **A claim of completeness about the nineteen classes.** They are the ones **found**, each with a
+- **A claim of completeness about the twenty classes.** They are the ones **found**, each with a
   citation. The useful thing this list provides is not a count but a set of questions to ask of the next
   green signal: *could this have been red? did anything verify the verifier? is the evidence complete or
   truncated? is the subject still there? did the instrument actually find it? **and does its green mean
@@ -242,6 +270,13 @@ they were consequential.** Both happened *inside* a control written to catch cla
   statement than either was alone: **a twentieth is likely.** The count is a running tally of what has
   been looked for, not a measure of what is there. Treat any future green in this body of work as
   provisional in exactly the way each of these nineteen turned out to be.
+
+  **Update 2026-11-08 — three-for-three.** The twentieth arrived, as predicted, and from a direction the first nineteen did
+  not come from: not from pointing tools at the tools, but from running the same repos on a machine that was not the
+  developer's. It also arrived as eight findings at once (class 20, (a)–(h)), one of which — the From-gate's DNS handling
+  under a resolver search domain — is a defect in the product and not in any test. The prediction stands for the same
+  reason it has stood before: **a twenty-first is likely**, and the likeliest place to look is wherever a check has so far
+  run on only one kind of machine.
 
   **The sharpest thing class 19 adds is a question the first eighteen do not ask.** Classes 4, 8 and 18
   are all *"the check did not run on its subject."* Class 19 is different and harder: the check ran, on
