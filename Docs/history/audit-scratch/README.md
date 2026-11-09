@@ -17,3 +17,12 @@ count). The rule errs towards keeping: some `pristine*` source copies are kept o
 
 Nothing in this directory is read by any gate. The platform runner (`tools/platform-check.sh` in the parent checkout) re-checks the hashes in `verification-runs.md`
 against the repositories, not these files.
+
+## Secret scanning and the one allowlist
+
+Six of the run logs here (`cm-audit/gh/m3-run2.log`, `m3-run3.log`, `coldmail-send-byo-42439730973.log`, `replica/m3-2.log` … `m3-4.log`) make `gitleaks`'s `generic-api-key` rule fire
+297 times. Read line by line, every hit is a control-plane request-log line — a request id (`rid=req_…`, `platformapi error <uuid> …`), a worker id
+(`worker registered id="…"`), an error-reason name such as `service_token_invalid_or_missing`, or a URL path — and **none is a secret**. The repository's `.gitleaks.toml` therefore
+allowlists that **one rule** in **these `.log` paths only**. It was verified not to blind the scan: with the config the full history is clean; a GitHub-token-shaped secret planted
+*inside* an allowlisted log is still detected (exactly 1 finding); a generic-key-shaped secret planted in `README.md` is still detected (exactly 1); and without the config the
+real history reports 297. If you add a log here that trips another rule, that is a real finding — do not widen the allowlist.

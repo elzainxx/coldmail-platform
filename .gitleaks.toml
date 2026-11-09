@@ -1,0 +1,19 @@
+title = "coldmail-platform"
+
+[extend]
+useDefault = true
+
+# The ONE exception, scoped to one rule and one directory of evidence logs.
+#
+# Docs/history/audit-scratch/ holds CI and replica run logs that the records cite by run ID. Control-plane request-log lines in them
+# (`platformapi error <request-id> GET /v1/report: code=not_found …`, `workerlink stream: worker registered id="…"`, `rid=req_<hex>`,
+# reason names such as `service_token_invalid_or_missing`) trip `generic-api-key`: the word "api" next to a high-entropy request id.
+# Read line by line on 2026-11-09: 297 hits in 6 files, every one a request id, worker id, error-reason name or URL path — no secret.
+#
+# This does NOT blind the scan, and that is checked, not asserted: a GitHub-token-shaped secret planted inside an allowlisted log is still
+# detected (other rules still run there), and a generic-key-shaped secret in any other path is still detected (this rule still runs elsewhere).
+# See Docs/history/audit-scratch/README.md.
+[[allowlists]]
+description = "request ids / worker ids / error-reason names in the cited run logs (not secrets)"
+targetRules = ["generic-api-key"]
+paths = ['''(^|/)Docs/history/audit-scratch/.*\.log$''']
