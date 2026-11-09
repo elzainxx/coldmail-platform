@@ -26,7 +26,7 @@ repository with its own history, its own `CLAUDE.md` / `PROJECT_RULES.md`, and i
 | `pass-1-findings.md` | What the first execution pass found, including the `FW-M2-*` headings that turned out to exist only here — see `deferrals-and-false-greens.md` §4. |
 | `deferrals-and-false-greens.md` | **The permanent record.** Every deferral with what blocks it, every deferral that was itself mis-recorded with the corrected premise, and the **twenty false-green classes** with a citation each (the twentieth, *the environment-masked green*, is the one to read first: it is why a run on the developer's machine no longer counts as green). Read this before trusting any green in this body of work. |
 | `verification-runs.md` | What was actually executed at the close of Chunk 4 — which commit, which container, what it produced, twice per repo. The evidence behind the word "verified". |
-| `scratch/` | The raw per-module interface inventories the audit was built from (`_inv_*`). Kept because a conclusion whose inputs were thrown away cannot be re-checked — not because anyone should read them straight through. Also `_deferrals.md`, the working notes that fed `deferrals-and-false-greens.md`. |
+| `Docs/history/scratch/` | The raw per-module interface inventories the audit was built from (`_inv_*`; moved here from `scratch/` on 2026-11-09, with `Docs/history/audit-scratch/` — the logs and drafts the records cite, each with a manifest). Kept because a conclusion whose inputs were thrown away cannot be re-checked — not because anyone should read them straight through. Also `_deferrals.md`, the working notes that fed `deferrals-and-false-greens.md`. |
 
 ## Why this is a separate repo
 

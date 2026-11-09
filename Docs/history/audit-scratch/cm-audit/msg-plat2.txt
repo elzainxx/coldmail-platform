@@ -1,0 +1,16 @@
+verification-runs: final heads after the harness fixes; M3's CI history stated in full
+
+M2 098427e: GitHub Actions success (second consecutive green; harness 62/0).
+M3 e53f263: GitHub Actions FAILURE, harness 99/1 — T5 only, M3-CI-OD-1.
+
+Records M3's whole CI history on the same code because one entry is unexplained: run
+42438687947 (40a2478, docs only) failed 98/2 — T5 AND the Phase 3 dispatch package, which
+failed with all 231 of 231 tests having run and no `--- FAIL` line. It did not recur in the
+next run of identical code and did not occur in three local rehearsals, so it is intermittent
+and its cause is unknown; nothing is claimed about it. The failure-detail printer that could
+not explain it is fixed and proven on a fixture of that shape, so the next occurrence will say
+what it was. Adds the printer fix to the findings table with its control.
+
+Every run URL in the file (11) was checked against GitHub for commit and conclusion.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

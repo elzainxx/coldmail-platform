@@ -1,0 +1,26 @@
+== m1 (coldmail-verify) started 2026-11-07 18:31:04
+copied the user's (gitignored) proxy CA into the clone
+HEAD: b212524 2026-11-07 18:26:43 +0200 Force LF line endings with .gitattributes   dirty=0   (fresh clone, autocrlf=false)
+  postgres:16-alpine up (fresh container = clean slate)              rc=0   OK
+  apply all migrations (tables 0 -> N)                               rc=0   OK
+  control-plane: go build ./... [golang:1.26]                        rc=0   OK
+  control-plane: go vet ./...                                        rc=0   OK
+  control-plane: go test -v ./... (real Postgres)                    rc=0   OK
+  gate: check-test-execution (every declared test RAN)               rc=0   OK
+  gate: check-test-execution SELF-TEST                               rc=0   OK
+  door5: assert-gem-unmodified.sh                                    rc=0   OK
+  door5: docker build node image                                     rc=0   OK
+  door5: bundle list resolves truemail 3.3.1                         rc=0   OK
+  verifier-node: RSpec in built image                                rc=0   OK
+  verifier-node: RSpec verdict (N examples, 0 failures)              rc=0   OK
+  gate: no-secret-leak (boot w/ canary secrets)                      rc=0   OK
+  gate: check-docs-updated.sh HEAD~1 (RANGE mode)                    rc=0   OK
+  gate: check-docs-updated SELF-TEST                                 rc=0   OK
+  gate: check-config-reference-fresh                                 rc=0   OK
+  gate: check-test-enumeration (meta-gate, incl. rule 6)             rc=0   OK
+  gate: check-test-enumeration SELF-TEST                             rc=0   OK
+  (ci job 'code-review' is a placeholder, not locally executable; its presence is enforced by enumeration rule 6)
+================ M1 SUMMARY ================
+  18 steps, 0 failed
+  ALL GREEN
+  finished 2026-11-07 18:39:47

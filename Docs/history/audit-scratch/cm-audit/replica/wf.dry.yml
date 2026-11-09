@@ -1,0 +1,209 @@
+# Real-infra CI (Phase 0). Runs on every push/PR; a passing run is a REQUIRED status check
+# on the default branch. Brings up the SAME compose stack devs run (base + harness override),
+# executes the real-infra behavioral harness, then every BLOCKING structural gate. Nothing is
+# mocked — real Postgres + real Control + real worker + real Mailpit (CLAUDE.md Rule 3).
+#
+# NO COUNT IS WRITTEN HERE ON PURPOSE. This line used to say "the three BLOCKING drift gates" and was
+# still saying three when there were nine — a hand-maintained number that nothing verifies is the
+# STALE ASSERTION class, and it reads as coverage while being wrong. The authoritative count is
+# derived, not written: tests/harness/checks/test_enumeration.sh rule 2 fails unless every
+# checks/*.sh is named in a run: command in this file, and prints the live number when it passes.
+name: real-infra
+on: [push, pull_request]
+
+jobs:
+  behavioral:
+    runs-on: ubuntu-latest
+    # The RAM-backed, fsync-off Postgres (tests/harness/compose.test.yml) is OPT-IN in scripts/dev.sh because it makes
+    # `docker stop postgres` destroy the database (module 3's #131, ported here). CI stops nothing, so it opts in for
+    # speed. Every `dev.sh` call below — and every check script, which takes its compose invocation from
+    # `dev.sh compose` — inherits this, so CI runs the same stack it always did.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      # The host-side Node tests (the worker unit suite and the harness's mTLS/variation tests) must run on the runtime the
+      # worker SHIPS on — services/worker/Dockerfile is `node:20-alpine` — not on whatever Node the runner image happens to
+      # carry that month. An unpinned toolchain is a hidden variable: it is how `node --test "glob"` (Node >= 21 only) went
+      # unnoticed until a Node 20 environment ran it.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Go lint — gofmt + vet (BLOCKING; keeps code/format from drifting)
+        run: |
+          test -z "$(gofmt -l services/control tools/send-managed-migrate tools/provision-worker tests/harness)" \
+            || { echo 'gofmt: files need formatting:'; gofmt -l services/control tools/send-managed-migrate tools/provision-worker tests/harness; exit 1; }
+          (cd services/control && go vet ./...)
+          (cd tools/send-managed-migrate && go vet ./...)
+          (cd tools/provision-worker && go vet ./...)
+          (cd tests/harness && go vet ./...)
+
+      - name: Generate dev certs/secrets + provision dev worker (writes .env)
+        run: bash scripts/dev.sh certs
+
+      # `reset`, NOT `up`. The ORDER IS LOAD-BEARING and this step used to get it wrong:
+      # postgres -> migrate (send_managed.boxes must EXIST) -> seed the box token rows -> everything
+      # else. `up` alone skips the seed, and the worker's only depends_on is `control: healthy` — so
+      # on a cold runner with an empty volume the worker registers BEFORE its token_hash row exists,
+      # is rejected as unauthenticated, burns its retry budget, and EXITS. The worker has no restart
+      # policy (`restart:` is unset), so nothing brings it back: the stack sits there with a dead
+      # worker and `docker compose up --wait` still returns 0, because the worker has no healthcheck
+      # for --wait to block on.
+      #
+      # MEASURED 2026-08-07 on a genuine clean slate, same tree, same host, nothing but the ordering
+      # changed:
+      #   certs -> up    -> test    58 passed,  4 FAILED
+      #   certs -> reset -> test    62 passed,  0 failed   (worker healthy first start, RestartCount=0)
+      # All four failures were SUITE 3 and SUITE 5 `docker compose exec`-ing into a worker that was
+      # not running, or was mid-restart from a manual recovery: `exec` then yields EMPTY output, so
+      # the probes read '' instead of 200/401 and the cert read looked unreadable. They present as an
+      # mTLS bug and a volume-mount bug. They are neither.
+      #
+      # scripts/dev.sh's `reset` case has documented this since it was written — "seeding after `up`
+      # is too late, because the worker has already burned its retry budget and exited" — and this
+      # workflow called `up` anyway. A comment in one file is not a control over another; the reason
+      # CI is correct now is that it invokes the recipe that encodes the order, rather than
+      # re-implementing a subset of it.
+      - name: Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)
+        run: bash scripts/dev.sh reset
+
+      # ANTI-VACUITY for the step above, and it guards a real blind spot: `dev.sh up` returns 0 with a
+      # DEAD worker, because the worker has no healthcheck for `--wait` to block on. So "the stack came
+      # up" is not evidence a worker exists to test. This asserts the state the seeded order produces —
+      # running, and never having exited — BEFORE the harness runs, so a regression names its own cause
+      # instead of surfacing as four unrelated-looking mTLS/mount failures downstream.
+      #
+      # IT ASSERTS ON THE LOG, NOT ON CONTAINER STATE, AND THAT IS THE WHOLE POINT. The first version of
+      # this step checked `running=true` and `RestartCount=0`, and that version IS FLAKY — flaky in the
+      # direction that matters, because it passes on the broken stack. The worker connects and is
+      # rejected ~1s AFTER start (src/index.js connectOnce: a register reject sets stream.stopped, and
+      # the 30-attempt/~30s budget bounds only NETWORK errors), so `up` can return while the worker is
+      # still alive-but-not-yet-rejected and a state sample taken then reads clean.
+      #
+      # MEASURED 2026-08-07 in module 3, whose worker has this identical shape — four consecutive
+      # unseeded runs, sampling the instant `up` returned:
+      #   attempt 1: running=true  RestartCount=0  -> the state check PASSES on a doomed worker
+      #   attempt 2..4: running=false RestartCount=0  -> fails
+      # One in four is a false green on the control for a defect, which reads as coverage while
+      # providing none. Re-measured with the log-based form below: 4/4 RED unseeded, 3/3 GREEN seeded.
+      #
+      # The two log lines are terminal and monotonic — once emitted they stay in the log — so waiting
+      # for one of them removes the sampling race outright instead of papering over it with a sleep.
+      # `register rejections == 0` is what makes the seeded ORDER the property under test rather than
+      # mere eventual liveness: a worker seeded late can still end up registered on a later attempt.
+      - name: Worker came up seeded on the FIRST attempt (no register-reject exit)
+        run: |
+          DC="docker compose -f docker-compose.yml -f tests/harness/compose.test.yml"
+          registered=0
+          for _ in $(seq 1 30); do
+            if $DC logs worker 2>&1 | grep -q "registered over mTLS stream"; then registered=1; break; fi
+            if $DC logs worker 2>&1 | grep -q "could not (re)register within the retry budget"; then break; fi
+            sleep 1
+          done
+          rc="$(docker inspect -f '{{.RestartCount}}' coldmail-send-managed-worker-1)"
+          running="$(docker inspect -f '{{.State.Running}}' coldmail-send-managed-worker-1)"
+          # `grep -c` prints 0 but EXITS 1 when nothing matches, and a GitHub step is `bash -e` (no pipefail): without the `|| true`
+          # this assignment silently killed the step on exactly the HEALTHY path (zero rejections). Invisible locally, where this step
+          # was re-run as a function without -e. The replica (tools/ci-replica.sh) runs steps with -e and found it.
+          rejected="$($DC logs worker 2>&1 | grep -c 'register rejected: unauthenticated' || true)"
+          echo "worker: running=$running RestartCount=$rc registered=$registered register_rejections=$rejected"
+          if [ "$registered" != "1" ] || [ "$rejected" != "0" ] || [ "$running" != "true" ] || [ "$rc" != "0" ]; then
+            echo "FAIL: the worker did not register cleanly on its FIRST attempt."
+            echo "register_rejections>0 means it connected before send_managed.boxes carried its"
+            echo "token_hash — the seed ran late or not at all — so it was rejected as"
+            echo "unauthenticated and exited. It has no restart policy, so it stays dead, and"
+            echo "SUITE 3/5 then fail with EMPTY exec output that looks like an mTLS or a volume"
+            echo "bug. Check the ordering in scripts/dev.sh's reset case."
+            $DC logs worker | tail -20
+            exit 1
+          fi
+
+      - name: Real-infra behavioral harness (10 checks, must be all-green)
+        run: bash scripts/dev.sh test
+
+      # #131's regression guard. Reads the RENDERED compose config in both modes (it needs no running stack, only .env
+      # from `dev.sh certs`) and fails if the DEFAULT stack's Postgres is ever RAM-backed again — with a built-in
+      # control that the RAM mode really does render a tmpfs, so the check cannot pass on an empty render.
+      - name: Durability gate — the default dev Postgres is not RAM-backed; the RAM one is opt-in (BLOCKING)
+        if: always()
+        run: bash tests/harness/checks/postgres_durability.sh
+
+      # The first CI run on a real runner died because the Control (uid 10001) could not read a 600 key owned by the
+      # runner user — invisible on Docker Desktop, whose bind mounts ignore POSIX ownership. `dev.sh certs` now chowns
+      # each key to its container uid (mode stays 600); this gate READS each key as that uid and, as the paired
+      # control, requires that the other uids CANNOT — so it fails if someone "fixes" a permission error by chmod'ing.
+      - name: Secret ownership gate — each dev key is readable by its container uid only, mode 600 (BLOCKING)
+        if: always()
+        run: bash tests/harness/checks/secret_ownership.sh
+
+      - name: Drift gate — config reference vs seeded send_managed.config (BLOCKING)
+        if: always()
+        run: bash tests/harness/checks/config_drift.sh
+
+      - name: Drift gate — served routes vs api-contract.md (BLOCKING)
+        if: always()
+        run: bash tests/harness/checks/contract_drift.sh
+
+      - name: Drift gate — migration chain lint (BLOCKING)
+        if: always()
+        run: bash tests/harness/checks/migration_lint.sh
+
+      - name: Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)
+        if: always()
+        run: bash tests/harness/checks/config_consumption.sh
+
+      # The PAIRED CONTROL for the step above. A separate step, not folded into the gate, so a failure
+      # names which of the two broke. Load-bearing: the real 54-key ledger reaches NONE of the gate's
+      # failure branches, and one of them (the consumer grep) was found on 2026-08-05 to accept a
+      # COMMENT as a consumer. Needs no database or stack — it builds a throwaway repo skeleton.
+      - name: Consumption gate SELF-TEST — the failure branches the real ledger never reaches (BLOCKING)
+        if: always()
+        run: bash tests/harness/checks/config_consumption_selftest.sh
+
+      # The META-GATE: it checks that the other gates and the test suites are actually WIRED.
+      # internal/httpapi's first test file (e3fee99) landed with nothing running it, and two more
+      # packages — workerlink, workerproto — accumulated behind the prose warning run.sh added after
+      # that incident (2e8be72). A warning comment is not a control. These two steps are the control.
+      # Neither needs the stack.
+      - name: Enumeration meta-gate — every test package and gate script is actually wired (BLOCKING)
+        if: always()
+        run: bash tests/harness/checks/test_enumeration.sh
+
+      - name: Enumeration meta-gate SELF-TEST — the paired control (BLOCKING)
+        if: always()
+        run: bash tests/harness/checks/test_enumeration_selftest.sh
+
+      - name: Shutdown gate — SIGTERM grace clears shutdown_drain_timeout_sec (BLOCKING)
+        if: always()
+        run: bash tests/harness/checks/drain_grace.sh
+
+      - name: Security gate — no credential leak in service logs (BLOCKING)
+        if: always()
+        run: bash tests/harness/checks/no_secret_leak.sh
+
+      # N1/D12's WIRING control. internal/dsnscrub's nine tests prove the scrub works; they cannot
+      # prove it is CALLED. Measured: with the wrap removed from internal/db's call sites, the unit
+      # package stayed green and so did go build and go vet — nothing in the toolchain notices a
+      # leaking call site. This gate is the thing that notices. It needs no database or stack (it is
+      # static analysis over services/ and tools/), so it sits with the other structural gates.
+      - name: Security gate — every driver call site scrubs the DSN out of its error (BLOCKING)
+        if: always()
+        run: bash tests/harness/checks/dsn_scrub_wiring.sh
+
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          docker compose -f docker-compose.yml -f tests/harness/compose.test.yml ps || true
+          docker compose -f docker-compose.yml -f tests/harness/compose.test.yml logs control worker migrate || true
+
+      - name: Tear down
+        if: always()
+        run: bash scripts/dev.sh down || true
+
+  # E11 (single-Control throughput-ceiling LOAD test) is a before-you-SCALE gate, NOT a
+  # per-push blocker (Phase 9.5 §7). It runs on demand, not here:
+  #   workflow_dispatch -> bash scripts/dev.sh test suites/load   (added when E11 lands)

@@ -1,0 +1,23 @@
+5b: the contract now requires the inert-cost declaration, not just tolerates the 0
+
+Item 5b (Tier 0) is landed in both senders, so the canonical contract records the
+closure rather than leaving the paragraph reading as a blessing of the ambiguity.
+
+Reporting `unit_price_credits: 0` / `cost: 0` was already blessed and stays
+blessed. What was missing is the other half: a structurally-zero cost and a
+broken price lookup are byte-identical on the wire and both return 200, so
+inference is not available to the caller. A module whose cost half is inert MUST
+now declare it as `pricing.cost_fields_inert` on describe, and a client
+rendering a price MUST branch on that field rather than on `cost == 0`.
+
+The derived-not-literal requirement is stated in the contract itself because
+that is where it binds future modules: `unit_price_credits` is live-retunable in
+both senders, so a hardcoded `true` becomes false-and-costly the first time an
+operator retunes — a client told the cost half is inert while the module charges.
+
+Landed: coldmail-send-byo 4abd8eb (seeded 0, so the field is true by default) and
+coldmail-send-managed 0b42e1b (seeded 1, so the WRONG literal there is the
+opposite one — which is why both repos carry a zero-retune control rather than a
+default-value assertion).
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>

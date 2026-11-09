@@ -1,0 +1,24 @@
+records: second pass — all three code repositories green on GitHub Actions; DNS class fixed in M3 and M1; drills on a runner
+
+verification-runs.md: new top section. Final heads, each checked against GitHub for commit, workflow and conclusion:
+M1 82644ae run 42498731680 (9/9 jobs, image built from scratch against the frozen Gemfile.lock); M2 51e081d run 42502196556
+(harness 62/0); M3 9aad2db run 42502198054 (harness 100/0). The first pass (M3 red on T5) is kept, marked superseded.
+
+Records C1 (M3-CI-OD-1 ruled and fixed, with the proof on the literal pre-fix code), C2 (the same class in module 1 — our DNS outage
+reported as `invalid / no_mx` — fixed under ADR-0019; the audit of every DNS lookup in M1 and the senders; how the Ruby node resolves,
+measured, Door 5 untouched) and C3 (digest pins, the Gemfile.lock, and the default-mode harness + real `docker stop postgres` drill
+on BOTH senders on a real runner: 22/22 each, with the before/after snapshots). States what was NOT done and why: the local drill
+runs were reaped twice for host memory and were not restarted, so they moved to GitHub; the Ruby 3.3/3.4 move was not attempted;
+the unexplained dispatch red was not chased (and has not recurred in seven M3 harness runs).
+
+Flags, not fixes: M1 reports an A-only domain as `invalid / no_mx` (the implicit-MX fallback is dead code against real DNS —
+measured); the Ruby 3.2 end-of-life decision; the node's resolver hygiene as a deployment rule.
+
+deferrals-and-false-greens.md, class 20: (h) is now ruled and fixed; the same class in module 1 (the bigger risk) and GitHub's own
+Azure search domain are recorded; the new controls are listed; the "not controlled" bullet is rewritten to what is actually still
+uncontrolled (builder tags not digest-pinned, Ruby 3.2 EOL, the node's resolver, the A-only false invalid, the unexplained red with its
+standing instruction "check the go_suite SIGPIPE race first").
+
+Every run URL in verification-runs.md (17) was checked against GitHub.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

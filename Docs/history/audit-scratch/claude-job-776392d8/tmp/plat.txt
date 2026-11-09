@@ -1,0 +1,25 @@
+Initial commit: the three-way audit and the contract it produced
+
+coldmail-platform is the neutral ground for decisions that span the three
+modules. It holds no code and no build; the modules stay independent (separate
+histories, separate rule files, no shared code path), so a cross-module finding
+has nowhere honest to live inside any one of them.
+
+  module-comparison-report.md  (1750 lines) — the full three-way audit
+  canonical-module-contract.md  (634 lines) — the shape a module should have
+  alignment-fix-plan.md         (476 lines) — the tiered fix list + estimates
+  scratch/_inv_*               (6 files)   — the raw per-module inventories
+
+scratch/ is kept deliberately: a conclusion whose inputs were discarded cannot
+be re-checked later. It is evidence, not reading material.
+
+The parent coldmail/ directory is NOT a git repository and must not become one —
+it sits inside a folder holding ~17 unrelated projects, so initialising it would
+sweep them in. Only this subdirectory is a repo; verified at init that neither
+D:/Mnfi nor coldmail/ gained a .git.
+
+The three module repos moved under coldmail/ by directory move, not re-clone:
+commit counts and HEADs verified identical before and after
+(M1 39 @ fe8fde6, M2 173 @ d34e57a, M3 241 @ 044e91e), all three trees clean.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>

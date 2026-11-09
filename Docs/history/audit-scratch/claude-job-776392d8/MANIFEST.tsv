@@ -1,0 +1,34 @@
+bytes	path	why cited
+5443	timeline.jsonl	holds cited commit 29e3bcb,468d902,c8f74a0
+2316	tmp/c30_msg_m2.txt	holds cited commit e3fee99
+1345	tmp/cpmsg.txt	holds cited commit 0b42e1b,4abd8eb
+5433	tmp/m1_flake_msg.txt	holds cited commit 29e6204,fe8fde6
+8223	tmp/m1_item10_msg.txt	holds cited commit 0c22c8e,a026e96
+5415	tmp/m2_7b_followup_msg.txt	holds cited commit e3fee99
+4795	tmp/m2_msg.txt	holds cited commit d34e57a
+22959	tmp/m2_runsh_ORIG.sh	holds cited commit e3fee99
+3885	tmp/m2_wf_ORIG.yml	holds cited commit e3fee99
+4486	tmp/m2_wf_SWEEP2.yml	holds cited commit e3fee99
+4486	tmp/m2_wf_SWEEP4.yml	holds cited commit e3fee99
+1983	tmp/m2gofmt.txt	holds cited commit 29e3bcb,d34e57a
+7586	tmp/m3_item10_msg.txt	holds cited commit 9c74fa8
+5948	tmp/metagate_m1.txt	holds cited commit e3fee99
+4692	tmp/metagate_m2.txt	holds cited commit e3fee99
+5056	tmp/metagate_m3.txt	holds cited commit e3fee99
+1353	tmp/plat.txt	holds cited commit d34e57a,fe8fde6
+11204	tmp/pristine68/account_bulk_add.go	by name
+14272	tmp/pristine68/describe_vocabularies.go	by name
+28414	tmp/pristine68/describe_vocabularies_test.go	by name
+15947	tmp/pristine68/quote_feasibility.go	by name
+81775	tmp/pristine_gate/Docs/api-contract.md	by name
+14272	tmp/pristine_gate/services/control/internal/platformapi/describe_vocabularies.go	by name
+18974	tmp/pristine_gate/tests/harness/checks/contract_drift.sh	by name
+15214	tmp/pristine_m2_68/describe_vocabularies.go	by name
+32092	tmp/pristine_m2_68/describe_vocabularies_test.go	by name
+44071	tmp/pristine_m2_gate/Docs/api-contract.md	by name
+15214	tmp/pristine_m2_gate/services/control/internal/platformapi/describe_vocabularies.go	by name
+17457	tmp/pristine_m2_gate/tests/harness/checks/contract_drift.sh	by name
+2814	tmp/rebuild_m2_templates.sh	by name
+1400028	tmp/renamediff.txt	holds cited commit a617fda,bc9b74e,fe27588
+184	tmp/shimbin/provision-worker	by name
+1613	tmp/suite5_control.sh	by name

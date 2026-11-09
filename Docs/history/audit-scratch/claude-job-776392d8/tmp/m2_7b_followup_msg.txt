@@ -1,0 +1,81 @@
+Item 7b follow-up: run the tests it added, and stop the gate asserting what it just denied
+
+Three misleading-green defects, all found by checking module 3's equivalents rather than
+by anything failing. Two are in MY OWN item 7b work here (e3fee99); one is older.
+
+1. NINE TESTS THAT NOTHING RAN. internal/httpapi's first-ever test file landed with
+   e3fee99 and no `go_suite` line was added, so neither the harness nor CI executed it.
+   tests/harness/run.sh names every Go package explicitly -- never `go test ./...` -- and
+   real-infra.yml runs only gofmt + vet over ./... plus that script, so a new test PACKAGE
+   is invisible to both until a line is added here. Found by grepping the harness output
+   for the new test names and getting zero.
+
+   A written test nothing executes is worse than no test: it reports coverage it does not
+   provide. Those nine are the only assertions that the ROOT mux answers a coded envelope
+   -- the surface where an unrouted path, or a real documented path whose credential is
+   unconfigured so its surface does not mount, previously fell through to
+   `404 page not found` in plain text. That whole third surface was unguarded.
+
+   The line is placed BEFORE any template is built because this is the one Go suite in the
+   file needing no infrastructure: it drives the real NewHealthServer wiring in-process
+   with nil db/guard, since what it asserts is what that constructor REGISTERS.
+
+2. THE DESCRIBE SUMMARY ASSERTED THE EQUALITY IT HAD JUST DENIED. contract_drift's
+   describe block printed
+
+     contract_drift: describe declarations derived-and-served — N error codes
+     (== codeStatus), 2 db_enum + 2 module_constant vocabularies (== declaration source)...
+
+   unconditionally, after its own FAIL lines. On module 3 that produced
+   `7 error codes (== codeStatus)` in the same output as
+   `FAIL: describe publishes 7 error codes, codeStatus declares 8`. This file had the
+   identical line; nothing had made it print yet only because this module's describe
+   happened to be consistent -- the defect was latent, not absent.
+
+   WHY THE OBVIOUS FIX DOES NOT WORK, recorded at the fix site: `desc_fail_baseline="$fail"`
+   … `[[ "$fail" -eq "$desc_fail_baseline" ]]` is jammed, because `fail` is a 0/1 LATCH,
+   not a counter. Every site assigns `fail=1`, so once any earlier check in the script has
+   fired the baseline is already 1 and `1 -eq 1` passes for the rest of the run. That was
+   tried on module 3 and verified by running it -- the misleading line printed again,
+   unchanged. ANY guard of that shape anywhere in the gate layer is jammed the same way.
+   Replaced with a block-local flag wired into all 15 in-block assertion sites.
+
+3. THE GATE DID NOT READ ITS OWN DOC'S COUNT. api-contract.md's error_codes[] paragraph
+   promises the number is DERIVED from codeStatus, and nothing enforced it. This module's
+   count moved five -> six in e3fee99 when method_not_allowed joined; had I left the word
+   at "five", no gate would have noticed. Module 3's did go stale for exactly that reason
+   ("seven" while codeStatus held eight). The gate now reads the word out of the prose and
+   compares, so the paragraph's promise is what makes it true rather than a claim about it.
+
+   Also corrected: this doc said "Module 3 emits seven". It emits EIGHT since 2026-08-04.
+   That cross-module sentence is not gate-checkable from inside this repo (the other repo's
+   codeStatus is not readable here) and is now dated and attributed so a reader can tell
+   how it would go stale again.
+
+FAIL-VERIFIED, five breaks, each applied, run, reverted, and hash-proven byte-identical
+afterwards (api-contract.md 79f3200..., contract_drift.sh 960c481...):
+  - Stale count word (six -> five): `api-contract.md says the platform surface emits five
+    (5) error codes, codeStatus declares 6`, true exit 1.
+  - Unrecognised word ("eleventy"): the vacuity guard fires -- `could not read the 'This
+    surface emits **<word>**' count ... (got 'eleventy')`. Without it a typo'd word would
+    silently disable the check.
+  - Sentence deleted entirely: same vacuity guard, `(got '')`.
+  - A DIFFERENT in-block site (VOC_SRC pointed at a nonexistent file, so three vocabulary
+    assertions fire): the summary switches to `describe declaration checks FAILED`. This is
+    the one that proves the flag is wired block-wide, not just to the new check.
+  - THE CONTROL for the guard itself: with `if [[ "$desc_fail" -eq 0 ]]` replaced by
+    `if true` and the same VOC_SRC break applied, the misleading line comes straight back --
+    `derived-and-served — ... 2 db_enum + 2 module_constant vocabularies (== declaration
+    source)` printed directly beneath `publishes 2 db_enum vocabularies, exposedDBEnums
+    declares 0`. The guard is load-bearing, not decoration.
+
+NO PRODUCTION CODE CHANGED. This commit touches only the harness, the gate layer, and one
+doc paragraph. The nine tests being run for the first time PASS as written -- e3fee99's
+code was correct; what was missing was anything that would have told us.
+
+Suite: HARNESS RESULT 59 passed, 0 failed (58 -> 59: the harness counts one entry per
+go_suite, so the nine tests arrive as one PASS line), run after `scripts/dev.sh reset` as
+Docs/future-work.md records is mandatory. gofmt clean, go vet clean, all six CI gates OK
+-- pasted in the session log.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>

@@ -1,0 +1,13 @@
+docs: M3's database-outage drill and default-mode harness are verified on a runner
+
+go-live-checklist.md and the local guide now record the outage drill's result: on GitHub Actions (run 42500897743, the on-demand
+outage-drill workflow) the whole harness passes in the default volume-backed mode (100 passed / 0 failed) and
+tests/harness/drills/postgres_outage.sh passes 22/22. With a job in flight on a paused worker and a snapshot taken first
+(jobs=8 job_events=28 send_logs=5 max(seq)=28), a 50 s outage left the Control running with 0 restarts, health and run failing
+closed with clean envelopes, `db outage RESOLVED after 54s`; afterwards jobs 8->8, events 28->28, max(seq) 28->28, no job for the
+refused run, and the in-flight job delivered exactly once. The guide also records that the drill's first run failed at fixtures (it
+reused the system user, who already has an account; module 3 allows one account per user) and was fixed in 00b780b.
+
+Docs only.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

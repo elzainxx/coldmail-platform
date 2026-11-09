@@ -1,0 +1,55 @@
+SECRET_ASSIGN	services/control/internal/dsnscrub/dsnscrub.go	abc86c5	password=SECRET&ss...(len 33)
+CONN_STRING	services/control/internal/dsnscrub/dsnscrub.go	abc86c5	postgres://u:***@h:5432
+SECRET_ASSIGN	services/control/internal/dispatch/rung_test.go	5af51f8	Token: e.jobAttemp...(len 24)
+SECRET_ASSIGN	.env.example	29e3bcb	PASSWORD=devmodule...(len 22)
+CONN_STRING	.env.example	29e3bcb	postgres://send_managed_app:***@postgres:5432
+SECRET_ASSIGN	.env.example	29e3bcb	TOKEN=replace-with...(len 46)
+SECRET_ASSIGN	.env.example	29e3bcb	TOKEN_HASH=replace...(len 57)
+CONN_STRING	Docs/install-and-deploy.md	29e3bcb	postgres://send_managed_app:***@<host>:5432
+SECRET_ASSIGN	docker-compose.yml	29e3bcb	PASSWORD:-devmodul...(len 23)
+CONN_STRING	docker-compose.yml	29e3bcb	postgres://send_managed_app:${SEND_MANAGED_MODULE_PASSWORD:***@postgres:5432
+SECRET_ASSIGN	docker-compose.yml	29e3bcb	TOKEN:-unprovision...(len 45)
+SECRET_ASSIGN	scripts/dev.sh	29e3bcb	PASSWORD=devmodule...(len 22)
+SECRET_ASSIGN	scripts/dev.sh	29e3bcb	token_hash=EXCLUDE...(len 30)
+SECRET_ASSIGN	services/control/internal/dispatch/attempttoken_lockorder_test.go	29e3bcb	token = attempt_to...(len 21)
+SECRET_ASSIGN	services/control/internal/dispatch/outcome.go	29e3bcb	Token: rep.Attempt...(len 23)
+SECRET_ASSIGN	tests/harness/load_e11.sh	29e3bcb	token_hash=EXCLUDE...(len 30)
+SECRET_ASSIGN	tests/harness/phase3_send.sh	29e3bcb	token_hash=EXCLUDE...(len 30)
+SECRET_ASSIGN	tests/harness/phase3_send.sh	29e3bcb	token:"definitely-...(len 29)
+CONN_STRING	tests/harness/run.sh	29e3bcb	postgres://postgres:***@localhost:5432
+SECRET_ASSIGN	tests/harness/run.sh	29e3bcb	PASSWORD:-devmodul...(len 23)
+SECRET_ASSIGN	tools/send-managed-migrate/runner.go	29e3bcb	password: send_man...(len 26)
+CONN_STRING	Docs/install-and-deploy.md	413e704	postgres://<admin-role>:***@<host>:5432
+SECRET_ASSIGN	Docs/install-and-deploy.md	413e704	token_hash = EXCLU...(len 32)
+CONN_STRING	Docs/install-and-deploy.md	3784daa	postgres://sender_module:***@<host>:5432
+SECRET_ASSIGN	Docs/history/phase-build-record.md	ea66e3e	token = attempt_to...(len 21)
+SECRET_ASSIGN	Docs/architecture-overview.md	7aa13a9	token = attempt_to...(len 21)
+SECRET_ASSIGN	db/migrations/sender_0020_jobs_attempt_token.up.sql	f49a104	token = attempt_to...(len 21)
+SECRET_ASSIGN	services/box/src/stream.js	f49a104	token: pj.attempt_...(len 23)
+SECRET_ASSIGN	services/box/src/stream.js	f49a104	token: attemptToke...(len 19)
+SECRET_ASSIGN	services/box/test/buffer.test.mjs	f49a104	token = attemptTok...(len 20)
+SECRET_ASSIGN	services/brain/internal/dispatch/attempttoken_lockorder_test.go	f49a104	token = attempt_to...(len 21)
+SECRET_ASSIGN	services/brain/internal/dispatch/dispatch.go	f49a104	token = attempt_to...(len 21)
+SECRET_ASSIGN	services/brain/internal/dispatch/outcome.go	f49a104	Token: rep.Attempt...(len 23)
+SECRET_ASSIGN	services/brain/internal/config/config.go	643b40a	TokenHashes = spli...(len 27)
+SECRET_ASSIGN	services/box/src/smtp.js	39f8866	secret = buf.toStr...(len 21)
+SECRET_ASSIGN	services/brain/internal/adminapi/credential_test.go	402ca37	secret = "hunter2-...(len 29)
+SECRET_ASSIGN	services/brain/internal/adminapi/credential_test.go	402ca37	secret = "leak-me-...(len 33)
+SECRET_ASSIGN	docker-compose.yml	5831a67	CREDENTIAL_KEY_ID:...(len 30)
+CONN_STRING	docker-compose.yml	0d3a735	postgres://postgres:${POSTGRES_SUPERPASS:***@postgres:5432
+CONN_STRING	docker-compose.yml	0d3a735	postgres://sender_module:${SENDER_MODULE_PASSWORD:***@postgres:5432
+SECRET_ASSIGN	tools/sender-migrate/runner.go	0d3a735	password: sender_m...(len 23)
+CONN_STRING	.env.example	b0ccbd6	postgres://postgres:***@postgres:5432
+CONN_STRING	.env.example	b0ccbd6	postgres://sender_module:***@postgres:5432
+SECRET_ASSIGN	.env.example	b0ccbd6	TOKEN=dev-platform...(len 32)
+SECRET_ASSIGN	.env.example	b0ccbd6	TOKEN=replace-with...(len 43)
+SECRET_ASSIGN	.env.example	b0ccbd6	TOKEN_HASH=replace...(len 54)
+SECRET_ASSIGN	tools/provision-box/main.go	b0ccbd6	token = authorizat...(len 21)
+CONN_STRING	Docs/phase-0-groundwork.md	b07ee84	postgres://postgres:***@postgres:5432
+CONN_STRING	Docs/phase-0-groundwork.md	b07ee84	postgres://sender_module:***@postgres:5432
+SECRET_ASSIGN	Docs/phase-2-account-management.md	b07ee84	secret = "hunter2-...(len 29)
+SECRET_ASSIGN	Docs/phase-3-minimal-send-path.md	b07ee84	token = re-registr...(len 23)
+SECRET_ASSIGN	Docs/phase1-drafts/03-encryption.md	b07ee84	credential_key_id ...(len 37)
+SECRET_ASSIGN	Docs/phase1-drafts/07-test-plan.md	b07ee84	credential = "secr...(len 40)
+SECRET_ASSIGN	Docs/phase1-drafts/07-test-plan.md	b07ee84	credential_ciphert...(len 37)
+CONN_STRING	Docs/phase1-drafts/07-test-plan.md	b07ee84	postgresql://sender_module:***@host

@@ -1,0 +1,76 @@
+PASS 1: rename identity to coldmail-send-managed (no behaviour changes)
+
+Module 2 becomes `coldmail-send-managed`. Identity only -- no behaviour moves in
+this commit, so a red in the suite is attributable to exactly one cause.
+
+WHAT MOVED
+  repo/module   sender-module      -> coldmail-send-managed
+  services      brain              -> control  (binary + dir + container)
+                box                -> worker
+  Go modules    github.com/sender-module/{brain,harness,provision-box,sender-migrate}
+                -> github.com/coldmail-send-managed/{control,harness,provision-worker,send-managed-migrate}
+  npm package   @sender-module/box -> @coldmail-send-managed/worker
+  schema        sender             -> send_managed
+  roles         sender_module      -> send_managed_app    (LOGIN)
+                sender_owner       -> send_managed_owner  (NON-LOGIN, so FORCE RLS still enforces)
+  migrations    sender_NNNN_*      -> send_managed_NNNN_*  (+ send_managed.schema_migrations)
+  routes        /v1/box/*          -> /v1/worker/*         (/v1 root unchanged)
+  env prefix    SENDER_            -> SEND_MANAGED_
+  GUC           sender.actor       -> send_managed.actor   (setter and all readers together)
+  dev CA CN     sender-dev-ca      -> send-managed-dev-ca
+  diagrams      sender_module_*.svg -> send_managed_*.svg  (+ every prose reference)
+
+WHAT DELIBERATELY DID NOT MOVE
+Rule 5 makes DB columns, enums and message schemas additive-only ("never rename"),
+and M2 has no fork-time exemption at all. So DB-level names are protected exactly
+like `public.users`:
+  table       send_managed.boxes  (103 refs; verified 0 `send_managed.workers`)
+  columns     box_id, assigned_box_id, box_metadata
+  enum type   box_status;  enum VALUE `box` of event_actor
+  index/FK    boxes_user_fk, boxes_liveness_idx, jobs_assigned_box_fk, ...
+  RLS policy  sender_module_full_access, sender_module_rw, account_events_sender_module_rw
+  config keys box_outcome_buffer_ttl_sec, brain_singleton_*, default_shared_pool_id
+  wire fields box_id, box_version, "boxes", boxes.active, subject.type "box"
+Live DB confirms the contract survived: enum types/values byte-identical to the
+pre-rename survey, `boxes` still present, send_managed_owner still NOLOGIN.
+
+Also frozen: fixture addresses (`sender@ourdomain.com` is the plaintext half of a
+base64 canary assertion), and the `.gitignore` path naming a locked on-disk
+directory. Docs/history/ untouched -- CLAUDE.md forbids editing it in build work.
+
+TOOLING TREATED AS CODE
+The migration prefix appears SYMBOLICALLY where literal-digit rules cannot reach
+it: migration_lint.sh's glob and regex, the runner's `prefix := "sender_" + ...`,
+and the operator-facing `sender_NNNN_*.up.sql` convention in README/compose/
+install-and-deploy/--help. Missing any one leaves the chain invisible to its own
+linter while every other name looks right.
+
+VERIFICATION (pasted in full in the session log)
+  harness  58 passed, 0 failed  -- incl. all three Go DB suites really running
+  gates    config_drift, contract_drift, migration_lint, config_consumption,
+           drain_grace, no_secret_leak -- all 6 green, run sequentially (Rule 11)
+  ports    5432/8080/8443/8444/8025; verified non-colliding with send-byo live
+
+The rename script is unit-tested with controls (210 checks), including
+transform(transform(x)) == transform(x) -- a second sweep over an already-renamed
+tree previously renamed the live TABLE to `.workers` self-consistently, i.e. GREEN
+on a Rule 5 violation. Protecting only pre-rename spellings is not enough.
+
+NOTED FOR PASS 2, NOT FIXED HERE
+  FW-M2-A  tests/harness/run.sh never builds tools/send-managed-migrate (gitignored),
+           so three Go DB suites silently SKIPPED while the harness printed
+           "0 failed". Pre-existing -- confirmed via `git show d34e57a:` -- so the
+           Pass 0 baseline green was itself partly vacuous. M3 builds it correctly.
+  FW-M2-B  `dev.sh certs --force` drops its argument (dev.sh:99 -> :15), so it
+           silently regenerates nothing.
+  FW-M2-C  `dev.sh reset` rebuilds no images, so it can bring up a stack whose
+           code predates the working tree.
+  FW-M2-D  SUITE 5's KMS-boundary check is order-dependent on SUITE 9: phase3_send.sh
+           hard-kills the worker (`$DC kill worker`, exit 137) and `dev.sh test`
+           never runs `up -d --wait`, so the NEXT run's SUITE 5 execs into a dead
+           container. A failed exec makes the negative check pass spuriously and
+           only the anti-vacuity control fail -- which is exactly the one red seen.
+           Reproduced deterministically with a control (kill -> PASS/FAIL/PASS;
+           live -> PASS/PASS/PASS) on an unmodified tree, so NOT a rename defect.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>

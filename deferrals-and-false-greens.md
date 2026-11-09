@@ -1,7 +1,7 @@
 # Deferrals and false greens — the permanent cross-module record
 
 **Written 2026-08-07, at the close of Chunk 4.** This is the PASS-3 deliverable that
-[`scratch/_deferrals.md`](scratch/_deferrals.md) existed to feed. That file is working notes and stays
+[`Docs/history/scratch/_deferrals.md`](Docs/history/scratch/_deferrals.md) existed to feed. That file is working notes and stays
 as provenance; **this file is the record.** Two things live here and nowhere else:
 
 1. **Every deferral**, with what blocks it and — where the deferral was itself mis-recorded — what the
@@ -95,7 +95,7 @@ section exists: a register of deferred work is itself an artifact that rots, and
 
 ### `FW-M2-A` and `FW-M2-D` were recorded as OPEN in M2's `Docs/future-work.md`. Both are FIXED, and neither ever lived in that file.
 
-`scratch/_deferrals.md:20` reads *"**M2** — FW-M2-A, FW-M2-B, FW-M2-C, FW-M2-D (`Docs/future-work.md`)"*.
+`Docs/history/scratch/_deferrals.md:20` reads *"**M2** — FW-M2-A, FW-M2-B, FW-M2-C, FW-M2-D (`Docs/future-work.md`)"*.
 Measured: **no `FW-M2-*` id has ever appeared anywhere in the `coldmail-send-managed` tree.** The ids
 exist only as headings in this repo's own [`pass-1-findings.md`](pass-1-findings.md). Their real state:
 

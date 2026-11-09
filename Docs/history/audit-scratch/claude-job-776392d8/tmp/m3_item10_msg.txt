@@ -1,0 +1,107 @@
+Item 10 (M3): /readyz answers in the platform's envelope, without breaking the monitor that reads it
+
+Module 3's half of item 10. Module 2 landed the identical change in 9c74fa8; this is the same fix
+under this module's own gates, verified HERE rather than inherited.
+
+WHAT WAS WRONG. Nothing about what this surface CHECKED. /readyz already probed the two things that
+decide whether this Control can serve — Postgres reachable, singleton lock genuinely held — and
+already answered 200/503 honestly. What it did not do was answer in a shape any other module shared.
+This module returned {status, db, singleton_lock, at}; the verify module returned
+{ready, config, pepper, supabaseKey}. Same question, two field names for the verdict, no overlap in
+the dependency keys, and no way to write one dashboard against both. The platform contract (§1.9.2)
+fixes the ENVELOPE rather than the dependency list, which is the only fix that can work: the three
+modules genuinely do not have the same dependencies, so a uniform set of KEYS would be a lie. A
+uniform {status, checks{}, at} with per-module names INSIDE checks{} is not.
+
+  {"at":"…","checks":{"db":true,"singleton_lock":true},"db":true,"singleton_lock":true,"status":"ready"}
+
+That is the LIVE body from this run on localhost:9080, not an illustration. A cross-module consumer
+walks checks{} and renders whatever names it finds; it never needs to know that this module reports
+db+singleton_lock while the verify module reports db+pepper.
+
+WHY BOTH COPIES STAY. The obvious tidy version of this change nests the two booleans and deletes the
+top-level pair. That would have been a silent production break, and the consumers are named, not
+hypothetical:
+
+  - Docs/monitoring.md §2 instructs an operator to point a live uptime check at /readyz and alert on
+    `db:false` or `singleton_lock:false` — at the top level.
+  - tests/harness/run.sh's SUITE 4 greps the raw body for `"singleton_lock":true` as its anti-vacuity
+    proof that the FIRST Control really holds the lock while the second exits.
+  - Docs/operator-runbook.md quotes the body and hangs a mid-life-lock-loss recovery procedure off
+    the field name.
+
+An uptime monitor that stops finding its field does not error; it just stops alerting. The refactor
+would have looked like a success until the next unnoticed incident. So Rule 5 is honoured literally:
+checks{} is purely additive, the pre-existing four fields are byte-for-byte where they were, and both
+copies are computed from the SAME two variables so they cannot disagree by construction.
+
+THE TRAP THIS CHANGE SET OFF, AND THE FIX. encoding/json marshals map keys alphabetically, so
+checks{} lands BEFORE the top-level "db" and "singleton_lock" in the body — and it contains the same
+two key:value texts. That gave SUITE 4's `grep '"singleton_lock":true'` a second place to match. The
+check would have kept passing with the documented top-level field deleted: an anti-vacuity assertion
+made vacuous by the very change it was watching. run.sh now strips the checks object before grepping
+
+  READYZ_TOP="$(curl -fsS http://localhost:9080/readyz | sed 's/"checks":{[^}]*}//')"
+
+and reports the stripped body in its failure message. Verified rather than reasoned about: against a
+body with the top-level fields deleted and checks{} kept, the OLD bare grep PASSES and the new
+strip-then-grep FAILS.
+
+TESTS. services/control/internal/httpapi/readyz_test.go is new: 7 functions, 16 cases with subtests.
+It does not re-test "readyz reports the DB" (it always did, and leadership_test.go covers the lock
+semantics). It tests the four properties this change actually created:
+
+  1. the nested and top-level copies of each boolean can never disagree — trivially true today,
+     which is the point: it fails the moment someone adds a dependency to one place only;
+  2. every pre-existing top-level field is still present and un-nested;
+  3. checks{} tracks each dependency SEPARATELY, so a mixed state renders as a mixed state instead
+     of collapsing to the overall verdict;
+  4. the top-level fields stay distinguishable from the nested copy in the RAW body, and checks{}
+     stays a flat brace-free object — the two halves of the harness's sed being correct.
+
+Real infra, not fakes (Rule 3), and not by preference — h.db is a concrete *db.DB and
+singleton.Guard's held flag is unexported, so there is no seam to fake from this package. The ready
+side of every assertion runs against real Postgres on a throwaway database, which is REQUIRED rather
+than convenient: singleton.LockKey is session-scoped per database and the live stack's own Control
+holds it on `platform` while the harness runs, so acquiring there would block on a lock a passing
+test must not be able to steal. readyz needs no migrated template (Ping needs a pool;
+pg_try_advisory_lock needs no tables), so the suite is cheap and runs before any template exists.
+
+FAIL-VERIFIED — four breaks in THIS repo's health.go, each applied, run, reverted, and hash-proven
+byte-identical (health.go md5 80483e01de27187ea3abd41ab29a8bdf), plus one at the harness level. The
+recorded counts are what running THEM HERE produced, not what module 2's run produced:
+
+  - checks{} removed entirely -> 5 tests.
+  - checks{} built from `dbOK && lockOK` for BOTH keys — the collapse -> 2 tests, and only the two
+    MIXED subtests of ChecksMapAgrees fire; both_up still passes. That asymmetry is why the mixed
+    states are constructed at all: an all-up probe cannot detect a collapsed map.
+  - top-level db/singleton_lock removed, nested copy kept — the plausible "clean up the
+    duplication" edit -> 3 tests, one printing the body a monitor would be left with.
+  - checks{} given a nested sub-object ("db":{"reachable":true}, an "enriched" check) -> 5 tests,
+    including the one reporting that the harness's sed can no longer strip it.
+  - harness level: the old grep vs the new one on a broken body, as described above.
+
+DOCS. monitoring.md §2 now shows the full body and says explicitly WHICH copy to alert on and why
+both exist — a single-module uptime check keeps using the top-level fields; a cross-module consumer
+uses checks{}. operator-runbook.md's two spelled-out bodies gained checks{} with a note that every
+procedure in the runbook quotes the top-level names. api-contract.md documents the envelope, the 503
+condition, and that /healthz deliberately carries NO checks — it checks nothing, and a checks map
+there would invite pointing an uptime monitor at the wrong endpoint. /healthz was confirmed live to
+still be {"at":…,"status":"ok"} with no checks key.
+
+Untouched on purpose: Docs/history/** (CLAUDE.md:33 forbids editing it in build work) and
+byosmtp-module-local-test-guide.md's recorded live observations, which record what WAS observed at a
+past date; editing them would turn a true record into a false one.
+
+VERIFIED on real infra, this run, after `dev.sh build` then `dev.sh reset` (build first is
+load-bearing: reset does not rebuild, so a stale image serves the old body and the item-10 harness
+lines would exercise code that is not in the tree):
+
+  live DB      schema send_byo; roles send_byo_app(LOGIN)/send_byo_owner(NOLOGIN); zero byosmtp
+               residue in pg_roles or pg_namespace; 51 migrations through 0050; 85 config keys
+  harness      92 passed, 0 failed
+  gates        config_consumption, config_drift, contract_drift, drain_grace, migration_lint,
+               no_secret_leak, user_output_scrub — all 7 rc=0
+  gofmt clean; go vet rc=0
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>

@@ -1,0 +1,26 @@
+Re-pin all four modules after the first real-runner CI; add the Linux replica; say what "green" means
+
+Pins (each is the head of that repo's main):
+  coldmail-verify        b212524 -> c58dd3f   GitHub Actions: success (7/7 jobs)
+  coldmail-send-managed  8afd970 -> 50d33db   GitHub Actions: success (harness 62/0)
+  coldmail-send-byo      99e51ae -> 40a2478   GitHub Actions: FAILURE on one test (see below)
+  coldmail-platform      5d2d553 -> 73596ed   documentation (class 20, verification-runs)
+
+coldmail-send-byo is pinned although RED, deliberately and disclosed: it is the head, it carries
+every other fix, and its one red is a recorded open decision (M3-CI-OD-1 — the From-gate's DNS
+fail-closed property depends on the host's resolver search domain; reproduced by changing one line of
+/etc/resolv.conf; a product property, not a test artefact), awaiting a ruling. The test was not
+loosened. Leaving the previous pin would have pinned a commit that is red for a worse reason.
+
+README: states that green means a GitHub Actions run (until 2026-11-08 it had only ever meant a
+Docker Desktop run on Windows); adds the current state of the pins; corrects the stale line saying
+module 2 lacks the RAM-Postgres opt-in; restates the pinning rule as "GitHub Actions run is green,
+or a recorded open decision is disclosed".
+
+tools/ci-replica.sh + tools/runner/: runs a repo's workflow job locally on Docker Desktop's own
+Linux filesystem as an unprivileged uid with `bash -e` semantics. REHEARSAL ONLY — it found five of
+the eight failures behind false-green class 20 and then passed both sender modules that failed on
+the real runner. .gitattributes: LF on every platform (a core.autocrlf=true checkout would hand
+users CRLF scripts).
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

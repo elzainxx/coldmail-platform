@@ -302,7 +302,7 @@ real tree (exit 0). That control caught one bug in the checker (a failure count 
 
 Result on the published layout: **3 JSON files parse; 7 internal links resolve; 3 cross-repo citations resolve; 55 cited
 commit shas resolve** (the August record plus the 11 this record cites itself; the parent repo's commit is searched too). Eight further hex strings do not resolve to commits — they are the same **subagent ids** the August
-record excluded ("8 agent ids excluded"), named in `scratch/_inv_*.json`, not commit hashes. A green here means the
+record excluded ("8 agent ids excluded"), named in `Docs/history/scratch/_inv_*.json`, not commit hashes. A green here means the
 citations resolve, **not** that the prose is correct.
 
 ### Found while verifying the published result (not by the suites)

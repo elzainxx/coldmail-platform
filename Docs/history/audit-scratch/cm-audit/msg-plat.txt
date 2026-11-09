@@ -1,0 +1,25 @@
+records: class 20 (the environment-masked green); GitHub Actions is now the source of truth
+
+deferrals-and-false-greens.md: add false-green class 20 and the counts that follow from it
+(header, section 6 title and lead-in, section 7, README x2, verification-runs). Section 7 had
+predicted "a twentieth is likely" twice; the entry says it arrived, from outside the
+verification tooling this time, and keeps the earlier predictions as written.
+
+Class 20 records eight masked failures, each measured: bind-mount ownership, a warm cache over a
+dead Debian 11 base, a host-timing race in the test SMTP sink (10 worker tests, S1/S3 among them,
+red on Linux on Node 20 and 24), CR-stripping host shells vs Mailpit's CRLF, `grep -c` under
+`bash -e`, `node --test "glob"` needing Node >= 21, a SIGPIPE race (one false red in the
+consumption gate, one latent false green in go_suite), and a resolver search domain changing the
+From-gate's DNS-failure handling. The last is a product property, not a test artefact
+(M3-CI-OD-1, open). It also records, as evidence, that the investigator's own host tools shared the
+mask (a wrong first diagnosis), that a Linux rehearsal which passed both sender modules was still
+wrong about the real runner, the controls that now exist and were each shown to fail when broken,
+and what is NOT controlled (unpinned :latest images, no Gemfile.lock, Ruby 3.2 EOL).
+
+verification-runs.md: new top section. A result now counts only if it is a GitHub Actions run.
+M1 c58dd3f success (7/7 jobs); M2 50d33db success (harness 62/0); M3 c1e4eb5 FAILURE (harness 99/1,
+T5 only) — stated plainly, so the goal is met for two of three modules. Every run URL was checked
+against GitHub for the commit and conclusion cited. Lists what was rehearsed but NOT run (M2 default-mode
+harness, a postgres stop/start drill, the Ruby 3.3/3.4 experiment) because the host ran low on memory.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

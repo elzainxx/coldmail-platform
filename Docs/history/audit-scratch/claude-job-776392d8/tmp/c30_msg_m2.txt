@@ -1,0 +1,47 @@
+test: wire two test packages that were written, passing, and run by NOTHING
+
+The module-2 half of a cross-repo audit (module 3 had four; see its own commit).
+Both packages' tests were passing and executed by nothing:
+
+  services/control/internal/workerlink   2 tests
+  services/control/internal/workerproto  1 test
+
+WHY NOTHING CAUGHT IT. tests/harness/run.sh names each package explicitly and
+never runs `go test ./...`; CI runs gofmt, `go vet ./...`, and this script. `go
+vet` type-checks test files WITHOUT running them, so an unwired package compiles,
+vets clean, and the harness prints a green total that never included it. Not a
+missed signal — there was no signal.
+
+run.sh already warned about this in prose (internal/httpapi's first test file
+landed with item 7b, commit e3fee99, and nothing ran it). The warning was correct
+and did not prevent the recurrence, because a comment cannot enumerate a package.
+
+Both need no database and no stack (verified with every TEST_* variable unset), so
+they are listed before any template build.
+
+BREAK-VERIFIED by breaking PRODUCTION code, not the test — wiring a test proves
+nothing unless a real regression turns it red. Added `omitempty` to
+Variation.CSSSkipBelowPx's JSON tag in workerproto.go, the regression the test
+exists for:
+
+  before wiring:  59 passed, 0 failed   (the break was INVISIBLE)
+  after wiring:   61 passed, 0 failed
+  under break:    59 passed, 2 failed   ->  FAIL: variation wire-format round-trip
+                                            FAIL: Phase 3 dispatch
+  after restore:  61 passed, 0 failed
+
+Worth recording: the break turned TWO suites red, not one. Phase 3 dispatch also
+detects it — so this particular field had partial coverage from a wired suite,
+and the workerproto test is the one that says WHY (it asserts at the JSON encoding
+boundary and names the omitempty class in its failure message) rather than just
+that something downstream broke. The other two tests in these packages have no
+such backstop.
+
+Production file restored and md5-verified (95f223bebe4cf3ca5a516600acee7df3).
+
+RUNS (pasted in the transcript)
+  dev.sh build rc=0, dev.sh reset rc=0
+  dev.sh test: HARNESS RESULT: 61 passed, 0 failed, both new suites named PASS
+  all 6 gates rc=0; go vet rc=0
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>

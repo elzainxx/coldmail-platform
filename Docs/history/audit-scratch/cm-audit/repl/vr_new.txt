@@ -1,0 +1,104 @@
+
+> **Two records live in this file.** The section directly below is the **current** one (2026-11-07, after the
+> fix-and-publish pass). Everything from "The four repos" onward is the **August 2026 record, kept as written**:
+> it is history, and its commit hashes and counts describe the trees as they were on 2026-08-07.
+
+---
+
+## Re-verification, 2026-11-07 — after the fix-and-publish pass
+
+**Why this section exists.** Three months after the August record, the audit re-ran everything and found one
+suite red for a reason that had nothing to do with any change: `coldmail-verify`'s raw-sidecar table had
+partitions for 2026-07..09 only, so from 2026-10-01 every SMTP verdict write failed. A suite that was green
+on 2026-08-07 was red on 2026-11-07 because the **date** moved. This section records the fixes and the runs
+that cover them. The same rule applies as in August: **"verified" is a claim about a specific execution.**
+
+### What changed (and where it is argued)
+
+| change | repo | where |
+|---|---|---|
+| Vulnerable pgx / `x/text` / `x/net` and Go stdlib cleared by upgrading the **builder** (`golang:1.23-alpine` → `golang:1.26-alpine`, go1.26.10), not by reverting | M2, M3 (and `x/net`, `x/text` in M1) | `future-work.md` row + `go-live-checklist.md` §9 in each |
+| `verification_raw` partition cliff: migration `0014`, a maintenance loop, dial `TM_RAW_PARTITION_MONTHS_AHEAD` | M1 | `Docs/adr/ADR-0017-raw-partition-maintenance.md` |
+| #141: `acknowledge_alignment_warning` accepted but not recorded (admin create; both PATCH handlers) | M3 | `Docs/api-contract.md` |
+| #131: RAM-backed Postgres made opt-in (`DEV_RAM_PG=1`), with a new gate `postgres_durability.sh` | M3 | `scripts/dev.sh`, `Docs/module-3-local-test-guide.md` |
+| LICENSE + NOTICE (M2), `.gitignore` (platform), default branch `main` | M2, platform; M2/M3/platform | each repo |
+| `.gitattributes` forcing LF — **found while verifying the published result**, see below | all four | each repo's `.gitattributes` |
+
+`govulncheck` (live call paths), before → after, on the builder named above: **M1** `control-plane` 17 → 0;
+**M2 / M3** `services/control` 41 → 0, `send-*-migrate` 27 → 0, `tests/harness` 27 → 0, `provision-worker` 0 → 0.
+It reported "No vulnerabilities found" for all nine Go modules. **This is a dated result**: the advisory
+database moves, so it is re-run at pilot time (each go-live document says so).
+
+### The runs that cover the published commits
+
+Cloned with a plain `git clone --recurse-submodules https://github.com/elzainxx/coldmail.git` (parent `1a6536b`),
+then each repo cloned again from that checkout (`core.autocrlf=false`) into a clean directory and run in Docker:
+clean-slate database/stack, full suite, every gate. Go ran only in containers. Nothing was run on the Windows host.
+
+| Repo | Commit | Result | Evidence |
+|---|---|---|---|
+| **coldmail-verify** (M1) | `b212524` | **18 steps, 0 failed, ALL GREEN** | `PASS=401 FAIL=0 SKIP=5` (was `388 / 1 / 5` in the audit), 23 packages ok; `401 of 406 declared test(s) EXECUTED`, the 5 skips being the sanctioned PENDING-GAP harness; RSpec **71 examples, 0 failures**; `truemail (3.3.1)`; 14 migrations, tables 0 → 25 |
+| **coldmail-send-managed** (M2) | `8afd970` | **19 steps, 0 failed, ALL GREEN** | `HARNESS RESULT: 62 passed, 0 failed`; 10 packages, every one `declared==ran skipped=0` (9, 16, 16, 2, 1, 9, 72, 168, 4, 54); 10 of 10 gates |
+| **coldmail-send-byo** (M3) | `99e51ae` | **23 steps, 0 failed, ALL GREEN** — run in the **new default (non-RAM) mode** | `HARNESS RESULT: 100 passed, 0 failed`; 12 packages, every one `declared==ran skipped=0` (adminapi 105, platformapi 160 — up from 102 and 158 by exactly the tests added for #141); 12 of 12 gates including `postgres_durability` |
+| **coldmail-platform** | `f461ee2` (this record is the next commit) | docs-only; citation checks below | see below |
+
+The failing M1 test was `TestPGAppendWithRawSidecar`. It and every new test pass in that run:
+`TestPGRawPartitions_LegacyCliffIsReal`, `…_MaintenanceKeepsNMonthsAhead`, `…_NoopMaintenanceLeavesTheCliff`
+(the standing control: with a tick that does nothing the headroom guard **fails**), `…_RuntimeDoorIsNarrow`,
+`…_BoundsAreUTCMonthAligned`, `…_ConcurrentTicksDoNotCollide`, and `TestBuildAPI_StartsPartitionMaintenance`.
+
+**Earlier rounds, for completeness** (same method, the committed HEADs of that moment): after the
+security/partition/#141/#131 commits — M1 `61ef119` 18 steps, M2 `4640dfb` 19, M3 `50dd2cb` 23, 0 failed each (M3 in
+the RAM mode CI uses); after the hygiene commits — M1 `e5b1472` 18, M2 `ffe42d5` 19, M3 `e464b39` 23, 0 failed each.
+The table above is the one that covers what was published.
+
+**Every fix was break-verified, not just run green.** The guard was neutered and restored byte-identical each time:
+the partition tick disabled (3 tests red), the `buildAPI` wiring call removed (the end-to-end test red while every
+store test stayed green), the advisory lock removed (the concurrency test fails 3 of 3 with `relation … already
+exists`), admin create no longer recording the acknowledgment, both PATCH handlers ignoring an unchanged-address
+acknowledgment (each turns exactly its own test red), `dev.sh` re-merging the RAM override (the new gate fails on three
+assertions), and an unrenderable compose config (the gate fails loudly rather than passing on an empty render).
+
+### The platform repo's own check
+
+`coldmail-platform` has no code; its "suite" is whether its citations resolve. The August runner (`cprun.sh`) was kept
+outside the repos and **no longer exists**, so `tools/platform-check.sh` (outside the repos, in `coldmail/tools/`) is a
+**re-implementation of four of its five checks** — not the original. The fifth (every sha attributed to a *named* repo
+is in that repo) was **not** re-implemented. The new checker was itself checked against a throwaway copy with a broken
+link, a broken cross-repo citation, invalid JSON and bogus shas planted: it failed on all of them (exit 1) and passes the
+real tree (exit 0). That control caught one bug in the checker (a failure count lost in a pipe subshell).
+
+Result on the published layout: **3 JSON files parse; 7 internal links resolve; 3 cross-repo citations resolve; 44 cited
+commit shas resolve.** Eight further hex strings do not resolve to commits — they are the same **subagent ids** the August
+record excluded ("8 agent ids excluded"), named in `scratch/_inv_*.json`, not commit hashes. A green here means the
+citations resolve, **not** that the prose is correct.
+
+### Found while verifying the published result (not by the suites)
+
+- **Submodule checkouts came out with CRLF.** `git clone -c core.autocrlf=false` configures only the **top-level**
+  repository, so a `--recurse-submodules` clone on a `core.autocrlf=true` host checked the three modules out with CRLF —
+  13 / 18 / 21 shell scripts — which bash and `gofmt` treat as content. Every suite had been green only because the
+  runners clone with an explicit `core.autocrlf=false`. It was found by cloning the *published* parent and counting, and
+  fixed in each repo with a `.gitattributes` (`* text=auto eol=lf`, plus an exact `-text` carve-out for every file already
+  stored with CRLF, so no vendored or frozen byte changed; `git add --renormalize .` stages nothing but that file). A plain
+  clone now has **0** non-exempt CRLF files; the exempt files still read CRLF by design (76 / 1 / 1 / 0).
+- **The Docker engine dropped three times** on this 8 GB WSL VM (a `govulncheck` call-graph run, twice; a `compose build`
+  that compiles two Go images at once). It is an engine failure (`rpc error … EOF`), not a build error; the retries used
+  `--memory` / `GOMEMLIMIT` caps and `COMPOSE_PARALLEL_LIMIT=1`. The VM size is the owner's setting and was left alone.
+- **Runner-process hygiene.** An earlier runner survived a `pkill` and started a second, concurrent M3 run; both were
+  stopped and the affected runs redone from clean directories. Their output is not counted anywhere above.
+
+### What this section does not claim
+
+- **That the campaign-expiry gap the local test run recorded is closed.** Its evidence is in none of the four
+  repositories, so it could not be located. `campaign_expiry_mode` defaults to `shadow`, so expiry does not enforce until promoted.
+- **That a real provider works.** Nothing here touched one. The real-provider smoke test (M3 go-live §11) is still ahead.
+- **That module 2 has #131 fixed.** It does not; it is registered in `coldmail-send-managed/Docs/future-work.md`.
+- **That the CI workflows were run.** No GitHub Actions run happened; the *steps* of each were run locally in Docker.
+  M1's `code-review` job is a placeholder that is not locally executable.
+- **That the secret sweep proves absence.** Two independent scanners (gitleaks, and a hand-written pattern sweep with its
+  own planted-secret control) found nothing in the full history of any repo, except four lines of vendored upstream sample
+  text in M1, accepted by exact fingerprint in `.gitleaksignore`. Pattern scanners do not find every secret.
+- **That a re-run later would reproduce these numbers.** M1's own history is the counter-example.
+
+---

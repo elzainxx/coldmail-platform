@@ -1,0 +1,28 @@
+== m3 (coldmail-send-byo) started 2026-11-07 14:54:37
+HEAD: 7805a1c 2026-08-07 08:55:20 +0300 Ledger close: rule R2-5, register three ids that were ruled but never filed   dirty=0   (fresh clone, autocrlf=false)
+  tools/send-byo-migrate/bin absent in fresh checkout (no stale copy) rc=0   OK
+  gofmt + go vet (4 modules) [golang:1.23-alpine]                    rc=0   OK
+  go build tools/send-byo-migrate                                    rc=0   OK
+  scripts/dev.sh certs                                               rc=0   OK
+  scripts/dev.sh build (images from THIS source)                     rc=0   OK
+  scripts/dev.sh reset (postgres->migrate->seed->rest)               rc=0   OK
+  worker registered cleanly on FIRST attempt                         rc=0   OK
+  scripts/dev.sh test (real-infra harness)                           rc=1   FAIL
+  HARNESS RESULT line: N passed, 0 failed                            rc=1   FAIL
+  per-package arithmetic: declared==ran, declared>0                  rc=1   FAIL
+  gate: config_consumption                                           rc=0   OK
+  gate: config_consumption_selftest                                  rc=0   OK
+  gate: config_drift                                                 rc=0   OK
+  gate: contract_drift                                               rc=0   OK
+  gate: drain_grace                                                  rc=0   OK
+  gate: dsn_scrub_wiring                                             rc=0   OK
+  gate: migration_lint                                               rc=0   OK
+  gate: no_secret_leak                                               rc=0   OK
+  gate: test_enumeration                                             rc=0   OK
+  gate: test_enumeration_selftest                                    rc=0   OK
+  gate: user_output_scrub                                            rc=0   OK
+  scripts/dev.sh down                                                rc=0   OK
+================ M3 SUMMARY ================
+  22 steps, 3 failed
+  RED - see /tmp/cm-audit/logs/m3
+  finished 2026-11-07 14:59:45

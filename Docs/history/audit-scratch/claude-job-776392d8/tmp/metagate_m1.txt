@@ -1,0 +1,101 @@
+ci: add the test-enumeration META-GATE — guard M1's test DISCOVERY, not a package list
+
+The module-1 counterpart of the meta-gate added to module 3 (220e360) and module 2
+(96b2e48). Completes the class fix across all three repos.
+
+THE CLASS. Four times across this project, work that was written, correct, and
+passing was executed by NOTHING, with every indicator green:
+
+  * module 2: internal/httpapi's first test file (e3fee99); then workerlink +
+    workerproto (2e8be72).
+  * module 3: config_consumption_selftest.sh — a BLOCKING control the workflow
+    never named — plus four more Go packages, 31 tests, from the same audit.
+
+A prose warning was added after the first incident and three more packages
+accumulated behind it. A warning comment is not a control.
+
+WHY M1'S RULES ARE DELIBERATELY NOT M2/M3'S. Those repos enumerate each Go package
+by name on a `go_suite` line, so a new package is invisible until someone edits the
+list — that is the exposure their gate closes. M1 does not have it: CI runs
+`go test -v ./...` over a single module, and RSpec uses its default
+`spec/**/*_spec.rb` glob with no pattern/exclude/default_path override anywhere
+(.rspec carries only --require and --format). Both discover new tests
+automatically. Porting M2/M3's rule 1 here would have produced a gate that can
+never fail — the exact vacuity this project keeps hitting, and the reason a
+sweep of M1 for unwired packages came back clean rather than "not applicable."
+
+So this gate guards the DISCOVERY PROPERTIES THEMSELVES — the five ways M1 can
+silently lose automatic discovery:
+
+  1. CI still runs `go test ./...` and not a hand-listed subset. If that changes,
+     M1 ACQUIRES M2/M3's exposure and the gate says to port their rule, not to
+     delete this one.
+  2. Exactly ONE go.mod. `go test ./...` walks only the module it runs in, so a
+     second module's tests vanish from a green run with no error and no skip.
+  3. No _test.go behind a build constraint. A //go:build tag removes a file from
+     `go test ./...` while it still compiles and vets clean under that tag — the
+     same "green signal, zero coverage" shape as an unwired package, and the only
+     way to defeat rule 1's automatic discovery without touching CI. BOTH syntaxes
+     are checked; Go still honours the legacy `// +build`, so knowing only the
+     modern form would make the rule bypassable in one line.
+  4. RSpec discovery is not narrowed — neither .rspec (--pattern,
+     --exclude-pattern, --default-path) nor spec_helper.rb (config.pattern).
+     Either drops spec files while the suite still reports green.
+  5. Every scripts/check-*.sh is named in ci.yml. The one rule that transfers
+     verbatim, and the one whose failure mode is already on this project's record.
+
+gen-config-reference.sh is deliberately OUT of rule 5's scope: it is the
+GENERATOR, and it is exercised in CI through check-config-reference-fresh.sh, which
+IS enumerated. The glob is check-*.sh precisely so a generator cannot be mistaken
+for a gate; selftest case 10 pins that so a later "tidy this to scripts/*.sh"
+cannot land quietly.
+
+A REAL DEFECT, FOUND BY BREAK-VERIFYING RATHER THAN BY REASONING. Rule 1's first
+version grepped for `go test ./...` anywhere in the workflow. ci.yml's own comment
+explaining this gate contains that string. So the break — replace the real command
+with a hand-listed package subset — left the gate GREEN: it was satisfied by prose
+ABOUT itself, the purest form of the vacuity it exists to prevent. Rule 5 had the
+`run:` anchor from the start; rule 1 did not, and only running the break on the real
+tree showed the difference. Fixed by anchoring to a `run:` line, with selftest case
+11 reproducing the exact shape (hand-listed command PLUS a comment mentioning the
+glob) so the anchor cannot be dropped again.
+
+BREAK-VERIFIED ON THE REAL TREE — every rule, each restored and md5-verified:
+
+  rule 1  hand-listed packages in ci.yml, comment intact  -> rc=1 (after the fix;
+          rc=0 BEFORE it, which is how the defect above surfaced)
+  rule 2  a second real go.mod at tools/scratch/          -> rc=1, names it
+  rule 3  //go:build integration prepended to the REAL
+          internal/store/pg_grants_test.go                -> rc=1, names it
+  rule 4  --pattern appended to the REAL .rspec           -> rc=1, quotes the line
+  rule 5  deleted check-no-secret-leak.sh's run: line     -> rc=1, names it
+  unbroken                                                 -> rc=0
+
+  restored: ci.yml md5 befead0b086e69ce99848b0335a130ff
+            .rspec md5 d710c9cbe851b9d0b07028b1c4470a9f
+            pg_grants_test.go md5 c200c8476fdfbe129d789e753af52a69
+
+Its very FIRST run failed for the right reason — rule 5 caught its own absence from
+ci.yml before it was wired.
+
+RUNS (pasted in the transcript). M1's Go work needs Go >= 1.26, so the alpine 1.23
+shim cannot serve it; run in golang:1.26 (Debian — alpine has no bash, and
+`apk add` cannot reach the network through the intercepting proxy) with the host
+module cache mounted and GOPROXY=off, which is the same CA prerequisite
+Docs/ONBOARDING.md §5 documents.
+
+  go build ./... + go vet ./...        BUILD+VET OK
+  go test ./... with real Postgres 16 + all 13 migrations applied:
+      22 packages ok, 0 failed, 0 SKIP
+  the D13 grant tests genuinely RAN (they are what item 3 is about) —
+      TestPGGrants_RoleSwitchActuallyBites          PASS
+      TestPGGrants_RuntimeCannotMutateTheLog        PASS
+      TestPGGrants_RuntimeCannotDeleteSendOutcomes  PASS
+      TestPGGrants_RuntimeCannotDeleteRateBudgets   PASS
+      TestPGGrants_RuntimeCannotIssueKeys           PASS
+  all 5 check scripts rc=0 (was 3; this commit adds the 4th and 5th):
+      config-reference-fresh, docs-updated, no-secret-leak,
+      test-enumeration, test-enumeration-selftest
+  selftest: 11 cases (3 accept, 8 reject), all 5 rules exercised
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>

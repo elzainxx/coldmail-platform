@@ -1,0 +1,93 @@
+# Real-infra CI (Phase 0). Runs on every push/PR; a passing run is a REQUIRED status check
+# on the default branch. Brings up the SAME compose stack devs run (base + harness override),
+# executes the real-infra behavioral harness, then the three BLOCKING drift gates. Nothing is
+# mocked — real Postgres + real Control + real worker + real Mailpit (CLAUDE.md Rule 3).
+name: real-infra
+on: [push, pull_request]
+
+jobs:
+  behavioral:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - name: Go lint — gofmt + vet (BLOCKING; keeps code/format from drifting)
+        run: |
+          test -z "$(gofmt -l services/control tools/send-managed-migrate tools/provision-worker tests/harness)" \
+            || { echo 'gofmt: files need formatting:'; gofmt -l services/control tools/send-managed-migrate tools/provision-worker tests/harness; exit 1; }
+          (cd services/control && go vet ./...)
+          (cd tools/send-managed-migrate && go vet ./...)
+          (cd tools/provision-worker && go vet ./...)
+          (cd tests/harness && go vet ./...)
+
+      - name: Generate dev certs/secrets + provision dev worker (writes .env)
+        run: bash scripts/dev.sh certs
+
+      - name: Bring up the stack (base + harness override; blocks on healthchecks)
+        run: bash scripts/dev.sh up
+
+      - name: Real-infra behavioral harness (10 checks, must be all-green)
+        run: bash scripts/dev.sh test
+
+      - name: Drift gate — config reference vs seeded send_managed.config (BLOCKING)
+        if: always()
+        run: bash tests/harness/checks/config_drift.sh
+
+      - name: Drift gate — served routes vs api-contract.md (BLOCKING)
+        if: always()
+        run: bash tests/harness/checks/contract_drift.sh
+
+      - name: Drift gate — migration chain lint (BLOCKING)
+        if: always()
+        run: bash tests/harness/checks/migration_lint.sh
+
+      - name: Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)
+        if: always()
+        run: bash tests/harness/checks/config_consumption.sh
+
+      # The PAIRED CONTROL for the step above. A separate step, not folded into the gate, so a failure
+      # names which of the two broke. Load-bearing: the real 54-key ledger reaches NONE of the gate's
+      # failure branches, and one of them (the consumer grep) was found on 2026-08-05 to accept a
+      # COMMENT as a consumer. Needs no database or stack — it builds a throwaway repo skeleton.
+      - name: Consumption gate SELF-TEST — the failure branches the real ledger never reaches (BLOCKING)
+        if: always()
+        run: bash tests/harness/checks/config_consumption_selftest.sh
+
+      # The META-GATE: it checks that the other gates and the test suites are actually WIRED.
+      # internal/httpapi's first test file (e3fee99) landed with nothing running it, and two more
+      # packages — workerlink, workerproto — accumulated behind the prose warning run.sh added after
+      # that incident (2e8be72). A warning comment is not a control. These two steps are the control.
+      # Neither needs the stack.
+      - name: Enumeration meta-gate — every test package and gate script is actually wired (BLOCKING)
+        if: always()
+        run: bash tests/harness/checks/test_enumeration.sh
+
+      - name: Enumeration meta-gate SELF-TEST — the paired control (BLOCKING)
+        if: always()
+        run: bash tests/harness/checks/test_enumeration_selftest.sh
+
+      - name: Shutdown gate — SIGTERM grace clears shutdown_drain_timeout_sec (BLOCKING)
+        if: always()
+        run: bash tests/harness/checks/drain_grace.sh
+
+      - name: Security gate — no credential leak in service logs (BLOCKING)
+        if: always()
+        run: bash tests/harness/checks/no_secret_leak.sh
+
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          docker compose -f docker-compose.yml -f tests/harness/compose.test.yml ps || true
+          docker compose -f docker-compose.yml -f tests/harness/compose.test.yml logs control worker migrate || true
+
+      - name: Tear down
+        if: always()
+        run: bash scripts/dev.sh down || true
+
+  # E11 (single-Control throughput-ceiling LOAD test) is a before-you-SCALE gate, NOT a
+  # per-push blocker (Phase 9.5 §7). It runs on demand, not here:
+  #   workflow_dispatch -> bash scripts/dev.sh test suites/load   (added when E11 lands)

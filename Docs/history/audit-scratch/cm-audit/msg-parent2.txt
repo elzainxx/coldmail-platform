@@ -1,0 +1,13 @@
+Re-pin to the final verified heads (M2 098427e, M3 e53f263, platform fb619e8)
+
+  coldmail-verify        c58dd3f   GitHub Actions: success (7/7 jobs)             [unchanged]
+  coldmail-send-managed  50d33db -> 098427e   success (harness 62/0; second consecutive green)
+  coldmail-send-byo      40a2478 -> e53f263   FAILURE (harness 99/1: T5 only — M3-CI-OD-1)
+  coldmail-platform      73596ed -> fb619e8   verification-runs with the final heads and M3's full CI history
+
+coldmail-send-byo stays pinned although red, as before and for the same disclosed reason (it is the
+head and carries every other fix; the one red is a recorded open decision awaiting a ruling). README
+now also states that one M3 run in three additionally failed the Phase 3 dispatch package with every
+test passing: intermittent, cause unknown, nothing claimed about it.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

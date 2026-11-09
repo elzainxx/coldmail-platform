@@ -1,0 +1,23 @@
+SECRET_ASSIGN	control-plane/internal/api/readyz_test.go	bcf6324	Pepper = "readyz-t...(len 46)
+CONN_STRING	Docs/adr/ADR-0016-no-credential-in-a-log-line.md	29e6204	postgres://u:***@h
+CONN_STRING	control-plane/internal/store/dsn_redaction_test.go	29e6204	postgres://u:***@h
+SECRET_ASSIGN	scripts/check-no-secret-leak.sh	29e6204	PEPPER="canaryPEPP...(len 28)
+SECRET_ASSIGN	scripts/check-no-secret-leak.sh	29e6204	TOKEN="canaryNODET...(len 27)
+CONN_STRING	Docs/ONBOARDING.md	80786ba	postgres://postgres:***@localhost:5432
+CONN_STRING	README.md	80786ba	postgres://postgres:***@localhost:5432
+SECRET_ASSIGN	control-plane/internal/secrets/secrets.go	40ac247	Tokens   = "TM_NOD...(len 26)
+SECRET_ASSIGN	control-plane/internal/router/router.go	00f2139	Token: skipTokenFo...(len 22)
+SECRET_ASSIGN	control-plane/internal/router/router.go	fb46642	Token: skipTokenFo...(len 19)
+SECRET_ASSIGN	control-plane/internal/orchestrator/smtp_stage.go	d1184c4	token = o.smtp.Tok...(len 23)
+CONN_STRING	control-plane/config/secrets.example.env	6421da1	postgres://user:***@host:5432
+CONN_STRING	control-plane/internal/store/postgres_test.go	3dca52a	postgres://postgres:***@localhost:55432
+CONN_STRING	control-plane/migrations/README.md	b5c0115	postgresql://postgres:***@db.[PROJECT].supabase.co:5432
+CERTIFICATE	scripts/export-norton-ca.ps1	21ad9ad	-----BEGIN CERTIFICATE-----
+SECRET_ASSIGN	control-plane/config/secrets.example.env	d3e56d8	tokens: "nodeid=to...(len 21)
+SECRET_ASSIGN	Docs/truemail-ground-truth.md	d582ab4	TOKEN=phase0-stock...(len 30)
+SECRET_ASSIGN	box/docker-compose.yml	d582ab4	TOKENS:-phase0-sto...(len 32)
+SECRET_ASSIGN	box/truemail-rack/README.md	d582ab4	TOKENS=a262d915-15...(len 43)
+CONN_STRING	box/truemail-rack/README.md	d582ab4	http://localhost:***@bestweb.com.ua
+SECRET_ASSIGN	brain/config/secrets.example.env	d582ab4	PEPPER=REPLACE_WIT...(len 62)
+SECRET_ASSIGN	brain/config/secrets.example.env	d582ab4	TOKEN=REPLACE_WITH...(len 36)
+SECRET_ASSIGN	brain/config/secrets.example.env	d582ab4	tokens: "nodeid=to...(len 21)

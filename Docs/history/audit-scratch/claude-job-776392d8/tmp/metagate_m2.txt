@@ -1,0 +1,81 @@
+ci: add the enumeration META-GATE — CI now fails when a test or gate is unwired
+
+The module-2 half; module 3 has the same pair (220e360). Wiring packages fixed the
+INSTANCE (2e8be72). This fixes the CLASS.
+
+THE CLASS. Four times across this project, work that was written, correct, and
+passing has been executed by NOTHING:
+
+  * internal/httpapi's first test file (item 7b, e3fee99) — no line ran it.
+  * internal/workerlink + internal/workerproto HERE — 3 tests, 0 skips, all
+    passing — found unwired by a cross-repo audit and wired in 2e8be72.
+  * module 3: config_consumption_selftest.sh, a BLOCKING control the workflow
+    never named, plus four more Go packages (31 tests) from the same audit.
+
+There was no signal to miss in ANY of them, which is the difficulty: run.sh names
+each Go package explicitly (deliberately — each suite gets its own PASS/FAIL line)
+and CI runs gofmt + `go vet ./...` + the harness + each gate by name. `go vet`
+TYPE-CHECKS test files WITHOUT running them. So an unwired package compiles, vets
+clean, and the harness prints a green total that silently excludes it. Identical
+signals, different truth.
+
+WHY A COMMENT WASN'T ENOUGH. run.sh has carried a prose warning about exactly this
+since the httpapi incident — and workerlink/workerproto accumulated behind it
+anyway. A warning comment is not a control. The fix for "someone might forget X"
+is never a note reminding them; it is a mechanism that fails when X is missing —
+the same reasoning as the ADR-0008 grants invariant and config_consumption.
+
+THIS REPO IS ALREADY CLEAN on both rules: 9 packages with test files, all
+enumerated; 6 gates, all named in the workflow. That is deliberate timing — the
+gate is added to keep a clean tree clean, not to clear a backlog. It also means
+the gate's only observable behaviour here is printing OK, which is precisely why
+the paired control is not optional.
+
+WHAT LANDS
+  tests/harness/checks/test_enumeration.sh          the gate, two rules:
+    1. every directory containing *_test.go is named on a go_suite line in run.sh
+    2. every tests/harness/checks/*.sh is named in .github/workflows/real-infra.yml
+  tests/harness/checks/test_enumeration_selftest.sh the paired control, 6 cases
+  .github/workflows/real-infra.yml                  BOTH wired, if: always()
+
+DESIGN NOTES (identical to module 3's, deliberately — one mechanism, two repos)
+  * NO EXEMPTION LIST. This project's history is several instances of an exemption
+    quietly becoming permanent. If a package has test files, it runs.
+  * FILESYSTEM DISCOVERY (find), not `go list ./...`. Needs no Go toolchain, and
+    it SEES a directory whose test files do not compile — which `go list` reports
+    as an error rather than as a package, exactly when you most want to know.
+    vendor/ is excluded, and so is Docs/, which holds the gitignored reference
+    codebase and its own nested .git.
+  * Rule 2 covers this gate itself but CANNOT detect its own absence from the
+    workflow. That hole is why the selftest's rule 0 asserts BOTH scripts are named
+    in CI, and why both are wired in this same commit.
+
+BREAK-VERIFIED ON THE REAL TREE — the point is not that the gate exists, it is
+that it BITES here, not merely in its own fixtures. Two real breaks at once:
+  A. deleted `go_suite services/control/internal/credential` from run.sh
+  B. deleted the `run: bash .../no_secret_leak.sh` line from real-infra.yml
+
+  before breaks:  rc=0, "all 9 package(s) ... and all 8 gate script(s)"
+  under BOTH:     rc=1, names services/control/internal/credential AND
+                  no_secret_leak.sh, each with its own remediation message
+  after restore:  rc=0
+                  run.sh md5        c618d95e34c319608f19c01a31cd8f6f
+                  real-infra.yml md5 e5cc024240327a5020c94b97a32bb38d
+
+Both defects in ONE run: rule 1 does not short-circuit rule 2. A run reporting only
+the first sends someone back for a second round trip and implies the other rule was
+satisfied. Selftest case 4 pins that.
+
+The selftest passed all 6 cases on its FIRST run here — the two bugs it found in
+module 3 (a `grep` exit-1 under `set -euo pipefail` that killed the gate silently
+when NO go_suite call lines exist, and orphan gate scripts leaking between cases so
+case 6 failed for rule 2 while claiming to test rule 1) were fixed there before this
+port, and their comments are carried over so neither can be reintroduced as a
+"simplification."
+
+RUNS (pasted in the transcript)
+  dev.sh build rc=0; dev.sh reset rc=0
+  dev.sh test: HARNESS RESULT: 61 passed, 0 failed
+  all 8 gates rc=0 (was 6; this commit adds the 7th and 8th)
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>

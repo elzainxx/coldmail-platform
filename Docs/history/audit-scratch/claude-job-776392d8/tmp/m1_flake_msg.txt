@@ -1,0 +1,84 @@
+Fix a cross-package test-isolation defect I introduced in 29e6204 (M1)
+
+WHAT BROKE. `go test ./internal/api/ ./internal/queue/ ./internal/store/` failed 5 runs out of 5:
+
+  queue drainer: settle error ...: store: settle insert verification: ERROR: duplicate key value
+    violates unique constraint "verifications_pkey" (SQLSTATE 23505)
+  --- FAIL: TestPGCrossTenantJobRead_404IdenticalAndZeroRows
+      pg_tenancy_test.go:214: fixture not drained (complete=false) — the leak test needs settled
+        verdicts to be leakable
+
+Two fixtures in two different packages were minting the SAME verification ids. This file's
+pgSettleComputer built `"018f0000-0000-7000-8000-" + tenancyHex12()` where tenancyHex12() was a
+from-1 process counter; internal/queue/pg_e2e_test.go has held randHex12() — byte-identical
+algorithm, identical `018f0000-0000-7000-8000-` prefix — since before this file existed. Both insert
+into `verifications`, which is APPEND-ONLY by design (Door 2: insertVerificationTx has no upsert and
+no ON CONFLICT, so a repeat id is a hard 23505, not a silent overwrite). Two packages, two counters
+each starting at 1, one shared TM_TEST_DATABASE_URL: the first ids each package mints are identical
+by construction, and `go test ./...` runs packages in PARALLEL against that one database.
+
+BLAME, ESTABLISHED WITH GIT RATHER THAN ASSUMED. queue/pg_e2e_test.go exists at fe8fde6 (pre-dates
+this work); api/pg_tenancy_test.go does not — it was added by 29e6204, my own Pass 2 C1 commit for
+item 2 / D1. The defect is mine, and the pre-existing file is the innocent party, so the fix goes
+here and queue/ is untouched.
+
+WHY THIS WAS NOT A HARMLESS LOCAL FLAKE. It passed on re-run, which is exactly how it would have
+been dismissed. It is live in CI: the control-plane job runs `go test -v ./...` against ONE Postgres
+service container. Whether it fires depends on which package's inserts reach the table first — a
+scheduling race, so CI was red-on-some-runs from 29e6204 onward. A test that fails one run in three
+teaches the team to hit re-run, which is worse than a test that always fails.
+
+THE FIX. crypto/rand, not a wider counter and not a nanosecond timestamp:
+
+  func tenancyVerificationID() string {
+      b := make([]byte, 6)
+      if _, err := rand.Read(b); err != nil { panic(...) }
+      return "018f0000-0000-7000-8000-" + hex.EncodeToString(b)
+  }
+
+A wider or offset counter would still be call-order-derivable, so the next fixture that picks the
+same prefix — a reasonable thing to do, since these ids are deliberately shaped to sort as UUIDv7 —
+collides again. Randomness makes the ids not derivable from call order at all, which is the property
+the bug actually needed. The panic is deliberate: a fixture that cannot get entropy must stop, not
+fall back to something predictable.
+
+THE CONTROL, AND WHY IT HAS TWO HALVES.
+TestPGTenancyFixtureIDsDoNotCollideWithSiblingPackages asserts:
+
+  (a) 512 calls are all unique and each is exactly 36 chars;
+  (b) NONE of them equals ordinal(i) for i in 1..512, where ordinal() reproduces the from-1 counter
+      with the same prefix — i.e. the ids are not derivable from call order.
+
+Half (a) alone is not enough, and that is the whole lesson of this defect: a counter satisfies
+"unique per call" PERFECTLY within one process and still collides across packages. Half (b) is what
+catches it. The test needs no database, so it runs everywhere the package does.
+
+FAIL-VERIFIED — both breaks applied, run, and observed, then the file restored and hash-proven
+byte-identical (md5 5e9a3126076828e731c277228dfeed08):
+
+  - BREAK 1: counter body restored. The control FAILS with `id "018f0000-0000-7000-8000-000000000001"
+    is the 1-th value of a from-1 counter and this fixture minted it: the ids are call-order
+    derivable...`, AND the original cross-package failure returns (duplicate key + "not drained").
+    So the control fails for the same reason the suite does.
+  - BREAK 2: counter restored AND half (b) deleted, keeping only uniqueness. The control PASSES.
+    That is the measured proof that (a) is insufficient and (b) is the load-bearing assertion —
+    not an argument that it is.
+
+VERIFIED, this run, all against real Postgres (cp-test-pg, postgres:16-alpine on 5434):
+
+  clean slate  cptest DROPped and CREATEd; all 13 migrations re-applied from scratch, each rc=0,
+               0013_job_owner.sql included
+  pairing      the exact 3-package command that failed 5/5 now passes 5/5
+  full suite   go test ./... -count=1 — every package ok, TWICE
+  build/vet    go build ./... rc=0; go vet ./... rc=0; gofmt clean on the changed file
+  CI gates     all six jobs' checks run locally: Door-5 assert-gem-unmodified OK · verifier-node
+               image builds and resolves truemail (3.3.1) · RSpec 71 examples / 0 failures ·
+               no-secret-leak OK (8 canaries, non-vacuous: parse-stage error present, 5 lines
+               scanned) · config-reference-fresh ok · docs-updated ok (code_changed=true
+               docs_changed=true) · code-review placeholder step intact
+
+Not touched: internal/queue/pg_e2e_test.go (pre-existing and correct), and the 29 files gofmt
+already flagged at fe8fde6 — that is pre-existing, M1's ci.yml has no gofmt step and PROJECT_RULES.md
+has no gofmt rule, so reformatting them here would bury a one-file fix in an unrelated sweep.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>

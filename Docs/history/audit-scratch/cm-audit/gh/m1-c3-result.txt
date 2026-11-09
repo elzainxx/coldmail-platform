@@ -1,0 +1,19 @@
+================ coldmail-verify @ 82644ae  run 42498731680 ================
+success  https://github.com/elzainxx/coldmail-verify/actions/runs/42498731680
+  success	verifier-node gems (committed Gemfile.lock, installed frozen, agrees with the Door 5 pin)
+  success	no-secret-leak (boot log carries no credential)
+  success	verifier-node (RSpec — stock + /v1 wrapper)
+  success	control-plane DNS (a SERVFAIL is unknown, never invalid — under a resolv.conf search domain)
+  success	docs-updated + config-reference freshness
+  success	control-plane (Go build + vet + test)
+  success	verifier-node base image (digest-pinned, supported Debian, built without a cache)
+  success	code-reviewer gate
+  success	verifier-node (Door 5 — engine pinned, unmodified)
+verifier-node gems (committed Gemfile.lock, installed frozen, agrees with the Door 5 pin)	Set up job	﻿2026-11-08T16:12:55.7859792Z Current runner version: '2.338.2'
+Complete job name: verifier-node gems (committed Gemfile.lock, installed frozen, agrees with the Door 5 pin)
+verifier-node gems (committed Gemfile.lock, installed frozen, agrees with the Door 5 pin)	Run actions/checkout@v4	﻿2026-11-08T16:12:56.3450475Z ##[group]Run actions/checkout@v4
+verifier-node gems (committed Gemfile.lock, installed frozen, agrees with the Door 5 pin)	lock tracked, image installs it frozen, truemail/net-smtp/bundler/Ruby agree with the Gemfile	﻿2026-11-08T16
+gemfile-lock: ok — lock tracked; image installs it frozen (no 'bundle lock'); truemail 3.3.1 and net-smtp 0.5.1 match the Gemfile pins; bundler 2.7.2; Ruby 3.2.11; dev/test gems present.
+verifier-node gems (committed Gemfile.lock, installed frozen, agrees with the Door 5 pin)	gemfile-lock SELF-TEST (the paired control)	﻿2026-11-08T16:12:57.6687519Z ##[group]Run bash scripts/check-ge
+  ok   no frozen setting (rejected: frozen true)
+verifier-node gems (committed Gemfile.lock, installed frozen, agrees with the Door 5 pin)	Post Run actions/checkout@v4	﻿2026-11-08T16:12:58.2889825Z Post job cleanup.

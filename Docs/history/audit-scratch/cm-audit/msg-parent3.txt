@@ -1,0 +1,20 @@
+Re-pin all four modules to green heads; README: all three code repositories are green on GitHub Actions
+
+  coldmail-verify        c58dd3f -> 82644ae   success, 9/9 jobs (run 42498731680) — image built from scratch against the frozen Gemfile.lock
+  coldmail-send-managed  098427e -> 51e081d   success, harness 62/0   (run 42502196556)
+  coldmail-send-byo      e53f263 -> 9aad2db   success, harness 100/0  (run 42502198054)
+  coldmail-platform      fb619e8 -> 7fbdb90   second-pass records (verification-runs, class 20)
+
+No pin is a disclosed red any more: module 3's earlier failure (TestEvaluate_T5…) was a real defect in the From-gate's DNS handling
+under a resolver search domain, ruled (M3-CI-OD-1) and fixed, and the same class was found and fixed in module 1 (ADR-0019). Every run
+URL in verification-runs.md was checked against GitHub.
+
+README: the status table now says green with the head and run; the stale "not yet verified" note about module 2's RAM-Postgres port is
+replaced by the fact (default-mode harness + real `docker stop postgres` drill pass on a runner, 22/22 on each sender); states that no
+compose file, Dockerfile or workflow uses :latest and that the verifier-node image installs a committed Gemfile.lock frozen; lists what
+is still open (module 1's A-only-domain false invalid, Ruby 3.2 EOL, one unexplained non-recurring red). The pinning rule keeps its
+disclosure clause but no longer names a current exception.
+
+tools/runner/Dockerfile: the replica's yq image is pinned by digest (the last :latest in the tree).
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

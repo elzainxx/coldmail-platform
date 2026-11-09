@@ -1,0 +1,29 @@
+== m3 (coldmail-send-byo) started 2026-11-07 18:47:47
+HEAD: 99e51ae 2026-11-07 18:26:11 +0200 Force LF line endings with .gitattributes   dirty=0   (fresh clone, autocrlf=false)
+  tools/send-byo-migrate/bin absent in fresh checkout (no stale copy) rc=0   OK
+  gofmt + go vet (4 modules) [golang:1.26-alpine]                    rc=0   OK
+  go build tools/send-byo-migrate                                    rc=0   OK
+  scripts/dev.sh certs                                               rc=0   OK
+  scripts/dev.sh build (images from THIS source)                     rc=0   OK
+  scripts/dev.sh reset (postgres->migrate->seed->rest)               rc=0   OK
+  worker registered cleanly on FIRST attempt                         rc=0   OK
+  scripts/dev.sh test (real-infra harness)                           rc=0   OK
+  HARNESS RESULT line: N passed, 0 failed                            rc=0   OK
+  per-package arithmetic: declared==ran, declared>0                  rc=0   OK
+  gate: config_consumption                                           rc=0   OK
+  gate: config_consumption_selftest                                  rc=0   OK
+  gate: config_drift                                                 rc=0   OK
+  gate: contract_drift                                               rc=0   OK
+  gate: drain_grace                                                  rc=0   OK
+  gate: dsn_scrub_wiring                                             rc=0   OK
+  gate: migration_lint                                               rc=0   OK
+  gate: no_secret_leak                                               rc=0   OK
+  gate: postgres_durability                                          rc=0   OK
+  gate: test_enumeration                                             rc=0   OK
+  gate: test_enumeration_selftest                                    rc=0   OK
+  gate: user_output_scrub                                            rc=0   OK
+  scripts/dev.sh down                                                rc=0   OK
+================ M3 SUMMARY ================
+  23 steps, 0 failed
+  ALL GREEN
+  finished 2026-11-07 19:14:42

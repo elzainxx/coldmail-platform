@@ -1,0 +1,85 @@
+ci: add the enumeration META-GATE — CI now fails when a test or gate is unwired
+
+Wiring six packages fixed the INSTANCE. This fixes the CLASS.
+
+THE CLASS. Four times this project has shipped work that was written, correct,
+and executed by nothing:
+
+  * internal/httpapi's first test file (item 7b, e3fee99) — no line ran it.
+  * config_consumption_selftest.sh (4f02aed) — a BLOCKING control the workflow
+    never named. I "verified" it by globbing checks/*.sh; the workflow enumerates
+    each gate by name and does not glob.
+  * four more Go packages (configordering, fromgate, workerlink, workerproto)
+    found unwired by the audit that followed — 31 tests.
+  * module 2's workerlink + workerproto, same shape, same jobs (2e8be72).
+
+There was no signal to miss in ANY of them, which is the whole difficulty:
+run.sh names each Go package explicitly (deliberately — each suite gets its own
+PASS/FAIL line) and CI runs gofmt + `go vet ./...` + the harness + each gate by
+name. `go vet` TYPE-CHECKS test files WITHOUT running them. So an unwired package
+compiles, vets clean, and the harness prints a green total that silently excludes
+it. Identical signals, different truth.
+
+WHY A COMMENT WASN'T ENOUGH. run.sh has carried a prose warning about exactly
+this since the httpapi incident. FOUR MORE PACKAGES accumulated behind the
+warning. A warning comment is not a control. The fix for "someone might forget X"
+is never a note reminding them; it is a mechanism that fails when X is missing —
+the same reasoning as the ADR-0008 grants invariant and config_consumption.
+
+WHAT LANDS
+  tests/harness/checks/test_enumeration.sh          the gate, two rules:
+    1. every directory containing *_test.go is named on a go_suite line in run.sh
+    2. every tests/harness/checks/*.sh is named in .github/workflows/real-infra.yml
+  tests/harness/checks/test_enumeration_selftest.sh the paired control, 6 cases
+  .github/workflows/real-infra.yml                  BOTH wired, if: always()
+
+DESIGN NOTES
+  * NO EXEMPTION LIST, deliberately. The obvious escape hatch is rejected: this
+    repo's own history (retry_count_4xx, variation_zero_width_rate_pct,
+    score_alert_threshold) is three separate instances of an exemption quietly
+    becoming permanent. If a package has test files, it runs.
+  * FILESYSTEM DISCOVERY (find), not `go list ./...`. It needs no Go toolchain,
+    and it SEES a directory whose test files do not compile — which `go list`
+    reports as an error rather than as a package, exactly when you most want to
+    know. vendor/ is excluded; vendored tests are not ours to run.
+  * Rule 2 covers this gate itself, but it structurally CANNOT detect its own
+    absence from the workflow. That hole is why the selftest's rule 0 asserts
+    BOTH scripts are named in CI, and why both are wired in this same commit.
+
+BREAK-VERIFIED ON THE REAL TREE — the point is not that the gate exists, it is
+that it BITES. Two real breaks applied at once, then restored and md5-verified:
+  A. deleted `go_suite services/control/internal/fromgate` from run.sh
+  B. deleted the `run: bash .../user_output_scrub.sh` line from real-infra.yml
+
+  before breaks:  rc=0, "all 11 package(s) ... and all 10 gate script(s)"
+  under BOTH:     rc=1, names services/control/internal/fromgate AND
+                  user_output_scrub.sh, each with its own remediation message
+  after restore:  rc=0
+                  run.sh md5 48d05b23368597f254690e28bca3879d
+                  real-infra.yml md5 f2c08666859f6932b38325c34a319490
+
+Both defects reported in ONE run: rule 1 does not short-circuit rule 2. A run
+that reports only the first sends someone back for a second round trip and, worse,
+implies the other rule was satisfied. Selftest case 4 pins that.
+
+TWO BUGS THE SELFTEST CAUGHT ON ITS FIRST RUN — both in the gate, not the control,
+which is what a paired control is for:
+  1. With ZERO go_suite CALL lines, `grep` exits 1 and `set -euo pipefail` killed
+     the gate mid-check with NO OUTPUT. The single worst case — every suite
+     un-enumerated — would have reported as a silent crash rather than as the
+     failure it is. Fixed with `|| true` and a comment saying why it is
+     load-bearing rather than defensive noise. Found by case 5.
+  2. reset_fixture did not delete orphan gate scripts, so case 3's orphan_gate.sh
+     and case 4's orphan2.sh leaked into case 6, which then failed for RULE 2
+     while claiming to test rule 1's vendor exclusion. A control that fails for
+     the wrong reason is not a control — which is why expect() asserts the
+     MESSAGE, not just the exit code. It caught its own harness.
+
+RUNS (pasted in the transcript)
+  dev.sh build rc=0; dev.sh reset rc=0  (a stale-state run first showed 15
+    failures — smtp_username conflict / status=301 — from the PREVIOUS run's
+    accumulated rows, not from this change; reset cleared it)
+  dev.sh test: HARNESS RESULT: 96 passed, 0 failed
+  all 10 gates rc=0 (was 8; this commit adds the 9th and 10th)
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>

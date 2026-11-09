@@ -1,0 +1,119 @@
+Item 10 (M1): readiness now measures the database, and answers in the contract's envelope
+
+THE DEFECT. /readyz was `ready = secrets.HasPepper()`. Nothing else. So a control-plane
+with a pepper and an unreachable (or unconfigured) database answered
+
+  200 {"ready":true, "pepper":"set", ...}
+
+while every POST /v1/verify on the same process answered 503. The readiness predicate and
+the serving predicate had drifted apart, and readiness is the one an orchestrator ACTS on:
+a load balancer adds this instance to the pool, a deploy gate calls the rollout finished, a
+Kubernetes readinessProbe stops restarting it. The canonical contract's word for that state
+is that it is worse than having no readiness endpoint at all, because a missing endpoint
+makes nobody route traffic anywhere.
+
+Note the shape of the bug: the old comment on the OpenPG failure path said "the
+control-plane can still serve health/readiness; verify stays 503 until the DB is reachable"
+— accurate about what it DID, and quietly wrong about what readiness therefore MEANT.
+Readiness reported on the pepper because the pepper was the thing readiness was written to
+report on, back when there was nothing else loaded. It never got revisited when a store
+arrived.
+
+TWO CHANGES, and they only work together:
+
+1. IT PINGS THE DATABASE. A new one-method `Pinger` interface (satisfied by *store.PG),
+   attached via WithPinger. One method, so readiness cannot accidentally acquire the ability
+   to read or write anything. Both dependencies are now required for `ready`, because either
+   one missing means the same thing to a caller: no verdict can be produced. No pepper => no
+   hash. No DB => no log row, and Door 2 forbids a verdict we cannot log.
+
+   The ping is LIVE PER REQUEST, not a boot-time result cached in a field. A DB that has gone
+   away since startup is precisely the case a cached answer would miss, and it is the common
+   one — the process that was ready an hour ago is the one you are probing now. It is also
+   BOUNDED (3s, matching both senders' handleReadyz), because readiness must answer when the
+   DB is wedged rather than merely down; an endpoint that hangs reads as "unknown" to some
+   orchestrators and "healthy" to others.
+
+   WHERE IT IS ATTACHED IS PART OF THE FIX. WithPinger is called at the END of buildAPI's
+   wiring, not next to OpenPG. Four early returns sit above that line and two of them (policy
+   load, default-policy seed) occur with a perfectly reachable pg while /v1/verify is NOT
+   wired. Pinging from OpenPG would report `db:true, ready` on exactly those paths — the same
+   drift, just relocated. Attaching at the end means all four early returns leave the pinger
+   nil, and a nil pinger reports db:false → not_ready, which is honest in every one of them.
+   A nil pinger reports the check FALSE rather than omitting it: an absent check would let a
+   monitor read "no news is good news" off a body describing an unserviceable process.
+
+2. IT CARRIES THE CONTRACT ENVELOPE — {"status":"ready"|"not_ready","checks":{name:bool},
+   "at":rfc3339}. The three modules previously shared not one readiness field name (this one
+   returned {ready, config, pepper, supabaseKey}; the senders {status, db, singleton_lock,
+   at}), so one dashboard needed three parsers. The uniform part is the ENVELOPE; the
+   per-module dependency names live inside checks{}, which is what makes one shape possible
+   without pretending the three modules have the same dependencies. /healthz gains `at` for
+   the same reason: it is what distinguishes "this module answered just now" from "I am
+   looking at a cached or proxied reply".
+
+STRICTLY ADDITIVE. Every pre-existing top-level field is still there, unchanged and
+un-nested — PROJECT_RULES' additive-only discipline applied to an operator surface.
+`config` in particular is grepped by a documented incident step (OPERATIONS.md's
+`curl /readyz | grep -o 'frontdoor=[^ "]*'`), so nesting it would break a procedure someone
+runs while pulling a kill-switch. `ready` stays the boolean it always was and `status` is
+its word form, so a monitor reading either gets the same answer.
+
+TESTS: 13 new in internal/api/readyz_test.go. The load-bearing ones:
+  - UnreachableDBIsNotReady — the defect itself: pepper set, ping errors, expect not_ready.
+  - BothDependenciesPresentIsReady — the CONTROL. Without it, hardcoding "not_ready" passes
+    the test above.
+  - ChecksMapAgreesWithTheStatusWord — 4 cases cross-checking status word, `ready` bool,
+    the AND of checks{}, and the HTTP code. This is what makes the envelope non-decorative:
+    a body cannot say ready while any check is false.
+  - PingIsLivePerRequest — includes down→UP recovery with no restart, which is what fails if
+    anyone later caches the result in a field.
+  - PingIsGivenABoundedContext — asserts a deadline arrives, not just that Ping is called.
+  - NilPingerReportsFalseNotAbsent — the four-early-return case above.
+  - RealPGPingIsTheRealDependency — gated on TM_TEST_DATABASE_URL: opens a REAL *store.PG,
+    asserts ready, then pg.Close() and asserts not_ready. This is the one that proves
+    *store.PG actually satisfies Pinger against live Postgres rather than in my head. It RAN
+    (0.01s, not SKIP) against the throwaway container; output pasted in the session log.
+  - PreExistingFieldsAreStillThere / LeaksNoSecretValue (with a fixture control) — the
+    additive-only and presence-only properties.
+
+A FIXTURE GUARD EARNED ITS KEEP. The first run was 12 FAILs, all `fixture broken: wanted
+HasPepper()==true, got false` — I had guessed the env key as TM_HASH_PEPPER; it is TM_PEPPER
+(secrets.EnvPepper). Without that explicit guard every "pepper present" case would have
+silently become "pepper absent", and since no-pepper is ALSO not-ready, the central test
+would have PASSED for entirely the wrong reason. Now keyed off secrets.EnvPepper so a rename
+breaks the build instead.
+
+FAIL-VERIFIED, seven breaks, each applied, run, then reverted and hash-proven byte-identical
+(api.go md5 e5dc6de46f40179f392e0a91006065b1):
+  A. dbOK hardcoded true            -> 4 tests fire (I predicted 2; recorded what happened)
+  B. ready = pepperOK only          -> UnreachableDBIsNotReady + the agreement matrix
+  C. checks{} omitted               -> exactly 1 test, the isolation wanted
+  D. status word inverted           -> the agreement matrix
+  E. `at` dropped from /healthz     -> CarriesAtToo only
+  F. ping given context.Background  -> PingIsGivenABoundedContext only
+  G. `config` dropped from /readyz  -> PreExistingFieldsAreStillThere AND the PRE-EXISTING
+     TestFrontDoorDefer_SummaryNamesTheRung, which guards the documented incident-time grep
+     at OPERATIONS.md:179. That second failure is the better one: the additive-only rule here
+     is already load-bearing for an operator procedure, and the repo already knew it.
+
+DOCS: OPERATIONS.md §2.1's verify line was FALSE as written ("reports ready once the pepper
+is present") and is now the real body, plus the /healthz contrast. TEST-PLAN.md 1.7 states
+the both-checks-required property, and §-live adds step 2b: stop the DB container and
+re-probe WITHOUT restarting the app, then start it and watch readiness recover — the manual
+form of PingIsLivePerRequest, with the note that `curl -f` is wrong there because it exits
+non-zero on the very 503 being asserted.
+
+NOT IN THIS COMMIT, deliberately: M1 has 30 gofmt-dirty files predating this work (the Pass-1
+rename regression; M2/M3 discharged theirs in 0c22c8e/a026e96 because THEIR CI runs gofmt and
+M1's ci.yml does not). cmd/control-plane/main.go is one of them — its dirty hunk is
+configToBudget's alignment at line 331, untouched here. Sweeping 30 files inside a fix commit
+would bury the fix; it is ledgered for its own commit, with the observation that a sweep needs
+a CI step or it just re-rots.
+
+VERIFIED: go build ./... clean · go vet ./... exit 0 · go test -count=1 ./... ALL PACKAGES OK
+with TM_TEST_DATABASE_URL set against real Postgres (internal/api 1.098s, internal/store
+3.315s) · the 13 readyz tests individually PASS in -v with none skipped. Pasted in the
+session log.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>

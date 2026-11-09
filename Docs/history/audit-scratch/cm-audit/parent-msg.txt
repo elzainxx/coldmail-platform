@@ -1,0 +1,17 @@
+coldmail: parent repository pinning the four module repos as submodules
+
+coldmail-verify          72e74ce  module 1: email verification
+coldmail-send-managed    d77f7e1  module 2: operator-managed SMTP sending
+coldmail-send-byo        d107ae9  module 3: user-owned (BYO) SMTP sending
+coldmail-platform        268e051  docs: contract, audit, deferrals, verification record
+
+Verification state of these pins, stated exactly:
+ - The code in each was run in Docker from a fresh clone at the immediately preceding commits
+   (M1 e5b1472 18 steps, M2 ffe42d5 19, M3 e464b39 23; 0 failed each), govulncheck clean, gitleaks
+   clean over full history.
+ - Each pin is that commit plus ONE docs-only go-live commit (no code). The run that covers these
+   exact commits is the fresh recursive clone of this repository; its result is recorded in
+   coldmail-platform/verification-runs.md, not asserted here.
+Submodules, not a merged history, so every commit hash the platform documents cite stays valid.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

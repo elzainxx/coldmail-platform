@@ -1,0 +1,35 @@
+Restore gofmt: the Pass 1 rename left 23 files unformatted, which is CI step 1
+
+Same defect as module 3's, found the same way and fixed the same way. real-infra.yml's
+FIRST blocking step is `test -z "$(gofmt -l services/control tools/send-managed-migrate
+tools/provision-worker tests/harness)"`, and it has been failing since the Pass 1
+rename: 23 files, 114 diff lines.
+
+WHY THE RENAME DID THIS. gofmt aligns consecutive struct fields, consecutive
+`key: value` composite-literal lines, and trailing comments into columns, and sorts
+import blocks. `box` -> `worker` and `brain` -> `control` changed identifier WIDTHS
+inside already-aligned blocks and import-path SORT POSITIONS, so every block holding
+a renamed name lost its alignment. Nothing about the code changed.
+
+CONFIRMED AS RENAME FALLOUT, not pre-existing. Probed d34e57a (the last commit before
+PASS 1, 29e3bcb) in a throwaway worktree: `gofmt -l services/brain tools tests`
+returns ZERO files there. Post-rename it returns 23.
+
+WHY PASS 1 MISSED IT, here and in module 3. Pass 1's verification ran each repo's
+full harness and all seven blocking check scripts, and every one was green. gofmt is
+not one of the seven -- it lives in the workflow yaml, as the step BEFORE them. The
+verification was complete on its own terms; the one gate it did not run is the gate
+that catches this. Recorded as a Pass 1 deferral in coldmail-platform so the gap in
+the verification recipe is written down, not just the two repos it bit.
+
+PROVEN SEMANTICALLY EMPTY, not asserted. Stripped ALL whitespace from every added
+and removed line of the diff and compared the multisets: 57 removals, 57 additions,
+difference EMPTY in both directions. No token added, removed, or changed. `go vet
+./...` exits 0.
+
+  gofmt -w services/control tools tests
+  23 files changed, 57 insertions(+), 57 deletions(-)
+
+Windows line-ending check: 0 of 149 tracked .go files contained CRLF before, 0 after.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
