@@ -26,4 +26,5 @@ desktop.ini
 
 # Output of verification runners run against this repo (the runners themselves live outside it)
 *.log
+# EXCEPTION: the run logs under Docs/history/audit-scratch/ are the evidence the records cite by run ID (verification-runs.md). Keep them.!Docs/history/audit-scratch/**/*.log
 *.tmp
