@@ -1,0 +1,518 @@
+[replica] coldmail-send-managed @ 8afd970 as uid 1001 in /var/lib/cm-linux/work/coldmail-send-managed (ext2/ext3 filesystem)
+
+::step:: Go lint — gofmt + vet (BLOCKING; keeps code/format from drifting)
+go: downloading github.com/jackc/pgx/v5 v5.10.0
+go: downloading golang.org/x/crypto v0.58.0
+go: downloading github.com/jackc/puddle/v2 v2.2.2
+go: downloading github.com/jackc/pgpassfile v1.0.0
+go: downloading github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761
+go: downloading golang.org/x/text v0.43.0
+go: downloading golang.org/x/sync v0.24.0
+go: downloading golang.org/x/crypto v0.31.0
+
+::step:: Generate dev certs/secrets + provision dev worker (writes .env)
+== gen-certs ==
+gen-certs: writing dev mTLS material to secrets/dev/certs
+gen-certs: done. CA + control/worker/sink/harness-client leaves in secrets/dev/certs (ca.key stays here, gitignored).
+gen-certs: keys are 600 and owned by YOU; run tools/own-secrets.sh (dev.sh certs does) to hand control.key/worker.key to their container uids.
+== gen-secrets ==
+gen-secrets: wrote dev KMS master key -> secrets/dev/kms/dev-master.key (Control-only; admin Encrypt-only)
+gen-secrets: operator admin (Domain B) key is minted (bcrypt) by 'provision-worker admin-key'
+             and written to .env by 'scripts/dev.sh certs' (ADMIN_API_KEY / ADMIN_API_KEY_HASHES).
+gen-secrets: done.
+== provision dev worker + operator admin key + write .env ==
+.env written (gitignored). TWO worker tokens/hashes + operator admin key + platform service token provisioned.
+== own-secrets ==
+own-secrets: chown'd control.key + dev-master.key -> uid 10001, worker.key -> uid 10002 (mode 600 kept)
+own-secrets: ok — Control(uid 10001) reads control.key+dev-master.key, worker(uid 10002) reads worker.key, keys are 600, and no other uid can read them
+
+::step:: Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)
+ Network coldmail-send-managed_default  Creating
+ Network coldmail-send-managed_default  Created
+ Container coldmail-send-managed-postgres-1  Creating
+ Container coldmail-send-managed-postgres-1  Created
+ Container coldmail-send-managed-postgres-1  Starting
+ Container coldmail-send-managed-postgres-1  Started
+ Container coldmail-send-managed-postgres-1  Waiting
+ Container coldmail-send-managed-postgres-1  Healthy
+ Container coldmail-send-managed-postgres-1  Running
+ Container coldmail-send-managed-migrate-1  Creating
+ Container coldmail-send-managed-migrate-1  Created
+Attaching to migrate-1
+migrate-1  | preflight: OK (public.users + public.job_items exist)
+migrate-1  | applied  0000_bootstrap
+migrate-1  | applied  0001_create_schema
+migrate-1  | applied  0002_create_role
+migrate-1  | applied  0003_create_enums
+migrate-1  | applied  0004_create_pools
+migrate-1  | applied  0005_create_accounts
+migrate-1  | applied  0006_create_boxes
+migrate-1  | applied  0007_create_jobs
+migrate-1  | applied  0008_create_job_events
+migrate-1  | applied  0009_create_send_logs
+migrate-1  | applied  0010_create_config_and_seed
+migrate-1  | applied  0011_add_indexes
+migrate-1  | applied  0012_grants_and_rls
+migrate-1  | applied  0013_accounts_pool_uniqueness
+migrate-1  | applied  0014_create_account_events
+migrate-1  | applied  0015_jobs_claim_by_user_idx
+migrate-1  | applied  0016_accounts_scoring_columns
+migrate-1  | applied  0017_seed_phase5_config
+migrate-1  | applied  0018_seed_phase6_config
+migrate-1  | applied  0019_seed_phase7_config
+migrate-1  | applied  0020_jobs_attempt_token
+migrate-1  | applied  0021_operability_config
+migrate-1  | applied  0022_job_events_error_context
+migrate-1  | applied  0023_singleton_reacquire_config
+migrate-1  | applied  0024_job_events_fk_carveout
+migrate-1  | applied  0025_dispatch_mode_ladder
+migrate-1  | applied  0026_shadow_mode_for_every_autonomous_mutator
+migrate-1  | up: applied 27 migration(s)
+migrate-1  | set-app-password: send_managed_app password set (value not logged)
+[Kmigrate-1 exited with code 0
+seed: system user + dev worker row (11111111-1111-1111-1111-111111111111) seeded; worker can register on the send stream.
+seed: second dev worker row (22222222-2222-2222-2222-222222222222) seeded; run 'scripts/dev.sh up2' to start it.
+ Container coldmail-send-managed-smtp-sink-1  Creating
+ Container coldmail-send-managed-postgres-1  Running
+ Container coldmail-send-managed-migrate-1  Created
+ Container coldmail-send-managed-control-1  Creating
+ Container coldmail-send-managed-smtp-sink-1  Created
+ Container coldmail-send-managed-control-1  Created
+ Container coldmail-send-managed-worker-1  Creating
+ Container coldmail-send-managed-worker-1  Created
+ Container coldmail-send-managed-postgres-1  Waiting
+ Container coldmail-send-managed-smtp-sink-1  Starting
+ Container coldmail-send-managed-postgres-1  Healthy
+ Container coldmail-send-managed-migrate-1  Starting
+ Container coldmail-send-managed-smtp-sink-1  Started
+ Container coldmail-send-managed-migrate-1  Started
+ Container coldmail-send-managed-postgres-1  Waiting
+ Container coldmail-send-managed-migrate-1  Waiting
+ Container coldmail-send-managed-migrate-1  Exited
+ Container coldmail-send-managed-postgres-1  Healthy
+ Container coldmail-send-managed-control-1  Starting
+ Container coldmail-send-managed-control-1  Started
+ Container coldmail-send-managed-control-1  Waiting
+ Container coldmail-send-managed-control-1  Healthy
+ Container coldmail-send-managed-worker-1  Starting
+ Container coldmail-send-managed-worker-1  Started
+ Container coldmail-send-managed-smtp-sink-1  Waiting
+ Container coldmail-send-managed-postgres-1  Waiting
+ Container coldmail-send-managed-migrate-1  Waiting
+ Container coldmail-send-managed-control-1  Waiting
+ Container coldmail-send-managed-worker-1  Waiting
+ Container coldmail-send-managed-worker-1  Healthy
+ Container coldmail-send-managed-migrate-1  Exited
+ Container coldmail-send-managed-control-1  Healthy
+ Container coldmail-send-managed-smtp-sink-1  Healthy
+ Container coldmail-send-managed-postgres-1  Healthy
+
+::step:: Worker came up seeded on the FIRST attempt (no register-reject exit)
+worker: running=true RestartCount=0 registered=1 register_rejections=0
+
+::step:: Real-infra behavioral harness (10 checks, must be all-green)
+== preparing template DB (send_managed_template) ==
+  template ready (fresh DB, migrated + app password; platform untouched)
+──────────────────────────────────────────────────────────────
+SUITE 1+2: Go real-infra tests (migration lifecycle + DB isolation + Phase 1 data model)
+──────────────────────────────────────────────────────────────
+--- PASS: TestUp_ContiguityGap (0.05s)
+--- PASS: TestDSNScrub_MigrateNoCredentialSurvives (0.00s)
+--- PASS: TestDSNScrub_MigratePgxStillLeaksAtThisPin (0.00s)
+--- PASS: TestDSNScrub_MigrateCleanErrorsKeepTheirDetail (0.00s)
+--- PASS: TestDSNScrub_MigrateConnectionRefusedSurvives (0.00s)
+--- PASS: TestDSNScrub_MigrateMessageNamesThisToolsEnvVars (0.00s)
+--- PASS: TestDSNScrub_MigrateNilIsNil (0.00s)
+--- PASS: TestDSNScrub_MigrateCopyHasNotDriftedFromControl (0.00s)
+--- PASS: TestRunnerLifecycle (0.61s)
+ok  	github.com/coldmail-send-managed/send-managed-migrate	0.670s
+  counts: declared=9 ran=9 skipped=0
+  PASS: migration lifecycle + contiguity guard (apply/idempotent/down/gap)
+--- PASS: TestModeA_TemplateCloneIsRealAndCrossConnection (0.06s)
+--- PASS: TestModeB_RollbackLeavesNoResidue (0.04s)
+--- PASS: TestT1_ConcurrentClaimExactlyOneWinner (0.07s)
+--- PASS: TestT1b_NWorkersMJobsEachClaimedOnce (0.10s)
+--- PASS: TestT2_EventPerTransition (0.06s)
+--- PASS: TestT3_NoStateChangeWithoutEvent (0.05s)
+--- PASS: TestT4_CredentialRoundTripNoPlaintextTamperAAD (0.05s)
+--- PASS: TestT5_ModuleRoleDeniedPlatformWrite (0.06s)
+--- PASS: TestT5b_JobItemIdUnique (0.05s)
+--- PASS: TestT6_AppendOnlyJobEvents (0.06s)
+--- PASS: TestT3e_RLSDefaultDenyBackstopsMisgrant (0.05s)
+--- PASS: TestT3f_SuperuserBypassesRLSButReadsOnlyCiphertext (0.05s)
+--- PASS: TestT7_CheckConstraintsRejectInvalid (0.05s)
+--- PASS: TestGrantsInvariant (0.05s)
+--- PASS: TestSendLogsWriteOnceButRetentionCanDelete (0.06s)
+--- PASS: TestGrantsInvariant_AntiVacuity (0.05s)
+ok  	github.com/coldmail-send-managed/harness	0.908s
+  counts: declared=16 ran=16 skipped=0
+  PASS: DB isolation + Phase 1 data model (claim/events/RLS/crypto/append-only)
+--- PASS: TestRootMux_UnknownPathIsACodedEnvelopeNotPlainText (0.00s)
+--- PASS: TestRootMux_UnmountedSurfacePathAnswersTheEnvelopeToo (0.00s)
+--- PASS: TestRootMux_EveryVerbOnAnUnknownPathIsTheSameEnvelope (0.00s)
+--- PASS: TestRootMux_RequestIDIsUniquePerRequest (0.00s)
+--- PASS: TestRootMux_CatchAllDoesNotShadowAMountedRoute (0.00s)
+--- PASS: TestRootMux_ForgedPathCannotSplitALogLine (0.00s)
+--- PASS: TestRootMux_ForgedPathIsNotReflectedIntoTheBody (0.00s)
+--- PASS: TestSanitizeLogPath_NeutralizesControlCharacters (0.00s)
+--- PASS: TestNewRequestID_ShapeMatchesTheOtherSurfaces (0.00s)
+--- PASS: TestReadyz_CarriesTheContractEnvelope (0.00s)
+--- PASS: TestReadyz_NilDependenciesReportFalseNotAbsent (0.00s)
+--- PASS: TestReadyz_ChecksMapAgreesWithTheTopLevelFields (0.05s)
+--- PASS: TestReadyz_ChecksMapTracksEachDependencySeparately (0.04s)
+--- PASS: TestReadyz_PreExistingTopLevelFieldsAreStillThere (0.00s)
+--- PASS: TestReadyz_TopLevelFieldsAreDistinguishableFromTheNestedCopy (0.04s)
+--- PASS: TestHealthz_IsLivenessNotReadiness (0.00s)
+ok  	github.com/coldmail-send-managed/control/internal/httpapi	0.147s
+  counts: declared=16 ran=16 skipped=0
+  PASS: root-mux coded 404 + log-forgery neutralization (item 7b) + readyz uniform checks{} envelope (item 10)
+--- PASS: TestInFlightMarker_ReplayedReportDoesNotFreeALiveJob (0.00s)
+--- PASS: TestInFlightMarker_ReplayOnAnIdleWorkerIsHarmless (0.00s)
+ok  	github.com/coldmail-send-managed/control/internal/workerlink	0.003s
+  counts: declared=2 ran=2 skipped=0
+  PASS: workerlink stream in-flight accounting (2 tests)
+--- PASS: TestVariation_ZeroValueNumericFieldsSurviveJSONRoundTrip (0.00s)
+ok  	github.com/coldmail-send-managed/control/internal/workerproto	0.002s
+  counts: declared=1 ran=1 skipped=0
+  PASS: variation wire-format round-trip (1 test)
+--- PASS: TestDSNScrub_NoCredentialSurvives (0.00s)
+--- PASS: TestDSNScrub_PgxStillLeaksAtThisPin (0.00s)
+--- PASS: TestDSNScrub_CleanErrorsKeepTheirDetail (0.00s)
+--- PASS: TestDSNScrub_CandidateCheckStandsAlone (0.00s)
+--- PASS: TestDSNScrub_WholeDSNCheckStandsAlone (0.00s)
+--- PASS: TestDSNScrub_ShortValuesDoNotSuppressEverything (0.00s)
+--- PASS: TestDSNScrub_StructuralValuesNeverSuppress (0.00s)
+--- PASS: TestDSNScrub_SpacedCredentialStillCaught (0.00s)
+--- PASS: TestDSNScrub_NilIsNil (0.00s)
+ok  	github.com/coldmail-send-managed/control/internal/dsnscrub	0.005s
+  counts: declared=9 ran=9 skipped=0
+  PASS: DSN credential scrub (N1/D12: pgx echoes the whole connection string; 9 tests, no DB)
+== preparing Phase 2 admin template (send_managed_template_p2, migrated 0000..0014) ==
+  Phase 2 template ready (migrated 0000..0014 + app password)
+--- PASS: TestHealth_ErrorsLastWindowCountsOnlyErrorTransitions (0.08s)
+--- PASS: TestHealth_ReportsTrueStateUnderKnownMix (0.11s)
+--- PASS: TestHealth_WindowAffectsRateCounts (0.09s)
+--- PASS: TestHealth_RequiresAuth (0.04s)
+--- PASS: TestLifecycleRefusalsAreDiagnosable (0.08s)
+--- PASS: TestPoolKindRequiredVsInvalid (0.05s)
+--- PASS: TestMethodDispatch_WrongVerbIsACodedEnvelopeNotPlainText (0.04s)
+--- PASS: TestMethodDispatch_EveryRouteRejectsAWrongVerbThroughTheEnvelope (0.05s)
+--- PASS: TestMethodDispatch_UnmatchedAdminPathIsACodedEnvelope (0.04s)
+--- PASS: TestMethodDispatch_405AndUnknownPath404AreDistinguishable (0.04s)
+--- PASS: TestMethodDispatch_WildcardsStillBindThroughTheWrapper (0.07s)
+--- PASS: TestMethodDispatch_AWrongVerbOnAWildcardRouteReportsThePATTERNNotThePath (0.04s)
+--- PASS: TestMethodDispatch_RequestIDIsUniqueAndCorrelatesToALogLine (0.04s)
+--- PASS: TestMethodDispatch_ShapeMuxCoversExactlyTheServedPaths (0.00s)
+--- PASS: TestMethodDispatch_EveryTableRouteIsAuthenticated (0.05s)
+--- PASS: TestMethodDispatch_HandlerIsTheWrapperNotTheBareMux (0.00s)
+--- PASS: TestSanitizePath_NeutralizesControlCharacters (0.00s)
+--- PASS: TestSanitizePath_ForgedPathCannotSplitALogLine (0.07s)
+--- PASS: TestSanitizePath_IsUsedByEveryLogSiteThatLogsAPath (0.01s)
+--- PASS: TestPhase95_UnitPriceCreditsRangeEnforced (0.07s)
+--- PASS: TestPhase95_HealthMetricsWindowSecRangeEnforced (0.07s)
+--- PASS: TestPhase95_ControlSingletonAcquireTimeoutSecRangeEnforced (0.06s)
+--- PASS: TestPhase95_VariationZeroWidthRatePctRangeEnforced (0.06s)
+--- PASS: TestPhase95_VariationCommentIntensityRatesShapeEnforced (0.07s)
+--- PASS: TestPhase95_VariationCSSMicroParamsShapeEnforced (0.07s)
+--- PASS: TestT4_PoolOwnerRules (0.07s)
+--- PASS: TestT5_DeletePoolWithAccounts (0.09s)
+--- PASS: TestT6_FallbackCycleRejected (0.08s)
+--- PASS: TestT13_SharedPoolRequiresSystemUser (0.06s)
+--- PASS: TestT10_ConfigValueTypeValidation (0.06s)
+--- PASS: TestPatchSmtpPortNullIsCleanReject (0.07s)
+--- PASS: TestSmtpHostRejectsPortSuffix (0.07s)
+--- PASS: TestDailyLimitSanityCeiling (0.07s)
+--- PASS: TestPoolImmutableFieldsRejected (0.06s)
+--- PASS: TestVariationConfig_BooleanToggleRoundTrips (0.05s)
+--- PASS: TestVariationConfig_EnumStringKeysRejectInvalidValues (0.06s)
+--- PASS: TestVariationConfig_PreheaderTemplatesArrayRoundTrips (0.05s)
+--- PASS: TestVariationConfig_RateParametersRoundTripAndBounds (0.08s)
+--- PASS: TestVariationConfig_QuotedNumericStringRejected (0.06s)
+ok  	github.com/coldmail-send-managed/control/internal/adminapi	5.903s
+  counts: declared=72 ran=72 skipped=0
+  PASS: Phase 2 admin API (credential intake/omit/AAD, pools/owner/cycle/RESTRICT, lifecycle+audit, config, auth 401)
+──────────────────────────────────────────────────────────────
+SUITE 3: worker<->Control mTLS register/heartbeat (probed IN-NETWORK, from the worker container)
+──────────────────────────────────────────────────────────────
+  PASS: register with correct token over mTLS -> 200
+  PASS: heartbeat after register -> 200
+  PASS: register with WRONG token -> 401 (token gate enforced)
+──────────────────────────────────────────────────────────────
+SUITE 4: two-Control singleton (real second Control process must exit, no double-lock)
+──────────────────────────────────────────────────────────────
+  PASS: second Control exited cleanly (singleton lock held by the first)
+  PASS: first Control still holds the singleton lock (readyz top-level singleton_lock=true)
+──────────────────────────────────────────────────────────────
+SUITE 5: worker CANNOT read KMS key material (least-privilege container boundary)
+──────────────────────────────────────────────────────────────
+  PASS: worker cannot see /secrets/kms/dev-master.key (path absent from worker mounts)
+  PASS: worker can read its own mTLS cert (proves the worker FS is mounted; KMS absence is meaningful)
+  PASS: Control CAN read the KMS key (sole decryptor); the worker cannot — boundary is real
+──────────────────────────────────────────────────────────────
+SUITE 6: no credential leak in service logs (Rule 5/6 regression guard)
+──────────────────────────────────────────────────────────────
+  PASS: no dev token/hash found in control/worker/migrate/postgres/sink logs
+──────────────────────────────────────────────────────────────
+SUITE 7: worker unit tests (real local sink / real stream; credential + outcome-buffer paths)
+──────────────────────────────────────────────────────────────
+  (node v20.20.2)
+# pass 80
+# fail 0
+  PASS: worker units: 80 passed (S1 scrub / S3 zeroing / S5 STARTTLS-before-AUTH + P7-4 buffer ack/replay/TTL)
+──────────────────────────────────────────────────────────────
+SUITE 8: Phase 3 dispatch + credential Go tests (real Postgres clones)
+──────────────────────────────────────────────────────────────
+== preparing Phase 3 dispatch template (send_managed_template_p3, migrated 0000..0014) ==
+  Phase 3 template ready
+--- PASS: TestRetention_ModuleRoleCanDeleteButStillCannotUpdate (0.07s)
+--- PASS: TestConfigOrdering_RejectsShortOutcomeBufferTTL (0.09s)
+--- PASS: TestRetention_SweepPausesUnderOutageAndInventsNothing (0.09s)
+--- PASS: TestRollup_BucketsFollowDailyResetTimezone (0.11s)
+--- PASS: TestRollup_ChangingDailyResetTimezoneShiftsBuckets (0.09s)
+--- PASS: TestRouting_RoundRobin (0.10s)
+--- PASS: TestRouting_RoundRobin_CursorSurvivesAcrossPools (0.07s)
+--- PASS: TestRouting_OneByOne (0.09s)
+--- PASS: TestRouting_Random (0.34s)
+--- PASS: TestRouting_StrategyReadFromPoolColumn (0.07s)
+--- PASS: TestDispatchRung_NoRungIsASynonymForItsNeighbour (0.52s)
+--- PASS: TestDispatchRung_StoppedFreezesTheSweepWithoutStrandingAnything (0.13s)
+--- PASS: TestDispatchRung_EnabledFalseIsAFloorNotASecondLever (0.00s)
+--- PASS: TestDispatchRung_EnabledFalseStillStopsClaimsThroughTheRealLoop (0.11s)
+--- PASS: TestDispatchRung_UnrecognizedModeFailsTowardTheSaferRungAndNotThePunitiveOne (0.00s)
+--- PASS: TestDispatchRung_UnrecognizedModeIsObeyedByTheRealLoopToo (0.11s)
+--- PASS: TestDispatchRung_OutcomeIngestionIsNeverGatedAtAnyRung (0.00s)
+--- PASS: TestDispatchRung_OutcomeIngestionSucceedsAtTheDeepestRung (0.11s)
+--- PASS: TestDispatchRung_TickIsANoOpAtEveryPausedRung (0.35s)
+--- PASS: TestDispatchRung_ConfigIsRereadEveryTickSoAPullTakesEffectWithoutRestart (0.11s)
+--- PASS: TestDispatchRung_EveryCopyOfTheLadderMatchesThisOne (0.01s)
+--- PASS: TestDispatchRung_LogLineNamesTheRungNotJustThePause (0.00s)
+--- PASS: TestComputeScore_Deterministic (0.00s)
+--- PASS: TestScore_DegradesOnFailureResetsOnSuccess (0.15s)
+--- PASS: TestScore_BounceNeverPenalizes (0.13s)
+--- PASS: TestShadowMode_LogsWithoutActing_ThenEnforceActs (0.15s)
+--- PASS: TestShadowMode_OffDisablesDecisionEntirely (0.19s)
+--- PASS: TestKillSwitch_AutopauseDisablesOnlyAutopause (0.13s)
+--- PASS: TestKillSwitch_VariationDisablesEntireLayer (0.11s)
+--- PASS: TestStaleReplay_NotAttributedToADifferentWorkersAttempt (0.15s)
+--- PASS: TestStateMachine_ScoreCrossingAutoQuarantines (0.21s)
+--- PASS: TestStateMachine_ThrottleAutoClears (0.10s)
+--- PASS: TestStateMachine_InWindowThrottleNotEligible (0.09s)
+--- PASS: TestVariation_DefaultConfigYieldsNeutralSnapshot (0.09s)
+--- PASS: TestVariation_LiveConfigChangeReachesNextPushJob (0.10s)
+--- PASS: TestVariation_RateParametersReachPushJob (0.09s)
+--- PASS: TestVariation_S11RatesReachPushJob (0.09s)
+--- PASS: TestVariation_CSSSkipBelowPxZeroSurvivesJSONRoundTrip (0.10s)
+--- PASS: TestVariation_PreheaderTemplatesOverrideReachesPushJob (0.09s)
+ok  	github.com/coldmail-send-managed/control/internal/dispatch	72.582s
+  counts: declared=168 ran=168 skipped=0
+  PASS: Phase 3 dispatch (claim/decrypt/push, idempotency, requeue, bounced, never-invent)
+--- PASS: TestDecrypt_RoundTrip (0.00s)
+--- PASS: TestDecrypt_TamperFailsClosed (0.00s)
+--- PASS: TestDecrypt_TransplantFailsClosed (0.00s)
+--- PASS: TestDecrypt_WrongKeyIDRejected (0.00s)
+ok  	github.com/coldmail-send-managed/control/internal/credential	0.002s
+  counts: declared=4 ran=4 skipped=0
+  PASS: Phase 3 credential decryptor (round-trip/tamper/transplant/key-id)
+--- PASS: TestDescribeVocabularies_StaticSetsMatchTheirSourceOfTruth (0.05s)
+--- PASS: TestDescribeVocabularies_EveryDeclaredFieldPathExists (0.05s)
+--- PASS: TestDescribeErrorCodes_MatchesCodeStatusExactly (0.05s)
+--- PASS: TestDescribeErrorCodes_APublishedCodeIsReallyEmitted (0.05s)
+--- PASS: TestDescribePricing_ModelIsAMemberOfTheDeclaredSet (0.05s)
+--- PASS: TestDescribeVocabularies_FailsClosedRatherThanPublishingAPartialSet (0.05s)
+--- PASS: TestDispatchRung_IntakeIsRefusedAtRefuseNewAndBelowAndNowhereElse (0.07s)
+--- PASS: TestDispatchRung_ValidationStillAnswersBeforeTheRungDoes (0.05s)
+--- PASS: TestDispatchRung_QuoteIsNeverGatedByTheRung (0.05s)
+--- PASS: TestDispatchRung_EnabledFalseDoesNotRefuseIntake (0.06s)
+--- PASS: TestDispatchRung_UnrecognizedModeStillAcceptsIntake (0.08s)
+--- PASS: TestDispatchRung_ReportPausedIsTrueAtEveryRungWhereWorkIsNotFlowing (0.09s)
+--- PASS: TestDispatchRung_ReportSurvivesAnAbsentModeRow (0.08s)
+--- PASS: TestDispatchRung_LadderMatchesTheDispatchPackageExactly (0.00s)
+--- PASS: TestMethodDispatch_WrongVerbIsACodedEnvelopeNotPlainText (0.04s)
+--- PASS: TestMethodDispatch_EveryRouteRejectsAWrongVerbThroughTheEnvelope (0.04s)
+--- PASS: TestMethodDispatch_UnmatchedPathIsACodedEnvelope (0.04s)
+--- PASS: TestMethodDispatch_405AndUnknownPath404AreDistinguishable (0.04s)
+--- PASS: TestMethodDispatch_EveryErrorPathCarriesAUniqueRequestID (0.04s)
+--- PASS: TestMethodDispatch_MethodNotAllowedIsPublishedInDescribe (0.05s)
+--- PASS: TestMethodDispatch_RealRoutesStillBindPathWildcards (0.05s)
+--- PASS: TestMethodDispatch_HeadOnAGetRouteIsServedNotRejected (0.05s)
+--- PASS: TestMethodDispatch_ShapeMuxCoversExactlyTheServedPaths (0.00s)
+--- PASS: TestMethodDispatch_HandlerIsTheWrapperNotTheBareMux (0.00s)
+--- PASS: TestMethodDispatch_MuxAnswersBeforeAuthSoTheResultIsCredentialIndependent (0.04s)
+--- PASS: TestMethodDispatch_ForgedPathCannotSplitTheLogLine (0.04s)
+--- PASS: TestSanitizePath_NeutralizesControlCharacters (0.00s)
+--- PASS: TestSanitizePath_IsUsedByEveryLogSiteThatLogsAPath (0.00s)
+--- PASS: TestQuote_MatchesRecipientCountTimesUnit (0.05s)
+--- PASS: TestQuote_NeverOverOrUnderQuotesAcrossRetryAndDuplicateRun (0.10s)
+--- PASS: TestQuote_AcceptsOptionalUserID (0.07s)
+--- PASS: TestQuote_AbsentVsNegativeRecipientCountAreDistinctIssues (0.05s)
+--- PASS: TestQuote_WrongTypeRecipientCountNamesTheField (0.06s)
+--- PASS: TestReportNotFoundNamesTheSelectorSent (0.07s)
+--- PASS: TestTenancy_CrossTenantReportIsNotFound (0.07s)
+--- PASS: TestTenancy_CrossTenantRunIsNotFound (0.06s)
+--- PASS: TestTenancy_MissingOrMalformedSelectorRejected (0.06s)
+--- PASS: TestTenancy_Unauthenticated (0.04s)
+--- PASS: TestUnitPrice_QuoteAndDescribeReflectLiveConfig (0.06s)
+ok  	github.com/coldmail-send-managed/control/internal/platformapi	2.615s
+  counts: declared=54 ran=54 skipped=0
+  PASS: Platform API tenancy (OD-25) + one-campaign-per-user (Phase 4 P4-7, incl. concurrent-attempt serialization)
+──────────────────────────────────────────────────────────────
+SUITE 9: Phase 3 minimal send path — LIVE end-to-end (real worker + real Mailpit)
+──────────────────────────────────────────────────────────────
+  PASS: P3: worker registered on the mTLS send stream (live row: active + heartbeat newer than this run)
+  PASS: P3: created shared pool via admin API
+  PASS: P3: created account (encrypted canary credential) via admin API
+  PASS: P3: set default_shared_pool_id to the suite pool (operator setup step, §4.3)
+  PASS: T2: POST /v1/run returned 202 immediately (async kickoff)
+  PASS: T1: job reached state=sent
+  PASS: T1: provider_message_id persisted
+  PASS: T1: job_events chain correct (system/dispatcher/dispatcher/box)
+  PASS: T1: exactly one send_logs row
+  PASS: T1: Mailpit received the message (count=1)
+  PASS: T2: GET /v1/report reflects sent + provider_message_id
+  PASS: T2: report carries only clean external state (no smtp/reason/credential)
+  PASS: T4: duplicate run is a clean no-op (200), not a raw error
+  PASS: T4: no second send (Mailpit count unchanged: 1→1)
+  PASS: T6: wrong-token register refused on the send stream (accepted:false)
+  PASS: T3: no report (worker killed) — job stays sending, never gained a provider_message_id, and never once touched a terminal state (never falsely sent)
+  PASS: S1: canary absent from service logs (plaintext)
+  PASS: S1: canary absent from service logs (base64: LOGIN padded/unpadded + PLAIN blob)
+  PASS: S1: canary absent from send_logs/jobs
+  PASS: S1: canary absent from send_logs/jobs (base64)
+  PASS: S1: credential column is ciphertext (canary bytes absent)
+  PASS: OD-7: no /v1/admin/* account route exposes plaintext (has_credential only)
+  PASS: OD-7: admin read exposes has_credential=true (positive control)
+  PASS: T7: cross-tenant report of another tenant's job → 404 (isolation enforced)
+  PASS: T7: cross-tenant 404 is identical to a nonexistent-job 404 (no existence disclosure)
+  PASS: T7: report without user_id → clean 400 validation_failed
+──────────────────────────────────────────────────────────────
+SUITE 10: Phase 8 content variation — LIVE end-to-end (real worker + real Mailpit)
+──────────────────────────────────────────────────────────────
+  PASS: P8 T1: every boolean toggle reads false via the live admin API (seeded defaults intact)
+  PASS: P8 T1: all-toggles-off job reached sent
+  PASS: P8 T1: the delivered message has exactly the Phase 3 shape (no injected comments/UA/Precedence, 8bit single-part)
+  PASS: P8 T3: variation-on job reached sent
+  PASS: P8 T3: variation-on delivered bytes differ from the all-off baseline (variation fired on the live stack)
+  PASS: P8 T3: delivered message still carries a valid Content-Type after variation
+  PASS: P8 T3: comment_injection fired live (an injected HTML comment is present)
+  PASS: P8 T3: original visible body text survived minification/comment injection
+  PASS: P8 T7: the delivered link carries a real _ref cache-buster param
+  PASS: P8 T7: no tracking/redirect surface in the delivered message (forward boundary intact, P8-10)
+  PASS: P8 S1: canary absent from service logs with variation ON (plaintext)
+  PASS: P8 S1: canary absent from service logs with variation ON (base64)
+  PASS: P8 S1: canary absent from the delivered message
+  PASS: P8 S1: canary absent from the delivered message (base64)
+  PASS: P8 S1: canary absent from send_logs/jobs with variation ON
+  PASS: P8 S1: canary absent from send_logs/jobs with variation ON (base64)
+──────────────────────────────────────────────────────────────
+HARNESS RESULT: 62 passed, 0 failed
+──────────────────────────────────────────────────────────────
+
+::step:: Durability gate — the default dev Postgres is not RAM-backed; the RAM one is opt-in (BLOCKING)
+postgres_durability: ok — default stack: no tmpfs, no fsync=off; DEV_RAM_PG=1: tmpfs on /var/lib/postgresql/data + fsync=off (control).
+
+::step:: Secret ownership gate — each dev key is readable by its container uid only, mode 600 (BLOCKING)
+own-secrets: ok — Control(uid 10001) reads control.key+dev-master.key, worker(uid 10002) reads worker.key, keys are 600, and no other uid can read them
+
+::step:: Drift gate — config reference vs seeded send_managed.config (BLOCKING)
+config_drift OK: 57 config key(s); live == manifest == config-reference.md
+
+::step:: Drift gate — served routes vs api-contract.md (BLOCKING)
+contract_drift: Phase 2+9.5 admin surface mounted — 21 routes gated (401), undocumented 404, 14 distinct paths wrong-verb-probed.
+contract_drift: Phase 3 platform surface mounted — 4 routes gated (401), 4 distinct paths wrong-verb-probed.
+contract_drift: describe declarations derived-and-served — 7 error codes (== codeStatus == the api-contract's spelled-out count), 2 db_enum + 2 module_constant vocabularies (== declaration source), pricing.model in models[], every tier id a published pool_kind.
+contract_drift: root-mux fallback answers the coded 404 (JSON, not_found, request_id, no path reflected).
+contract_drift: wrong-verb dispatch proved on 18 paths (405 + coded envelope + request_id + Allow derived from the route table).
+contract_drift OK: served routes == documented contract (Phase 0 + Phase 2 admin).
+
+::step:: Drift gate — migration chain lint (BLOCKING)
+migration_lint OK: chain contiguous, paired, self-tracking; lifecycle test covers 0026.
+
+::step:: Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)
+config_consumption OK: all 57 config key(s) have a verified consumer or an explicit, operator-visible RESERVED marker
+
+::step:: Consumption gate SELF-TEST — the failure branches the real ledger never reaches (BLOCKING)
+config_consumption_selftest: exercising the failure branches the real 54-key ledger never reaches
+  ok: a real code consumer is accepted
+  ok: RESERVED with the operator-visible marker is accepted
+  ok: a pattern found ONLY in a comment is rejected
+  ok: a pattern absent from code is rejected with the OTHER message
+  ok: RESERVED with no refdoc marker is rejected
+  ok: a manifest key with no ledger line is rejected
+config_consumption_selftest OK: 6 cases (2 accept, 4 reject) — consumer branch incl. the
+  comment-satisfied defect found 2026-08-05, RESERVED visibility, and ledger bookkeeping
+
+::step:: Enumeration meta-gate — every test package and gate script is actually wired (BLOCKING)
+test_enumeration OK: all 10 package(s) with test files are in tests/harness/run.sh, and all 12 gate script(s) are in .github/workflows/real-infra.yml
+
+::step:: Enumeration meta-gate SELF-TEST — the paired control (BLOCKING)
+test_enumeration_selftest: exercising the failure branches the real tree never reaches
+  ok: a fully wired skeleton passes
+  ok: an unenumerated test package fails
+  ok: an unenumerated gate script fails
+  ok: both violations are reported in ONE run
+  ok: the go_suite() definition alone is not an enumeration
+  ok: a vendored *_test.go is correctly ignored
+  ok: a COMMENTED-OUT gate step does not count as wired
+  ok: a gate invoked inside a 'run: |' block is wired
+  ok: a gate named only in a step NAME does not count as wired
+test_enumeration_selftest OK: 9 cases (3 accept, 6 reject) + both scripts confirmed wired in
+  CI — rule 1's enumeration (2,4,5), the vendor exclusion (6), and rule 2's run-command
+  matching incl. the comment-satisfied defect found 2026-08-05 (7-9)
+
+::step:: Shutdown gate — SIGTERM grace clears shutdown_drain_timeout_sec (BLOCKING)
+drain_grace OK: drain 30s < docker stop_grace_period 90s and systemd TimeoutStopSec=120
+
+::step:: Security gate — no credential leak in service logs (BLOCKING)
+no_secret_leak OK: no dev token/hash found in service logs.
+
+::step:: Security gate — every driver call site scrubs the DSN out of its error (BLOCKING)
+dsn_scrub_wiring OK: 7 driver call site(s) discovered in services/ and tools/, all 7 declared; 6 scrubbed before the next driver call, 1 re-derived as discarding their error inline.
+
+::step:: Tear down
+ Container coldmail-send-managed-worker-1  Stopping
+ Container coldmail-send-managed-smtp-sink-1  Stopping
+ Container coldmail-send-managed-worker-1  Stopped
+ Container coldmail-send-managed-worker-1  Removing
+ Container coldmail-send-managed-worker-1  Removed
+ Container coldmail-send-managed-control-1  Stopping
+ Container coldmail-send-managed-smtp-sink-1  Stopped
+ Container coldmail-send-managed-smtp-sink-1  Removing
+ Container coldmail-send-managed-smtp-sink-1  Removed
+ Container coldmail-send-managed-control-1  Stopped
+ Container coldmail-send-managed-control-1  Removing
+ Container coldmail-send-managed-control-1  Removed
+ Container coldmail-send-managed-migrate-1  Stopping
+ Container coldmail-send-managed-migrate-1  Stopped
+ Container coldmail-send-managed-migrate-1  Removing
+ Container coldmail-send-managed-migrate-1  Removed
+ Container coldmail-send-managed-postgres-1  Stopping
+ Container coldmail-send-managed-postgres-1  Stopped
+ Container coldmail-send-managed-postgres-1  Removing
+ Container coldmail-send-managed-postgres-1  Removed
+ Network coldmail-send-managed_default  Removing
+ Network coldmail-send-managed_default  Removed
+
+================ [replica] coldmail-send-managed / behavioral — step results ================
+skip(uses)  actions/checkout@v4
+skip(uses)  actions/setup-go@v5
+skip(uses)  actions/setup-node@v4
+ok          Go lint — gofmt + vet (BLOCKING; keeps code/format from drifting)
+ok          Generate dev certs/secrets + provision dev worker (writes .env)
+ok          Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)
+ok          Worker came up seeded on the FIRST attempt (no register-reject exit)
+ok          Real-infra behavioral harness (10 checks, must be all-green)
+ok          Durability gate — the default dev Postgres is not RAM-backed; the RAM one is opt-in (BLOCKING)
+ok          Secret ownership gate — each dev key is readable by its container uid only, mode 600 (BLOCKING)
+ok          Drift gate — config reference vs seeded send_managed.config (BLOCKING)
+ok          Drift gate — served routes vs api-contract.md (BLOCKING)
+ok          Drift gate — migration chain lint (BLOCKING)
+ok          Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)
+ok          Consumption gate SELF-TEST — the failure branches the real ledger never reaches (BLOCKING)
+ok          Enumeration meta-gate — every test package and gate script is actually wired (BLOCKING)
+ok          Enumeration meta-gate SELF-TEST — the paired control (BLOCKING)
+ok          Shutdown gate — SIGTERM grace clears shutdown_drain_timeout_sec (BLOCKING)
+ok          Security gate — no credential leak in service logs (BLOCKING)
+ok          Security gate — every driver call site scrubs the DSN out of its error (BLOCKING)
+skip        Diagnostics on failure
+ok          Tear down
+[replica] job result: SUCCESS

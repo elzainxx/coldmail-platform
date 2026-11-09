@@ -1,0 +1,331 @@
+[replica] coldmail-send-byo @ 99e51ae as uid 1001 in /var/lib/cm-linux/work/coldmail-send-byo (ext2/ext3 filesystem)
+
+::step:: Go lint — gofmt + vet (BLOCKING; keeps code/format from drifting)
+go: downloading github.com/jackc/pgx/v5 v5.10.0
+go: downloading golang.org/x/net v0.62.0
+go: downloading golang.org/x/crypto v0.58.0
+go: downloading github.com/jackc/puddle/v2 v2.2.2
+go: downloading github.com/jackc/pgpassfile v1.0.0
+go: downloading github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761
+go: downloading golang.org/x/text v0.43.0
+go: downloading golang.org/x/sync v0.24.0
+go: downloading golang.org/x/crypto v0.31.0
+
+::step:: Build the migrate runner (M3-P0-OD-12 — required by three template-DB steps in run.sh)
+
+::step:: Generate dev certs/secrets + provision dev worker (writes .env)
+== gen-certs ==
+gen-certs: writing dev mTLS material to secrets/dev/certs
+gen-certs: done. CA + control/worker/sink leaves in secrets/dev/certs (ca.key stays here, gitignored).
+== gen-secrets ==
+gen-secrets: wrote dev KMS master key -> secrets/dev/kms/dev-master.key (Control-only; admin Encrypt-only)
+gen-secrets: operator admin (Domain B) key is minted (bcrypt) by 'provision-worker admin-key'
+             and written to .env by 'scripts/dev.sh certs' (ADMIN_API_KEY / ADMIN_API_KEY_HASHES).
+gen-secrets: done.
+== provision dev worker + operator admin key + write .env ==
+.env written (gitignored). TWO worker tokens/hashes + operator admin key + platform service token provisioned.
+
+::step:: Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)
+ Network coldmail-send-byo_default  Creating
+ Network coldmail-send-byo_default  Created
+ Container coldmail-send-byo-postgres-1  Creating
+ Container coldmail-send-byo-postgres-1  Created
+ Container coldmail-send-byo-postgres-1  Starting
+ Container coldmail-send-byo-postgres-1  Started
+ Container coldmail-send-byo-postgres-1  Waiting
+ Container coldmail-send-byo-postgres-1  Healthy
+ Container coldmail-send-byo-postgres-1  Running
+ Container coldmail-send-byo-migrate-1  Creating
+ Container coldmail-send-byo-migrate-1  Created
+Attaching to migrate-1
+migrate-1  | preflight: OK (public.users + public.job_items exist)
+migrate-1  | applied  0000_bootstrap
+migrate-1  | applied  0001_create_schema
+migrate-1  | applied  0002_create_role
+migrate-1  | applied  0003_create_enums
+migrate-1  | applied  0004_create_pools
+migrate-1  | applied  0005_create_accounts
+migrate-1  | applied  0006_create_boxes
+migrate-1  | applied  0007_create_jobs
+migrate-1  | applied  0008_create_job_events
+migrate-1  | applied  0009_create_send_logs
+migrate-1  | applied  0010_create_config_and_seed
+migrate-1  | applied  0011_add_indexes
+migrate-1  | applied  0012_grants_and_rls
+migrate-1  | applied  0013_accounts_pool_uniqueness
+migrate-1  | applied  0014_create_account_events
+migrate-1  | applied  0015_jobs_claim_by_user_idx
+migrate-1  | applied  0016_accounts_scoring_columns
+migrate-1  | applied  0017_seed_phase5_config
+migrate-1  | applied  0018_seed_phase6_config
+migrate-1  | applied  0019_seed_phase7_config
+migrate-1  | applied  0020_jobs_attempt_token
+migrate-1  | applied  0021_operability_config
+migrate-1  | applied  0022_job_events_error_context
+migrate-1  | applied  0023_singleton_reacquire_config
+migrate-1  | applied  0024_job_events_fk_carveout
+migrate-1  | applied  0025_new_enums
+migrate-1  | applied  0026_accounts_m3_state
+migrate-1  | applied  0027_accounts_user_owned
+migrate-1  | applied  0028_drop_pools
+migrate-1  | applied  0029_create_user_settings
+migrate-1  | applied  0030_create_user_config_overrides
+migrate-1  | applied  0031_create_user_suspensions
+migrate-1  | applied  0032_create_campaigns
+migrate-1  | applied  0033_create_notifications
+migrate-1  | applied  0034_account_events_action_widen
+migrate-1  | applied  0035_account_verification_state
+migrate-1  | applied  0036_account_config_seeds
+migrate-1  | applied  0037_test_send_job_items_grant
+migrate-1  | applied  0038_bulk_add_max_rows_config
+migrate-1  | applied  0039_from_gate_config_seeds
+migrate-1  | applied  0040_from_gate_predicate
+migrate-1  | applied  0041_from_gate_override_action
+migrate-1  | applied  0042_seed_phase5_config
+migrate-1  | applied  0043_job_events_account_window_idx
+migrate-1  | applied  0044_account_events_suspend_action
+migrate-1  | applied  0045_test_button_per_user_limit
+migrate-1  | applied  0046_visibility
+migrate-1  | applied  0047_notification_state_suppressed
+migrate-1  | applied  0048_unit_price_zero
+migrate-1  | applied  0049_discharge_expired_reserved_keys
+migrate-1  | applied  0050_notifications_user_page_idx
+migrate-1  | applied  0051_drop_score_alert_threshold
+migrate-1  | applied  0052_dispatch_mode_ladder
+migrate-1  | applied  0053_shadow_mode_for_every_autonomous_mutator
+migrate-1  | up: applied 54 migration(s)
+migrate-1  | set-app-password: send_byo_app password set (value not logged)
+[Kmigrate-1 exited with code 0
+seed: system user + dev worker row (11111111-1111-1111-1111-111111111111) seeded; worker can register on the send stream.
+seed: second dev worker row (22222222-2222-2222-2222-222222222222) seeded; run 'scripts/dev.sh up2' to start it.
+ Container coldmail-send-byo-smtp-sink-1  Creating
+ Container coldmail-send-byo-dns-blackhole-1  Creating
+ Container coldmail-send-byo-coredns-1  Creating
+ Container coldmail-send-byo-postgres-1  Running
+ Container coldmail-send-byo-migrate-1  Created
+ Container coldmail-send-byo-control-1  Creating
+ Container coldmail-send-byo-control-1  Created
+ Container coldmail-send-byo-worker-1  Creating
+ Container coldmail-send-byo-smtp-sink-1  Created
+ Container coldmail-send-byo-dns-blackhole-1  Created
+ Container coldmail-send-byo-coredns-1  Created
+ Container coldmail-send-byo-worker-1  Created
+ Container coldmail-send-byo-dns-blackhole-1  Starting
+ Container coldmail-send-byo-smtp-sink-1  Starting
+ Container coldmail-send-byo-coredns-1  Starting
+ Container coldmail-send-byo-postgres-1  Waiting
+ Container coldmail-send-byo-postgres-1  Healthy
+ Container coldmail-send-byo-migrate-1  Starting
+ Container coldmail-send-byo-dns-blackhole-1  Started
+ Container coldmail-send-byo-coredns-1  Started
+ Container coldmail-send-byo-smtp-sink-1  Started
+ Container coldmail-send-byo-migrate-1  Started
+ Container coldmail-send-byo-postgres-1  Waiting
+ Container coldmail-send-byo-migrate-1  Waiting
+ Container coldmail-send-byo-migrate-1  Exited
+ Container coldmail-send-byo-postgres-1  Healthy
+ Container coldmail-send-byo-control-1  Starting
+ Container coldmail-send-byo-control-1  Started
+ Container coldmail-send-byo-control-1  Waiting
+ Container coldmail-send-byo-control-1  Error
+dependency failed to start: container coldmail-send-byo-control-1 exited (1)
+
+::step:: Durability gate — the default dev Postgres is not RAM-backed; the RAM one is opt-in (BLOCKING)
+postgres_durability: ok — default stack: no tmpfs, no fsync=off; DEV_RAM_PG=1: tmpfs on /var/lib/postgresql/data + fsync=off (control).
+
+::step:: Drift gate — config reference vs seeded send_byo.config (BLOCKING)
+config_drift OK: 89 config key(s); live == manifest == config-reference.md
+
+::step:: Drift gate — served routes vs api-contract.md (BLOCKING)
+contract_drift FAIL: GET /healthz not served
+contract_drift FAIL: GET /readyz not served (got 000000)
+contract_drift FAIL: POST /v1/worker/register not served as documented (got 000)
+contract_drift FAIL: POST /v1/worker/heartbeat not served as documented (got 000)
+contract_drift: admin surface not mounted (GET /v1/admin/accounts -> 000000); skipping Phase 2 route checks (set ADMIN_API_KEY_HASHES to enable).
+contract_drift: platform surface not mounted (POST /v1/run -> 000000); skipping Phase 3 route checks (set PLATFORM_TOKEN_HASHES to enable).
+contract_drift FAIL: GET /v1/describe returned nothing with the dev platform token
+contract_drift FAIL: undocumented path did not 404 (got 000000) — surface wider than the contract
+contract_drift FAIL: the root-mux 404 is not application/json — ServeMux's plain text is back
+contract_drift FAIL: the root-mux 404 carries no error.code=not_found
+contract_drift FAIL: the root-mux 404 carries no request_id in the req_<32hex> shape all three surfaces mint
+contract_drift: NO wrong-verb checks ran — both API surfaces are unmounted, so item 7b is UNPROVEN by this run (set ADMIN_API_KEY_HASHES and PLATFORM_TOKEN_HASHES).
+
+::step:: Drift gate — migration chain lint (BLOCKING)
+migration_lint OK: 54 migration(s) linted (chain contiguous, paired, self-tracking); lifecycle test covers 0053.
+
+::step:: Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)
+config_consumption OK: all 89 config key(s) have a verified consumer or an explicit, operator-visible RESERVED marker
+
+::step:: Consumption gate SELF-TEST — the RESERVED-expiry branch the real ledger no longer reaches (BLOCKING)
+config_consumption_selftest: exercising the RESERVED-expiry branch the real ledger no longer reaches
+  ok: FW-M3-N expiry is rejected as WITHDRAWN
+  ok: a FUTURE phase expiry is still accepted
+  ok: an at-or-past phase expiry still fails
+  ok: a missing expiry field still fails
+  ok: an unrecognized expiry label still fails
+  ok: RESERVED with no refdoc marker still fails
+  ok: a real code consumer is accepted
+  ok: a pattern found ONLY in a comment is rejected
+  ok: a pattern absent from code entirely is rejected with the OTHER message
+  ok: an emptied ledger fails WITH A REASON, not silently
+config_consumption_selftest OK: 10 cases (2 accept, 8 reject) — expiry branch (1-6), the
+  consumer-grep branch (7-9, incl. the comment-satisfied defect), and the emptied-ledger
+  silent-crash guard (10) — the last two both found 2026-08-05
+
+::step:: Enumeration meta-gate — every test package and gate script is actually wired (BLOCKING)
+test_enumeration OK: all 12 package(s) with test files are in tests/harness/run.sh, and all 12 gate script(s) are in .github/workflows/real-infra.yml
+
+::step:: Enumeration meta-gate SELF-TEST — the paired control (BLOCKING)
+test_enumeration_selftest: exercising the failure branches the real tree never reaches
+  ok: a fully wired skeleton passes
+  ok: an unenumerated test package fails
+  ok: an unenumerated gate script fails
+  ok: both violations are reported in ONE run
+  ok: the go_suite() definition alone is not an enumeration
+  ok: a vendored *_test.go is correctly ignored
+  ok: a COMMENTED-OUT gate step does not count as wired
+  ok: a gate invoked inside a 'run: |' block is wired
+  ok: a gate named only in a step NAME does not count as wired
+test_enumeration_selftest OK: 9 cases (3 accept, 6 reject) + both scripts confirmed wired in
+  CI — rule 1's enumeration (2,4,5), the vendor exclusion (6), and rule 2's run-command
+  matching incl. the comment-satisfied defect found 2026-08-05 (7-9)
+
+::step:: Shutdown gate — SIGTERM grace clears shutdown_drain_timeout_sec (BLOCKING)
+drain_grace OK: drain 30s < docker stop_grace_period 90s and systemd TimeoutStopSec=120
+
+::step:: Security gate — no credential leak in service logs (BLOCKING)
+no_secret_leak OK: no dev token/hash found in service logs.
+
+::step:: Security gate — every driver call site scrubs the DSN out of its error (BLOCKING)
+dsn_scrub_wiring OK: 7 driver call site(s) discovered in services/ and tools/, all 7 declared; 6 scrubbed before the next driver call, 1 re-derived as discarding their error inline.
+
+::step:: Scrub gate — last_smtp_response has one reader, last_error_message has zero readers in platformapi/ (BLOCKING)
+user_output_scrub OK: last_smtp_response has one reader, last_error_message has zero readers in platformapi/, the notifications.payload path (if it exists) uses the accessor, and every workerproto.Report.SMTPResponse consumer is ledgered.
+
+::step:: Diagnostics on failure
+NAME                                IMAGE                    COMMAND                  SERVICE         CREATED          STATUS                    PORTS
+coldmail-send-byo-coredns-1         coredns/coredns:latest   "/coredns -conf /etc…"   coredns         17 seconds ago   Up 11 seconds             0.0.0.0:9053->53/tcp, 0.0.0.0:9053->53/udp, [::]:9053->53/tcp, [::]:9053->53/udp
+coldmail-send-byo-dns-blackhole-1   python:3-alpine          "python3 -c 'import …"   dns-blackhole   17 seconds ago   Up 12 seconds             
+coldmail-send-byo-postgres-1        postgres:16-alpine       "docker-entrypoint.s…"   postgres        30 seconds ago   Up 26 seconds (healthy)   0.0.0.0:6432->5432/tcp, [::]:6432->5432/tcp
+coldmail-send-byo-smtp-sink-1       axllent/mailpit:latest   "/mailpit"               smtp-sink       17 seconds ago   Up 11 seconds (healthy)   0.0.0.0:9025->8025/tcp, [::]:9025->8025/tcp
+control-1  | control 2026/11/07 23:52:08 db connected
+control-1  | control 2026/11/07 23:52:08 singleton lock acquired (key=8200000001)
+control-1  | control 2026/11/07 23:52:08 singleton: mid-life lock loss will PAUSE dispatch/reclaim/retention and re-attempt acquisition every 5s (brain_singleton_reacquire_interval_sec)
+control-1  | control 2026/11/07 23:52:08 FATAL kms load: read dev kms key "/secrets/kms/dev-master.key": open /secrets/kms/dev-master.key: permission denied
+migrate-1  | preflight: OK (public.users + public.job_items exist)
+migrate-1  | applied  0000_bootstrap
+migrate-1  | applied  0001_create_schema
+migrate-1  | applied  0002_create_role
+migrate-1  | applied  0003_create_enums
+migrate-1  | applied  0004_create_pools
+migrate-1  | applied  0005_create_accounts
+migrate-1  | applied  0006_create_boxes
+migrate-1  | applied  0007_create_jobs
+migrate-1  | applied  0008_create_job_events
+migrate-1  | applied  0009_create_send_logs
+migrate-1  | applied  0010_create_config_and_seed
+migrate-1  | applied  0011_add_indexes
+migrate-1  | applied  0012_grants_and_rls
+migrate-1  | applied  0013_accounts_pool_uniqueness
+migrate-1  | applied  0014_create_account_events
+migrate-1  | applied  0015_jobs_claim_by_user_idx
+migrate-1  | applied  0016_accounts_scoring_columns
+migrate-1  | applied  0017_seed_phase5_config
+migrate-1  | applied  0018_seed_phase6_config
+migrate-1  | applied  0019_seed_phase7_config
+migrate-1  | applied  0020_jobs_attempt_token
+migrate-1  | applied  0021_operability_config
+migrate-1  | applied  0022_job_events_error_context
+migrate-1  | applied  0023_singleton_reacquire_config
+migrate-1  | applied  0024_job_events_fk_carveout
+migrate-1  | applied  0025_new_enums
+migrate-1  | applied  0026_accounts_m3_state
+migrate-1  | applied  0027_accounts_user_owned
+migrate-1  | applied  0028_drop_pools
+migrate-1  | applied  0029_create_user_settings
+migrate-1  | applied  0030_create_user_config_overrides
+migrate-1  | applied  0031_create_user_suspensions
+migrate-1  | applied  0032_create_campaigns
+migrate-1  | applied  0033_create_notifications
+migrate-1  | applied  0034_account_events_action_widen
+migrate-1  | applied  0035_account_verification_state
+migrate-1  | applied  0036_account_config_seeds
+migrate-1  | applied  0037_test_send_job_items_grant
+migrate-1  | applied  0038_bulk_add_max_rows_config
+migrate-1  | applied  0039_from_gate_config_seeds
+migrate-1  | applied  0040_from_gate_predicate
+migrate-1  | applied  0041_from_gate_override_action
+migrate-1  | applied  0042_seed_phase5_config
+migrate-1  | applied  0043_job_events_account_window_idx
+migrate-1  | applied  0044_account_events_suspend_action
+migrate-1  | applied  0045_test_button_per_user_limit
+migrate-1  | applied  0046_visibility
+migrate-1  | applied  0047_notification_state_suppressed
+migrate-1  | applied  0048_unit_price_zero
+migrate-1  | applied  0049_discharge_expired_reserved_keys
+migrate-1  | applied  0050_notifications_user_page_idx
+migrate-1  | applied  0051_drop_score_alert_threshold
+migrate-1  | applied  0052_dispatch_mode_ladder
+migrate-1  | applied  0053_shadow_mode_for_every_autonomous_mutator
+migrate-1  | up: applied 54 migration(s)
+migrate-1  | set-app-password: send_byo_app password set (value not logged)
+migrate-1  | preflight: OK (public.users + public.job_items exist)
+migrate-1  | up: no pending migrations (already current)
+migrate-1  | set-app-password: send_byo_app password set (value not logged)
+
+::step:: Tear down
+ Container coldmail-send-byo-worker-1  Stopping
+ Container coldmail-send-byo-smtp-sink-1  Stopping
+ Container coldmail-send-byo-coredns-1  Stopping
+ Container coldmail-send-byo-dns-blackhole-1  Stopping
+ Container coldmail-send-byo-worker-1  Stopped
+ Container coldmail-send-byo-worker-1  Removing
+ Container coldmail-send-byo-worker-1  Removed
+ Container coldmail-send-byo-control-1  Stopping
+ Container coldmail-send-byo-control-1  Stopped
+ Container coldmail-send-byo-control-1  Removing
+ Container coldmail-send-byo-coredns-1  Stopped
+ Container coldmail-send-byo-coredns-1  Removing
+ Container coldmail-send-byo-control-1  Removed
+ Container coldmail-send-byo-migrate-1  Stopping
+ Container coldmail-send-byo-migrate-1  Stopped
+ Container coldmail-send-byo-migrate-1  Removing
+ Container coldmail-send-byo-smtp-sink-1  Stopped
+ Container coldmail-send-byo-smtp-sink-1  Removing
+ Container coldmail-send-byo-migrate-1  Removed
+ Container coldmail-send-byo-postgres-1  Stopping
+ Container coldmail-send-byo-coredns-1  Removed
+ Container coldmail-send-byo-smtp-sink-1  Removed
+ Container coldmail-send-byo-postgres-1  Stopped
+ Container coldmail-send-byo-postgres-1  Removing
+ Container coldmail-send-byo-postgres-1  Removed
+ Container coldmail-send-byo-dns-blackhole-1  Stopped
+ Container coldmail-send-byo-dns-blackhole-1  Removing
+ Container coldmail-send-byo-dns-blackhole-1  Removed
+ Network coldmail-send-byo_default  Removing
+ Network coldmail-send-byo_default  Removed
+
+================ [replica] coldmail-send-byo / behavioral — step results ================
+skip(uses)  actions/checkout@v4
+skip(uses)  actions/setup-go@v5
+ok          Go lint — gofmt + vet (BLOCKING; keeps code/format from drifting)
+ok          Build the migrate runner (M3-P0-OD-12 — required by three template-DB steps in run.sh)
+ok          Generate dev certs/secrets + provision dev worker (writes .env)
+FAILED rc=1 Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)
+skip(after failure) Worker came up seeded on the FIRST attempt (no register-reject exit)
+skip(after failure) Real-infra behavioral harness (10 checks, must be all-green)
+ok          Durability gate — the default dev Postgres is not RAM-backed; the RAM one is opt-in (BLOCKING)
+ok          Drift gate — config reference vs seeded send_byo.config (BLOCKING)
+FAILED rc=1 Drift gate — served routes vs api-contract.md (BLOCKING)
+ok          Drift gate — migration chain lint (BLOCKING)
+ok          Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)
+ok          Consumption gate SELF-TEST — the RESERVED-expiry branch the real ledger no longer reaches (BLOCKING)
+ok          Enumeration meta-gate — every test package and gate script is actually wired (BLOCKING)
+ok          Enumeration meta-gate SELF-TEST — the paired control (BLOCKING)
+ok          Shutdown gate — SIGTERM grace clears shutdown_drain_timeout_sec (BLOCKING)
+ok          Security gate — no credential leak in service logs (BLOCKING)
+ok          Security gate — every driver call site scrubs the DSN out of its error (BLOCKING)
+ok          Scrub gate — last_smtp_response has one reader, last_error_message has zero readers in platformapi/ (BLOCKING)
+ok          Diagnostics on failure
+ok          Tear down
+[replica] job result: FAILURE

@@ -1,0 +1,1380 @@
+default-mode	Set up job	﻿2026-11-08T16:22:54.0002708Z Current runner version: '2.338.2'
+##[group]Runner Image Provisioner
+Hosted Compute Agent
+Version: 20261028.624
+Commit: 54898b74c23fde5556c9b3c3a2290865feef0dfe
+Build Date: 2026-10-28T21:51:42Z
+Worker ID: {413aa6da-8ba7-47ff-81c5-399d2a8ebb41}
+Region: centralus
+Cloud: Azure
+##[endgroup]
+##[group]Operating System
+Ubuntu
+24.04.5
+LTS
+##[endgroup]
+##[group]Runner Image
+Image: ubuntu-24.04
+Version: 20261101.360.1
+Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20261101.360/images/ubuntu/Ubuntu2404-Readme.md
+Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20261101.360
+##[endgroup]
+##[group]GITHUB_TOKEN Permissions
+Contents: read
+Metadata: read
+Packages: read
+##[endgroup]
+Secret source: Actions
+Cache mode: write
+Prepare workflow directory
+Prepare all required actions
+Getting action download info
+Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+Download action repository 'actions/setup-go@v5' (SHA:40f1582b2485089dde7abd97c1529aa768e1baff)
+Download action repository 'actions/setup-node@v4' (SHA:49933ea5288caeca8642d1e84afbd3f7d6820020)
+Complete job name: default-mode
+default-mode	Run actions/checkout@v4	﻿2026-11-08T16:22:55.1350347Z ##[group]Run actions/checkout@v4
+with:
+  repository: elzainxx/coldmail-send-byo
+  token: ***
+  ssh-strict: true
+  ssh-user: git
+  persist-credentials: true
+  clean: true
+  sparse-checkout-cone-mode: true
+  fetch-depth: 1
+  fetch-tags: false
+  show-progress: true
+  lfs: false
+  submodules: false
+  set-safe-directory: true
+  allow-unsafe-pr-checkout: false
+##[endgroup]
+Syncing repository: elzainxx/coldmail-send-byo
+##[group]Getting Git version info
+Working directory is '/home/runner/work/coldmail-send-byo/coldmail-send-byo'
+[command]/usr/bin/git version
+git version 2.56.0
+##[endgroup]
+Temporarily overriding HOME='/home/runner/work/_temp/50437963-6d70-4525-b4eb-84abda03ffd9' before making global git config changes
+Adding repository directory to the temporary git global config as a safe directory
+[command]/usr/bin/git config --global --add safe.directory /home/runner/work/coldmail-send-byo/coldmail-send-byo
+Deleting the contents of '/home/runner/work/coldmail-send-byo/coldmail-send-byo'
+##[group]Initializing the repository
+[command]/usr/bin/git init /home/runner/work/coldmail-send-byo/coldmail-send-byo
+hint: Using 'master' as the name for the initial branch. This default branch name
+hint: will change to "main" in Git 3.0. To configure the initial branch name
+hint: to use in all of your new repositories, which will suppress this warning,
+hint: call:
+hint:
+hint: 	git config --global init.defaultBranch <name>
+hint:
+hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+hint: 'development'. The just-created branch can be renamed via this command:
+hint:
+hint: 	git branch -m <name>
+hint:
+hint: Disable this message with "git config set advice.defaultBranchName false"
+Initialized empty Git repository in /home/runner/work/coldmail-send-byo/coldmail-send-byo/.git/
+[command]/usr/bin/git remote add origin https://github.com/elzainxx/coldmail-send-byo
+##[endgroup]
+##[group]Disabling automatic garbage collection
+[command]/usr/bin/git config --local gc.auto 0
+##[endgroup]
+##[group]Setting up auth
+[command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+[command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+[command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+[command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+[command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+[command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+[command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+##[endgroup]
+##[group]Fetching the repository
+[command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +d03199a9b5278e0678a04ee45aa623c4cc1fb9f5:refs/remotes/origin/main
+From https://github.com/elzainxx/coldmail-send-byo
+ * [new ref]         d03199a9b5278e0678a04ee45aa623c4cc1fb9f5 -> origin/main
+##[endgroup]
+##[group]Determining the checkout info
+##[endgroup]
+[command]/usr/bin/git sparse-checkout disable
+[command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+##[group]Checking out the ref
+[command]/usr/bin/git checkout --progress --force -B main refs/remotes/origin/main
+Switched to a new branch 'main'
+branch 'main' set up to track 'origin/main'.
+##[endgroup]
+[command]/usr/bin/git log -1 --format=%H
+d03199a9b5278e0678a04ee45aa623c4cc1fb9f5
+default-mode	Run actions/setup-go@v5	﻿2026-11-08T16:22:56.3117611Z ##[group]Run actions/setup-go@v5
+with:
+  go-version: 1.26
+  check-latest: false
+  token: ***
+  cache: true
+##[endgroup]
+Setup go version spec 1.26
+(node:2033) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+Found in cache @ /opt/hostedtoolcache/go/1.26.10/x64
+Added go to the path
+Successfully set up Go version 1.26
+[command]/opt/hostedtoolcache/go/1.26.10/x64/bin/go env GOMODCACHE
+[command]/opt/hostedtoolcache/go/1.26.10/x64/bin/go env GOCACHE
+/home/runner/go/pkg/mod
+/home/runner/.cache/go-build
+##[warning]Restore cache failed: Dependencies file is not found in /home/runner/work/coldmail-send-byo/coldmail-send-byo. Supported file pattern: go.sum
+go version go1.26.10 linux/amd64
+
+##[group]go env
+AR='ar'
+CC='gcc'
+CGO_CFLAGS='-O2 -g'
+CGO_CPPFLAGS=''
+CGO_CXXFLAGS='-O2 -g'
+CGO_ENABLED='1'
+CGO_FFLAGS='-O2 -g'
+CGO_LDFLAGS='-O2 -g'
+CXX='g++'
+GCCGO='gccgo'
+GO111MODULE=''
+GOAMD64='v1'
+GOARCH='amd64'
+GOAUTH='netrc'
+GOBIN=''
+GOCACHE='/home/runner/.cache/go-build'
+GOCACHEPROG=''
+GODEBUG=''
+GOENV='/home/runner/.config/go/env'
+GOEXE=''
+GOEXPERIMENT=''
+GOFIPS140='off'
+GOFLAGS=''
+GOGCCFLAGS='-fPIC -m64 -pthread -Wl,--no-gc-sections -fmessage-length=0 -ffile-prefix-map=/tmp/go-build2159990227=/tmp/go-build -gno-record-gcc-switches'
+GOHOSTARCH='amd64'
+GOHOSTOS='linux'
+GOINSECURE=''
+GOMOD='/dev/null'
+GOMODCACHE='/home/runner/go/pkg/mod'
+GONOPROXY=''
+GONOSUMDB=''
+GOOS='linux'
+GOPATH='/home/runner/go'
+GOPRIVATE=''
+GOPROXY='https://proxy.golang.org,direct'
+GOROOT='/opt/hostedtoolcache/go/1.26.10/x64'
+GOSUMDB='sum.golang.org'
+GOTELEMETRY='local'
+GOTELEMETRYDIR='/home/runner/.config/go/telemetry'
+GOTMPDIR=''
+GOTOOLCHAIN='auto'
+GOTOOLDIR='/opt/hostedtoolcache/go/1.26.10/x64/pkg/tool/linux_amd64'
+GOVCS=''
+GOVERSION='go1.26.10'
+GOWORK=''
+PKG_CONFIG='pkg-config'
+
+##[endgroup]
+default-mode	Run actions/setup-node@v4	﻿2026-11-08T16:22:57.1507193Z ##[group]Run actions/setup-node@v4
+with:
+  node-version: 20
+  always-auth: false
+  check-latest: false
+  token: ***
+##[endgroup]
+Attempting to download 20...
+(node:2094) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+Acquiring 20.20.2 - x64 from https://github.com/actions/node-versions/releases/download/20.20.2-23521894959/node-20.20.2-linux-x64.tar.gz
+Extracting ...
+[command]/usr/bin/tar xz --strip 1 --warning=no-unknown-keyword --overwrite -C /home/runner/work/_temp/e1f5c601-00c7-4776-9cca-fde53e33e27c -f /home/runner/work/_temp/99e16a62-33b6-4998-88f0-77a0041400bc
+Adding to the cache ...
+##[group]Environment details
+node: v20.20.2
+npm: 10.8.2
+yarn: 1.22.22
+##[endgroup]
+default-mode	Build the migrate runner (M3-P0-OD-12 — required by three template-DB steps in run.sh)	﻿2026-11-08T16:23:02.3596730Z ##[group]Run (cd tools/send-byo-migrate && go build -o bin/send-byo-migrate .)
+^[[36;1m(cd tools/send-byo-migrate && go build -o bin/send-byo-migrate .)^[[0m
+shell: /usr/bin/bash -e {0}
+##[endgroup]
+go: downloading github.com/jackc/pgx/v5 v5.10.0
+go: downloading github.com/jackc/pgpassfile v1.0.0
+go: downloading github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761
+go: downloading golang.org/x/text v0.43.0
+default-mode	Generate dev certs/secrets + provision dev worker (writes .env)	﻿2026-11-08T16:23:24.7612390Z ##[group]Run bash scripts/dev.sh certs
+^[[36;1mbash scripts/dev.sh certs^[[0m
+shell: /usr/bin/bash -e {0}
+##[endgroup]
+== gen-certs ==
+gen-certs: writing dev mTLS material to secrets/dev/certs
+gen-certs: done. CA + control/worker/sink/harness-client leaves in secrets/dev/certs (ca.key stays here, gitignored).
+gen-certs: keys are 600 and owned by YOU; run tools/own-secrets.sh (dev.sh certs does) to hand control.key/worker.key to their container uids.
+== gen-secrets ==
+gen-secrets: wrote dev KMS master key -> secrets/dev/kms/dev-master.key (Control-only; admin Encrypt-only)
+gen-secrets: operator admin (Domain B) key is minted (bcrypt) by 'provision-worker admin-key'
+             and written to .env by 'scripts/dev.sh certs' (ADMIN_API_KEY / ADMIN_API_KEY_HASHES).
+gen-secrets: done.
+== provision dev worker + operator admin key + write .env ==
+.env written (gitignored). TWO worker tokens/hashes + operator admin key + platform service token provisioned.
+== own-secrets ==
+own-secrets: chown'd control.key + dev-master.key -> uid 10001, worker.key -> uid 10002 (mode 600 kept)
+own-secrets: ok — Control(uid 10001) reads control.key+dev-master.key, worker(uid 10002) reads worker.key, keys are 600, and no other uid can read them
+default-mode	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest), DEFAULT mode	﻿2026-11-08T16:23:33.9346167Z ##[group]Run bash scripts/dev.sh reset
+^[[36;1mbash scripts/dev.sh reset^[[0m
+shell: /usr/bin/bash -e {0}
+##[endgroup]
+ postgres Pulling 
+ 881fc932939e Already exists 
+ fd818ebd7c87 Pulling fs layer 
+ 07e60219949d Pulling fs layer 
+ ec3414c15456 Pulling fs layer 
+ a8b9fccd8d77 Pulling fs layer 
+ 850c0285d2f3 Pulling fs layer 
+ ac5e852d5d1d Pulling fs layer 
+ 55cd3be29a9d Pulling fs layer 
+ 108fda73eb54 Pulling fs layer 
+ 45a91a95fdfe Pulling fs layer 
+ 9df8a060171e Pulling fs layer 
+ ac5e852d5d1d Waiting 
+ 55cd3be29a9d Waiting 
+ 108fda73eb54 Waiting 
+ 45a91a95fdfe Waiting 
+ 9df8a060171e Waiting 
+ 850c0285d2f3 Waiting 
+ a8b9fccd8d77 Waiting 
+ fd818ebd7c87 Downloading [==================================================>]     968B/968B
+ fd818ebd7c87 Verifying Checksum 
+ fd818ebd7c87 Download complete 
+ fd818ebd7c87 Extracting [==================================================>]     968B/968B
+ fd818ebd7c87 Extracting [==================================================>]     968B/968B
+ ec3414c15456 Downloading [==================================================>]     170B/170B
+ ec3414c15456 Verifying Checksum 
+ ec3414c15456 Download complete 
+ 07e60219949d Downloading [>                                                  ]  15.79kB/900kB
+ fd818ebd7c87 Pull complete 
+ 07e60219949d Downloading [==================================================>]    900kB/900kB
+ 07e60219949d Download complete 
+ 07e60219949d Extracting [=>                                                 ]  32.77kB/900kB
+ 07e60219949d Extracting [==================================================>]    900kB/900kB
+ 07e60219949d Extracting [==================================================>]    900kB/900kB
+ 07e60219949d Pull complete 
+ ec3414c15456 Extracting [==================================================>]     170B/170B
+ ec3414c15456 Extracting [==================================================>]     170B/170B
+ ec3414c15456 Pull complete 
+ a8b9fccd8d77 Downloading [==================================================>]     116B/116B
+ a8b9fccd8d77 Download complete 
+ a8b9fccd8d77 Extracting [==================================================>]     116B/116B
+ a8b9fccd8d77 Extracting [==================================================>]     116B/116B
+ a8b9fccd8d77 Pull complete 
+ ac5e852d5d1d Downloading [==================>                                ]  3.501kB/9.669kB
+ ac5e852d5d1d Downloading [==================================================>]  9.669kB/9.669kB
+ ac5e852d5d1d Verifying Checksum 
+ ac5e852d5d1d Download complete 
+ 850c0285d2f3 Downloading [>                                                  ]  534.1kB/111.3MB
+ 55cd3be29a9d Downloading [==================================================>]     129B/129B
+ 55cd3be29a9d Verifying Checksum 
+ 55cd3be29a9d Download complete 
+ 850c0285d2f3 Downloading [===========>                                       ]  26.68MB/111.3MB
+ 108fda73eb54 Downloading [==================================================>]     166B/166B
+ 108fda73eb54 Verifying Checksum 
+ 108fda73eb54 Download complete 
+ 850c0285d2f3 Downloading [=============================>                     ]  65.63MB/111.3MB
+ 45a91a95fdfe Downloading [============================>                      ]  3.501kB/6.108kB
+ 45a91a95fdfe Downloading [==================================================>]  6.108kB/6.108kB
+ 45a91a95fdfe Verifying Checksum 
+ 45a91a95fdfe Download complete 
+ 9df8a060171e Downloading [==================================================>]     183B/183B
+ 850c0285d2f3 Downloading [==============================================>    ]  104.6MB/111.3MB
+ 9df8a060171e Verifying Checksum 
+ 9df8a060171e Download complete 
+ 850c0285d2f3 Verifying Checksum 
+ 850c0285d2f3 Download complete 
+ 850c0285d2f3 Extracting [>                                                  ]  557.1kB/111.3MB
+ 850c0285d2f3 Extracting [===>                                               ]  7.242MB/111.3MB
+ 850c0285d2f3 Extracting [========>                                          ]  18.38MB/111.3MB
+ 850c0285d2f3 Extracting [=============>                                     ]  29.52MB/111.3MB
+ 850c0285d2f3 Extracting [==================>                                ]  40.11MB/111.3MB
+ 850c0285d2f3 Extracting [=======================>                           ]  51.25MB/111.3MB
+ 850c0285d2f3 Extracting [==========================>                        ]  58.49MB/111.3MB
+ 850c0285d2f3 Extracting [==============================>                    ]   67.4MB/111.3MB
+ 850c0285d2f3 Extracting [===================================>               ]  78.54MB/111.3MB
+ 850c0285d2f3 Extracting [====================================>              ]  81.89MB/111.3MB
+ 850c0285d2f3 Extracting [======================================>            ]  86.34MB/111.3MB
+ 850c0285d2f3 Extracting [=========================================>         ]  92.47MB/111.3MB
+ 850c0285d2f3 Extracting [============================================>      ]  98.04MB/111.3MB
+ 850c0285d2f3 Extracting [=================================================> ]  109.7MB/111.3MB
+ 850c0285d2f3 Extracting [==================================================>]  111.3MB/111.3MB
+ 850c0285d2f3 Pull complete 
+ ac5e852d5d1d Extracting [==================================================>]  9.669kB/9.669kB
+ ac5e852d5d1d Extracting [==================================================>]  9.669kB/9.669kB
+ ac5e852d5d1d Pull complete 
+ 55cd3be29a9d Extracting [==================================================>]     129B/129B
+ 55cd3be29a9d Extracting [==================================================>]     129B/129B
+ 55cd3be29a9d Pull complete 
+ 108fda73eb54 Extracting [==================================================>]     166B/166B
+ 108fda73eb54 Extracting [==================================================>]     166B/166B
+ 108fda73eb54 Pull complete 
+ 45a91a95fdfe Extracting [==================================================>]  6.108kB/6.108kB
+ 45a91a95fdfe Extracting [==================================================>]  6.108kB/6.108kB
+ 45a91a95fdfe Pull complete 
+ 9df8a060171e Extracting [==================================================>]     183B/183B
+ 9df8a060171e Extracting [==================================================>]     183B/183B
+ 9df8a060171e Pull complete 
+ postgres Pulled 
+ Network coldmail-send-byo_default  Creating
+ Network coldmail-send-byo_default  Created
+ Container coldmail-send-byo-postgres-1  Creating
+ Container coldmail-send-byo-postgres-1  Created
+ Container coldmail-send-byo-postgres-1  Starting
+ Container coldmail-send-byo-postgres-1  Started
+ Container coldmail-send-byo-postgres-1  Waiting
+ Container coldmail-send-byo-postgres-1  Healthy
+#1 [internal] load local bake definitions
+#1 reading from stdin 445B done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 615B done
+#2 DONE 0.0s
+
+#3 [auth] library/golang:pull token for registry-1.docker.io
+#3 DONE 0.0s
+
+#4 [auth] library/alpine:pull token for registry-1.docker.io
+#4 DONE 0.0s
+
+#5 [internal] load metadata for docker.io/library/golang:1.26-alpine
+#5 DONE 0.5s
+
+#6 [internal] load metadata for docker.io/library/alpine:3.20
+#6 DONE 0.6s
+
+#7 [internal] load .dockerignore
+#7 transferring context: 2B done
+#7 DONE 0.0s
+
+#8 [internal] load build context
+#8 transferring context: 13.68MB 0.0s done
+#8 DONE 0.0s
+
+#9 [build 1/6] FROM docker.io/library/golang:1.26-alpine@sha256:87c65a688975c0b1d4585d204874c45ca78354670e3a5f11368c5a492303d696
+#9 resolve docker.io/library/golang:1.26-alpine@sha256:87c65a688975c0b1d4585d204874c45ca78354670e3a5f11368c5a492303d696 done
+#9 extracting sha256:350517c3be7d98583bf8add1014f6abb38dbc851e5ff8d53b7e4995414bdedfb
+#9 extracting sha256:350517c3be7d98583bf8add1014f6abb38dbc851e5ff8d53b7e4995414bdedfb 0.0s done
+#9 sha256:922b2f213a3ed9cdc1060d7da5b4c8b1a7e940524e6a783e3aa4b8cc06367591 2.19kB / 2.19kB done
+#9 sha256:350517c3be7d98583bf8add1014f6abb38dbc851e5ff8d53b7e4995414bdedfb 244.47kB / 244.47kB 0.1s done
+#9 sha256:f64d732997a02e45cca29ef334d56f89f7599c8937c2617b6467edd19bc037d6 0B / 67.35MB 0.1s
+#9 sha256:938c48435f2c0b41279f6db704d52892177f88935ace8b66ee0a443ffd126daf 0B / 126B 0.1s
+#9 sha256:87c65a688975c0b1d4585d204874c45ca78354670e3a5f11368c5a492303d696 10.30kB / 10.30kB done
+#9 sha256:2173d702003b1a8d17b844191acaeb36e94de46f6cabf2cb27370e151bbce5aa 1.92kB / 1.92kB done
+#9 sha256:f64d732997a02e45cca29ef334d56f89f7599c8937c2617b6467edd19bc037d6 5.24MB / 67.35MB 0.3s
+#9 sha256:938c48435f2c0b41279f6db704d52892177f88935ace8b66ee0a443ffd126daf 126B / 126B 0.2s
+#9 sha256:f64d732997a02e45cca29ef334d56f89f7599c8937c2617b6467edd19bc037d6 12.58MB / 67.35MB 0.4s
+#9 sha256:f64d732997a02e45cca29ef334d56f89f7599c8937c2617b6467edd19bc037d6 51.38MB / 67.35MB 0.5s
+#9 sha256:938c48435f2c0b41279f6db704d52892177f88935ace8b66ee0a443ffd126daf 126B / 126B 0.4s done
+#9 sha256:4f4fb700ef54461cfa02571ae0db9a0dc1e0cdb5577484a6d75e68dc38e8acc1 32B / 32B 0.5s done
+#9 sha256:f64d732997a02e45cca29ef334d56f89f7599c8937c2617b6467edd19bc037d6 67.35MB / 67.35MB 0.7s
+#9 ...
+
+#10 [stage-1 1/3] FROM docker.io/library/alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+#10 resolve docker.io/library/alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc done
+#10 sha256:bf8527eb54c3680e728d5b4b383a8ba730d72dae7236fbc8dff97ed6b224a731 612B / 612B done
+#10 sha256:25f1d6b1951ac8eb3740558fe94cb83d377bdadf95fd9f98b50d2e1b96130471 3.63MB / 3.63MB 0.4s done
+#10 sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc 9.23kB / 9.23kB done
+#10 sha256:c64c687cbea9300178b30c95835354e34c4e4febc4badfe27102879de0483b5e 1.02kB / 1.02kB done
+#10 extracting sha256:25f1d6b1951ac8eb3740558fe94cb83d377bdadf95fd9f98b50d2e1b96130471 0.1s done
+#10 DONE 1.2s
+
+#9 [build 1/6] FROM docker.io/library/golang:1.26-alpine@sha256:87c65a688975c0b1d4585d204874c45ca78354670e3a5f11368c5a492303d696
+#9 extracting sha256:f64d732997a02e45cca29ef334d56f89f7599c8937c2617b6467edd19bc037d6
+#9 ...
+
+#11 [stage-1 2/3] RUN apk add --no-cache ca-certificates
+#11 0.137 fetch https://dl-cdn.alpinelinux.org/alpine/v3.20/main/x86_64/APKINDEX.tar.gz
+#11 0.269 fetch https://dl-cdn.alpinelinux.org/alpine/v3.20/community/x86_64/APKINDEX.tar.gz
+#11 0.547 (1/1) Installing ca-certificates (20261020-r0)
+#11 0.569 Executing busybox-1.36.1-r31.trigger
+#11 0.576 Executing ca-certificates-20261020-r0.trigger
+#11 0.626 OK: 8 MiB in 15 packages
+#11 DONE 2.5s
+
+#9 [build 1/6] FROM docker.io/library/golang:1.26-alpine@sha256:87c65a688975c0b1d4585d204874c45ca78354670e3a5f11368c5a492303d696
+#9 extracting sha256:f64d732997a02e45cca29ef334d56f89f7599c8937c2617b6467edd19bc037d6 3.4s done
+#9 extracting sha256:938c48435f2c0b41279f6db704d52892177f88935ace8b66ee0a443ffd126daf
+#9 extracting sha256:938c48435f2c0b41279f6db704d52892177f88935ace8b66ee0a443ffd126daf done
+#9 extracting sha256:4f4fb700ef54461cfa02571ae0db9a0dc1e0cdb5577484a6d75e68dc38e8acc1 done
+#9 DONE 6.5s
+
+#12 [build 2/6] WORKDIR /src
+#12 DONE 0.0s
+
+#13 [build 3/6] COPY tools/send-byo-migrate/go.mod tools/send-byo-migrate/go.sum ./
+#13 DONE 0.0s
+
+#14 [build 4/6] RUN go mod download
+#14 DONE 1.4s
+
+#15 [build 5/6] COPY tools/send-byo-migrate/ ./
+#15 DONE 0.1s
+
+#16 [build 6/6] RUN CGO_ENABLED=0 GOTOOLCHAIN=local go build -o /out/send-byo-migrate .
+#16 DONE 17.8s
+
+#17 [stage-1 3/3] COPY --from=build /out/send-byo-migrate /usr/local/bin/send-byo-migrate
+#17 DONE 0.1s
+
+#18 exporting to image
+#18 exporting layers
+#18 exporting layers 0.8s done
+ migrate  Built
+#18 writing image sha256:480cb5a2a6e55aed2720f0fd256fce466643b636a46c35a56e159dec0c277b5b done
+#18 naming to docker.io/library/coldmail-send-byo-migrate done
+#18 DONE 0.8s
+
+#19 resolving provenance for metadata file
+#19 DONE 0.0s
+ Container coldmail-send-byo-postgres-1  Running
+ Container coldmail-send-byo-migrate-1  Creating
+ Container coldmail-send-byo-migrate-1  Created
+Attaching to migrate-1
+migrate-1  | preflight: OK (public.users + public.job_items exist)
+migrate-1  | applied  0000_bootstrap
+migrate-1  | applied  0001_create_schema
+migrate-1  | applied  0002_create_role
+migrate-1  | applied  0003_create_enums
+migrate-1  | applied  0004_create_pools
+migrate-1  | applied  0005_create_accounts
+migrate-1  | applied  0006_create_boxes
+migrate-1  | applied  0007_create_jobs
+migrate-1  | applied  0008_create_job_events
+migrate-1  | applied  0009_create_send_logs
+migrate-1  | applied  0010_create_config_and_seed
+migrate-1  | applied  0011_add_indexes
+migrate-1  | applied  0012_grants_and_rls
+migrate-1  | applied  0013_accounts_pool_uniqueness
+migrate-1  | applied  0014_create_account_events
+migrate-1  | applied  0015_jobs_claim_by_user_idx
+migrate-1  | applied  0016_accounts_scoring_columns
+migrate-1  | applied  0017_seed_phase5_config
+migrate-1  | applied  0018_seed_phase6_config
+migrate-1  | applied  0019_seed_phase7_config
+migrate-1  | applied  0020_jobs_attempt_token
+migrate-1  | applied  0021_operability_config
+migrate-1  | applied  0022_job_events_error_context
+migrate-1  | applied  0023_singleton_reacquire_config
+migrate-1  | applied  0024_job_events_fk_carveout
+migrate-1  | applied  0025_new_enums
+migrate-1  | applied  0026_accounts_m3_state
+migrate-1  | applied  0027_accounts_user_owned
+migrate-1  | applied  0028_drop_pools
+migrate-1  | applied  0029_create_user_settings
+migrate-1  | applied  0030_create_user_config_overrides
+migrate-1  | applied  0031_create_user_suspensions
+migrate-1  | applied  0032_create_campaigns
+migrate-1  | applied  0033_create_notifications
+migrate-1  | applied  0034_account_events_action_widen
+migrate-1  | applied  0035_account_verification_state
+migrate-1  | applied  0036_account_config_seeds
+migrate-1  | applied  0037_test_send_job_items_grant
+migrate-1  | applied  0038_bulk_add_max_rows_config
+migrate-1  | applied  0039_from_gate_config_seeds
+migrate-1  | applied  0040_from_gate_predicate
+migrate-1  | applied  0041_from_gate_override_action
+migrate-1  | applied  0042_seed_phase5_config
+migrate-1  | applied  0043_job_events_account_window_idx
+migrate-1  | applied  0044_account_events_suspend_action
+migrate-1  | applied  0045_test_button_per_user_limit
+migrate-1  | applied  0046_visibility
+migrate-1  | applied  0047_notification_state_suppressed
+migrate-1  | applied  0048_unit_price_zero
+migrate-1  | applied  0049_discharge_expired_reserved_keys
+migrate-1  | applied  0050_notifications_user_page_idx
+migrate-1  | applied  0051_drop_score_alert_threshold
+migrate-1  | applied  0052_dispatch_mode_ladder
+migrate-1  | applied  0053_shadow_mode_for_every_autonomous_mutator
+migrate-1  | up: applied 54 migration(s)
+migrate-1  | set-app-password: send_byo_app password set (value not logged)
+
+^[[Kmigrate-1 exited with code 0
+seed: system user + dev worker row (11111111-1111-1111-1111-111111111111) seeded; worker can register on the send stream.
+seed: second dev worker row (22222222-2222-2222-2222-222222222222) seeded; run 'scripts/dev.sh up2' to start it.
+ dns-blackhole Pulling 
+ smtp-sink Pulling 
+ coredns Pulling 
+ 881fc932939e Already exists 
+ f2ba4559468d Pulling fs layer 
+ 9c6a15861a91 Pulling fs layer 
+ ad7fcb30079d Pulling fs layer 
+ 2e4cf50eeb92 Pulling fs layer 
+ c36c4b61cfba Pulling fs layer 
+ e1089d61b200 Pulling fs layer 
+ 0f8b424aa0b9 Pulling fs layer 
+ d557676654e5 Pulling fs layer 
+ d82bc7a76a83 Pulling fs layer 
+ 68e4cd60e60f Pulling fs layer 
+ 0783a66ae749 Pulling fs layer 
+ efae86a3fb38 Pulling fs layer 
+ 6b72b81ed966 Pulling fs layer 
+ 6e6cfc6a1a74 Pulling fs layer 
+ 0f8b64095b38 Pulling fs layer 
+ 2e4cf50eeb92 Waiting 
+ c36c4b61cfba Waiting 
+ e1089d61b200 Waiting 
+ 0f8b424aa0b9 Waiting 
+ d557676654e5 Waiting 
+ d82bc7a76a83 Waiting 
+ 68e4cd60e60f Waiting 
+ 0783a66ae749 Waiting 
+ 6b72b81ed966 Waiting 
+ 6e6cfc6a1a74 Waiting 
+ 0f8b64095b38 Waiting 
+ efae86a3fb38 Waiting 
+ 881fc932939e Already exists 
+ 2d2b30fc2d84 Pulling fs layer 
+ 55d6aff20023 Pulling fs layer 
+ 912101e0eb18 Pulling fs layer 
+ 2d2b30fc2d84 Waiting 
+ 55d6aff20023 Waiting 
+ 912101e0eb18 Waiting 
+ 9c6a15861a91 Downloading [>                                                  ]    3.5kB/234.5kB
+ ad7fcb30079d Downloading [==>                                                ]    3.5kB/84.78kB
+ ad7fcb30079d Downloading [==================================================>]  84.78kB/84.78kB
+ ad7fcb30079d Download complete 
+ ad7fcb30079d Extracting [===================>                               ]  32.77kB/84.78kB
+ ad7fcb30079d Extracting [==================================================>]  84.78kB/84.78kB
+ ad7fcb30079d Extracting [==================================================>]  84.78kB/84.78kB
+ f2ba4559468d Downloading [>                                                  ]  114.1kB/10.92MB
+ 9c6a15861a91 Downloading [==================================================>]  234.5kB/234.5kB
+ 9c6a15861a91 Verifying Checksum 
+ 9c6a15861a91 Download complete 
+ ad7fcb30079d Pull complete 
+ f2ba4559468d Verifying Checksum 
+ f2ba4559468d Download complete 
+ f2ba4559468d Extracting [>                                                  ]  131.1kB/10.92MB
+ 2e4cf50eeb92 Downloading [=============>                                     ]  3.499kB/12.58kB
+ 2e4cf50eeb92 Downloading [==================================================>]  12.58kB/12.58kB
+ 2e4cf50eeb92 Verifying Checksum 
+ 2e4cf50eeb92 Extracting [==================================================>]  12.58kB/12.58kB
+ 2e4cf50eeb92 Extracting [==================================================>]  12.58kB/12.58kB
+ c36c4b61cfba Downloading [=>                                                 ]  15.74kB/463.4kB
+ f2ba4559468d Extracting [=======================================>           ]  8.651MB/10.92MB
+ c36c4b61cfba Downloading [==================================================>]  463.4kB/463.4kB
+ c36c4b61cfba Verifying Checksum 
+ c36c4b61cfba Download complete 
+ f2ba4559468d Extracting [==================================================>]  10.92MB/10.92MB
+ e1089d61b200 Downloading [======>                                            ]  3.499kB/28.39kB
+ e1089d61b200 Downloading [==================================================>]  28.39kB/28.39kB
+ e1089d61b200 Verifying Checksum 
+ e1089d61b200 Download complete 
+ 0f8b424aa0b9 Downloading [==================================================>]      75B/75B
+ 0f8b424aa0b9 Verifying Checksum 
+ 0f8b424aa0b9 Download complete 
+ d557676654e5 Downloading [==================================================>]     193B/193B
+ d557676654e5 Verifying Checksum 
+ d557676654e5 Download complete 
+ d82bc7a76a83 Downloading [==================================================>]     130B/130B
+ d82bc7a76a83 Download complete 
+ 68e4cd60e60f Downloading [==================================================>]     168B/168B
+ 68e4cd60e60f Verifying Checksum 
+ 68e4cd60e60f Download complete 
+ 0783a66ae749 Downloading [==================================================>]      84B/84B
+ 0783a66ae749 Verifying Checksum 
+ 0783a66ae749 Download complete 
+ efae86a3fb38 Downloading [==================================================>]     358B/358B
+ efae86a3fb38 Verifying Checksum 
+ efae86a3fb38 Download complete 
+ 6b72b81ed966 Downloading [==================================================>]     320B/320B
+ 6b72b81ed966 Verifying Checksum 
+ 6b72b81ed966 Download complete 
+ f2ba4559468d Pull complete 
+ 9c6a15861a91 Extracting [======>                                            ]  32.77kB/234.5kB
+ 2e4cf50eeb92 Pull complete 
+ c36c4b61cfba Extracting [===>                                               ]  32.77kB/463.4kB
+ 9c6a15861a91 Extracting [==================================================>]  234.5kB/234.5kB
+ 9c6a15861a91 Extracting [==================================================>]  234.5kB/234.5kB
+ 6e6cfc6a1a74 Downloading [=>                                                 ]  3.457kB/142.4kB
+ 6e6cfc6a1a74 Downloading [==================================================>]  142.4kB/142.4kB
+ 6e6cfc6a1a74 Verifying Checksum 
+ 6e6cfc6a1a74 Download complete 
+ c36c4b61cfba Extracting [=============================================>     ]    426kB/463.4kB
+ c36c4b61cfba Extracting [==================================================>]  463.4kB/463.4kB
+ 9c6a15861a91 Pull complete 
+ 0f8b64095b38 Downloading [>                                                  ]  245.1kB/24.12MB
+ smtp-sink Pulled 
+ 2d2b30fc2d84 Downloading [=>                                                 ]  15.79kB/412kB
+ c36c4b61cfba Extracting [==================================================>]  463.4kB/463.4kB
+ 2d2b30fc2d84 Verifying Checksum 
+ 2d2b30fc2d84 Download complete 
+ 2d2b30fc2d84 Extracting [===>                                               ]  32.77kB/412kB
+ 0f8b64095b38 Downloading [================>                                  ]  8.109MB/24.12MB
+ 2d2b30fc2d84 Extracting [==================================================>]    412kB/412kB
+ 55d6aff20023 Downloading [>                                                  ]  163.2kB/15.4MB
+ 0f8b64095b38 Downloading [================================================>  ]  23.59MB/24.12MB
+ 0f8b64095b38 Verifying Checksum 
+ 0f8b64095b38 Download complete 
+ 912101e0eb18 Downloading [==================================================>]     247B/247B
+ 912101e0eb18 Verifying Checksum 
+ 912101e0eb18 Download complete 
+ 55d6aff20023 Downloading [===========>                                       ]  3.604MB/15.4MB
+ 55d6aff20023 Verifying Checksum 
+ 55d6aff20023 Download complete 
+ 2d2b30fc2d84 Pull complete 
+ 55d6aff20023 Extracting [>                                                  ]  163.8kB/15.4MB
+ 55d6aff20023 Extracting [============>                                      ]  3.768MB/15.4MB
+ c36c4b61cfba Pull complete 
+ e1089d61b200 Extracting [==================================================>]  28.39kB/28.39kB
+ e1089d61b200 Extracting [==================================================>]  28.39kB/28.39kB
+ 55d6aff20023 Extracting [=======================>                           ]  7.209MB/15.4MB
+ 55d6aff20023 Extracting [==========================================>        ]  12.94MB/15.4MB
+ 55d6aff20023 Extracting [===============================================>   ]  14.58MB/15.4MB
+ 55d6aff20023 Extracting [==================================================>]   15.4MB/15.4MB
+ 55d6aff20023 Pull complete 
+ e1089d61b200 Pull complete 
+ 912101e0eb18 Extracting [==================================================>]     247B/247B
+ 912101e0eb18 Extracting [==================================================>]     247B/247B
+ 0f8b424aa0b9 Extracting [==================================================>]      75B/75B
+ 0f8b424aa0b9 Extracting [==================================================>]      75B/75B
+ 912101e0eb18 Pull complete 
+ 0f8b424aa0b9 Pull complete 
+ dns-blackhole Pulled 
+ d557676654e5 Extracting [==================================================>]     193B/193B
+ d557676654e5 Extracting [==================================================>]     193B/193B
+ d557676654e5 Pull complete 
+ d82bc7a76a83 Extracting [==================================================>]     130B/130B
+ d82bc7a76a83 Extracting [==================================================>]     130B/130B
+ d82bc7a76a83 Pull complete 
+ 68e4cd60e60f Extracting [==================================================>]     168B/168B
+ 68e4cd60e60f Extracting [==================================================>]     168B/168B
+ 68e4cd60e60f Pull complete 
+ 0783a66ae749 Extracting [==================================================>]      84B/84B
+ 0783a66ae749 Extracting [==================================================>]      84B/84B
+ 0783a66ae749 Pull complete 
+ efae86a3fb38 Extracting [==================================================>]     358B/358B
+ efae86a3fb38 Extracting [==================================================>]     358B/358B
+ efae86a3fb38 Pull complete 
+ 6b72b81ed966 Extracting [==================================================>]     320B/320B
+ 6b72b81ed966 Extracting [==================================================>]     320B/320B
+ 6b72b81ed966 Pull complete 
+ 6e6cfc6a1a74 Extracting [===========>                                       ]  32.77kB/142.4kB
+ 6e6cfc6a1a74 Extracting [==================================================>]  142.4kB/142.4kB
+ 6e6cfc6a1a74 Pull complete 
+ 0f8b64095b38 Extracting [>                                                  ]  262.1kB/24.12MB
+ 0f8b64095b38 Extracting [===================>                               ]  9.437MB/24.12MB
+ 0f8b64095b38 Extracting [====================================>              ]  17.83MB/24.12MB
+ 0f8b64095b38 Extracting [==================================================>]  24.12MB/24.12MB
+ 0f8b64095b38 Pull complete 
+ coredns Pulled 
+#1 [internal] load local bake definitions
+#1 reading from stdin 1.13kB done
+#1 DONE 0.0s
+
+#2 [worker internal] load build definition from Dockerfile
+#2 transferring dockerfile: 411B done
+#2 DONE 0.0s
+
+#3 [control internal] load build definition from Dockerfile
+#3 transferring dockerfile: 643B done
+#3 DONE 0.0s
+
+#4 [auth] library/node:pull token for registry-1.docker.io
+#4 DONE 0.0s
+
+#5 [control internal] load metadata for docker.io/library/alpine:3.20
+#5 DONE 0.2s
+
+#6 [control internal] load metadata for docker.io/library/golang:1.26-alpine
+#6 DONE 0.2s
+
+#7 [control internal] load .dockerignore
+#7 transferring context: 2B done
+#7 DONE 0.0s
+
+#8 [control stage-1 1/3] FROM docker.io/library/alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+#8 CACHED
+
+#9 [control build 1/6] FROM docker.io/library/golang:1.26-alpine@sha256:87c65a688975c0b1d4585d204874c45ca78354670e3a5f11368c5a492303d696
+#9 DONE 0.0s
+
+#10 [control internal] load build context
+#10 transferring context: 2.67MB 0.1s done
+#10 DONE 0.1s
+
+#11 [control build 2/6] WORKDIR /src
+#11 CACHED
+
+#12 [control build 3/6] COPY services/control/go.mod services/control/go.sum ./
+#12 DONE 0.1s
+
+#13 [control stage-1 2/3] RUN apk add --no-cache ca-certificates curl && adduser -D -u 10001 control
+#13 0.174 fetch https://dl-cdn.alpinelinux.org/alpine/v3.20/main/x86_64/APKINDEX.tar.gz
+#13 0.312 fetch https://dl-cdn.alpinelinux.org/alpine/v3.20/community/x86_64/APKINDEX.tar.gz
+#13 ...
+
+#14 [worker internal] load metadata for docker.io/library/node:20-alpine
+#14 DONE 0.7s
+
+#7 [worker internal] load .dockerignore
+#7 transferring context: 2B done
+#7 DONE 0.0s
+
+#15 [worker internal] load build context
+#15 transferring context: 109.97kB done
+#15 DONE 0.0s
+
+#13 [control stage-1 2/3] RUN apk add --no-cache ca-certificates curl && adduser -D -u 10001 control
+#13 0.535 (1/10) Installing ca-certificates (20261020-r0)
+#13 0.559 (2/10) Installing brotli-libs (1.1.0-r2)
+#13 0.582 (3/10) Installing c-ares (1.33.1-r0)
+#13 0.597 (4/10) Installing libunistring (1.2-r0)
+#13 0.624 (5/10) Installing libidn2 (2.3.7-r0)
+#13 0.644 (6/10) Installing nghttp2-libs (1.62.1-r0)
+#13 0.655 (7/10) Installing libpsl (0.21.5-r1)
+#13 0.674 (8/10) Installing zstd-libs (1.5.6-r0)
+#13 0.696 (9/10) Installing libcurl (8.14.1-r2)
+#13 0.713 (10/10) Installing curl (8.14.1-r2)
+#13 0.729 Executing busybox-1.36.1-r31.trigger
+#13 0.736 Executing ca-certificates-20261020-r0.trigger
+#13 0.789 OK: 13 MiB in 24 packages
+#13 DONE 1.7s
+
+#16 [worker 1/5] FROM docker.io/library/node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293
+#16 resolve docker.io/library/node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 done
+#16 sha256:afdf98210b07b586eb71fa22ba2e432e058e4cd1304d31ed60888755b8c865fb 1.72kB / 1.72kB done
+#16 sha256:11cedc39e663e7c5d5cb9cc77a461a0d2adc25537b94e6831a6108f09cb2001b 6.52kB / 6.52kB done
+#16 sha256:6a0ac1617861a677b045b7ff88545213ec31c0ff08763195a70a4a5adda577bb 3.86MB / 3.86MB 0.2s done
+#16 sha256:4feea04c154301db6f4a496efa397b3db96603b1c009c797cfdde77bea8b3287 43.23MB / 43.23MB 0.7s done
+#16 sha256:b2cbbfe903b0821005780971ddc5892edcc4ce74c5a48d82e1d2b382edac3122 1.26MB / 1.26MB 0.2s done
+#16 sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 7.67kB / 7.67kB done
+#16 extracting sha256:6a0ac1617861a677b045b7ff88545213ec31c0ff08763195a70a4a5adda577bb 0.2s done
+#16 sha256:fff4e2c1b189bf87d63ad8bd07f7f4eb288d6f2b6a07a8bb44c60e8c075d2096 445B / 445B 0.2s done
+#16 extracting sha256:4feea04c154301db6f4a496efa397b3db96603b1c009c797cfdde77bea8b3287 0.5s
+#16 extracting sha256:4feea04c154301db6f4a496efa397b3db96603b1c009c797cfdde77bea8b3287 1.3s done
+#16 ...
+
+#17 [control build 4/6] RUN go mod download
+#17 DONE 4.0s
+
+#18 [control build 5/6] COPY services/control/ ./
+#18 DONE 0.2s
+
+#16 [worker 1/5] FROM docker.io/library/node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293
+#16 extracting sha256:b2cbbfe903b0821005780971ddc5892edcc4ce74c5a48d82e1d2b382edac3122 0.1s done
+#16 extracting sha256:fff4e2c1b189bf87d63ad8bd07f7f4eb288d6f2b6a07a8bb44c60e8c075d2096 done
+#16 DONE 3.9s
+
+#19 [worker 2/5] RUN apk add --no-cache curl && adduser -D -u 10002 worker
+#19 0.610 (1/9) Installing brotli-libs (1.2.1-r0)
+#19 0.628 (2/9) Installing c-ares (1.34.9-r0)
+#19 0.640 (3/9) Installing libunistring (1.4.1-r0)
+#19 0.658 (4/9) Installing libidn2 (2.3.8-r0)
+#19 0.671 (5/9) Installing nghttp2-libs (1.69.0-r0)
+#19 0.682 (6/9) Installing libpsl (0.21.5-r3)
+#19 0.693 (7/9) Installing zstd-libs (1.5.7-r2)
+#19 0.710 (8/9) Installing libcurl (8.23.0-r0)
+#19 0.725 (9/9) Installing curl (8.23.0-r0)
+#19 0.737 Executing busybox-1.37.0-r30.trigger
+#19 0.749 OK: 15.9 MiB in 27 packages
+#19 DONE 1.1s
+
+#20 [control build 6/6] RUN CGO_ENABLED=0 GOTOOLCHAIN=local go build -o /out/control ./cmd/control
+#20 ...
+
+#21 [worker 3/5] WORKDIR /app
+#21 DONE 0.0s
+
+#22 [worker 4/5] COPY services/worker/package.json ./
+#22 DONE 0.0s
+
+#23 [worker 5/5] COPY services/worker/src ./src
+#23 DONE 0.0s
+
+#24 [worker] exporting to image
+#24 exporting layers
+#24 exporting layers 0.8s done
+#24 writing image sha256:4469c3aaae0efa0a660b4f8abf66d951277c59485b0381b139eba13ca38a4915 done
+#24 naming to docker.io/library/coldmail-send-byo-worker done
+#24 DONE 0.8s
+
+#25 [worker] resolving provenance for metadata file
+#25 DONE 0.0s
+
+#20 [control build 6/6] RUN CGO_ENABLED=0 GOTOOLCHAIN=local go build -o /out/control ./cmd/control
+#20 DONE 22.3s
+
+#26 [control stage-1 3/3] COPY --from=build /out/control /usr/local/bin/control
+#26 DONE 0.2s
+
+#27 [control] exporting to image
+#27 exporting layers
+#27 exporting layers 0.5s done
+#27 writing image sha256:a8dfd6a188bd2f0ade67b75b4c0bfebfd9fe3bcaef5fdae6d1d1bab687217795 done
+ control  Built
+ worker  Built
+#27 naming to docker.io/library/coldmail-send-byo-control done
+#27 DONE 0.5s
+
+#28 [control] resolving provenance for metadata file
+#28 DONE 0.0s
+ Container coldmail-send-byo-coredns-1  Creating
+ Container coldmail-send-byo-postgres-1  Running
+ Container coldmail-send-byo-migrate-1  Recreate
+ Container coldmail-send-byo-dns-blackhole-1  Creating
+ Container coldmail-send-byo-smtp-sink-1  Creating
+ Container coldmail-send-byo-smtp-sink-1  Created
+ Container coldmail-send-byo-dns-blackhole-1  Created
+ Container coldmail-send-byo-coredns-1  Created
+ Container coldmail-send-byo-migrate-1  Recreated
+ Container coldmail-send-byo-control-1  Creating
+ Container coldmail-send-byo-control-1  Created
+ Container coldmail-send-byo-worker-1  Creating
+ Container coldmail-send-byo-worker-1  Created
+ Container coldmail-send-byo-coredns-1  Starting
+ Container coldmail-send-byo-postgres-1  Waiting
+ Container coldmail-send-byo-dns-blackhole-1  Starting
+ Container coldmail-send-byo-smtp-sink-1  Starting
+ Container coldmail-send-byo-dns-blackhole-1  Started
+ Container coldmail-send-byo-smtp-sink-1  Started
+ Container coldmail-send-byo-coredns-1  Started
+ Container coldmail-send-byo-postgres-1  Healthy
+ Container coldmail-send-byo-migrate-1  Starting
+ Container coldmail-send-byo-migrate-1  Started
+ Container coldmail-send-byo-postgres-1  Waiting
+ Container coldmail-send-byo-migrate-1  Waiting
+ Container coldmail-send-byo-migrate-1  Exited
+ Container coldmail-send-byo-postgres-1  Healthy
+ Container coldmail-send-byo-control-1  Starting
+ Container coldmail-send-byo-control-1  Started
+ Container coldmail-send-byo-control-1  Waiting
+ Container coldmail-send-byo-control-1  Healthy
+ Container coldmail-send-byo-worker-1  Starting
+ Container coldmail-send-byo-worker-1  Started
+ Container coldmail-send-byo-dns-blackhole-1  Waiting
+ Container coldmail-send-byo-postgres-1  Waiting
+ Container coldmail-send-byo-migrate-1  Waiting
+ Container coldmail-send-byo-control-1  Waiting
+ Container coldmail-send-byo-worker-1  Waiting
+ Container coldmail-send-byo-smtp-sink-1  Waiting
+ Container coldmail-send-byo-coredns-1  Waiting
+ Container coldmail-send-byo-dns-blackhole-1  Healthy
+ Container coldmail-send-byo-worker-1  Healthy
+ Container coldmail-send-byo-postgres-1  Healthy
+ Container coldmail-send-byo-coredns-1  Healthy
+ Container coldmail-send-byo-migrate-1  Exited
+ Container coldmail-send-byo-control-1  Healthy
+ Container coldmail-send-byo-smtp-sink-1  Healthy
+default-mode	Postgres is volume-backed in this mode (the precondition of everything below)	﻿2026-11-08T16:24:50.4529157Z ##[group]Run bash tests/harness/checks/postgres_durability.sh
+^[[36;1mbash tests/harness/checks/postgres_durability.sh^[[0m
+shell: /usr/bin/bash -e {0}
+##[endgroup]
+postgres_durability: ok — default stack: no tmpfs, no fsync=off; DEV_RAM_PG=1: tmpfs on /var/lib/postgresql/data + fsync=off (control).
+default-mode	Real-infra behavioral harness in the DEFAULT (non-RAM) mode	﻿2026-11-08T16:24:50.6343465Z ##[group]Run bash scripts/dev.sh test
+^[[36;1mbash scripts/dev.sh test^[[0m
+shell: /usr/bin/bash -e {0}
+##[endgroup]
+== preparing template DB (send_byo_template) ==
+  template ready (fresh DB, migrated + app password; platform untouched)
+──────────────────────────────────────────────────────────────
+SUITE 1+2: Go real-infra tests (migration lifecycle + DB isolation + Phase 1 data model)
+──────────────────────────────────────────────────────────────
+--- PASS: TestUp_ContiguityGap (0.08s)
+--- PASS: TestDSNScrub_MigrateNoCredentialSurvives (0.00s)
+--- PASS: TestDSNScrub_MigratePgxStillLeaksAtThisPin (0.00s)
+--- PASS: TestDSNScrub_MigrateCleanErrorsKeepTheirDetail (0.00s)
+--- PASS: TestDSNScrub_MigrateConnectionRefusedSurvives (0.00s)
+--- PASS: TestDSNScrub_MigrateMessageNamesThisToolsEnvVars (0.00s)
+--- PASS: TestDSNScrub_MigrateNilIsNil (0.00s)
+--- PASS: TestDSNScrub_MigrateCopyHasNotDriftedFromControl (0.00s)
+--- PASS: TestRunnerLifecycle (1.27s)
+ok  	github.com/coldmail-send-byo/send-byo-migrate	1.357s
+  counts: declared=9 ran=9 skipped=0
+  PASS: migration lifecycle + contiguity guard (apply/idempotent/down/gap)
+--- PASS: TestModeA_TemplateCloneIsRealAndCrossConnection (0.38s)
+--- PASS: TestModeB_RollbackLeavesNoResidue (0.09s)
+--- PASS: TestT1_ConcurrentClaimExactlyOneWinner (0.12s)
+--- PASS: TestT1b_NWorkersMJobsEachClaimedOnce (0.18s)
+--- PASS: TestT2_EventPerTransition (0.11s)
+--- PASS: TestT3_NoStateChangeWithoutEvent (0.10s)
+--- PASS: TestT4_CredentialRoundTripNoPlaintextTamperAAD (0.11s)
+--- PASS: TestT5_ModuleRoleDeniedPlatformWrite (0.11s)
+--- PASS: TestT5b_JobItemIdUnique (0.10s)
+--- PASS: TestT6_AppendOnlyJobEvents (0.12s)
+--- PASS: TestT3e_RLSDefaultDenyBackstopsMisgrant (0.11s)
+--- PASS: TestT3f_SuperuserBypassesRLSButReadsOnlyCiphertext (0.10s)
+--- PASS: TestT7_CheckConstraintsRejectInvalid (0.10s)
+--- PASS: TestT17_AccountsUserFKRestrict (0.11s)
+--- PASS: TestGrantsInvariant (0.10s)
+--- PASS: TestSendLogsWriteOnceButRetentionCanDelete (0.12s)
+--- PASS: TestGrantsInvariant_AntiVacuity (0.10s)
+ok  	github.com/coldmail-send-byo/harness	2.175s
+  counts: declared=17 ran=17 skipped=0
+  PASS: DB isolation + Phase 1 data model (claim/events/RLS/crypto/append-only)
+--- PASS: TestRootMux_UnroutedPathAnswersTheCodedEnvelope (0.00s)
+--- PASS: TestRootMux_404DoesNotEchoTheRequestedPath (0.00s)
+--- PASS: TestRootMux_404CarriesNoAllowHeader (0.00s)
+--- PASS: TestRootMux_ADocumentedPathWithAnUnmountedSurfaceStillAnswersTheEnvelope (0.00s)
+--- PASS: TestRootMux_MountedSurfacesStillReceiveTheirOwnPaths (0.00s)
+--- PASS: TestRootMux_HealthRoutesAreUntouched (0.00s)
+--- PASS: TestSanitizeLogPath_NeutralizesControlCharacters (0.00s)
+--- PASS: TestHandleNoRoute_AForgedPathCannotSplitTheLogLine (0.00s)
+--- PASS: TestNewRequestID_MatchesTheShapeTheAPIPackagesMint (0.00s)
+--- PASS: TestReadyz_CarriesTheContractEnvelope (0.00s)
+--- PASS: TestReadyz_NilDependenciesReportFalseNotAbsent (0.00s)
+--- PASS: TestReadyz_ChecksMapAgreesWithTheTopLevelFields (0.13s)
+--- PASS: TestReadyz_ChecksMapTracksEachDependencySeparately (0.09s)
+--- PASS: TestReadyz_PreExistingTopLevelFieldsAreStillThere (0.00s)
+--- PASS: TestReadyz_TopLevelFieldsAreDistinguishableFromTheNestedCopy (0.10s)
+--- PASS: TestHealthz_IsLivenessNotReadiness (0.00s)
+ok  	github.com/coldmail-send-byo/control/internal/httpapi	0.332s
+  counts: declared=16 ran=16 skipped=0
+  PASS: root-mux coded 404 + log-forgery neutralization (item 7b) + readyz uniform checks{} envelope (item 10)
+--- PASS: TestCheckFromDNSLookupTimeoutVsBudget (0.00s)
+--- PASS: TestCheckFromDNSNegativeCacheVsPositiveCache (0.00s)
+--- PASS: TestFromDNSViolationDetail (0.00s)
+ok  	github.com/coldmail-send-byo/control/internal/configordering	0.002s
+  counts: declared=3 ran=3 skipped=0
+  PASS: config key ordering/precedence (3 tests)
+--- PASS: TestInFlightMarker_ReplayedReportDoesNotFreeALiveJob (0.00s)
+--- PASS: TestInFlightMarker_ReplayOnAnIdleWorkerIsHarmless (0.00s)
+ok  	github.com/coldmail-send-byo/control/internal/workerlink	0.003s
+  counts: declared=2 ran=2 skipped=0
+  PASS: workerlink stream in-flight accounting (2 tests)
+--- PASS: TestVariation_ZeroValueNumericFieldsSurviveJSONRoundTrip (0.00s)
+ok  	github.com/coldmail-send-byo/control/internal/workerproto	0.002s
+  counts: declared=1 ran=1 skipped=0
+  PASS: variation wire-format round-trip (1 test)
+--- PASS: TestDSNScrub_NoCredentialSurvives (0.00s)
+--- PASS: TestDSNScrub_PgxStillLeaksAtThisPin (0.00s)
+--- PASS: TestDSNScrub_CleanErrorsKeepTheirDetail (0.00s)
+--- PASS: TestDSNScrub_CandidateCheckStandsAlone (0.00s)
+--- PASS: TestDSNScrub_WholeDSNCheckStandsAlone (0.00s)
+--- PASS: TestDSNScrub_ShortValuesDoNotSuppressEverything (0.00s)
+--- PASS: TestDSNScrub_StructuralValuesNeverSuppress (0.00s)
+--- PASS: TestDSNScrub_SpacedCredentialStillCaught (0.00s)
+--- PASS: TestDSNScrub_NilIsNil (0.00s)
+ok  	github.com/coldmail-send-byo/control/internal/dsnscrub	0.004s
+  counts: declared=9 ran=9 skipped=0
+  PASS: DSN credential scrub (N1/D12: pgx echoes the whole connection string; 9 tests, no DB)
+--- PASS: TestCache_PositiveResultReusedWithinTTL (0.00s)
+--- PASS: TestCache_NegativeResultExpiresBeforePositiveTTLWould (0.00s)
+--- PASS: TestCache_IgnoranceNeverCached_Deterministic (0.00s)
+--- PASS: TestRenderCopy_BannedPhrasesAbsent (0.00s)
+--- PASS: TestBannedPhraseCheck_ActuallyFires (0.00s)
+--- PASS: TestRenderCopy_HedgedFormPresent (0.00s)
+--- PASS: TestRenderCopy_AllowIsEmpty (0.00s)
+--- PASS: TestRenderCopy_T3c_EnforcingVsOrdinaryDistinguishable (0.00s)
+--- PASS: TestFromGateDNSReachable (0.00s)
+--- PASS: TestEvaluate_T1_AlignedAllowsMisalignedControlDoesNot (0.01s)
+--- PASS: TestEvaluate_T2_OnlyFullTripleConditionBlocks (0.00s)
+--- PASS: TestEvaluate_T2b_EachConditionAloneIsNotEnough (0.00s)
+--- PASS: TestEvaluate_T3_WarnedNotJustAllowed (0.02s)
+--- PASS: TestEvaluate_T3c_EnforcingPolicyDistinguishable (0.00s)
+--- PASS: TestEvaluate_T4_AliasSelfHostedVsViaProvider (0.00s)
+--- PASS: TestEvaluate_T5_TimeoutServfailVsNXDOMAIN (3.00s)
+--- PASS: TestEvaluate_NonexistentDomainFallsThroughToOrdinaryWarn (0.00s)
+--- PASS: TestEvaluate_SPFPermErrors_MultipleAndMalformed (0.00s)
+--- PASS: TestEvaluate_SPFLookupLimitPosture (0.01s)
+--- PASS: TestEvaluate_MacroNeverBlocks (0.00s)
+--- PASS: TestEvaluate_UnmatchedProviderNeverBlocks (0.00s)
+--- PASS: TestEvaluate_AmbiguousDMARCTreatedAsNoPolicy (0.00s)
+--- PASS: TestEvaluate_TotalBudgetBounded (2.00s)
+--- PASS: TestEvaluate_CanaryRealProviderFacts (0.01s)
+--- PASS: TestEvaluate_T12_GateModeHonored (0.00s)
+--- PASS: TestEvaluate_SelfHostedMX_ServfailIsIndeterminateNotNotSelfHosted (0.00s)
+--- PASS: TestEvaluate_SelfHostedMX_PublishedMXAllows (0.00s)
+--- PASS: TestEvaluate_SelfHostedMX_GenuineAbsenceIsAnAnswerNotIgnorance (0.00s)
+--- PASS: TestSearchDomainCanary (0.02s)
+--- PASS: TestFQDN (0.00s)
+--- PASS: TestFQDNResolver_RootsEveryLookupType (0.00s)
+--- PASS: TestFQDNResolver_CacheIsKeyedOnTheRootedName (0.00s)
+--- PASS: TestIsAbsence_IsTheNarrowDoor (0.00s)
+--- PASS: TestCache_NeverCachesAnythingThatIsNotGenuineAbsence (0.00s)
+ok  	github.com/coldmail-send-byo/control/internal/fromgate	5.115s
+  counts: declared=34 ran=34 skipped=0
+  PASS: FROM-gate SPF/DNS evaluation + cache + copy (25 tests, real CoreDNS)
+== preparing Phase 2 admin template (send_byo_template_p2, migrated to head) ==
+  Phase 2 template ready (migrated to head + app password)
+--- PASS: TestSanitizePath_NeutralizesControlCharactersSoOneRequestIsOneLogLine (0.00s)
+--- PASS: TestSanitizePath_IsUsedByEveryLogSiteThatLogsAPath (0.01s)
+--- PASS: TestLogError_AForgedPathCannotSplitTheLogLine (0.00s)
+--- PASS: TestNotificationClear_AdminUnquarantineClearsLiveRow (0.11s)
+--- PASS: TestNotificationClear_AdminCredentialUpdateAutoClearClearsLiveRow (0.12s)
+--- PASS: TestNotificationClear_AdminRefusedUnquarantineClearsNothing (0.11s)
+--- PASS: TestNotificationClear_AdminDedupKeyMatchesDispatchWriter (0.12s)
+--- PASS: TestPhase95_UnitPriceCreditsRangeEnforced (0.11s)
+--- PASS: TestPhase95_HealthMetricsWindowSecRangeEnforced (0.11s)
+--- PASS: TestPhase95_ControlSingletonAcquireTimeoutSecRangeEnforced (0.11s)
+--- PASS: TestP8_ExpiredReservedKeysAreGone (0.11s)
+--- PASS: TestPhase95_VariationCommentIntensityRatesShapeEnforced (0.11s)
+--- PASS: TestPhase95_VariationCSSMicroParamsShapeEnforced (0.11s)
+--- PASS: TestConfigOrdering_T10_QuarantineMinSamplePUTRejectsZero (0.11s)
+--- PASS: TestConfigOrdering_T10_QuarantineFailureRatePctPUTRejectsOutOfRange (0.11s)
+--- PASS: TestPatchSmtpPortNullIsCleanReject (0.15s)
+--- PASS: TestSmtpHostRejectsPortSuffix (0.14s)
+--- PASS: TestDailyLimitSanityCeiling (0.17s)
+--- PASS: TestRouteCoverage_T10_EveryAdminRouteRequiresTheOperatorKey (0.15s)
+--- PASS: TestRouteCoverage_UndocumentedPathIs404 (0.11s)
+--- PASS: TestOverride_T9_ConcurrentGlobalLowerAndOverrideRaiseBlockOnTheSharedLock (0.87s)
+--- PASS: TestOverride_T9_ConcurrentGlobalLowerAndOverrideRaiseCannotInvertPair (0.16s)
+--- PASS: TestOverride_T6cd_AdminRouteRefusesWithoutOperatorKeyOrActorIdentity (0.11s)
+--- PASS: TestOverride_T9a_OverrideWriteInvertingResolvedPairIsRefused (0.12s)
+--- PASS: TestOverride_T9b_GlobalWriteInvertingAnExistingOverrideIsRefused (0.14s)
+--- PASS: TestOverride_T11_DeletedUsersOverridesCascade (0.13s)
+--- PASS: TestUserSuspend_T14_DoubleReinstateCreditsThePausedIntervalExactlyOnce (2.00s)
+--- PASS: TestUserSuspend_T14Control_GuardRemovedProducesA23502 (0.92s)
+--- PASS: TestUserSuspend_T14Control_DifferentUsersDoNotBlockEachOther (0.15s)
+--- PASS: TestUserSuspend_SuspendThenUnsuspend (0.12s)
+--- PASS: TestUserSuspend_UnknownUserNotFound (0.11s)
+--- PASS: TestUserSuspend_T8_ExpiryDoesNotAdvanceWhileSuspended (2.32s)
+--- PASS: TestUserSuspend_T8a_UnsuspendedCampaignUnaffectedOverTheSameRealInterval (2.32s)
+--- PASS: TestUserSuspend_T8b_SuspendedCampaignAbsentFromSweepIndexPredicate (0.12s)
+--- PASS: TestVariationConfig_BooleanToggleRoundTrips (0.11s)
+--- PASS: TestVariationConfig_EnumStringKeysRejectInvalidValues (0.12s)
+--- PASS: TestVariationConfig_PreheaderTemplatesArrayRoundTrips (0.12s)
+--- PASS: TestVariationConfig_RateParametersRoundTripAndBounds (0.14s)
+--- PASS: TestVariationConfig_QuotedNumericStringRejected (0.11s)
+ok  	github.com/coldmail-send-byo/control/internal/adminapi	22.885s
+  counts: declared=105 ran=105 skipped=0
+  PASS: Phase 2 admin API (credential intake/omit/AAD, per-user uniqueness/accounts_user_fk RESTRICT, lifecycle+audit, config, auth 401)
+──────────────────────────────────────────────────────────────
+SUITE 3: worker<->Control mTLS register/heartbeat (probed IN-NETWORK, from the worker container)
+──────────────────────────────────────────────────────────────
+  PASS: register with correct token over mTLS -> 200
+  PASS: heartbeat after register -> 200
+  PASS: register with WRONG token -> 401 (token gate enforced)
+──────────────────────────────────────────────────────────────
+SUITE 4: two-Control singleton (real second Control process must exit, no double-lock)
+──────────────────────────────────────────────────────────────
+  PASS: second Control exited cleanly (singleton lock held by the first)
+  PASS: first Control still holds the singleton lock (readyz top-level singleton_lock=true)
+──────────────────────────────────────────────────────────────
+SUITE 5: worker CANNOT read KMS key material (least-privilege container boundary)
+──────────────────────────────────────────────────────────────
+  PASS: worker cannot see /secrets/kms/dev-master.key (path absent from worker mounts)
+  PASS: worker can read its own mTLS cert (proves the worker FS is mounted; KMS absence is meaningful)
+  PASS: Control CAN read the KMS key (sole decryptor); the worker cannot — boundary is real
+──────────────────────────────────────────────────────────────
+SUITE 6: no credential leak in service logs (Rule 5/6 regression guard)
+──────────────────────────────────────────────────────────────
+  PASS: no dev token/hash found in control/worker/migrate/postgres/sink logs
+──────────────────────────────────────────────────────────────
+SUITE 7: worker unit tests (real local sink / real stream; credential + outcome-buffer paths)
+──────────────────────────────────────────────────────────────
+  (node v20.20.2)
+# pass 104
+# fail 0
+  PASS: worker units: 104 passed (S1 scrub / S3 zeroing / S5 STARTTLS-before-AUTH + P7-4 buffer ack/replay/TTL)
+──────────────────────────────────────────────────────────────
+SUITE 8: Phase 3 dispatch + credential Go tests (real Postgres clones)
+──────────────────────────────────────────────────────────────
+== preparing Phase 3 dispatch template (send_byo_template_p3, migrated to head) ==
+  Phase 3 template ready
+--- PASS: TestRouting_Random (0.41s)
+--- PASS: TestDispatchRung_NoRungIsASynonymForItsNeighbour (1.27s)
+--- PASS: TestDispatchRung_StoppedFreezesTheSweepWithoutStrandingAnything (0.18s)
+--- PASS: TestDispatchRung_EnabledFalseIsAFloorNotASecondLever (0.00s)
+--- PASS: TestDispatchRung_EnabledFalseStillStopsClaimsThroughTheRealLoop (0.16s)
+--- PASS: TestDispatchRung_UnrecognizedModeFailsTowardTheSaferRungAndNotThePunitiveOne (0.00s)
+--- PASS: TestDispatchRung_UnrecognizedModeIsObeyedByTheRealLoopToo (0.16s)
+--- PASS: TestDispatchRung_OutcomeIngestionIsNeverGatedAtAnyRung (0.00s)
+--- PASS: TestDispatchRung_OutcomeIngestionSucceedsAtTheDeepestRung (0.21s)
+--- PASS: TestDispatchRung_TickIsANoOpAtEveryPausedRung (0.55s)
+--- PASS: TestDispatchRung_ConfigIsRereadEveryTickSoAPullTakesEffectWithoutRestart (0.17s)
+--- PASS: TestDispatchRung_EveryCopyOfTheLadderMatchesThisOne (0.01s)
+--- PASS: TestDispatchRung_LogLineNamesTheRungNotJustThePause (0.00s)
+--- PASS: TestComputeScore_Deterministic (0.00s)
+--- PASS: TestScore_DegradesOnFailureResetsOnSuccess (0.19s)
+--- PASS: TestScore_BounceNeverPenalizes (0.18s)
+--- PASS: TestShadowMode_LogsWithoutActing_ThenEnforceActs (0.19s)
+--- PASS: TestShadowMode_OffDisablesDecisionEntirely (0.24s)
+--- PASS: TestShadowMode_T9_FailureRateTriggerNamedCorrectly (0.29s)
+--- PASS: TestShadowMode_T9c_UnrecognizedModeFallsBackToShadowNeverEnforce (0.16s)
+--- PASS: TestKillSwitch_AutopauseDisablesOnlyAutopause (0.17s)
+--- PASS: TestKillSwitch_VariationDisablesEntireLayer (0.15s)
+--- PASS: TestStaleReplay_NotAttributedToADifferentWorkersAttempt (0.19s)
+--- PASS: TestStateMachine_ConsecutiveFailuresAutoQuarantines (0.25s)
+--- PASS: TestStateMachine_ThrottleAutoClears (0.14s)
+--- PASS: TestStateMachine_InWindowThrottleNotEligible (0.14s)
+--- PASS: TestSuspend_T13a_ClaimAfterSuspendCommitsIsRefusedEvenIfTheRingWasDecidedBefore (0.12s)
+--- PASS: TestSuspend_T13b_AJobAlreadyClaimedBeforeSuspendCommitsIsNotStrandedAssignedWithNoWorker (0.14s)
+--- PASS: TestSuspend_T7_HaltsLosslesslyThenReinstateResumes (0.17s)
+--- PASS: TestSuspend_T7a_UnsuspendedUserUnderIdenticalTrafficKeepsSending (0.15s)
+--- PASS: TestSuspend_T7b_TryDispatchAlsoRefuses (0.15s)
+--- PASS: TestSuspend_T7c_SubscriptionLapsedIdenticalToOperator (0.16s)
+--- PASS: TestSuspend_T7d_TerminalBlockedAccountsUnderSuspensionStayQueued (0.14s)
+--- PASS: TestVariation_DefaultConfigYieldsNeutralSnapshot (0.15s)
+--- PASS: TestVariation_LiveConfigChangeReachesNextPushJob (0.15s)
+--- PASS: TestVariation_RateParametersReachPushJob (0.16s)
+--- PASS: TestVariation_S11RatesReachPushJob (0.15s)
+--- PASS: TestVariation_CSSSkipBelowPxZeroSurvivesJSONRoundTrip (0.14s)
+--- PASS: TestVariation_PreheaderTemplatesOverrideReachesPushJob (0.14s)
+ok  	github.com/coldmail-send-byo/control/internal/dispatch	113.093s
+  counts: declared=231 ran=231 skipped=0
+  PASS: Phase 3 dispatch (claim/decrypt/push, idempotency, requeue, bounced, never-invent)
+--- PASS: TestDecrypt_RoundTrip (0.00s)
+--- PASS: TestDecrypt_TamperFailsClosed (0.00s)
+--- PASS: TestDecrypt_TransplantFailsClosed (0.00s)
+--- PASS: TestDecrypt_WrongKeyIDRejected (0.00s)
+ok  	github.com/coldmail-send-byo/control/internal/credential	0.003s
+  counts: declared=4 ran=4 skipped=0
+  PASS: Phase 3 credential decryptor (round-trip/tamper/transplant/key-id)
+--- PASS: TestNotificationsRead_CrossTenantSeesNothing (0.13s)
+--- PASS: TestNotificationsRead_TenantSelectorRequired (0.10s)
+--- PASS: TestNotificationsRead_KeysetPagesWithoutDuplicatingASubSecondBoundaryRow (0.12s)
+--- PASS: TestNotificationsRead_LimitAndMalformedCursor (0.12s)
+--- PASS: TestNotificationsRead_PayloadWriteSitesArePinned (0.01s)
+--- PASS: TestNotificationsRead_IsDeclaredInDescribe (0.11s)
+--- PASS: TestNotificationsRead_PayloadIsUnwrappedJSON (0.10s)
+--- PASS: TestQuoteFeasibility_ExceedsQueueCapIsInfeasibleWithReasonCode (0.12s)
+--- PASS: TestQuoteFeasibility_ControlA_RaisedPerUserOverrideBecomesFeasible (0.11s)
+--- PASS: TestQuoteFeasibility_ControlB_SlowButWithinQueueCapIsFeasible (0.11s)
+--- PASS: TestQuoteFeasibility_ControlC_DurationAlwaysPresentAndWarningTracksThreshold (0.33s)
+--- PASS: TestQuoteFeasibility_NoEligibleAccountsIsInfeasible (0.11s)
+--- PASS: TestQuoteFeasibility_DispatchDisabledIsInfeasible (0.11s)
+--- PASS: TestQuoteFeasibility_ProjectionDisabledOmitsCapacityProjection (0.11s)
+--- PASS: TestQuote_MatchesRecipientCountTimesUnit (0.11s)
+--- PASS: TestQuote_NeverOverOrUnderQuotesAcrossRetryAndDuplicateRun (0.16s)
+--- PASS: TestQuote_AbsentVsNegativeRecipientCountAreDistinctIssues (0.11s)
+--- PASS: TestQuote_WrongTypeRecipientCountNamesTheField (0.11s)
+--- PASS: TestReportNotFoundNamesTheSelectorSent (0.15s)
+--- PASS: TestReportNullConvention_CampaignNullsAndSingleJobOmits (0.12s)
+--- PASS: TestReportWidening_SingleJob_FailureSurfacesProviderTextAndClass (0.13s)
+--- PASS: TestReportWidening_SingleJob_SuccessOmitsFailureFields (0.14s)
+--- PASS: TestReportWidening_CampaignItems_FailureSurfacesProviderTextAndClass (0.12s)
+--- PASS: TestResourceCaps_MaxCampaignSize (0.14s)
+--- PASS: TestResourceCaps_MaxQueuedJobs (0.13s)
+--- PASS: TestResourceCaps_PerUserOverrideRaisesCampaignCapForThatUserOnly (0.14s)
+--- PASS: TestTenancy_CrossTenantReportIsNotFound (0.13s)
+--- PASS: TestTenancy_CrossTenantRunIsNotFound (0.12s)
+--- PASS: TestTenancy_MissingOrMalformedSelectorRejected (0.13s)
+--- PASS: TestTenancy_Unauthenticated (0.10s)
+--- PASS: TestUnitPrice_QuoteAndDescribeReflectLiveConfig (0.12s)
+--- PASS: TestUsage_AggregatesMessageCountsPerDay (0.13s)
+--- PASS: TestUsage_AccountSnapshotDistinguishesConfiguredFromEligible (0.13s)
+--- PASS: TestUsage_NoProviderTextOnFailedSends (0.14s)
+--- PASS: TestUsage_CrossTenantScoping (0.12s)
+--- PASS: TestUsage_MalformedDateRejected (0.10s)
+--- PASS: TestUserSettings_RoundTrip (0.11s)
+--- PASS: TestUserSettings_T6ae_CannotReachAnAdminDialThroughThisRoute (0.10s)
+--- PASS: TestUserSettings_CrossTenantSelectorCannotWriteAnotherUsersStrategy (0.11s)
+ok  	github.com/coldmail-send-byo/control/internal/platformapi	35.938s
+  counts: declared=160 ran=160 skipped=0
+  PASS: Platform API tenancy (OD-25) + one-campaign-per-user (Phase 4 P4-7, incl. concurrent-attempt serialization)
+──────────────────────────────────────────────────────────────
+SUITE 9: Phase 3 minimal send path — LIVE end-to-end (real worker + real Mailpit)
+──────────────────────────────────────────────────────────────
+  PASS: P3: worker registered on the mTLS send stream (live row: active + heartbeat newer than this run)
+  PASS: P3: created account (encrypted canary credential) via admin API
+  PASS: T2: POST /v1/run returned 202 immediately (async kickoff)
+  PASS: T1: job reached state=sent
+  PASS: T1: provider_message_id persisted
+  PASS: T1: job_events chain correct (system/dispatcher/dispatcher/box)
+  PASS: T1: exactly one send_logs row
+  PASS: T1: Mailpit received the message (count=1)
+  PASS: T2: GET /v1/report reflects sent + provider_message_id
+  PASS: T2: report carries only clean external state (no smtp/reason/credential)
+  PASS: T4: duplicate run is a clean no-op (200), not a raw error
+  PASS: T4: no second send (Mailpit count unchanged: 1→1)
+  PASS: T6: wrong-token register refused on the send stream (accepted:false)
+  PASS: T3: no report (worker killed) — job stays sending, never gained a provider_message_id, and never once touched a terminal state (never falsely sent)
+  PASS: S1: canary absent from service logs (plaintext)
+  PASS: S1: canary absent from service logs (base64: LOGIN padded/unpadded + PLAIN blob)
+  PASS: S1: canary absent from send_logs/jobs
+  PASS: S1: canary absent from send_logs/jobs (base64)
+  PASS: S1: credential column is ciphertext (canary bytes absent)
+  PASS: OD-7: no /v1/admin/* account route exposes plaintext (has_credential only)
+  PASS: OD-7: admin read exposes has_credential=true (positive control)
+  PASS: T7: cross-tenant report of another tenant's job → 404 (isolation enforced)
+  PASS: T7: cross-tenant 404 is identical to a nonexistent-job 404 (no existence disclosure)
+  PASS: T7: report without user_id → clean 400 validation_failed
+──────────────────────────────────────────────────────────────
+SUITE 10: Phase 8 content variation — LIVE end-to-end (real worker + real Mailpit)
+──────────────────────────────────────────────────────────────
+  PASS: P8 T1: every boolean toggle reads false via the live admin API (seeded defaults intact)
+  PASS: P8 T1: all-toggles-off job reached sent
+  PASS: P8 T1: the delivered message has exactly the Phase 3 shape (no injected comments/UA/Precedence, 8bit single-part)
+  PASS: P8 T3: variation-on job reached sent
+  PASS: P8 T3: variation-on delivered bytes differ from the all-off baseline (variation fired on the live stack)
+  PASS: P8 T3: delivered message still carries a valid Content-Type after variation
+  PASS: P8 T3: comment_injection fired live (an injected HTML comment is present)
+  PASS: P8 T3: original visible body text survived minification/comment injection
+  PASS: P8 T7: the delivered link carries a real _ref cache-buster param
+  PASS: P8 T7: no tracking/redirect surface in the delivered message (forward boundary intact, P8-10)
+  PASS: P8 S1: canary absent from service logs with variation ON (plaintext)
+  PASS: P8 S1: canary absent from service logs with variation ON (base64)
+  PASS: P8 S1: canary absent from the delivered message
+  PASS: P8 S1: canary absent from the delivered message (base64)
+  PASS: P8 S1: canary absent from send_logs/jobs with variation ON
+  PASS: P8 S1: canary absent from send_logs/jobs with variation ON (base64)
+──────────────────────────────────────────────────────────────
+SUITE 11: Module 3 Phase 3 C2 — verify-on-add LIVE end-to-end (real worker + real smtp-sink)
+──────────────────────────────────────────────────────────────
+  PASS: T2: account created despite a bad credential (§2.5: failure persists, not a rollback)
+  PASS: T2 note: dev smtp-sink accepts any AUTH — verified as expected (real AUTH-reject case covered by the Node unit suite)
+  PASS: T2c: account created for the live verify-success path
+  PASS: T2c: account verified via the LIVE push_verify/verify_report round trip
+  PASS: T2c: credential_verified_at + credential_verify_at both set
+  PASS: T2c: GET reflects verification.state=verified
+  PASS: T3b (live): account creation's mandatory verify-on-add delivered NO mail (Mailpit unchanged: 3→3)
+  PASS: S1 (live verify): both verify canaries absent from service logs (plaintext)
+  PASS: S1 (live verify): verify canary absent from service logs (base64)
+  PASS: audit: exactly one 'verified' account_events row for the live-verified account
+  PASS: C3 test button: reused push_verify path re-verified the already-good account live
+  PASS: C3 T5 (live): test button refused with 429 after the daily limit (1) was reached by verify-on-add's own attempt
+  PASS: C3 test-send: returned 202 (async kickoff)
+  PASS: C3 test-send: returned a real job_id
+  PASS: C3 test-send: job reached state=sent via the REAL push_job/report path
+  PASS: C3 test-send: recipient forced to the account's own from_address (M3-P3-OD-5)
+  PASS: C3 test-send: assigned_account_id is the CLICKED account (M3-P3-OD-16), never re-selected
+  PASS: C3 test-send: real job_events row(s) exist for the test-send job
+  PASS: C3 test-send: an ineligible (quarantined) clicked account is refused outright (409)
+  PASS: C3 test-send: no job row created for the refused ineligible-account attempt
+  PASS: C4 (live): row 1 created
+  PASS: C4 (live): row 2 (duplicate of row 1) rejected
+  PASS: C4 (live): row 3 (malformed port) rejected
+  PASS: C4 (live): row 4 created despite rows 2/3's earlier rejections (no batch-spanning transaction)
+  PASS: C4 (live): DB contains exactly the 2 created rows (1 and 4)
+  PASS: C4 (live): a batch over bulk_add_max_rows is rejected whole (422)
+  PASS: C4 (live): no rows created from the rejected over-bound batch
+  PASS: C4 (live): pacing is observable as real elapsed time (paced=6076ms, unpaced=71ms, gap=6005ms > 4000ms floor)
+  PASS: C5 (live): DELETE returned 204
+  PASS: C5 (live): deleted_at/purge_after stamped on the real row
+  PASS: C5 (live): the account row PERSISTS through the retention window (soft delete, not hard)
+  PASS: C5 (live): GET on the deleted account returns 404 (unusable, §6.2)
+  PASS: C5 (live): a second delete is idempotent (404, not a crash or a re-stamp)
+  PASS: C5 (live): a job for a deleted-account-only user FAILS promptly (M3-P4-OD-11: deletion has no auto-recovery timer), never claimed by the deleted account
+  PASS: C5 (live): at the SEEDED account_purge_mode=shadow the purge loop (the FIFTH Control loop) ticked on its own after the restart — a NEW shadow line appeared (was 1), so the loop is wired and running unattended
+  PASS: C5 (live): the shadow line NAMES a real backlog, not 0 — at shadow that count is the operator's ONLY warning before credentials become unrecoverable
+  PASS: C5 (live): at shadow that tick deleted NOTHING, though the row was already past purge_after — the ladder holds on the module's most irreversible writer
+  PASS: C5 (live): promoted to account_purge_mode=enforce, the live loop hard-deleted the expired account on its NEXT tick with no restart (config-not-code on the fifth loop), unattended
+──────────────────────────────────────────────────────────────
+HARNESS RESULT: 100 passed, 0 failed
+──────────────────────────────────────────────────────────────
+default-mode	Postgres outage drill — the Control halts cleanly and invents nothing	﻿2026-11-08T16:30:53.3683251Z ##[group]Run bash scripts/dev.sh up && bash tests/harness/drills/postgres_outage.sh
+^[[36;1mbash scripts/dev.sh up && bash tests/harness/drills/postgres_outage.sh^[[0m
+shell: /usr/bin/bash -e {0}
+##[endgroup]
+ Container coldmail-send-byo-postgres-1  Running
+ Container coldmail-send-byo-control-1  Recreate
+ Container coldmail-send-byo-coredns-1  Running
+ Container coldmail-send-byo-smtp-sink-1  Running
+ Container coldmail-send-byo-dns-blackhole-1  Running
+ Container coldmail-send-byo-control-1  Recreated
+ Container coldmail-send-byo-worker-1  Running
+ Container coldmail-send-byo-postgres-1  Waiting
+ Container coldmail-send-byo-postgres-1  Healthy
+ Container coldmail-send-byo-migrate-1  Starting
+ Container coldmail-send-byo-migrate-1  Started
+ Container coldmail-send-byo-postgres-1  Waiting
+ Container coldmail-send-byo-migrate-1  Waiting
+ Container coldmail-send-byo-migrate-1  Exited
+ Container coldmail-send-byo-postgres-1  Healthy
+ Container coldmail-send-byo-control-1  Starting
+ Container coldmail-send-byo-control-1  Started
+ Container coldmail-send-byo-control-1  Waiting
+ Container coldmail-send-byo-control-1  Healthy
+ Container coldmail-send-byo-control-1  Waiting
+ Container coldmail-send-byo-worker-1  Waiting
+ Container coldmail-send-byo-smtp-sink-1  Waiting
+ Container coldmail-send-byo-coredns-1  Waiting
+ Container coldmail-send-byo-dns-blackhole-1  Waiting
+ Container coldmail-send-byo-postgres-1  Waiting
+ Container coldmail-send-byo-migrate-1  Waiting
+ Container coldmail-send-byo-coredns-1  Healthy
+ Container coldmail-send-byo-postgres-1  Healthy
+ Container coldmail-send-byo-migrate-1  Exited
+ Container coldmail-send-byo-smtp-sink-1  Healthy
+ Container coldmail-send-byo-control-1  Healthy
+ Container coldmail-send-byo-worker-1  Healthy
+ Container coldmail-send-byo-dns-blackhole-1  Healthy
+== preconditions ==
+  PASS: Postgres is volume-backed (no tmpfs on its data directory): a stop/start keeps the data
+== fixtures (admin API, as an operator would) ==
+  FAIL: could not create an account
+##[error]Process completed with exit code 1.
+default-mode	Diagnostics on failure	﻿2026-11-08T16:31:29.2102453Z ##[group]Run docker compose -f docker-compose.yml ps -a || true
+^[[36;1mdocker compose -f docker-compose.yml ps -a || true^[[0m
+^[[36;1mdocker compose -f docker-compose.yml logs --tail 120 control worker || true^[[0m
+shell: /usr/bin/bash -e {0}
+##[endgroup]
+NAME                                IMAGE                                                                                             COMMAND                  SERVICE         CREATED          STATUS                     PORTS
+coldmail-send-byo-control-1         coldmail-send-byo-control                                                                         "/usr/local/bin/cont…"   control         36 seconds ago   Up 4 seconds (healthy)     0.0.0.0:9080->8080/tcp, [::]:9080->8080/tcp, 0.0.0.0:9443->8443/tcp, [::]:9443->8443/tcp, 0.0.0.0:9444->8444/tcp, [::]:9444->8444/tcp
+coldmail-send-byo-coredns-1         coredns/coredns:1.15.0@sha256:0a9d8c8ddf34347eb59aad9a8784f0710de88d6d112726d11d271f9bc6daca26    "/coredns -conf /etc…"   coredns         6 minutes ago    Up 6 minutes               0.0.0.0:9053->53/tcp, 0.0.0.0:9053->53/udp, [::]:9053->53/tcp, [::]:9053->53/udp
+coldmail-send-byo-dns-blackhole-1   python:3.15.2-alpine@sha256:a0f2e268f2ce8f3709611a90054ec6a8ae31f6251f5896b8648b9bb99835e30a      "python3 -c 'import …"   dns-blackhole   6 minutes ago    Up 6 minutes               
+coldmail-send-byo-migrate-1         coldmail-send-byo-migrate                                                                         "/usr/local/bin/send…"   migrate         6 minutes ago    Exited (0) 4 seconds ago   
+coldmail-send-byo-postgres-1        postgres:16-alpine                                                                                "docker-entrypoint.s…"   postgres        7 minutes ago    Up 7 minutes (healthy)     0.0.0.0:6432->5432/tcp, [::]:6432->5432/tcp
+coldmail-send-byo-smtp-sink-1       axllent/mailpit:v1.33.1@sha256:aef2aacc11f075ec0fb6874275ee4a421e688e11a96ebb296134d1735c7761ce   "/mailpit"               smtp-sink       6 minutes ago    Up 6 minutes (healthy)     1025/tcp, 1110/tcp, 0.0.0.0:9025->8025/tcp, [::]:9025->8025/tcp
+coldmail-send-byo-worker-1          coldmail-send-byo-worker                                                                          "node src/index.js"      worker          5 minutes ago    Up About a minute          
+worker-1  | worker 11111111-1111-1111-1111-111111111111: registered over mTLS stream; awaiting pushed jobs (buffered outcomes replayed on connect)
+worker-1  | worker 11111111-1111-1111-1111-111111111111: registered over mTLS stream; awaiting pushed jobs (buffered outcomes replayed on connect)
+worker-1  | worker 11111111-1111-1111-1111-111111111111: control stream closed; reconnecting (outcome buffer retained)
+worker-1  | worker 11111111-1111-1111-1111-111111111111: connect attempt 1 not ready (connect ECONNREFUSED 172.18.0.6:8444); retrying
+worker-1  | worker 11111111-1111-1111-1111-111111111111: registered over mTLS stream; awaiting pushed jobs (buffered outcomes replayed on connect)
+worker-1  | worker 11111111-1111-1111-1111-111111111111: control stream closed; reconnecting (outcome buffer retained)
+worker-1  | worker 11111111-1111-1111-1111-111111111111: connect attempt 1 not ready (connect ECONNREFUSED 172.18.0.6:8444); retrying
+worker-1  | worker 11111111-1111-1111-1111-111111111111: registered over mTLS stream; awaiting pushed jobs (buffered outcomes replayed on connect)
+control-1  | control 2026/11/08 16:31:25 db connected
+control-1  | control 2026/11/08 16:31:25 singleton lock acquired (key=8200000001)
+control-1  | control 2026/11/08 16:31:25 singleton: mid-life lock loss will PAUSE dispatch/reclaim/retention and re-attempt acquisition every 5s (brain_singleton_reacquire_interval_sec)
+control-1  | control 2026/11/08 16:31:25 kms dev key loaded (sole decryptor; 32 bytes of key material held in-process, never logged)
+control-1  | control 2026/11/08 16:31:25 admin API mounted on :8080 under /v1/admin/* (operator-key auth; Encrypt-only; 1 key(s) configured)
+control-1  | control 2026/11/08 16:31:25 startup rescan: extended 1 orphaned in-flight lease(s) + refreshed worker heartbeats (reconnect window opened; reclaim delegated to the continuous loop)
+control-1  | control 2026/11/08 16:31:25 workerlink send-stream mTLS server on :8444 (client cert required; credential channel)
+control-1  | control 2026/11/08 16:31:25 platform API mounted under /v1/{quote,run,report,describe,send_byo/accounts...} (service-token auth; 1 token(s) configured)
+control-1  | control 2026/11/08 16:31:25 health server on :8080
+control-1  | control 2026/11/08 16:31:25 workerlink mTLS server on :8443 (client cert required)
+control-1  | control 2026/11/08 16:31:25 control ready
+control-1  | control 2026/11/08 16:31:25 retention: retention_shadow_would_delete — retention_mode="shadow", so NOTHING was deleted this tick; 0 expired send_logs row(s) would be dropped at retention_mode=enforce. send_logs GROWS WITHOUT BOUND until this dial is promoted (fix-plan item 13, go-live-checklist.md)
+control-1  | control 2026/11/08 16:31:25 purge: purge_shadow_would_delete — account_purge_mode="shadow", so NOTHING was purged this tick; 0 soft-deleted account(s) past their retention window would be hard-DELETEd at account_purge_mode=enforce. Their credential_ciphertext OUTLIVES the promised window until this dial is promoted (fix-plan item 13, go-live-checklist.md)
+control-1  | control 2026/11/08 16:31:27 workerlink stream: worker registered id="11111111-1111-1111-1111-111111111111" (token verified, mTLS client cert)
+control-1  | control 2026/11/08 16:31:29 admin request_id=req_cbaffe3100f471606508496ded05cd77 method=POST path=/v1/admin/accounts outcome=error code=conflict reason=duplicate_account_for_user level=warn
+default-mode	Tear down	﻿2026-11-08T16:31:29.3517547Z ##[group]Run bash scripts/dev.sh down || true
+^[[36;1mbash scripts/dev.sh down || true^[[0m
+shell: /usr/bin/bash -e {0}
+##[endgroup]
+ Container coldmail-send-byo-coredns-1  Stopping
+ Container coldmail-send-byo-dns-blackhole-1  Stopping
+ Container coldmail-send-byo-worker-1  Stopping
+ Container coldmail-send-byo-smtp-sink-1  Stopping
+ Container coldmail-send-byo-worker-1  Stopped
+ Container coldmail-send-byo-worker-1  Removing
+ Container coldmail-send-byo-worker-1  Removed
+ Container coldmail-send-byo-control-1  Stopping
+ Container coldmail-send-byo-coredns-1  Stopped
+ Container coldmail-send-byo-coredns-1  Removing
+ Container coldmail-send-byo-coredns-1  Removed
+ Container coldmail-send-byo-smtp-sink-1  Stopped
+ Container coldmail-send-byo-smtp-sink-1  Removing
+ Container coldmail-send-byo-smtp-sink-1  Removed
+ Container coldmail-send-byo-dns-blackhole-1  Stopped
+ Container coldmail-send-byo-dns-blackhole-1  Removing
+ Container coldmail-send-byo-dns-blackhole-1  Removed
+ Container coldmail-send-byo-control-1  Stopped
+ Container coldmail-send-byo-control-1  Removing
+ Container coldmail-send-byo-control-1  Removed
+ Container coldmail-send-byo-migrate-1  Stopping
+ Container coldmail-send-byo-migrate-1  Stopped
+ Container coldmail-send-byo-migrate-1  Removing
+ Container coldmail-send-byo-migrate-1  Removed
+ Container coldmail-send-byo-postgres-1  Stopping
+ Container coldmail-send-byo-postgres-1  Stopped
+ Container coldmail-send-byo-postgres-1  Removing
+ Container coldmail-send-byo-postgres-1  Removed
+ Network coldmail-send-byo_default  Removing
+ Network coldmail-send-byo_default  Removed
+default-mode	Post Run actions/checkout@v4	﻿2026-11-08T16:32:00.3890411Z Post job cleanup.
+[command]/usr/bin/git version
+git version 2.56.0
+Temporarily overriding HOME='/home/runner/work/_temp/d9d4413a-e520-444a-acb1-e92dd69d7d6b' before making global git config changes
+Adding repository directory to the temporary git global config as a safe directory
+[command]/usr/bin/git config --global --add safe.directory /home/runner/work/coldmail-send-byo/coldmail-send-byo
+[command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+[command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+[command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+http.https://github.com/.extraheader
+[command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+[command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+[command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+[command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+default-mode	Complete job	﻿2026-11-08T16:32:00.5988267Z Cleaning up orphan processes
+##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-go@v5, actions/setup-node@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

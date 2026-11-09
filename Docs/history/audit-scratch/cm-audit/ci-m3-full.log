@@ -1,0 +1,1184 @@
+behavioral	Set up job	﻿2026-11-07T16:29:29.6593376Z Current runner version: '2.338.2'
+behavioral	Set up job	2026-11-07T16:29:29.6633111Z ##[group]Runner Image Provisioner
+behavioral	Set up job	2026-11-07T16:29:29.6634507Z Hosted Compute Agent
+behavioral	Set up job	2026-11-07T16:29:29.6635581Z Version: 20261028.624
+behavioral	Set up job	2026-11-07T16:29:29.6636707Z Commit: 54898b74c23fde5556c9b3c3a2290865feef0dfe
+behavioral	Set up job	2026-11-07T16:29:29.6638364Z Build Date: 2026-10-28T21:51:42Z
+behavioral	Set up job	2026-11-07T16:29:29.6639584Z Worker ID: {cd95ed50-494b-4a1f-8668-06a1f7b569c5}
+behavioral	Set up job	2026-11-07T16:29:29.6640877Z Region: eastus
+behavioral	Set up job	2026-11-07T16:29:29.6641909Z Cloud: Azure
+behavioral	Set up job	2026-11-07T16:29:29.6642836Z ##[endgroup]
+behavioral	Set up job	2026-11-07T16:29:29.6645653Z ##[group]Operating System
+behavioral	Set up job	2026-11-07T16:29:29.6646799Z Ubuntu
+behavioral	Set up job	2026-11-07T16:29:29.6647967Z 24.04.5
+behavioral	Set up job	2026-11-07T16:29:29.6649099Z LTS
+behavioral	Set up job	2026-11-07T16:29:29.6649935Z ##[endgroup]
+behavioral	Set up job	2026-11-07T16:29:29.6651100Z ##[group]Runner Image
+behavioral	Set up job	2026-11-07T16:29:29.6652151Z Image: ubuntu-24.04
+behavioral	Set up job	2026-11-07T16:29:29.6653112Z Version: 20261101.360.1
+behavioral	Set up job	2026-11-07T16:29:29.6655145Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20261101.360/images/ubuntu/Ubuntu2404-Readme.md
+behavioral	Set up job	2026-11-07T16:29:29.6658615Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20261101.360
+behavioral	Set up job	2026-11-07T16:29:29.6660385Z ##[endgroup]
+behavioral	Set up job	2026-11-07T16:29:29.6662558Z ##[group]GITHUB_TOKEN Permissions
+behavioral	Set up job	2026-11-07T16:29:29.6665339Z Contents: read
+behavioral	Set up job	2026-11-07T16:29:29.6666390Z Metadata: read
+behavioral	Set up job	2026-11-07T16:29:29.6667378Z Packages: read
+behavioral	Set up job	2026-11-07T16:29:29.6668710Z ##[endgroup]
+behavioral	Set up job	2026-11-07T16:29:29.6672049Z Secret source: Actions
+behavioral	Set up job	2026-11-07T16:29:29.6673593Z Cache mode: write
+behavioral	Set up job	2026-11-07T16:29:29.6674881Z Prepare workflow directory
+behavioral	Set up job	2026-11-07T16:29:29.7255951Z Prepare all required actions
+behavioral	Set up job	2026-11-07T16:29:29.7328080Z Getting action download info
+behavioral	Set up job	2026-11-07T16:29:29.9292119Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+behavioral	Set up job	2026-11-07T16:29:30.0475403Z Download action repository 'actions/setup-go@v5' (SHA:40f1582b2485089dde7abd97c1529aa768e1baff)
+behavioral	Set up job	2026-11-07T16:29:30.3476827Z Complete job name: behavioral
+behavioral	Run actions/checkout@v4	﻿2026-11-07T16:29:30.4494830Z ##[group]Run actions/checkout@v4
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:30.4495802Z with:
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:30.4496315Z   repository: elzainxx/coldmail-send-byo
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:30.4500430Z   token: ***
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:30.4500902Z   ssh-strict: true
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:30.4501373Z   ssh-user: git
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:30.4501850Z   persist-credentials: true
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:30.4502368Z   clean: true
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:30.4502839Z   sparse-checkout-cone-mode: true
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:30.4503381Z   fetch-depth: 1
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:30.4503887Z   fetch-tags: false
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:30.4504357Z   show-progress: true
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:30.4504826Z   lfs: false
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:30.4505261Z   submodules: false
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:30.4505728Z   set-safe-directory: true
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:30.4506256Z   allow-unsafe-pr-checkout: false
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:30.4507081Z env:
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:30.4507531Z   DEV_RAM_PG: 1
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:30.4508149Z ##[endgroup]
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:30.8883657Z Syncing repository: elzainxx/coldmail-send-byo
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:30.8887504Z ##[group]Getting Git version info
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:30.8889998Z Working directory is '/home/runner/work/coldmail-send-byo/coldmail-send-byo'
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:30.8893009Z [command]/usr/bin/git version
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:30.9069324Z git version 2.56.0
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.0428586Z ##[endgroup]
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.0439540Z Temporarily overriding HOME='/home/runner/work/_temp/e1d35755-9ed3-41c4-b1ac-09849ae2534f' before making global git config changes
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.0443255Z Adding repository directory to the temporary git global config as a safe directory
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.0446746Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/coldmail-send-byo/coldmail-send-byo
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.0452990Z Deleting the contents of '/home/runner/work/coldmail-send-byo/coldmail-send-byo'
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.0456501Z ##[group]Initializing the repository
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.0459425Z [command]/usr/bin/git init /home/runner/work/coldmail-send-byo/coldmail-send-byo
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.0462784Z hint: Using 'master' as the name for the initial branch. This default branch name
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.0465660Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.0468568Z hint: to use in all of your new repositories, which will suppress this warning,
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.0470933Z hint: call:
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.0472503Z hint:
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.0474041Z hint: 	git config --global init.defaultBranch <name>
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.0475247Z hint:
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.0476360Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.0478792Z hint: 'development'. The just-created branch can be renamed via this command:
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.0481281Z hint:
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.0482661Z hint: 	git branch -m <name>
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.0495952Z hint:
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.0497540Z hint: Disable this message with "git config set advice.defaultBranchName false"
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.0500477Z Initialized empty Git repository in /home/runner/work/coldmail-send-byo/coldmail-send-byo/.git/
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.0504337Z [command]/usr/bin/git remote add origin https://github.com/elzainxx/coldmail-send-byo
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.0508478Z ##[endgroup]
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.0510483Z ##[group]Disabling automatic garbage collection
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.0511992Z [command]/usr/bin/git config --local gc.auto 0
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.0515609Z ##[endgroup]
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.0517343Z ##[group]Setting up auth
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.0519368Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.0524204Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.0698887Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.0744537Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.1076450Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.1128984Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.1399158Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.1455470Z ##[endgroup]
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.1470568Z ##[group]Fetching the repository
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.1480865Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +99e51aebf38820ba88ea8440f29bf97029d41907:refs/remotes/origin/main
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.5571148Z From https://github.com/elzainxx/coldmail-send-byo
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.5574340Z  * [new ref]         99e51aebf38820ba88ea8440f29bf97029d41907 -> origin/main
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.5579354Z ##[endgroup]
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.5581607Z ##[group]Determining the checkout info
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.5583912Z ##[endgroup]
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.5585349Z [command]/usr/bin/git sparse-checkout disable
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.5672755Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.5728560Z ##[group]Checking out the ref
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.5749809Z [command]/usr/bin/git checkout --progress --force -B main refs/remotes/origin/main
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.6348575Z Switched to a new branch 'main'
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.6352927Z branch 'main' set up to track 'origin/main'.
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.6364476Z ##[endgroup]
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.6423717Z [command]/usr/bin/git log -1 --format=%H
+behavioral	Run actions/checkout@v4	2026-11-07T16:29:31.6463280Z 99e51aebf38820ba88ea8440f29bf97029d41907
+behavioral	Run actions/setup-go@v5	﻿2026-11-07T16:29:31.6898509Z ##[group]Run actions/setup-go@v5
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:31.6899535Z with:
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:31.6900322Z   go-version: 1.26
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:31.6901125Z   check-latest: false
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:31.6905655Z   token: ***
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:31.6906446Z   cache: true
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:31.6907212Z env:
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:31.6908218Z   DEV_RAM_PG: 1
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:31.6909009Z ##[endgroup]
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:31.8388885Z Setup go version spec 1.26
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:31.8447560Z (node:2074) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:31.8452058Z Found in cache @ /opt/hostedtoolcache/go/1.26.10/x64
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:31.8454831Z Added go to the path
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:31.8457081Z Successfully set up Go version 1.26
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:31.8465918Z (Use `node --trace-deprecation ...` to show where the warning was created)
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.3328705Z [command]/opt/hostedtoolcache/go/1.26.10/x64/bin/go env GOMODCACHE
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.3398996Z [command]/opt/hostedtoolcache/go/1.26.10/x64/bin/go env GOCACHE
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.3442016Z /home/runner/go/pkg/mod
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.3464129Z /home/runner/.cache/go-build
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.3505714Z ##[warning]Restore cache failed: Dependencies file is not found in /home/runner/work/coldmail-send-byo/coldmail-send-byo. Supported file pattern: go.sum
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.3561005Z go version go1.26.10 linux/amd64
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.3562228Z 
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.3563731Z ##[group]go env
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5506546Z AR='ar'
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5513314Z CC='gcc'
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5514870Z CGO_CFLAGS='-O2 -g'
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5516273Z CGO_CPPFLAGS=''
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5517527Z CGO_CXXFLAGS='-O2 -g'
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5538600Z CGO_ENABLED='1'
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5548531Z CGO_FFLAGS='-O2 -g'
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5568855Z CGO_LDFLAGS='-O2 -g'
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5582941Z CXX='g++'
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5598828Z GCCGO='gccgo'
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5609093Z GO111MODULE=''
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5626749Z GOAMD64='v1'
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5631704Z GOARCH='amd64'
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5649251Z GOAUTH='netrc'
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5660713Z GOBIN=''
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5666877Z GOCACHE='/home/runner/.cache/go-build'
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5698725Z GOCACHEPROG=''
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5700221Z GODEBUG=''
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5716945Z GOENV='/home/runner/.config/go/env'
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5720450Z GOEXE=''
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5722721Z GOEXPERIMENT=''
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5724123Z GOFIPS140='off'
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5725414Z GOFLAGS=''
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5729659Z GOGCCFLAGS='-fPIC -m64 -pthread -Wl,--no-gc-sections -fmessage-length=0 -ffile-prefix-map=/tmp/go-build59181868=/tmp/go-build -gno-record-gcc-switches'
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5745776Z GOHOSTARCH='amd64'
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5747083Z GOHOSTOS='linux'
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5748978Z GOINSECURE=''
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5750021Z GOMOD='/dev/null'
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5751149Z GOMODCACHE='/home/runner/go/pkg/mod'
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5752547Z GONOPROXY=''
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5753460Z GONOSUMDB=''
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5754396Z GOOS='linux'
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5755354Z GOPATH='/home/runner/go'
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5756191Z GOPRIVATE=''
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5756978Z GOPROXY='https://proxy.golang.org,direct'
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5758555Z GOROOT='/opt/hostedtoolcache/go/1.26.10/x64'
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5759588Z GOSUMDB='sum.golang.org'
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5760313Z GOTELEMETRY='local'
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5761138Z GOTELEMETRYDIR='/home/runner/.config/go/telemetry'
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5762194Z GOTMPDIR=''
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5762753Z GOTOOLCHAIN='auto'
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5763818Z GOTOOLDIR='/opt/hostedtoolcache/go/1.26.10/x64/pkg/tool/linux_amd64'
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5765136Z GOVCS=''
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5765682Z GOVERSION='go1.26.10'
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5766309Z GOWORK=''
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5766871Z PKG_CONFIG='pkg-config'
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5767328Z 
+behavioral	Run actions/setup-go@v5	2026-11-07T16:29:32.5768534Z ##[endgroup]
+behavioral	Go lint — gofmt + vet (BLOCKING; keeps code/format from drifting)	﻿2026-11-07T16:29:32.5877392Z ##[group]Run test -z "$(gofmt -l services/control tools/send-byo-migrate tools/provision-worker tests/harness)" \
+behavioral	Go lint — gofmt + vet (BLOCKING; keeps code/format from drifting)	2026-11-07T16:29:32.5880805Z ^[[36;1mtest -z "$(gofmt -l services/control tools/send-byo-migrate tools/provision-worker tests/harness)" \^[[0m
+behavioral	Go lint — gofmt + vet (BLOCKING; keeps code/format from drifting)	2026-11-07T16:29:32.5884464Z ^[[36;1m  || { echo 'gofmt: files need formatting:'; gofmt -l services/control tools/send-byo-migrate tools/provision-worker tests/harness; exit 1; }^[[0m
+behavioral	Go lint — gofmt + vet (BLOCKING; keeps code/format from drifting)	2026-11-07T16:29:32.5888847Z ^[[36;1m(cd services/control && go vet ./...)^[[0m
+behavioral	Go lint — gofmt + vet (BLOCKING; keeps code/format from drifting)	2026-11-07T16:29:32.5890421Z ^[[36;1m(cd tools/send-byo-migrate && go vet ./...)^[[0m
+behavioral	Go lint — gofmt + vet (BLOCKING; keeps code/format from drifting)	2026-11-07T16:29:32.5892403Z ^[[36;1m(cd tools/provision-worker && go vet ./...)^[[0m
+behavioral	Go lint — gofmt + vet (BLOCKING; keeps code/format from drifting)	2026-11-07T16:29:32.5894141Z ^[[36;1m(cd tests/harness && go vet ./...)^[[0m
+behavioral	Go lint — gofmt + vet (BLOCKING; keeps code/format from drifting)	2026-11-07T16:29:32.5933701Z shell: /usr/bin/bash -e {0}
+behavioral	Go lint — gofmt + vet (BLOCKING; keeps code/format from drifting)	2026-11-07T16:29:32.5934930Z env:
+behavioral	Go lint — gofmt + vet (BLOCKING; keeps code/format from drifting)	2026-11-07T16:29:32.5935773Z   DEV_RAM_PG: 1
+behavioral	Go lint — gofmt + vet (BLOCKING; keeps code/format from drifting)	2026-11-07T16:29:32.5936724Z ##[endgroup]
+behavioral	Go lint — gofmt + vet (BLOCKING; keeps code/format from drifting)	2026-11-07T16:29:33.6137207Z go: downloading github.com/jackc/pgx/v5 v5.10.0
+behavioral	Go lint — gofmt + vet (BLOCKING; keeps code/format from drifting)	2026-11-07T16:29:34.4114036Z go: downloading golang.org/x/crypto v0.58.0
+behavioral	Go lint — gofmt + vet (BLOCKING; keeps code/format from drifting)	2026-11-07T16:29:35.0383967Z go: downloading golang.org/x/net v0.62.0
+behavioral	Go lint — gofmt + vet (BLOCKING; keeps code/format from drifting)	2026-11-07T16:29:35.5861312Z go: downloading github.com/jackc/puddle/v2 v2.2.2
+behavioral	Go lint — gofmt + vet (BLOCKING; keeps code/format from drifting)	2026-11-07T16:29:36.5403370Z go: downloading github.com/jackc/pgpassfile v1.0.0
+behavioral	Go lint — gofmt + vet (BLOCKING; keeps code/format from drifting)	2026-11-07T16:29:36.5433683Z go: downloading github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761
+behavioral	Go lint — gofmt + vet (BLOCKING; keeps code/format from drifting)	2026-11-07T16:29:36.5504418Z go: downloading golang.org/x/text v0.43.0
+behavioral	Go lint — gofmt + vet (BLOCKING; keeps code/format from drifting)	2026-11-07T16:29:37.0327812Z go: downloading golang.org/x/sync v0.24.0
+behavioral	Go lint — gofmt + vet (BLOCKING; keeps code/format from drifting)	2026-11-07T16:30:21.0117001Z go: downloading golang.org/x/crypto v0.31.0
+behavioral	Build the migrate runner (M3-P0-OD-12 — required by three template-DB steps in run.sh)	﻿2026-11-07T16:30:21.5243409Z ##[group]Run (cd tools/send-byo-migrate && go build -o bin/send-byo-migrate .)
+behavioral	Build the migrate runner (M3-P0-OD-12 — required by three template-DB steps in run.sh)	2026-11-07T16:30:21.5244072Z ^[[36;1m(cd tools/send-byo-migrate && go build -o bin/send-byo-migrate .)^[[0m
+behavioral	Build the migrate runner (M3-P0-OD-12 — required by three template-DB steps in run.sh)	2026-11-07T16:30:21.5264165Z shell: /usr/bin/bash -e {0}
+behavioral	Build the migrate runner (M3-P0-OD-12 — required by three template-DB steps in run.sh)	2026-11-07T16:30:21.5264442Z env:
+behavioral	Build the migrate runner (M3-P0-OD-12 — required by three template-DB steps in run.sh)	2026-11-07T16:30:21.5264643Z   DEV_RAM_PG: 1
+behavioral	Build the migrate runner (M3-P0-OD-12 — required by three template-DB steps in run.sh)	2026-11-07T16:30:21.5264858Z ##[endgroup]
+behavioral	Generate dev certs/secrets + provision dev worker (writes .env)	﻿2026-11-07T16:30:22.4880275Z ##[group]Run bash scripts/dev.sh certs
+behavioral	Generate dev certs/secrets + provision dev worker (writes .env)	2026-11-07T16:30:22.4880941Z ^[[36;1mbash scripts/dev.sh certs^[[0m
+behavioral	Generate dev certs/secrets + provision dev worker (writes .env)	2026-11-07T16:30:22.4901327Z shell: /usr/bin/bash -e {0}
+behavioral	Generate dev certs/secrets + provision dev worker (writes .env)	2026-11-07T16:30:22.4901605Z env:
+behavioral	Generate dev certs/secrets + provision dev worker (writes .env)	2026-11-07T16:30:22.4901807Z   DEV_RAM_PG: 1
+behavioral	Generate dev certs/secrets + provision dev worker (writes .env)	2026-11-07T16:30:22.4902024Z ##[endgroup]
+behavioral	Generate dev certs/secrets + provision dev worker (writes .env)	2026-11-07T16:30:22.4980353Z == gen-certs ==
+behavioral	Generate dev certs/secrets + provision dev worker (writes .env)	2026-11-07T16:30:22.5009641Z gen-certs: writing dev mTLS material to secrets/dev/certs
+behavioral	Generate dev certs/secrets + provision dev worker (writes .env)	2026-11-07T16:30:23.9086215Z gen-certs: done. CA + control/worker/sink leaves in secrets/dev/certs (ca.key stays here, gitignored).
+behavioral	Generate dev certs/secrets + provision dev worker (writes .env)	2026-11-07T16:30:23.9092231Z == gen-secrets ==
+behavioral	Generate dev certs/secrets + provision dev worker (writes .env)	2026-11-07T16:30:23.9169340Z gen-secrets: wrote dev KMS master key -> secrets/dev/kms/dev-master.key (Control-only; admin Encrypt-only)
+behavioral	Generate dev certs/secrets + provision dev worker (writes .env)	2026-11-07T16:30:23.9170928Z gen-secrets: operator admin (Domain B) key is minted (bcrypt) by 'provision-worker admin-key'
+behavioral	Generate dev certs/secrets + provision dev worker (writes .env)	2026-11-07T16:30:23.9174447Z              and written to .env by 'scripts/dev.sh certs' (ADMIN_API_KEY / ADMIN_API_KEY_HASHES).
+behavioral	Generate dev certs/secrets + provision dev worker (writes .env)	2026-11-07T16:30:23.9175645Z gen-secrets: done.
+behavioral	Generate dev certs/secrets + provision dev worker (writes .env)	2026-11-07T16:30:23.9176669Z == provision dev worker + operator admin key + write .env ==
+behavioral	Generate dev certs/secrets + provision dev worker (writes .env)	2026-11-07T16:30:24.4528746Z .env written (gitignored). TWO worker tokens/hashes + operator admin key + platform service token provisioned.
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	﻿2026-11-07T16:30:24.4583291Z ##[group]Run bash scripts/dev.sh reset
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:24.4583929Z ^[[36;1mbash scripts/dev.sh reset^[[0m
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:24.4614171Z shell: /usr/bin/bash -e {0}
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:24.4614625Z env:
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:24.4614938Z   DEV_RAM_PG: 1
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:24.4615295Z ##[endgroup]
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.3523976Z  postgres Pulling 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.6901677Z  881fc932939e Pulling fs layer 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.6902655Z  fd818ebd7c87 Pulling fs layer 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.6903415Z  07e60219949d Pulling fs layer 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.6920481Z  ec3414c15456 Pulling fs layer 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.6931247Z  a8b9fccd8d77 Pulling fs layer 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.6931899Z  850c0285d2f3 Pulling fs layer 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.6933242Z  ac5e852d5d1d Pulling fs layer 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.6938330Z  55cd3be29a9d Pulling fs layer 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.6939792Z  108fda73eb54 Pulling fs layer 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.6942234Z  45a91a95fdfe Pulling fs layer 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.6943147Z  9df8a060171e Pulling fs layer 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.6950256Z  ac5e852d5d1d Waiting 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.6952632Z  55cd3be29a9d Waiting 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.6955067Z  108fda73eb54 Waiting 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.6956334Z  45a91a95fdfe Waiting 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.6957249Z  9df8a060171e Waiting 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.6958581Z  ec3414c15456 Waiting 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.6959095Z  a8b9fccd8d77 Waiting 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.6959977Z  850c0285d2f3 Waiting 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.7873216Z  fd818ebd7c87 Downloading [==================================================>]     968B/968B
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.7883407Z  07e60219949d Downloading [>                                                  ]  15.79kB/900kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.7884923Z  fd818ebd7c87 Verifying Checksum 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.7886038Z  fd818ebd7c87 Download complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.7895840Z  881fc932939e Downloading [>                                                  ]  48.55kB/3.854MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.7956652Z  07e60219949d Download complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.8127448Z  881fc932939e Verifying Checksum 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.8128970Z  881fc932939e Download complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.8144123Z  ec3414c15456 Downloading [==================================================>]     170B/170B
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.8161290Z  ec3414c15456 Verifying Checksum 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.8162836Z  ec3414c15456 Download complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.8164139Z  881fc932939e Extracting [>                                                  ]  65.54kB/3.854MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.8288002Z  a8b9fccd8d77 Downloading [==================================================>]     116B/116B
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.8295778Z  a8b9fccd8d77 Verifying Checksum 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.8297836Z  a8b9fccd8d77 Download complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.8438677Z  ac5e852d5d1d Downloading [==================>                                ]  3.502kB/9.669kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.8447025Z  ac5e852d5d1d Downloading [==================================================>]  9.669kB/9.669kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.8461732Z  ac5e852d5d1d Verifying Checksum 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.8468204Z  ac5e852d5d1d Download complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.8625355Z  55cd3be29a9d Downloading [==================================================>]     129B/129B
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.8639434Z  55cd3be29a9d Verifying Checksum 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.8645511Z  55cd3be29a9d Download complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.8656814Z  850c0285d2f3 Downloading [>                                                  ]  537.5kB/111.3MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.8941217Z  108fda73eb54 Downloading [==================================================>]     166B/166B
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.8971900Z  108fda73eb54 Verifying Checksum 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.8973157Z  108fda73eb54 Download complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.9225076Z  45a91a95fdfe Downloading [============================>                      ]  3.502kB/6.108kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.9229627Z  45a91a95fdfe Downloading [==================================================>]  6.108kB/6.108kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.9234170Z  45a91a95fdfe Verifying Checksum 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.9235421Z  45a91a95fdfe Download complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.9298602Z  881fc932939e Extracting [=================>                                 ]  1.376MB/3.854MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.9549587Z  9df8a060171e Downloading [==================================================>]     183B/183B
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.9551318Z  9df8a060171e Verifying Checksum 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.9552139Z  9df8a060171e Download complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.9676188Z  850c0285d2f3 Downloading [==========>                                        ]  23.91MB/111.3MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:26.9960933Z  881fc932939e Extracting [==================================================>]  3.854MB/3.854MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:27.0013377Z  881fc932939e Extracting [==================================================>]  3.854MB/3.854MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:27.0298510Z  881fc932939e Pull complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:27.0421803Z  fd818ebd7c87 Extracting [==================================================>]     968B/968B
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:27.0430505Z  fd818ebd7c87 Extracting [==================================================>]     968B/968B
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:27.0722535Z  850c0285d2f3 Downloading [======================>                            ]  50.45MB/111.3MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:27.1716443Z  850c0285d2f3 Downloading [==================================>                ]  75.93MB/111.3MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:27.3753851Z  850c0285d2f3 Downloading [==========================================>        ]  95.58MB/111.3MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:27.4741940Z  850c0285d2f3 Verifying Checksum 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:27.6770462Z  fd818ebd7c87 Pull complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:27.8782370Z  07e60219949d Extracting [=>                                                 ]  32.77kB/900kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:27.9810209Z  07e60219949d Extracting [==============>                                    ]  262.1kB/900kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:27.9943919Z  07e60219949d Extracting [==================================================>]    900kB/900kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:28.0076549Z  07e60219949d Pull complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:28.0097954Z  ec3414c15456 Extracting [==================================================>]     170B/170B
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:28.0099482Z  ec3414c15456 Extracting [==================================================>]     170B/170B
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:28.0202229Z  ec3414c15456 Pull complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:28.0218655Z  a8b9fccd8d77 Extracting [==================================================>]     116B/116B
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:28.0229275Z  a8b9fccd8d77 Extracting [==================================================>]     116B/116B
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:28.0291844Z  a8b9fccd8d77 Pull complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:28.0439915Z  850c0285d2f3 Extracting [>                                                  ]  557.1kB/111.3MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:28.1489354Z  850c0285d2f3 Extracting [=>                                                 ]  3.899MB/111.3MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:28.2562010Z  850c0285d2f3 Extracting [=====>                                             ]  12.26MB/111.3MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:28.3584775Z  850c0285d2f3 Extracting [=========>                                         ]  20.05MB/111.3MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:28.4631776Z  850c0285d2f3 Extracting [============>                                      ]  27.85MB/111.3MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:28.5680582Z  850c0285d2f3 Extracting [===============>                                   ]  35.09MB/111.3MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:28.6746286Z  850c0285d2f3 Extracting [==================>                                ]  41.22MB/111.3MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:28.7811755Z  850c0285d2f3 Extracting [======================>                            ]  49.02MB/111.3MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:28.8842947Z  850c0285d2f3 Extracting [========================>                          ]  55.15MB/111.3MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:28.9875927Z  850c0285d2f3 Extracting [==========================>                        ]  59.05MB/111.3MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:29.0898863Z  850c0285d2f3 Extracting [============================>                      ]  64.06MB/111.3MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:29.1934390Z  850c0285d2f3 Extracting [================================>                  ]   71.3MB/111.3MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:29.2983971Z  850c0285d2f3 Extracting [===================================>               ]  78.54MB/111.3MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:29.4698427Z  850c0285d2f3 Extracting [====================================>              ]  81.33MB/111.3MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:29.6004257Z  850c0285d2f3 Extracting [=====================================>             ]  82.44MB/111.3MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:29.7218357Z  850c0285d2f3 Extracting [======================================>            ]  85.23MB/111.3MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:29.8335529Z  850c0285d2f3 Extracting [========================================>          ]  89.13MB/111.3MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:29.9530933Z  850c0285d2f3 Extracting [=========================================>         ]  93.03MB/111.3MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:30.1332375Z  850c0285d2f3 Extracting [============================================>      ]  98.04MB/111.3MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:30.2359460Z  850c0285d2f3 Extracting [===============================================>   ]  105.8MB/111.3MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:30.3529243Z  850c0285d2f3 Extracting [==================================================>]  111.3MB/111.3MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:31.6276933Z  850c0285d2f3 Pull complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:31.6291226Z  ac5e852d5d1d Extracting [==================================================>]  9.669kB/9.669kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:31.6300399Z  ac5e852d5d1d Extracting [==================================================>]  9.669kB/9.669kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:31.6441561Z  ac5e852d5d1d Pull complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:31.6463303Z  55cd3be29a9d Extracting [==================================================>]     129B/129B
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:31.6467034Z  55cd3be29a9d Extracting [==================================================>]     129B/129B
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:31.6562967Z  55cd3be29a9d Pull complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:31.6581165Z  108fda73eb54 Extracting [==================================================>]     166B/166B
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:31.6582527Z  108fda73eb54 Extracting [==================================================>]     166B/166B
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:31.6728998Z  108fda73eb54 Pull complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:31.6742706Z  45a91a95fdfe Extracting [==================================================>]  6.108kB/6.108kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:31.6749908Z  45a91a95fdfe Extracting [==================================================>]  6.108kB/6.108kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:31.6870203Z  45a91a95fdfe Pull complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:31.6885506Z  9df8a060171e Extracting [==================================================>]     183B/183B
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:31.6891433Z  9df8a060171e Extracting [==================================================>]     183B/183B
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:31.6978615Z  9df8a060171e Pull complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:31.7051313Z  postgres Pulled 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:31.7086769Z  Network coldmail-send-byo_default  Creating
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:31.7606300Z  Network coldmail-send-byo_default  Created
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:31.7616012Z  Container coldmail-send-byo-postgres-1  Creating
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:31.7850392Z  Container coldmail-send-byo-postgres-1  Created
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:31.7861602Z  Container coldmail-send-byo-postgres-1  Starting
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:32.0295046Z  Container coldmail-send-byo-postgres-1  Started
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:32.0297825Z  Container coldmail-send-byo-postgres-1  Waiting
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:35.5320728Z  Container coldmail-send-byo-postgres-1  Healthy
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.0100127Z #1 [internal] load local bake definitions
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.1139555Z #1 reading from stdin 445B done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.1141127Z #1 DONE 0.0s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.3082220Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.3082973Z #2 [internal] load build definition from Dockerfile
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.3083869Z #2 transferring dockerfile: 615B done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.3084761Z #2 DONE 0.0s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.3085187Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.3085579Z #3 [auth] library/alpine:pull token for registry-1.docker.io
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.3086293Z #3 DONE 0.0s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.3086545Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.3086926Z #4 [auth] library/golang:pull token for registry-1.docker.io
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.3087934Z #4 DONE 0.0s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.3088641Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.3089124Z #5 [internal] load metadata for docker.io/library/golang:1.26-alpine
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.4566937Z #5 DONE 0.3s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.4567482Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.4568370Z #6 [internal] load metadata for docker.io/library/alpine:3.20
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.5580994Z #6 DONE 0.3s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.5581353Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.5581582Z #7 [internal] load .dockerignore
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.5582073Z #7 transferring context: 2B done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.5582501Z #7 DONE 0.0s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.5582694Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.5583443Z #8 [build 1/6] FROM docker.io/library/golang:1.26-alpine@sha256:87c65a688975c0b1d4585d204874c45ca78354670e3a5f11368c5a492303d696
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.5585029Z #8 resolve docker.io/library/golang:1.26-alpine@sha256:87c65a688975c0b1d4585d204874c45ca78354670e3a5f11368c5a492303d696 0.0s done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.5586389Z #8 extracting sha256:350517c3be7d98583bf8add1014f6abb38dbc851e5ff8d53b7e4995414bdedfb
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.6719531Z #8 extracting sha256:350517c3be7d98583bf8add1014f6abb38dbc851e5ff8d53b7e4995414bdedfb 0.1s done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.6721558Z #8 sha256:4f4fb700ef54461cfa02571ae0db9a0dc1e0cdb5577484a6d75e68dc38e8acc1 32B / 32B 0.1s done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.6722777Z #8 sha256:87c65a688975c0b1d4585d204874c45ca78354670e3a5f11368c5a492303d696 10.30kB / 10.30kB done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.6728742Z #8 sha256:2173d702003b1a8d17b844191acaeb36e94de46f6cabf2cb27370e151bbce5aa 1.92kB / 1.92kB done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.6730208Z #8 sha256:922b2f213a3ed9cdc1060d7da5b4c8b1a7e940524e6a783e3aa4b8cc06367591 2.19kB / 2.19kB done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.6731749Z #8 sha256:350517c3be7d98583bf8add1014f6abb38dbc851e5ff8d53b7e4995414bdedfb 244.47kB / 244.47kB 0.0s done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.6733210Z #8 sha256:f64d732997a02e45cca29ef334d56f89f7599c8937c2617b6467edd19bc037d6 4.19MB / 67.35MB 0.1s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.6734639Z #8 sha256:938c48435f2c0b41279f6db704d52892177f88935ace8b66ee0a443ffd126daf 126B / 126B 0.1s done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.7936357Z #8 sha256:f64d732997a02e45cca29ef334d56f89f7599c8937c2617b6467edd19bc037d6 48.23MB / 67.35MB 0.3s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.9732561Z #8 ...
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.9734991Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.9735523Z #9 [internal] load build context
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.9737191Z #9 transferring context: 13.68MB 0.3s done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.9738579Z #9 DONE 0.5s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.9739121Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.9740121Z #8 [build 1/6] FROM docker.io/library/golang:1.26-alpine@sha256:87c65a688975c0b1d4585d204874c45ca78354670e3a5f11368c5a492303d696
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:36.9742018Z #8 sha256:f64d732997a02e45cca29ef334d56f89f7599c8937c2617b6467edd19bc037d6 67.35MB / 67.35MB 0.4s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:37.2004093Z #8 ...
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:37.2007405Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:37.2010509Z #10 [stage-1 1/3] FROM docker.io/library/alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:37.2012911Z #10 resolve docker.io/library/alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc 0.0s done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:37.2014935Z #10 extracting sha256:25f1d6b1951ac8eb3740558fe94cb83d377bdadf95fd9f98b50d2e1b96130471 0.3s done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:37.2016788Z #10 sha256:c64c687cbea9300178b30c95835354e34c4e4febc4badfe27102879de0483b5e 1.02kB / 1.02kB done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:37.2018572Z #10 sha256:bf8527eb54c3680e728d5b4b383a8ba730d72dae7236fbc8dff97ed6b224a731 612B / 612B done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:37.2020009Z #10 sha256:25f1d6b1951ac8eb3740558fe94cb83d377bdadf95fd9f98b50d2e1b96130471 3.63MB / 3.63MB 0.0s done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:37.2021590Z #10 sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc 9.23kB / 9.23kB done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:37.2023046Z #10 DONE 0.5s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:37.2023492Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:37.2024643Z #8 [build 1/6] FROM docker.io/library/golang:1.26-alpine@sha256:87c65a688975c0b1d4585d204874c45ca78354670e3a5f11368c5a492303d696
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:37.2026429Z #8 extracting sha256:f64d732997a02e45cca29ef334d56f89f7599c8937c2617b6467edd19bc037d6 0.1s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:38.2617561Z #8 ...
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:38.2618223Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:38.2620674Z #11 [stage-1 2/3] RUN apk add --no-cache ca-certificates
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:38.2622028Z #11 0.230 fetch https://dl-cdn.alpinelinux.org/alpine/v3.20/main/x86_64/APKINDEX.tar.gz
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:38.2623250Z #11 0.388 fetch https://dl-cdn.alpinelinux.org/alpine/v3.20/community/x86_64/APKINDEX.tar.gz
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:38.2624262Z #11 0.805 (1/1) Installing ca-certificates (20261020-r0)
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:38.2624963Z #11 0.839 Executing busybox-1.36.1-r31.trigger
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:38.2625686Z #11 0.847 Executing ca-certificates-20261020-r0.trigger
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:38.2626357Z #11 0.898 OK: 8 MiB in 15 packages
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:38.2626877Z #11 DONE 1.2s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:38.2630360Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:38.2633696Z #8 [build 1/6] FROM docker.io/library/golang:1.26-alpine@sha256:87c65a688975c0b1d4585d204874c45ca78354670e3a5f11368c5a492303d696
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:42.7164556Z #8 extracting sha256:f64d732997a02e45cca29ef334d56f89f7599c8937c2617b6467edd19bc037d6 5.7s done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:43.7291099Z #8 extracting sha256:938c48435f2c0b41279f6db704d52892177f88935ace8b66ee0a443ffd126daf
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:43.9453347Z #8 extracting sha256:938c48435f2c0b41279f6db704d52892177f88935ace8b66ee0a443ffd126daf done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:43.9455046Z #8 extracting sha256:4f4fb700ef54461cfa02571ae0db9a0dc1e0cdb5577484a6d75e68dc38e8acc1 done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:43.9456071Z #8 DONE 7.3s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:43.9456311Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:43.9456524Z #12 [build 2/6] WORKDIR /src
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:43.9457026Z #12 DONE 0.0s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:43.9457260Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:43.9457987Z #13 [build 3/6] COPY tools/send-byo-migrate/go.mod tools/send-byo-migrate/go.sum ./
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:43.9458845Z #13 DONE 0.0s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:43.9459086Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:43.9459302Z #14 [build 4/6] RUN go mod download
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:44.5806566Z #14 DONE 0.8s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:44.7594168Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:44.7595832Z #15 [build 5/6] COPY tools/send-byo-migrate/ ./
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:44.7596673Z #15 DONE 0.0s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:44.7597043Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:30:44.7597785Z #16 [build 6/6] RUN CGO_ENABLED=0 GOTOOLCHAIN=local go build -o /out/send-byo-migrate .
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:12.9751204Z #16 DONE 28.4s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:13.2221672Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:13.2222672Z #17 [stage-1 3/3] COPY --from=build /out/send-byo-migrate /usr/local/bin/send-byo-migrate
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:13.2223686Z #17 DONE 0.1s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:13.2224095Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:13.2224499Z #18 exporting to image
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:13.2224878Z #18 exporting layers
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.0065965Z #18 exporting layers 0.9s done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.0389291Z  migrate  Built
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.0390574Z #18 writing image sha256:5e55a0b7ea97335688336a1c2765d0be6e2d391851003cc2a89418dc6defa0e8 done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.0394513Z #18 naming to docker.io/library/coldmail-send-byo-migrate done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.0395792Z #18 DONE 0.9s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.0396135Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.0396440Z #19 resolving provenance for metadata file
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.0397009Z #19 DONE 0.0s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.0420617Z  Container coldmail-send-byo-postgres-1  Running
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.0423251Z  Container coldmail-send-byo-migrate-1  Creating
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.0697328Z  Container coldmail-send-byo-migrate-1  Created
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.0709381Z Attaching to migrate-1
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.7438412Z migrate-1  | preflight: OK (public.users + public.job_items exist)
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.7672827Z migrate-1  | applied  0000_bootstrap
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.7685863Z migrate-1  | applied  0001_create_schema
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.7697305Z migrate-1  | applied  0002_create_role
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.7744942Z migrate-1  | applied  0003_create_enums
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.7858687Z migrate-1  | applied  0004_create_pools
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.7990454Z migrate-1  | applied  0005_create_accounts
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.8060241Z migrate-1  | applied  0006_create_boxes
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.8192609Z migrate-1  | applied  0007_create_jobs
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.8382723Z migrate-1  | applied  0008_create_job_events
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.8487293Z migrate-1  | applied  0009_create_send_logs
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.8541066Z migrate-1  | applied  0010_create_config_and_seed
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.8671329Z migrate-1  | applied  0011_add_indexes
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.8724186Z migrate-1  | applied  0012_grants_and_rls
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.8749355Z migrate-1  | applied  0013_accounts_pool_uniqueness
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.8865963Z migrate-1  | applied  0014_create_account_events
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.8894929Z migrate-1  | applied  0015_jobs_claim_by_user_idx
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.8918507Z migrate-1  | applied  0016_accounts_scoring_columns
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.8929750Z migrate-1  | applied  0017_seed_phase5_config
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.8940712Z migrate-1  | applied  0018_seed_phase6_config
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.8951116Z migrate-1  | applied  0019_seed_phase7_config
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.8978825Z migrate-1  | applied  0020_jobs_attempt_token
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.8990876Z migrate-1  | applied  0021_operability_config
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.9010820Z migrate-1  | applied  0022_job_events_error_context
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.9018313Z migrate-1  | applied  0023_singleton_reacquire_config
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.9032375Z migrate-1  | applied  0024_job_events_fk_carveout
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.9069612Z migrate-1  | applied  0025_new_enums
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.9172622Z migrate-1  | applied  0026_accounts_m3_state
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.9339728Z migrate-1  | applied  0027_accounts_user_owned
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.9493988Z migrate-1  | applied  0028_drop_pools
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.9540399Z migrate-1  | applied  0029_create_user_settings
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.9598144Z migrate-1  | applied  0030_create_user_config_overrides
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.9660595Z migrate-1  | applied  0031_create_user_suspensions
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.9734329Z migrate-1  | applied  0032_create_campaigns
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.9848289Z migrate-1  | applied  0033_create_notifications
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.9870790Z migrate-1  | applied  0034_account_events_action_widen
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.9922997Z migrate-1  | applied  0035_account_verification_state
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.9935254Z migrate-1  | applied  0036_account_config_seeds
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.9945231Z migrate-1  | applied  0037_test_send_job_items_grant
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.9954226Z migrate-1  | applied  0038_bulk_add_max_rows_config
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:14.9965899Z migrate-1  | applied  0039_from_gate_config_seeds
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.0117341Z migrate-1  | applied  0040_from_gate_predicate
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.0139857Z migrate-1  | applied  0041_from_gate_override_action
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.0154593Z migrate-1  | applied  0042_seed_phase5_config
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.0173951Z migrate-1  | applied  0043_job_events_account_window_idx
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.0196140Z migrate-1  | applied  0044_account_events_suspend_action
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.0205927Z migrate-1  | applied  0045_test_button_per_user_limit
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.0249374Z migrate-1  | applied  0046_visibility
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.0259005Z migrate-1  | applied  0047_notification_state_suppressed
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.0276128Z migrate-1  | applied  0048_unit_price_zero
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.0285217Z migrate-1  | applied  0049_discharge_expired_reserved_keys
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.0306233Z migrate-1  | applied  0050_notifications_user_page_idx
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.0316866Z migrate-1  | applied  0051_drop_score_alert_threshold
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.0325538Z migrate-1  | applied  0052_dispatch_mode_ladder
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.0336373Z migrate-1  | applied  0053_shadow_mode_for_every_autonomous_mutator
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.0346689Z migrate-1  | up: applied 54 migration(s)
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.0555112Z migrate-1  | set-app-password: send_byo_app password set (value not logged)
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.1472356Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.1474005Z ^[[Kmigrate-1 exited with code 0
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.3631463Z seed: system user + dev worker row (11111111-1111-1111-1111-111111111111) seeded; worker can register on the send stream.
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.5532491Z seed: second dev worker row (22222222-2222-2222-2222-222222222222) seeded; run 'scripts/dev.sh up2' to start it.
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.6688698Z  coredns Pulling 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.6692435Z  dns-blackhole Pulling 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.6705004Z  smtp-sink Pulling 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.9692522Z  7b229517ed22 Pulling fs layer 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.9693244Z  5d9afc867194 Pulling fs layer 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.9838573Z  e1656acc19fd Pulling fs layer 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.9839287Z  ad7fcb30079d Pulling fs layer 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.9840287Z  2e4cf50eeb92 Pulling fs layer 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.9841217Z  c36c4b61cfba Pulling fs layer 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.9841992Z  e1089d61b200 Pulling fs layer 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.9842812Z  0f8b424aa0b9 Pulling fs layer 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.9843322Z  d557676654e5 Pulling fs layer 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.9843801Z  d82bc7a76a83 Pulling fs layer 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.9844325Z  68e4cd60e60f Pulling fs layer 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.9844822Z  0783a66ae749 Pulling fs layer 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.9845354Z  efae86a3fb38 Pulling fs layer 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.9845860Z  6b72b81ed966 Pulling fs layer 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.9846350Z  6e6cfc6a1a74 Pulling fs layer 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.9846829Z  0f8b64095b38 Pulling fs layer 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.9853393Z  0f8b424aa0b9 Waiting 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.9853773Z  d557676654e5 Waiting 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.9854115Z  d82bc7a76a83 Waiting 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.9854490Z  68e4cd60e60f Waiting 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.9854840Z  0783a66ae749 Waiting 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.9855185Z  efae86a3fb38 Waiting 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.9855526Z  6b72b81ed966 Waiting 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.9855881Z  6e6cfc6a1a74 Waiting 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.9856229Z  0f8b64095b38 Waiting 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.9856567Z  ad7fcb30079d Waiting 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.9856901Z  2e4cf50eeb92 Waiting 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.9857298Z  c36c4b61cfba Waiting 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:15.9864836Z  e1089d61b200 Waiting 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.0017153Z  e1656acc19fd Downloading [>                                                  ]    3.5kB/177.3kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.0018801Z  7b229517ed22 Downloading [>                                                  ]  48.55kB/3.853MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.0047865Z  5d9afc867194 Downloading [>                                                  ]  114.1kB/10.87MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.0078997Z  881fc932939e Already exists 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.0098034Z  e1656acc19fd Downloading [==================================================>]  177.3kB/177.3kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.0102532Z  e1656acc19fd Verifying Checksum 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.0103804Z  e1656acc19fd Download complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.0104665Z  2d2b30fc2d84 Pulling fs layer 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.0105166Z  55d6aff20023 Pulling fs layer 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.0105626Z  912101e0eb18 Pulling fs layer 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.0106055Z  2d2b30fc2d84 Waiting 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.0106456Z  55d6aff20023 Waiting 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.0106834Z  912101e0eb18 Waiting 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.0262099Z  7b229517ed22 Verifying Checksum 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.0264413Z  7b229517ed22 Download complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.0327507Z  7b229517ed22 Extracting [>                                                  ]  65.54kB/3.853MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.0630472Z  ad7fcb30079d Downloading [==>                                                ]    3.5kB/84.78kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.0709611Z  ad7fcb30079d Downloading [==================================================>]  84.78kB/84.78kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.0711824Z  ad7fcb30079d Verifying Checksum 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.0712741Z  ad7fcb30079d Download complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.0749115Z  ad7fcb30079d Extracting [===================>                               ]  32.77kB/84.78kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.0768618Z  5d9afc867194 Verifying Checksum 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.0769477Z  5d9afc867194 Download complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.0990548Z  ad7fcb30079d Extracting [==================================================>]  84.78kB/84.78kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.0999059Z  2e4cf50eeb92 Downloading [=============>                                     ]  3.477kB/12.58kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.1000165Z  2e4cf50eeb92 Downloading [==================================================>]  12.58kB/12.58kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.1016504Z  2e4cf50eeb92 Verifying Checksum 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.1026243Z  2e4cf50eeb92 Download complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.1328380Z  ad7fcb30079d Pull complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.1459740Z  7b229517ed22 Extracting [=================>                                 ]  1.376MB/3.853MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.1488946Z  2e4cf50eeb92 Extracting [==================================================>]  12.58kB/12.58kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.1492097Z  2e4cf50eeb92 Extracting [==================================================>]  12.58kB/12.58kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.1532993Z  e1089d61b200 Downloading [======>                                            ]  3.478kB/28.39kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.1542501Z  e1089d61b200 Downloading [==================================================>]  28.39kB/28.39kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.1547287Z  e1089d61b200 Verifying Checksum 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.1549038Z  e1089d61b200 Download complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.1589437Z  c36c4b61cfba Downloading [=>                                                 ]  15.72kB/463.4kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.1674208Z  0f8b424aa0b9 Downloading [==================================================>]      75B/75B
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.1706106Z  0f8b424aa0b9 Verifying Checksum 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.1706763Z  0f8b424aa0b9 Download complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.1754245Z  c36c4b61cfba Downloading [==================================================>]  463.4kB/463.4kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.1775794Z  c36c4b61cfba Verifying Checksum 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.1776858Z  c36c4b61cfba Download complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.1955693Z  d557676654e5 Downloading [==================================================>]     193B/193B
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.1957383Z  d557676654e5 Verifying Checksum 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.1958489Z  d557676654e5 Download complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.2062990Z  d82bc7a76a83 Downloading [==================================================>]     130B/130B
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.2069970Z  d82bc7a76a83 Download complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.2143293Z  68e4cd60e60f Downloading [==================================================>]     168B/168B
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.2149998Z  68e4cd60e60f Verifying Checksum 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.2153934Z  68e4cd60e60f Download complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.2210384Z  2e4cf50eeb92 Pull complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.2236786Z  c36c4b61cfba Extracting [===>                                               ]  32.77kB/463.4kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.2258512Z  0783a66ae749 Downloading [==================================================>]      84B/84B
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.2283692Z  0783a66ae749 Verifying Checksum 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.2284749Z  0783a66ae749 Download complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.2482453Z  7b229517ed22 Extracting [=============================================>     ]  3.539MB/3.853MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.2484026Z  efae86a3fb38 Downloading [==================================================>]     358B/358B
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.2490977Z  efae86a3fb38 Verifying Checksum 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.2491809Z  efae86a3fb38 Download complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.2520062Z  6b72b81ed966 Downloading [==================================================>]     320B/320B
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.2527833Z  6b72b81ed966 Verifying Checksum 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.2528626Z  6b72b81ed966 Download complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.2594283Z  7b229517ed22 Extracting [==================================================>]  3.853MB/3.853MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.2620734Z  6e6cfc6a1a74 Downloading [=>                                                 ]  3.457kB/142.4kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.2717581Z  6e6cfc6a1a74 Downloading [==================================================>]  142.4kB/142.4kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.2730322Z  6e6cfc6a1a74 Verifying Checksum 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.2732705Z  6e6cfc6a1a74 Download complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.2921478Z  7b229517ed22 Pull complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.3083485Z  5d9afc867194 Extracting [>                                                  ]  131.1kB/10.87MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.3206863Z  2d2b30fc2d84 Downloading [=>                                                 ]  15.79kB/412kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.3310061Z  0f8b64095b38 Downloading [>                                                  ]  243.2kB/24.12MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.3453230Z  2d2b30fc2d84 Verifying Checksum 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.3463509Z  2d2b30fc2d84 Download complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.3546729Z  2d2b30fc2d84 Extracting [===>                                               ]  32.77kB/412kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.3681574Z  c36c4b61cfba Extracting [======================================>            ]  360.4kB/463.4kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.4411733Z  5d9afc867194 Extracting [====>                                              ]  917.5kB/10.87MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.4516405Z  0f8b64095b38 Downloading [=====================>                             ]  10.57MB/24.12MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.4554175Z  55d6aff20023 Downloading [>                                                  ]  163.2kB/15.4MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.4580748Z  2d2b30fc2d84 Extracting [=======================================>           ]  327.7kB/412kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.4745859Z  c36c4b61cfba Extracting [==========================================>        ]  393.2kB/463.4kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.4887074Z  2d2b30fc2d84 Extracting [==================================================>]    412kB/412kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.5071173Z  912101e0eb18 Downloading [==================================================>]     247B/247B
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.5077082Z  912101e0eb18 Verifying Checksum 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.5078319Z  912101e0eb18 Download complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.5130015Z  0f8b64095b38 Downloading [==================================================>]  24.12MB/24.12MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.5131838Z  0f8b64095b38 Verifying Checksum 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.5132993Z  0f8b64095b38 Download complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.5363791Z  2d2b30fc2d84 Extracting [==================================================>]    412kB/412kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.5555090Z  5d9afc867194 Extracting [=======>                                           ]  1.573MB/10.87MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.5723507Z  55d6aff20023 Downloading [=====>                                             ]  1.638MB/15.4MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.5769892Z  c36c4b61cfba Extracting [==================================================>]  463.4kB/463.4kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.6104100Z  c36c4b61cfba Extracting [==================================================>]  463.4kB/463.4kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.6753457Z  5d9afc867194 Extracting [==========>                                        ]  2.359MB/10.87MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.6776096Z  55d6aff20023 Downloading [==========================>                        ]  8.191MB/15.4MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.7341622Z  55d6aff20023 Verifying Checksum 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.7343065Z  55d6aff20023 Download complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.7777044Z  5d9afc867194 Extracting [=================>                                 ]  3.801MB/10.87MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.7854848Z  2d2b30fc2d84 Pull complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.8124771Z  55d6aff20023 Extracting [>                                                  ]  163.8kB/15.4MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.8818947Z  5d9afc867194 Extracting [==========================>                        ]  5.767MB/10.87MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.9164394Z  55d6aff20023 Extracting [=======>                                           ]  2.294MB/15.4MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:16.9851201Z  5d9afc867194 Extracting [==================================>                ]  7.602MB/10.87MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.0230163Z  c36c4b61cfba Pull complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.0284751Z  e1089d61b200 Extracting [==================================================>]  28.39kB/28.39kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.0310384Z  e1089d61b200 Extracting [==================================================>]  28.39kB/28.39kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.0643188Z  55d6aff20023 Extracting [===========>                                       ]  3.604MB/15.4MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.0862223Z  5d9afc867194 Extracting [=============================================>     ]  9.961MB/10.87MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.1040973Z  e1089d61b200 Pull complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.1079325Z  0f8b424aa0b9 Extracting [==================================================>]      75B/75B
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.1080817Z  0f8b424aa0b9 Extracting [==================================================>]      75B/75B
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.1209957Z  5d9afc867194 Extracting [==================================================>]  10.87MB/10.87MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.1365351Z  5d9afc867194 Pull complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.1389632Z  e1656acc19fd Extracting [=========>                                         ]  32.77kB/177.3kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.1472246Z  e1656acc19fd Extracting [==================================================>]  177.3kB/177.3kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.1670736Z  55d6aff20023 Extracting [=================>                                 ]  5.243MB/15.4MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.1691057Z  0f8b424aa0b9 Pull complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.1752535Z  d557676654e5 Extracting [==================================================>]     193B/193B
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.1754132Z  d557676654e5 Extracting [==================================================>]     193B/193B
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.2118643Z  d557676654e5 Pull complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.2191574Z  d82bc7a76a83 Extracting [==================================================>]     130B/130B
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.2216456Z  e1656acc19fd Extracting [==================================================>]  177.3kB/177.3kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.2221834Z  d82bc7a76a83 Extracting [==================================================>]     130B/130B
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.2595225Z  d82bc7a76a83 Pull complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.2646914Z  68e4cd60e60f Extracting [==================================================>]     168B/168B
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.2651791Z  68e4cd60e60f Extracting [==================================================>]     168B/168B
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.2798616Z  55d6aff20023 Extracting [=====================>                             ]  6.554MB/15.4MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.3235899Z  68e4cd60e60f Pull complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.3296202Z  0783a66ae749 Extracting [==================================================>]      84B/84B
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.3298735Z  0783a66ae749 Extracting [==================================================>]      84B/84B
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.3884602Z  0783a66ae749 Pull complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.4023130Z  efae86a3fb38 Extracting [==================================================>]     358B/358B
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.4028400Z  efae86a3fb38 Extracting [==================================================>]     358B/358B
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.4133513Z  55d6aff20023 Extracting [=======================>                           ]  7.209MB/15.4MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.4363381Z  e1656acc19fd Pull complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.4442875Z  efae86a3fb38 Pull complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.4475709Z  smtp-sink Pulled 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.4487991Z  6b72b81ed966 Extracting [==================================================>]     320B/320B
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.4501512Z  6b72b81ed966 Extracting [==================================================>]     320B/320B
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.4748472Z  6b72b81ed966 Pull complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.4781994Z  6e6cfc6a1a74 Extracting [===========>                                       ]  32.77kB/142.4kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.4803971Z  6e6cfc6a1a74 Extracting [==================================================>]  142.4kB/142.4kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.4814000Z  6e6cfc6a1a74 Extracting [==================================================>]  142.4kB/142.4kB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.5117351Z  6e6cfc6a1a74 Pull complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.5253315Z  0f8b64095b38 Extracting [>                                                  ]  262.1kB/24.12MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.5302658Z  55d6aff20023 Extracting [===============================>                   ]  9.667MB/15.4MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.6261699Z  0f8b64095b38 Extracting [========>                                          ]  3.932MB/24.12MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.6310920Z  55d6aff20023 Extracting [=======================================>           ]  12.29MB/15.4MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.7287299Z  0f8b64095b38 Extracting [================>                                  ]  8.126MB/24.12MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.7755340Z  55d6aff20023 Extracting [===========================================>       ]  13.43MB/15.4MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.8314993Z  0f8b64095b38 Extracting [========================>                          ]   11.8MB/24.12MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.8887305Z  55d6aff20023 Extracting [==============================================>    ]  14.42MB/15.4MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:17.9322611Z  0f8b64095b38 Extracting [===============================>                   ]   15.2MB/24.12MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.0039288Z  55d6aff20023 Extracting [================================================>  ]  14.91MB/15.4MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.0349366Z  0f8b64095b38 Extracting [=========================================>         ]  19.92MB/24.12MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.0740141Z  55d6aff20023 Extracting [==================================================>]   15.4MB/15.4MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.1382445Z  0f8b64095b38 Extracting [================================================>  ]  23.33MB/24.12MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.1592531Z  0f8b64095b38 Extracting [==================================================>]  24.12MB/24.12MB
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.2769275Z  0f8b64095b38 Pull complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.3708159Z  coredns Pulled 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.3713398Z  55d6aff20023 Pull complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.3723065Z  912101e0eb18 Extracting [==================================================>]     247B/247B
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.3734684Z  912101e0eb18 Extracting [==================================================>]     247B/247B
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.3883775Z  912101e0eb18 Pull complete 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.3951954Z  dns-blackhole Pulled 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.4884183Z #1 [internal] load local bake definitions
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.6439335Z #1 reading from stdin 1.13kB done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.6440217Z #1 DONE 0.0s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.6444084Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.6444481Z #2 [control internal] load build definition from Dockerfile
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.6446006Z #2 transferring dockerfile: 643B done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.6446809Z #2 DONE 0.0s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.6447028Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.6447370Z #3 [worker internal] load build definition from Dockerfile
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.6448406Z #3 transferring dockerfile: 411B done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.6449836Z #3 DONE 0.0s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.6450338Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.6450661Z #4 [auth] library/node:pull token for registry-1.docker.io
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.6451578Z #4 DONE 0.0s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.6451797Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.6452134Z #5 [control internal] load metadata for docker.io/library/alpine:3.20
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.6453025Z #5 DONE 0.1s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.6453216Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.6453821Z #6 [worker internal] load metadata for docker.io/library/node:20-alpine
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.7708445Z #6 ...
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.7708926Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.7709583Z #7 [control internal] load metadata for docker.io/library/golang:1.26-alpine
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.7710442Z #7 DONE 0.1s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.7710750Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.7711119Z #8 [control internal] load .dockerignore
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.7711660Z #8 transferring context: 2B done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.7712280Z #8 DONE 0.0s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.7712777Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.7713890Z #9 [control build 1/6] FROM docker.io/library/golang:1.26-alpine@sha256:87c65a688975c0b1d4585d204874c45ca78354670e3a5f11368c5a492303d696
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.7715227Z #9 DONE 0.0s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.7715655Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.7716640Z #10 [control stage-1 1/3] FROM docker.io/library/alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.7718254Z #10 CACHED
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.9700759Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.9702329Z #11 [control internal] load build context
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.9704426Z #11 transferring context: 2.66MB 0.2s done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.9705452Z #11 DONE 0.2s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.9705924Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.9706310Z #12 [control build 2/6] WORKDIR /src
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.9706995Z #12 CACHED
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.9707378Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.9708412Z #13 [control build 3/6] COPY services/control/go.mod services/control/go.sum ./
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.9709467Z #13 DONE 0.0s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.9710527Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.9711082Z #6 [worker internal] load metadata for docker.io/library/node:20-alpine
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.9712056Z #6 DONE 0.4s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.9712499Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:18.9712884Z #14 [control build 4/6] RUN go mod download
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:19.0886660Z #14 ...
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:19.0888272Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:19.0888810Z #8 [worker internal] load .dockerignore
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:19.0889659Z #8 transferring context: 2B done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:19.0890261Z #8 DONE 0.0s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:19.0890621Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:19.0890994Z #15 [worker internal] load build context
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:19.0891719Z #15 transferring context: 109.97kB 0.0s done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:19.0892458Z #15 DONE 0.1s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:19.2052930Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:19.2056006Z #16 [worker 1/5] FROM docker.io/library/node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:19.2058378Z #16 resolve docker.io/library/node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 0.0s done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:19.2060625Z #16 extracting sha256:6a0ac1617861a677b045b7ff88545213ec31c0ff08763195a70a4a5adda577bb 0.1s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:19.2062117Z #16 sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 7.67kB / 7.67kB done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:19.2063535Z #16 sha256:afdf98210b07b586eb71fa22ba2e432e058e4cd1304d31ed60888755b8c865fb 1.72kB / 1.72kB done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:19.2064989Z #16 sha256:11cedc39e663e7c5d5cb9cc77a461a0d2adc25537b94e6831a6108f09cb2001b 6.52kB / 6.52kB done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:19.2066455Z #16 sha256:6a0ac1617861a677b045b7ff88545213ec31c0ff08763195a70a4a5adda577bb 3.86MB / 3.86MB 0.0s done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:19.2068316Z #16 sha256:4feea04c154301db6f4a496efa397b3db96603b1c009c797cfdde77bea8b3287 3.15MB / 43.23MB 0.1s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:19.2069820Z #16 sha256:fff4e2c1b189bf87d63ad8bd07f7f4eb288d6f2b6a07a8bb44c60e8c075d2096 0B / 445B 0.1s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:19.3346785Z #16 sha256:4feea04c154301db6f4a496efa397b3db96603b1c009c797cfdde77bea8b3287 26.21MB / 43.23MB 0.3s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:19.3349248Z #16 sha256:fff4e2c1b189bf87d63ad8bd07f7f4eb288d6f2b6a07a8bb44c60e8c075d2096 445B / 445B 0.1s done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:19.3351004Z #16 sha256:b2cbbfe903b0821005780971ddc5892edcc4ce74c5a48d82e1d2b382edac3122 1.26MB / 1.26MB 0.1s done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:19.4878567Z #16 extracting sha256:6a0ac1617861a677b045b7ff88545213ec31c0ff08763195a70a4a5adda577bb 0.3s done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:19.4881374Z #16 sha256:4feea04c154301db6f4a496efa397b3db96603b1c009c797cfdde77bea8b3287 40.89MB / 43.23MB 0.4s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:19.4883113Z #16 extracting sha256:4feea04c154301db6f4a496efa397b3db96603b1c009c797cfdde77bea8b3287
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:19.6040658Z #16 sha256:4feea04c154301db6f4a496efa397b3db96603b1c009c797cfdde77bea8b3287 43.23MB / 43.23MB 0.4s done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:21.1372092Z #16 ...
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:21.1373960Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:21.1374910Z #17 [control stage-1 2/3] RUN apk add --no-cache ca-certificates curl && adduser -D -u 10001 control
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:21.1376439Z #17 0.311 fetch https://dl-cdn.alpinelinux.org/alpine/v3.20/main/x86_64/APKINDEX.tar.gz
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:21.1377866Z #17 0.521 fetch https://dl-cdn.alpinelinux.org/alpine/v3.20/community/x86_64/APKINDEX.tar.gz
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:21.1379915Z #17 1.350 (1/10) Installing ca-certificates (20261020-r0)
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:21.1380608Z #17 1.388 (2/10) Installing brotli-libs (1.1.0-r2)
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:21.1381189Z #17 1.405 (3/10) Installing c-ares (1.33.1-r0)
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:21.1381751Z #17 1.412 (4/10) Installing libunistring (1.2-r0)
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:21.1382308Z #17 1.434 (5/10) Installing libidn2 (2.3.7-r0)
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:21.1382883Z #17 1.439 (6/10) Installing nghttp2-libs (1.62.1-r0)
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:21.1383453Z #17 1.447 (7/10) Installing libpsl (0.21.5-r1)
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:21.1384000Z #17 1.450 (8/10) Installing zstd-libs (1.5.6-r0)
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:21.1384429Z #17 1.461 (9/10) Installing libcurl (8.14.1-r2)
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:21.1384778Z #17 1.486 (10/10) Installing curl (8.14.1-r2)
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:21.1385841Z #17 1.527 Executing busybox-1.36.1-r31.trigger
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:21.1386411Z #17 1.537 Executing ca-certificates-20261020-r0.trigger
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:21.1386972Z #17 1.683 OK: 13 MiB in 24 packages
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:21.1387411Z #17 DONE 2.4s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:21.1387829Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:21.1388586Z #16 [worker 1/5] FROM docker.io/library/node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:21.6603428Z #16 ...
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:21.6603937Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:21.6604412Z #14 [control build 4/6] RUN go mod download
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:21.6604974Z #14 DONE 2.8s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:21.7692558Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:21.7694543Z #16 [worker 1/5] FROM docker.io/library/node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:21.9531111Z #16 ...
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:21.9531536Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:21.9532239Z #18 [control build 5/6] COPY services/control/ ./
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:21.9532789Z #18 DONE 0.1s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:21.9698797Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:21.9700578Z #16 [worker 1/5] FROM docker.io/library/node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:22.1585652Z #16 extracting sha256:4feea04c154301db6f4a496efa397b3db96603b1c009c797cfdde77bea8b3287 2.7s done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:22.3213559Z #16 extracting sha256:b2cbbfe903b0821005780971ddc5892edcc4ce74c5a48d82e1d2b382edac3122
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:22.5685290Z #16 extracting sha256:b2cbbfe903b0821005780971ddc5892edcc4ce74c5a48d82e1d2b382edac3122 0.0s done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:22.5687029Z #16 extracting sha256:fff4e2c1b189bf87d63ad8bd07f7f4eb288d6f2b6a07a8bb44c60e8c075d2096 done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:22.5688413Z #16 DONE 3.4s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:22.5688749Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:22.5689152Z #19 [worker 2/5] RUN apk add --no-cache curl && adduser -D -u 10002 worker
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:23.3004184Z #19 0.882 (1/9) Installing brotli-libs (1.2.1-r0)
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:23.4384366Z #19 0.894 (2/9) Installing c-ares (1.34.9-r0)
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:23.4385274Z #19 0.904 (3/9) Installing libunistring (1.4.1-r0)
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:23.4388275Z #19 0.922 (4/9) Installing libidn2 (2.3.8-r0)
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:23.4388838Z #19 0.928 (5/9) Installing nghttp2-libs (1.69.0-r0)
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:23.4389410Z #19 0.932 (6/9) Installing libpsl (0.21.5-r3)
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:23.4389944Z #19 0.935 (7/9) Installing zstd-libs (1.5.7-r2)
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:23.4390487Z #19 0.946 (8/9) Installing libcurl (8.23.0-r0)
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:23.4391003Z #19 0.958 (9/9) Installing curl (8.23.0-r0)
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:23.4391525Z #19 0.963 Executing busybox-1.37.0-r30.trigger
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:23.4392029Z #19 1.020 OK: 15.9 MiB in 27 packages
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:23.6042517Z #19 DONE 1.2s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:23.6043443Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:23.6044697Z #20 [control build 6/6] RUN CGO_ENABLED=0 GOTOOLCHAIN=local go build -o /out/control ./cmd/control
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:23.7047517Z #20 ...
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:23.7050190Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:23.7050730Z #21 [worker 3/5] WORKDIR /app
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:23.7051580Z #21 DONE 0.0s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:23.7052047Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:23.7052546Z #22 [worker 4/5] COPY services/worker/package.json ./
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:23.7053310Z #22 DONE 0.0s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:23.7053709Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:23.7054342Z #23 [worker 5/5] COPY services/worker/src ./src
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:23.7055074Z #23 DONE 0.0s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:23.8581703Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:23.8583509Z #24 [worker] exporting to image
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:23.8584887Z #24 exporting layers
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:24.7503793Z #24 exporting layers 1.0s done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:24.9333175Z #24 writing image sha256:7fe45a24318bc9365f595ac60ece4851f4647bc26a33fb4ebe5db2e9ed284969 done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:24.9334627Z #24 naming to docker.io/library/coldmail-send-byo-worker done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:24.9336303Z #24 DONE 1.1s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:24.9336737Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:24.9338782Z #25 [worker] resolving provenance for metadata file
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:24.9339548Z #25 DONE 0.0s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:24.9340335Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:24.9341045Z #20 [control build 6/6] RUN CGO_ENABLED=0 GOTOOLCHAIN=local go build -o /out/control ./cmd/control
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:59.3764841Z #20 DONE 37.6s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:59.6255525Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:59.6256839Z #26 [control stage-1 3/3] COPY --from=build /out/control /usr/local/bin/control
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:59.6258708Z #26 DONE 0.1s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:59.6259035Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:59.6259360Z #27 [control] exporting to image
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:31:59.6259862Z #27 exporting layers
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:32:00.0091956Z #27 exporting layers 0.5s done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:32:00.0428102Z  control  Built
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:32:00.0429067Z #27 writing image sha256:56198c0fb75d379c44c82810008e1ba6b20ced3f6f70cdd5c833f4dd839673d5 done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:32:00.0429970Z  worker  Built
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:32:00.0430933Z #27 naming to docker.io/library/coldmail-send-byo-control done
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:32:00.0435838Z #27 DONE 0.5s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:32:00.0436087Z 
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:32:00.0436362Z #28 [control] resolving provenance for metadata file
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:32:00.0436883Z #28 DONE 0.0s
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:32:00.0478384Z  Container coldmail-send-byo-smtp-sink-1  Creating
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:32:00.0479847Z  Container coldmail-send-byo-coredns-1  Creating
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:32:00.0481105Z  Container coldmail-send-byo-dns-blackhole-1  Creating
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:32:00.0483328Z  Container coldmail-send-byo-postgres-1  Running
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:32:00.0484359Z  Container coldmail-send-byo-migrate-1  Recreate
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:32:00.0780732Z  Container coldmail-send-byo-dns-blackhole-1  Created
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:32:00.0789873Z  Container coldmail-send-byo-smtp-sink-1  Created
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:32:00.0862097Z  Container coldmail-send-byo-coredns-1  Created
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:32:00.0906398Z  Container coldmail-send-byo-migrate-1  Recreated
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:32:00.0907549Z  Container coldmail-send-byo-control-1  Creating
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:32:00.1018917Z  Container coldmail-send-byo-control-1  Created
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:32:00.1020536Z  Container coldmail-send-byo-worker-1  Creating
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:32:00.1131368Z  Container coldmail-send-byo-worker-1  Created
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:32:00.1151881Z  Container coldmail-send-byo-coredns-1  Starting
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:32:00.1157550Z  Container coldmail-send-byo-dns-blackhole-1  Starting
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:32:00.1159432Z  Container coldmail-send-byo-postgres-1  Waiting
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:32:00.1160633Z  Container coldmail-send-byo-smtp-sink-1  Starting
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:32:00.5235426Z  Container coldmail-send-byo-dns-blackhole-1  Started
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:32:00.5236942Z  Container coldmail-send-byo-smtp-sink-1  Started
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:32:00.6221434Z  Container coldmail-send-byo-postgres-1  Healthy
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:32:00.6222612Z  Container coldmail-send-byo-migrate-1  Starting
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:32:00.6914333Z  Container coldmail-send-byo-coredns-1  Started
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:32:00.8410518Z  Container coldmail-send-byo-migrate-1  Started
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:32:00.8411859Z  Container coldmail-send-byo-migrate-1  Waiting
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:32:00.8414891Z  Container coldmail-send-byo-postgres-1  Waiting
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:32:01.3423653Z  Container coldmail-send-byo-migrate-1  Exited
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:32:01.3426163Z  Container coldmail-send-byo-postgres-1  Healthy
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:32:01.3429233Z  Container coldmail-send-byo-control-1  Starting
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:32:01.5907213Z  Container coldmail-send-byo-control-1  Started
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:32:01.5909039Z  Container coldmail-send-byo-control-1  Waiting
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:32:02.0938251Z  Container coldmail-send-byo-control-1  Error
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:32:02.0939391Z dependency failed to start: container coldmail-send-byo-control-1 exited (1)
+behavioral	Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)	2026-11-07T16:32:02.1011563Z ##[error]Process completed with exit code 1.
+behavioral	Durability gate — the default dev Postgres is not RAM-backed; the RAM one is opt-in (BLOCKING)	﻿2026-11-07T16:32:02.1083617Z ##[group]Run bash tests/harness/checks/postgres_durability.sh
+behavioral	Durability gate — the default dev Postgres is not RAM-backed; the RAM one is opt-in (BLOCKING)	2026-11-07T16:32:02.1084202Z ^[[36;1mbash tests/harness/checks/postgres_durability.sh^[[0m
+behavioral	Durability gate — the default dev Postgres is not RAM-backed; the RAM one is opt-in (BLOCKING)	2026-11-07T16:32:02.1105917Z shell: /usr/bin/bash -e {0}
+behavioral	Durability gate — the default dev Postgres is not RAM-backed; the RAM one is opt-in (BLOCKING)	2026-11-07T16:32:02.1106238Z env:
+behavioral	Durability gate — the default dev Postgres is not RAM-backed; the RAM one is opt-in (BLOCKING)	2026-11-07T16:32:02.1106480Z   DEV_RAM_PG: 1
+behavioral	Durability gate — the default dev Postgres is not RAM-backed; the RAM one is opt-in (BLOCKING)	2026-11-07T16:32:02.1106729Z ##[endgroup]
+behavioral	Durability gate — the default dev Postgres is not RAM-backed; the RAM one is opt-in (BLOCKING)	2026-11-07T16:32:02.4151171Z postgres_durability: ok — default stack: no tmpfs, no fsync=off; DEV_RAM_PG=1: tmpfs on /var/lib/postgresql/data + fsync=off (control).
+behavioral	Drift gate — config reference vs seeded send_byo.config (BLOCKING)	﻿2026-11-07T16:32:02.4209060Z ##[group]Run bash tests/harness/checks/config_drift.sh
+behavioral	Drift gate — config reference vs seeded send_byo.config (BLOCKING)	2026-11-07T16:32:02.4209867Z ^[[36;1mbash tests/harness/checks/config_drift.sh^[[0m
+behavioral	Drift gate — config reference vs seeded send_byo.config (BLOCKING)	2026-11-07T16:32:02.4242514Z shell: /usr/bin/bash -e {0}
+behavioral	Drift gate — config reference vs seeded send_byo.config (BLOCKING)	2026-11-07T16:32:02.4243015Z env:
+behavioral	Drift gate — config reference vs seeded send_byo.config (BLOCKING)	2026-11-07T16:32:02.4243358Z   DEV_RAM_PG: 1
+behavioral	Drift gate — config reference vs seeded send_byo.config (BLOCKING)	2026-11-07T16:32:02.4243732Z ##[endgroup]
+behavioral	Drift gate — config reference vs seeded send_byo.config (BLOCKING)	2026-11-07T16:32:02.6467165Z config_drift OK: 89 config key(s); live == manifest == config-reference.md
+behavioral	Drift gate — served routes vs api-contract.md (BLOCKING)	﻿2026-11-07T16:32:02.6508989Z ##[group]Run bash tests/harness/checks/contract_drift.sh
+behavioral	Drift gate — served routes vs api-contract.md (BLOCKING)	2026-11-07T16:32:02.6509532Z ^[[36;1mbash tests/harness/checks/contract_drift.sh^[[0m
+behavioral	Drift gate — served routes vs api-contract.md (BLOCKING)	2026-11-07T16:32:02.6530620Z shell: /usr/bin/bash -e {0}
+behavioral	Drift gate — served routes vs api-contract.md (BLOCKING)	2026-11-07T16:32:02.6530917Z env:
+behavioral	Drift gate — served routes vs api-contract.md (BLOCKING)	2026-11-07T16:32:02.6531132Z   DEV_RAM_PG: 1
+behavioral	Drift gate — served routes vs api-contract.md (BLOCKING)	2026-11-07T16:32:02.6531363Z ##[endgroup]
+behavioral	Drift gate — served routes vs api-contract.md (BLOCKING)	2026-11-07T16:32:02.6850481Z contract_drift FAIL: GET /healthz not served
+behavioral	Drift gate — served routes vs api-contract.md (BLOCKING)	2026-11-07T16:32:02.7002211Z contract_drift FAIL: GET /readyz not served (got 000000)
+behavioral	Drift gate — served routes vs api-contract.md (BLOCKING)	2026-11-07T16:32:02.8346051Z contract_drift FAIL: POST /v1/worker/register not served as documented (got 000)
+behavioral	Drift gate — served routes vs api-contract.md (BLOCKING)	2026-11-07T16:32:02.9594746Z contract_drift FAIL: POST /v1/worker/heartbeat not served as documented (got 000)
+behavioral	Drift gate — served routes vs api-contract.md (BLOCKING)	2026-11-07T16:32:02.9689811Z contract_drift: admin surface not mounted (GET /v1/admin/accounts -> 000000); skipping Phase 2 route checks (set ADMIN_API_KEY_HASHES to enable).
+behavioral	Drift gate — served routes vs api-contract.md (BLOCKING)	2026-11-07T16:32:02.9844118Z contract_drift: platform surface not mounted (POST /v1/run -> 000000); skipping Phase 3 route checks (set PLATFORM_TOKEN_HASHES to enable).
+behavioral	Drift gate — served routes vs api-contract.md (BLOCKING)	2026-11-07T16:32:03.0005068Z contract_drift FAIL: GET /v1/describe returned nothing with the dev platform token
+behavioral	Drift gate — served routes vs api-contract.md (BLOCKING)	2026-11-07T16:32:03.0159914Z contract_drift FAIL: undocumented path did not 404 (got 000000) — surface wider than the contract
+behavioral	Drift gate — served routes vs api-contract.md (BLOCKING)	2026-11-07T16:32:03.0266452Z contract_drift FAIL: the root-mux 404 is not application/json — ServeMux's plain text is back
+behavioral	Drift gate — served routes vs api-contract.md (BLOCKING)	2026-11-07T16:32:03.0314453Z contract_drift FAIL: the root-mux 404 carries no error.code=not_found
+behavioral	Drift gate — served routes vs api-contract.md (BLOCKING)	2026-11-07T16:32:03.0353474Z contract_drift FAIL: the root-mux 404 carries no request_id in the req_<32hex> shape all three surfaces mint
+behavioral	Drift gate — served routes vs api-contract.md (BLOCKING)	2026-11-07T16:32:03.0405510Z contract_drift: NO wrong-verb checks ran — both API surfaces are unmounted, so item 7b is UNPROVEN by this run (set ADMIN_API_KEY_HASHES and PLATFORM_TOKEN_HASHES).
+behavioral	Drift gate — served routes vs api-contract.md (BLOCKING)	2026-11-07T16:32:03.0926886Z ##[error]Process completed with exit code 1.
+behavioral	Drift gate — migration chain lint (BLOCKING)	﻿2026-11-07T16:32:03.0964601Z ##[group]Run bash tests/harness/checks/migration_lint.sh
+behavioral	Drift gate — migration chain lint (BLOCKING)	2026-11-07T16:32:03.0965153Z ^[[36;1mbash tests/harness/checks/migration_lint.sh^[[0m
+behavioral	Drift gate — migration chain lint (BLOCKING)	2026-11-07T16:32:03.0986052Z shell: /usr/bin/bash -e {0}
+behavioral	Drift gate — migration chain lint (BLOCKING)	2026-11-07T16:32:03.0986362Z env:
+behavioral	Drift gate — migration chain lint (BLOCKING)	2026-11-07T16:32:03.0986580Z   DEV_RAM_PG: 1
+behavioral	Drift gate — migration chain lint (BLOCKING)	2026-11-07T16:32:03.0986817Z ##[endgroup]
+behavioral	Drift gate — migration chain lint (BLOCKING)	2026-11-07T16:32:03.5323640Z migration_lint OK: 54 migration(s) linted (chain contiguous, paired, self-tracking); lifecycle test covers 0053.
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	﻿2026-11-07T16:32:03.5389447Z ##[group]Run bash tests/harness/checks/config_consumption.sh
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:03.5390266Z ^[[36;1mbash tests/harness/checks/config_consumption.sh^[[0m
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:03.5421656Z shell: /usr/bin/bash -e {0}
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:03.5422111Z env:
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:03.5422431Z   DEV_RAM_PG: 1
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:03.5422773Z ##[endgroup]
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:03.7390990Z sed: couldn't flush stdout: Broken pipe
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:03.8141134Z sed: couldn't flush stdout: Broken pipe
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:03.8907493Z sed: couldn't write 49 items to stdout: Broken pipe
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.0800962Z sed: couldn't write 67 items to stdout: Broken pipe
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.0938514Z sed: couldn't flush stdout: Broken pipe
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.0965909Z sed: couldn't flush stdout: Broken pipe
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.0994463Z sed: couldn't write 90 items to stdout: Broken pipe
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.1082434Z config_consumption FAIL: 'autoquarantine_mode' matches pattern 'AutoquarantineMode' ONLY INSIDE COMMENTS, never in code:
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.1096813Z     - ./services/control/internal/dispatch/account_effect.go
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.1104701Z     - ./services/control/internal/adminapi/health_handler.go
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.1105889Z     - ./services/control/internal/adminapi/health_store.go
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.1107207Z   A comment mentioning the key is not a consumer. The operator turns this dial and nothing
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.1109270Z   happens, which is worse than a hardcoded constant — it is a false promise of control.
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.1110660Z   Fix: restore the real read, or dispose of the key (row+manifest+refdoc+ledger together)
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.1111763Z   the way score_alert_threshold was at send_byo_0051.
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.1722177Z sed: couldn't flush stdout: Broken pipe
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.1801309Z config_consumption FAIL: 'brain_singleton_acquire_timeout_sec' matches pattern 'readSingletonAcquireTimeout' ONLY INSIDE COMMENTS, never in code:
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.1825497Z     - ./services/control/cmd/control/main.go
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.1833990Z   A comment mentioning the key is not a consumer. The operator turns this dial and nothing
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.1849841Z   happens, which is worse than a hardcoded constant — it is a false promise of control.
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.1852104Z   Fix: restore the real read, or dispose of the key (row+manifest+refdoc+ledger together)
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.1868758Z   the way score_alert_threshold was at send_byo_0051.
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.1991022Z sed: couldn't write 124 items to stdout: Broken pipe
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.2070690Z config_consumption FAIL: 'unit_price_credits' matches pattern 'readUnitPriceCredits' ONLY INSIDE COMMENTS, never in code:
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.2094960Z     - ./services/control/internal/platformapi/describe_vocabularies.go
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.2103682Z     - ./services/control/internal/platformapi/dispatch_rung.go
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.2111971Z     - ./services/control/internal/platformapi/handlers.go
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.2113150Z   A comment mentioning the key is not a consumer. The operator turns this dial and nothing
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.2114880Z   happens, which is worse than a hardcoded constant — it is a false promise of control.
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.2116348Z   Fix: restore the real read, or dispose of the key (row+manifest+refdoc+ledger together)
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.2117459Z   the way score_alert_threshold was at send_byo_0051.
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.2403265Z sed: couldn't write 141 items to stdout: Broken pipe
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.2478404Z config_consumption FAIL: 'brain_singleton_reacquire_interval_sec' matches pattern 'readSingletonReacquireInterval' ONLY INSIDE COMMENTS, never in code:
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.2499132Z     - ./services/control/cmd/control/main.go
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.2507026Z   A comment mentioning the key is not a consumer. The operator turns this dial and nothing
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.2530988Z   happens, which is worse than a hardcoded constant — it is a false promise of control.
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.2539090Z   Fix: restore the real read, or dispose of the key (row+manifest+refdoc+ledger together)
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.2540831Z   the way score_alert_threshold was at send_byo_0051.
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.4672906Z sed: couldn't flush stdout: Broken pipe
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.4779789Z config_consumption FAIL: 'quarantine_consecutive_threshold' matches pattern 'quarantineDecision' ONLY INSIDE COMMENTS, never in code:
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.4804577Z     - ./services/control/internal/dispatch/account_effect.go
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.4805961Z     - ./services/control/internal/platformapi/account_unquarantine.go
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.4807392Z   A comment mentioning the key is not a consumer. The operator turns this dial and nothing
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.4809794Z   happens, which is worse than a hardcoded constant — it is a false promise of control.
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.4811916Z   Fix: restore the real read, or dispose of the key (row+manifest+refdoc+ledger together)
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.4813374Z   the way score_alert_threshold was at send_byo_0051.
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.4915617Z sed: couldn't flush stdout: Broken pipe
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.5025820Z config_consumption FAIL: 'quarantine_failure_rate_pct' matches pattern 'quarantineDecision' ONLY INSIDE COMMENTS, never in code:
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.5048660Z     - ./services/control/internal/dispatch/account_effect.go
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.5049583Z     - ./services/control/internal/platformapi/account_unquarantine.go
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.5051976Z   A comment mentioning the key is not a consumer. The operator turns this dial and nothing
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.5053695Z   happens, which is worse than a hardcoded constant — it is a false promise of control.
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.5055680Z   Fix: restore the real read, or dispose of the key (row+manifest+refdoc+ledger together)
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.5057098Z   the way score_alert_threshold was at send_byo_0051.
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.5161991Z sed: couldn't flush stdout: Broken pipe
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.5237583Z config_consumption FAIL: 'quarantine_failure_window_sec' matches pattern 'queryFailureRateWindow' ONLY INSIDE COMMENTS, never in code:
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.5257010Z     - ./services/control/internal/dispatch/account_effect.go
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.5260317Z   A comment mentioning the key is not a consumer. The operator turns this dial and nothing
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.5263191Z   happens, which is worse than a hardcoded constant — it is a false promise of control.
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.5265175Z   Fix: restore the real read, or dispose of the key (row+manifest+refdoc+ledger together)
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.5266217Z   the way score_alert_threshold was at send_byo_0051.
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.5363256Z sed: couldn't flush stdout: Broken pipe
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.5466350Z config_consumption FAIL: 'quarantine_min_sample' matches pattern 'quarantineDecision' ONLY INSIDE COMMENTS, never in code:
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.5494436Z     - ./services/control/internal/dispatch/account_effect.go
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.5495867Z     - ./services/control/internal/platformapi/account_unquarantine.go
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.5499617Z   A comment mentioning the key is not a consumer. The operator turns this dial and nothing
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.5501443Z   happens, which is worse than a hardcoded constant — it is a false promise of control.
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.5503180Z   Fix: restore the real read, or dispose of the key (row+manifest+refdoc+ledger together)
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.5504839Z   the way score_alert_threshold was at send_byo_0051.
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.5656248Z sed: couldn't flush stdout: Broken pipe
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.5811288Z config_consumption FAIL: 'unquarantine_max_per_day' matches pattern 'runUnquarantine' ONLY INSIDE COMMENTS, never in code:
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.5849762Z     - ./services/control/internal/platformapi/account_unquarantine.go
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.5879214Z   A comment mentioning the key is not a consumer. The operator turns this dial and nothing
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.5899440Z   happens, which is worse than a hardcoded constant — it is a false promise of control.
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.5901031Z   Fix: restore the real read, or dispose of the key (row+manifest+refdoc+ledger together)
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.5926673Z   the way score_alert_threshold was at send_byo_0051.
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.6559215Z sed: couldn't flush stdout: Broken pipe
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.7009220Z sed: couldn't write 89 items to stdout: Broken pipe
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.9291128Z sed: couldn't write 67 items to stdout: Broken pipe
+behavioral	Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)	2026-11-07T16:32:04.9784942Z ##[error]Process completed with exit code 1.
+behavioral	Consumption gate SELF-TEST — the RESERVED-expiry branch the real ledger no longer reaches (BLOCKING)	﻿2026-11-07T16:32:04.9836870Z ##[group]Run bash tests/harness/checks/config_consumption_selftest.sh
+behavioral	Consumption gate SELF-TEST — the RESERVED-expiry branch the real ledger no longer reaches (BLOCKING)	2026-11-07T16:32:04.9838072Z ^[[36;1mbash tests/harness/checks/config_consumption_selftest.sh^[[0m
+behavioral	Consumption gate SELF-TEST — the RESERVED-expiry branch the real ledger no longer reaches (BLOCKING)	2026-11-07T16:32:04.9869712Z shell: /usr/bin/bash -e {0}
+behavioral	Consumption gate SELF-TEST — the RESERVED-expiry branch the real ledger no longer reaches (BLOCKING)	2026-11-07T16:32:04.9870220Z env:
+behavioral	Consumption gate SELF-TEST — the RESERVED-expiry branch the real ledger no longer reaches (BLOCKING)	2026-11-07T16:32:04.9870574Z   DEV_RAM_PG: 1
+behavioral	Consumption gate SELF-TEST — the RESERVED-expiry branch the real ledger no longer reaches (BLOCKING)	2026-11-07T16:32:04.9870960Z ##[endgroup]
+behavioral	Consumption gate SELF-TEST — the RESERVED-expiry branch the real ledger no longer reaches (BLOCKING)	2026-11-07T16:32:05.0144614Z config_consumption_selftest: exercising the RESERVED-expiry branch the real ledger no longer reaches
+behavioral	Consumption gate SELF-TEST — the RESERVED-expiry branch the real ledger no longer reaches (BLOCKING)	2026-11-07T16:32:05.0404021Z   ok: FW-M3-N expiry is rejected as WITHDRAWN
+behavioral	Consumption gate SELF-TEST — the RESERVED-expiry branch the real ledger no longer reaches (BLOCKING)	2026-11-07T16:32:05.0677274Z   ok: a FUTURE phase expiry is still accepted
+behavioral	Consumption gate SELF-TEST — the RESERVED-expiry branch the real ledger no longer reaches (BLOCKING)	2026-11-07T16:32:05.0970577Z   ok: an at-or-past phase expiry still fails
+behavioral	Consumption gate SELF-TEST — the RESERVED-expiry branch the real ledger no longer reaches (BLOCKING)	2026-11-07T16:32:05.1302714Z   ok: a missing expiry field still fails
+behavioral	Consumption gate SELF-TEST — the RESERVED-expiry branch the real ledger no longer reaches (BLOCKING)	2026-11-07T16:32:05.1556858Z   ok: an unrecognized expiry label still fails
+behavioral	Consumption gate SELF-TEST — the RESERVED-expiry branch the real ledger no longer reaches (BLOCKING)	2026-11-07T16:32:05.1816853Z   ok: RESERVED with no refdoc marker still fails
+behavioral	Consumption gate SELF-TEST — the RESERVED-expiry branch the real ledger no longer reaches (BLOCKING)	2026-11-07T16:32:05.2170971Z   ok: a real code consumer is accepted
+behavioral	Consumption gate SELF-TEST — the RESERVED-expiry branch the real ledger no longer reaches (BLOCKING)	2026-11-07T16:32:05.2542864Z   ok: a pattern found ONLY in a comment is rejected
+behavioral	Consumption gate SELF-TEST — the RESERVED-expiry branch the real ledger no longer reaches (BLOCKING)	2026-11-07T16:32:05.2878415Z   ok: a pattern absent from code entirely is rejected with the OTHER message
+behavioral	Consumption gate SELF-TEST — the RESERVED-expiry branch the real ledger no longer reaches (BLOCKING)	2026-11-07T16:32:05.3156375Z   ok: an emptied ledger fails WITH A REASON, not silently
+behavioral	Consumption gate SELF-TEST — the RESERVED-expiry branch the real ledger no longer reaches (BLOCKING)	2026-11-07T16:32:05.3159228Z config_consumption_selftest OK: 10 cases (2 accept, 8 reject) — expiry branch (1-6), the
+behavioral	Consumption gate SELF-TEST — the RESERVED-expiry branch the real ledger no longer reaches (BLOCKING)	2026-11-07T16:32:05.3160878Z   consumer-grep branch (7-9, incl. the comment-satisfied defect), and the emptied-ledger
+behavioral	Consumption gate SELF-TEST — the RESERVED-expiry branch the real ledger no longer reaches (BLOCKING)	2026-11-07T16:32:05.3162324Z   silent-crash guard (10) — the last two both found 2026-08-05
+behavioral	Enumeration meta-gate — every test package and gate script is actually wired (BLOCKING)	﻿2026-11-07T16:32:05.3236401Z ##[group]Run bash tests/harness/checks/test_enumeration.sh
+behavioral	Enumeration meta-gate — every test package and gate script is actually wired (BLOCKING)	2026-11-07T16:32:05.3237209Z ^[[36;1mbash tests/harness/checks/test_enumeration.sh^[[0m
+behavioral	Enumeration meta-gate — every test package and gate script is actually wired (BLOCKING)	2026-11-07T16:32:05.3258988Z shell: /usr/bin/bash -e {0}
+behavioral	Enumeration meta-gate — every test package and gate script is actually wired (BLOCKING)	2026-11-07T16:32:05.3259484Z env:
+behavioral	Enumeration meta-gate — every test package and gate script is actually wired (BLOCKING)	2026-11-07T16:32:05.3259685Z   DEV_RAM_PG: 1
+behavioral	Enumeration meta-gate — every test package and gate script is actually wired (BLOCKING)	2026-11-07T16:32:05.3259901Z ##[endgroup]
+behavioral	Enumeration meta-gate — every test package and gate script is actually wired (BLOCKING)	2026-11-07T16:32:05.4122481Z test_enumeration OK: all 12 package(s) with test files are in tests/harness/run.sh, and all 12 gate script(s) are in .github/workflows/real-infra.yml
+behavioral	Enumeration meta-gate SELF-TEST — the paired control (BLOCKING)	﻿2026-11-07T16:32:05.4204454Z ##[group]Run bash tests/harness/checks/test_enumeration_selftest.sh
+behavioral	Enumeration meta-gate SELF-TEST — the paired control (BLOCKING)	2026-11-07T16:32:05.4205389Z ^[[36;1mbash tests/harness/checks/test_enumeration_selftest.sh^[[0m
+behavioral	Enumeration meta-gate SELF-TEST — the paired control (BLOCKING)	2026-11-07T16:32:05.4235814Z shell: /usr/bin/bash -e {0}
+behavioral	Enumeration meta-gate SELF-TEST — the paired control (BLOCKING)	2026-11-07T16:32:05.4236275Z env:
+behavioral	Enumeration meta-gate SELF-TEST — the paired control (BLOCKING)	2026-11-07T16:32:05.4236629Z   DEV_RAM_PG: 1
+behavioral	Enumeration meta-gate SELF-TEST — the paired control (BLOCKING)	2026-11-07T16:32:05.4237004Z ##[endgroup]
+behavioral	Enumeration meta-gate SELF-TEST — the paired control (BLOCKING)	2026-11-07T16:32:05.4521071Z test_enumeration_selftest: exercising the failure branches the real tree never reaches
+behavioral	Enumeration meta-gate SELF-TEST — the paired control (BLOCKING)	2026-11-07T16:32:05.4937033Z   ok: a fully wired skeleton passes
+behavioral	Enumeration meta-gate SELF-TEST — the paired control (BLOCKING)	2026-11-07T16:32:05.5349166Z   ok: an unenumerated test package fails
+behavioral	Enumeration meta-gate SELF-TEST — the paired control (BLOCKING)	2026-11-07T16:32:05.5752973Z   ok: an unenumerated gate script fails
+behavioral	Enumeration meta-gate SELF-TEST — the paired control (BLOCKING)	2026-11-07T16:32:05.6225542Z   ok: both violations are reported in ONE run
+behavioral	Enumeration meta-gate SELF-TEST — the paired control (BLOCKING)	2026-11-07T16:32:05.6622365Z   ok: the go_suite() definition alone is not an enumeration
+behavioral	Enumeration meta-gate SELF-TEST — the paired control (BLOCKING)	2026-11-07T16:32:05.7047042Z   ok: a vendored *_test.go is correctly ignored
+behavioral	Enumeration meta-gate SELF-TEST — the paired control (BLOCKING)	2026-11-07T16:32:05.7546111Z   ok: a COMMENTED-OUT gate step does not count as wired
+behavioral	Enumeration meta-gate SELF-TEST — the paired control (BLOCKING)	2026-11-07T16:32:05.8007457Z   ok: a gate invoked inside a 'run: |' block is wired
+behavioral	Enumeration meta-gate SELF-TEST — the paired control (BLOCKING)	2026-11-07T16:32:05.8455314Z   ok: a gate named only in a step NAME does not count as wired
+behavioral	Enumeration meta-gate SELF-TEST — the paired control (BLOCKING)	2026-11-07T16:32:05.8457530Z test_enumeration_selftest OK: 9 cases (3 accept, 6 reject) + both scripts confirmed wired in
+behavioral	Enumeration meta-gate SELF-TEST — the paired control (BLOCKING)	2026-11-07T16:32:05.8460553Z   CI — rule 1's enumeration (2,4,5), the vendor exclusion (6), and rule 2's run-command
+behavioral	Enumeration meta-gate SELF-TEST — the paired control (BLOCKING)	2026-11-07T16:32:05.8461939Z   matching incl. the comment-satisfied defect found 2026-08-05 (7-9)
+behavioral	Shutdown gate — SIGTERM grace clears shutdown_drain_timeout_sec (BLOCKING)	﻿2026-11-07T16:32:05.8525460Z ##[group]Run bash tests/harness/checks/drain_grace.sh
+behavioral	Shutdown gate — SIGTERM grace clears shutdown_drain_timeout_sec (BLOCKING)	2026-11-07T16:32:05.8526226Z ^[[36;1mbash tests/harness/checks/drain_grace.sh^[[0m
+behavioral	Shutdown gate — SIGTERM grace clears shutdown_drain_timeout_sec (BLOCKING)	2026-11-07T16:32:05.8555636Z shell: /usr/bin/bash -e {0}
+behavioral	Shutdown gate — SIGTERM grace clears shutdown_drain_timeout_sec (BLOCKING)	2026-11-07T16:32:05.8556133Z env:
+behavioral	Shutdown gate — SIGTERM grace clears shutdown_drain_timeout_sec (BLOCKING)	2026-11-07T16:32:05.8556480Z   DEV_RAM_PG: 1
+behavioral	Shutdown gate — SIGTERM grace clears shutdown_drain_timeout_sec (BLOCKING)	2026-11-07T16:32:05.8556832Z ##[endgroup]
+behavioral	Shutdown gate — SIGTERM grace clears shutdown_drain_timeout_sec (BLOCKING)	2026-11-07T16:32:06.0691723Z drain_grace OK: drain 30s < docker stop_grace_period 90s and systemd TimeoutStopSec=120
+behavioral	Security gate — no credential leak in service logs (BLOCKING)	﻿2026-11-07T16:32:06.0755349Z ##[group]Run bash tests/harness/checks/no_secret_leak.sh
+behavioral	Security gate — no credential leak in service logs (BLOCKING)	2026-11-07T16:32:06.0756180Z ^[[36;1mbash tests/harness/checks/no_secret_leak.sh^[[0m
+behavioral	Security gate — no credential leak in service logs (BLOCKING)	2026-11-07T16:32:06.0786744Z shell: /usr/bin/bash -e {0}
+behavioral	Security gate — no credential leak in service logs (BLOCKING)	2026-11-07T16:32:06.0787199Z env:
+behavioral	Security gate — no credential leak in service logs (BLOCKING)	2026-11-07T16:32:06.0787546Z   DEV_RAM_PG: 1
+behavioral	Security gate — no credential leak in service logs (BLOCKING)	2026-11-07T16:32:06.0788252Z ##[endgroup]
+behavioral	Security gate — no credential leak in service logs (BLOCKING)	2026-11-07T16:32:06.2570427Z no_secret_leak OK: no dev token/hash found in service logs.
+behavioral	Security gate — every driver call site scrubs the DSN out of its error (BLOCKING)	﻿2026-11-07T16:32:06.2626724Z ##[group]Run bash tests/harness/checks/dsn_scrub_wiring.sh
+behavioral	Security gate — every driver call site scrubs the DSN out of its error (BLOCKING)	2026-11-07T16:32:06.2627544Z ^[[36;1mbash tests/harness/checks/dsn_scrub_wiring.sh^[[0m
+behavioral	Security gate — every driver call site scrubs the DSN out of its error (BLOCKING)	2026-11-07T16:32:06.2658759Z shell: /usr/bin/bash -e {0}
+behavioral	Security gate — every driver call site scrubs the DSN out of its error (BLOCKING)	2026-11-07T16:32:06.2659224Z env:
+behavioral	Security gate — every driver call site scrubs the DSN out of its error (BLOCKING)	2026-11-07T16:32:06.2659561Z   DEV_RAM_PG: 1
+behavioral	Security gate — every driver call site scrubs the DSN out of its error (BLOCKING)	2026-11-07T16:32:06.2659949Z ##[endgroup]
+behavioral	Security gate — every driver call site scrubs the DSN out of its error (BLOCKING)	2026-11-07T16:32:07.1171821Z dsn_scrub_wiring OK: 7 driver call site(s) discovered in services/ and tools/, all 7 declared; 6 scrubbed before the next driver call, 1 re-derived as discarding their error inline.
+behavioral	Scrub gate — last_smtp_response has one reader, last_error_message has zero readers in platformapi/ (BLOCKING)	﻿2026-11-07T16:32:07.1232062Z ##[group]Run bash tests/harness/checks/user_output_scrub.sh
+behavioral	Scrub gate — last_smtp_response has one reader, last_error_message has zero readers in platformapi/ (BLOCKING)	2026-11-07T16:32:07.1232902Z ^[[36;1mbash tests/harness/checks/user_output_scrub.sh^[[0m
+behavioral	Scrub gate — last_smtp_response has one reader, last_error_message has zero readers in platformapi/ (BLOCKING)	2026-11-07T16:32:07.1261828Z shell: /usr/bin/bash -e {0}
+behavioral	Scrub gate — last_smtp_response has one reader, last_error_message has zero readers in platformapi/ (BLOCKING)	2026-11-07T16:32:07.1262290Z env:
+behavioral	Scrub gate — last_smtp_response has one reader, last_error_message has zero readers in platformapi/ (BLOCKING)	2026-11-07T16:32:07.1262643Z   DEV_RAM_PG: 1
+behavioral	Scrub gate — last_smtp_response has one reader, last_error_message has zero readers in platformapi/ (BLOCKING)	2026-11-07T16:32:07.1263021Z ##[endgroup]
+behavioral	Scrub gate — last_smtp_response has one reader, last_error_message has zero readers in platformapi/ (BLOCKING)	2026-11-07T16:32:07.1958074Z user_output_scrub OK: last_smtp_response has one reader, last_error_message has zero readers in platformapi/, the notifications.payload path (if it exists) uses the accessor, and every workerproto.Report.SMTPResponse consumer is ledgered.
+behavioral	Diagnostics on failure	﻿2026-11-07T16:32:07.2006611Z ##[group]Run docker compose -f docker-compose.yml -f tests/harness/compose.test.yml ps || true
+behavioral	Diagnostics on failure	2026-11-07T16:32:07.2007412Z ^[[36;1mdocker compose -f docker-compose.yml -f tests/harness/compose.test.yml ps || true^[[0m
+behavioral	Diagnostics on failure	2026-11-07T16:32:07.2008725Z ^[[36;1mdocker compose -f docker-compose.yml -f tests/harness/compose.test.yml logs control worker migrate || true^[[0m
+behavioral	Diagnostics on failure	2026-11-07T16:32:07.2039268Z shell: /usr/bin/bash -e {0}
+behavioral	Diagnostics on failure	2026-11-07T16:32:07.2039550Z env:
+behavioral	Diagnostics on failure	2026-11-07T16:32:07.2039759Z   DEV_RAM_PG: 1
+behavioral	Diagnostics on failure	2026-11-07T16:32:07.2040142Z ##[endgroup]
+behavioral	Diagnostics on failure	2026-11-07T16:32:07.3332293Z NAME                                IMAGE                    COMMAND                  SERVICE         CREATED              STATUS                        PORTS
+behavioral	Diagnostics on failure	2026-11-07T16:32:07.3360986Z coldmail-send-byo-coredns-1         coredns/coredns:latest   "/coredns -conf /etc…"   coredns         7 seconds ago        Up 7 seconds                  0.0.0.0:9053->53/tcp, 0.0.0.0:9053->53/udp, [::]:9053->53/tcp, [::]:9053->53/udp
+behavioral	Diagnostics on failure	2026-11-07T16:32:07.3363620Z coldmail-send-byo-dns-blackhole-1   python:3-alpine          "python3 -c 'import …"   dns-blackhole   7 seconds ago        Up 7 seconds                  
+behavioral	Diagnostics on failure	2026-11-07T16:32:07.3366858Z coldmail-send-byo-postgres-1        postgres:16-alpine       "docker-entrypoint.s…"   postgres        About a minute ago   Up About a minute (healthy)   0.0.0.0:6432->5432/tcp, [::]:6432->5432/tcp
+behavioral	Diagnostics on failure	2026-11-07T16:32:07.3370070Z coldmail-send-byo-smtp-sink-1       axllent/mailpit:latest   "/mailpit"               smtp-sink       7 seconds ago        Up 7 seconds (healthy)        1025/tcp, 1110/tcp, 0.0.0.0:9025->8025/tcp, [::]:9025->8025/tcp
+behavioral	Diagnostics on failure	2026-11-07T16:32:07.4601937Z control-1  | control 2026/11/07 16:32:01 db connected
+behavioral	Diagnostics on failure	2026-11-07T16:32:07.4603463Z control-1  | control 2026/11/07 16:32:01 singleton lock acquired (key=8200000001)
+behavioral	Diagnostics on failure	2026-11-07T16:32:07.4605442Z control-1  | control 2026/11/07 16:32:01 singleton: mid-life lock loss will PAUSE dispatch/reclaim/retention and re-attempt acquisition every 5s (brain_singleton_reacquire_interval_sec)
+behavioral	Diagnostics on failure	2026-11-07T16:32:07.4607319Z migrate-1  | preflight: OK (public.users + public.job_items exist)
+behavioral	Diagnostics on failure	2026-11-07T16:32:07.4608711Z migrate-1  | up: no pending migrations (already current)
+behavioral	Diagnostics on failure	2026-11-07T16:32:07.4609890Z migrate-1  | set-app-password: send_byo_app password set (value not logged)
+behavioral	Diagnostics on failure	2026-11-07T16:32:07.4619039Z control-1  | control 2026/11/07 16:32:01 FATAL kms load: read dev kms key "/secrets/kms/dev-master.key": open /secrets/kms/dev-master.key: permission denied
+behavioral	Tear down	﻿2026-11-07T16:32:07.4711389Z ##[group]Run bash scripts/dev.sh down || true
+behavioral	Tear down	2026-11-07T16:32:07.4711828Z ^[[36;1mbash scripts/dev.sh down || true^[[0m
+behavioral	Tear down	2026-11-07T16:32:07.4732422Z shell: /usr/bin/bash -e {0}
+behavioral	Tear down	2026-11-07T16:32:07.4732737Z env:
+behavioral	Tear down	2026-11-07T16:32:07.4732973Z   DEV_RAM_PG: 1
+behavioral	Tear down	2026-11-07T16:32:07.4733234Z ##[endgroup]
+behavioral	Tear down	2026-11-07T16:32:07.6591379Z  Container coldmail-send-byo-dns-blackhole-1  Stopping
+behavioral	Tear down	2026-11-07T16:32:07.6592453Z  Container coldmail-send-byo-worker-1  Stopping
+behavioral	Tear down	2026-11-07T16:32:07.6604866Z  Container coldmail-send-byo-smtp-sink-1  Stopping
+behavioral	Tear down	2026-11-07T16:32:07.6609536Z  Container coldmail-send-byo-coredns-1  Stopping
+behavioral	Tear down	2026-11-07T16:32:07.6620411Z  Container coldmail-send-byo-worker-1  Stopped
+behavioral	Tear down	2026-11-07T16:32:07.6812585Z  Container coldmail-send-byo-worker-1  Removing
+behavioral	Tear down	2026-11-07T16:32:07.6835024Z  Container coldmail-send-byo-worker-1  Removed
+behavioral	Tear down	2026-11-07T16:32:07.6836131Z  Container coldmail-send-byo-control-1  Stopping
+behavioral	Tear down	2026-11-07T16:32:07.6839280Z  Container coldmail-send-byo-control-1  Stopped
+behavioral	Tear down	2026-11-07T16:32:07.6840682Z  Container coldmail-send-byo-control-1  Removing
+behavioral	Tear down	2026-11-07T16:32:07.6897420Z  Container coldmail-send-byo-control-1  Removed
+behavioral	Tear down	2026-11-07T16:32:07.6898839Z  Container coldmail-send-byo-migrate-1  Stopping
+behavioral	Tear down	2026-11-07T16:32:07.6908882Z  Container coldmail-send-byo-migrate-1  Stopped
+behavioral	Tear down	2026-11-07T16:32:07.6909840Z  Container coldmail-send-byo-migrate-1  Removing
+behavioral	Tear down	2026-11-07T16:32:07.7045548Z  Container coldmail-send-byo-migrate-1  Removed
+behavioral	Tear down	2026-11-07T16:32:07.7046864Z  Container coldmail-send-byo-postgres-1  Stopping
+behavioral	Tear down	2026-11-07T16:32:07.8645451Z  Container coldmail-send-byo-coredns-1  Stopped
+behavioral	Tear down	2026-11-07T16:32:07.8647117Z  Container coldmail-send-byo-coredns-1  Removing
+behavioral	Tear down	2026-11-07T16:32:07.8946964Z  Container coldmail-send-byo-coredns-1  Removed
+behavioral	Tear down	2026-11-07T16:32:07.9290535Z  Container coldmail-send-byo-postgres-1  Stopped
+behavioral	Tear down	2026-11-07T16:32:07.9291457Z  Container coldmail-send-byo-postgres-1  Removing
+behavioral	Tear down	2026-11-07T16:32:07.9408688Z  Container coldmail-send-byo-postgres-1  Removed
+behavioral	Tear down	2026-11-07T16:32:08.0989638Z  Container coldmail-send-byo-smtp-sink-1  Stopped
+behavioral	Tear down	2026-11-07T16:32:08.0990908Z  Container coldmail-send-byo-smtp-sink-1  Removing
+behavioral	Tear down	2026-11-07T16:32:08.1109862Z  Container coldmail-send-byo-smtp-sink-1  Removed
+behavioral	Tear down	2026-11-07T16:32:17.7580116Z  Container coldmail-send-byo-dns-blackhole-1  Stopped
+behavioral	Tear down	2026-11-07T16:32:17.7588342Z  Container coldmail-send-byo-dns-blackhole-1  Removing
+behavioral	Tear down	2026-11-07T16:32:17.7693474Z  Container coldmail-send-byo-dns-blackhole-1  Removed
+behavioral	Tear down	2026-11-07T16:32:17.7720308Z  Network coldmail-send-byo_default  Removing
+behavioral	Tear down	2026-11-07T16:32:17.8421325Z  Network coldmail-send-byo_default  Removed
+behavioral	Post Run actions/checkout@v4	﻿2026-11-07T16:32:17.8656151Z Post job cleanup.
+behavioral	Post Run actions/checkout@v4	2026-11-07T16:32:17.9738560Z [command]/usr/bin/git version
+behavioral	Post Run actions/checkout@v4	2026-11-07T16:32:17.9838864Z git version 2.56.0
+behavioral	Post Run actions/checkout@v4	2026-11-07T16:32:17.9898303Z Temporarily overriding HOME='/home/runner/work/_temp/c7be68ff-2541-48e5-afef-437d2d379999' before making global git config changes
+behavioral	Post Run actions/checkout@v4	2026-11-07T16:32:17.9907432Z Adding repository directory to the temporary git global config as a safe directory
+behavioral	Post Run actions/checkout@v4	2026-11-07T16:32:17.9933310Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/coldmail-send-byo/coldmail-send-byo
+behavioral	Post Run actions/checkout@v4	2026-11-07T16:32:17.9989817Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+behavioral	Post Run actions/checkout@v4	2026-11-07T16:32:18.0053630Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+behavioral	Post Run actions/checkout@v4	2026-11-07T16:32:18.0450483Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+behavioral	Post Run actions/checkout@v4	2026-11-07T16:32:18.0499470Z http.https://github.com/.extraheader
+behavioral	Post Run actions/checkout@v4	2026-11-07T16:32:18.0581608Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+behavioral	Post Run actions/checkout@v4	2026-11-07T16:32:18.0610290Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+behavioral	Post Run actions/checkout@v4	2026-11-07T16:32:18.1468941Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+behavioral	Post Run actions/checkout@v4	2026-11-07T16:32:18.1559468Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+behavioral	Complete job	﻿2026-11-07T16:32:18.2177398Z Cleaning up orphan processes
+behavioral	Complete job	2026-11-07T16:32:18.2637026Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-go@v5. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

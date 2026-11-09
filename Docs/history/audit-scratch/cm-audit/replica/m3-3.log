@@ -1,0 +1,882 @@
+[replica] coldmail-send-byo @ 99e51ae as uid 1001 in /var/lib/cm-linux/work/coldmail-send-byo (ext2/ext3 filesystem)
+
+::step:: Go lint — gofmt + vet (BLOCKING; keeps code/format from drifting)
+go: downloading github.com/jackc/pgx/v5 v5.10.0
+go: downloading golang.org/x/net v0.62.0
+go: downloading golang.org/x/crypto v0.58.0
+go: downloading github.com/jackc/puddle/v2 v2.2.2
+go: downloading github.com/jackc/pgpassfile v1.0.0
+go: downloading github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761
+go: downloading golang.org/x/text v0.43.0
+go: downloading golang.org/x/sync v0.24.0
+go: downloading golang.org/x/crypto v0.31.0
+
+::step:: Build the migrate runner (M3-P0-OD-12 — required by three template-DB steps in run.sh)
+
+::step:: Generate dev certs/secrets + provision dev worker (writes .env)
+== gen-certs ==
+gen-certs: writing dev mTLS material to secrets/dev/certs
+gen-certs: done. CA + control/worker/sink/harness-client leaves in secrets/dev/certs (ca.key stays here, gitignored).
+gen-certs: keys are 600 and owned by YOU; run tools/own-secrets.sh (dev.sh certs does) to hand control.key/worker.key to their container uids.
+== gen-secrets ==
+gen-secrets: wrote dev KMS master key -> secrets/dev/kms/dev-master.key (Control-only; admin Encrypt-only)
+gen-secrets: operator admin (Domain B) key is minted (bcrypt) by 'provision-worker admin-key'
+             and written to .env by 'scripts/dev.sh certs' (ADMIN_API_KEY / ADMIN_API_KEY_HASHES).
+gen-secrets: done.
+== provision dev worker + operator admin key + write .env ==
+.env written (gitignored). TWO worker tokens/hashes + operator admin key + platform service token provisioned.
+== own-secrets ==
+own-secrets: chown'd control.key + dev-master.key -> uid 10001, worker.key -> uid 10002 (mode 600 kept)
+own-secrets: ok — Control(uid 10001) reads control.key+dev-master.key, worker(uid 10002) reads worker.key, keys are 600, and no other uid can read them
+
+::step:: Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)
+ Network coldmail-send-byo_default  Creating
+ Network coldmail-send-byo_default  Created
+ Container coldmail-send-byo-postgres-1  Creating
+ Container coldmail-send-byo-postgres-1  Created
+ Container coldmail-send-byo-postgres-1  Starting
+ Container coldmail-send-byo-postgres-1  Started
+ Container coldmail-send-byo-postgres-1  Waiting
+ Container coldmail-send-byo-postgres-1  Healthy
+ Container coldmail-send-byo-postgres-1  Running
+ Container coldmail-send-byo-migrate-1  Creating
+ Container coldmail-send-byo-migrate-1  Created
+Attaching to migrate-1
+migrate-1  | preflight: OK (public.users + public.job_items exist)
+migrate-1  | applied  0000_bootstrap
+migrate-1  | applied  0001_create_schema
+migrate-1  | applied  0002_create_role
+migrate-1  | applied  0003_create_enums
+migrate-1  | applied  0004_create_pools
+migrate-1  | applied  0005_create_accounts
+migrate-1  | applied  0006_create_boxes
+migrate-1  | applied  0007_create_jobs
+migrate-1  | applied  0008_create_job_events
+migrate-1  | applied  0009_create_send_logs
+migrate-1  | applied  0010_create_config_and_seed
+migrate-1  | applied  0011_add_indexes
+migrate-1  | applied  0012_grants_and_rls
+migrate-1  | applied  0013_accounts_pool_uniqueness
+migrate-1  | applied  0014_create_account_events
+migrate-1  | applied  0015_jobs_claim_by_user_idx
+migrate-1  | applied  0016_accounts_scoring_columns
+migrate-1  | applied  0017_seed_phase5_config
+migrate-1  | applied  0018_seed_phase6_config
+migrate-1  | applied  0019_seed_phase7_config
+migrate-1  | applied  0020_jobs_attempt_token
+migrate-1  | applied  0021_operability_config
+migrate-1  | applied  0022_job_events_error_context
+migrate-1  | applied  0023_singleton_reacquire_config
+migrate-1  | applied  0024_job_events_fk_carveout
+migrate-1  | applied  0025_new_enums
+migrate-1  | applied  0026_accounts_m3_state
+migrate-1  | applied  0027_accounts_user_owned
+migrate-1  | applied  0028_drop_pools
+migrate-1  | applied  0029_create_user_settings
+migrate-1  | applied  0030_create_user_config_overrides
+migrate-1  | applied  0031_create_user_suspensions
+migrate-1  | applied  0032_create_campaigns
+migrate-1  | applied  0033_create_notifications
+migrate-1  | applied  0034_account_events_action_widen
+migrate-1  | applied  0035_account_verification_state
+migrate-1  | applied  0036_account_config_seeds
+migrate-1  | applied  0037_test_send_job_items_grant
+migrate-1  | applied  0038_bulk_add_max_rows_config
+migrate-1  | applied  0039_from_gate_config_seeds
+migrate-1  | applied  0040_from_gate_predicate
+migrate-1  | applied  0041_from_gate_override_action
+migrate-1  | applied  0042_seed_phase5_config
+migrate-1  | applied  0043_job_events_account_window_idx
+migrate-1  | applied  0044_account_events_suspend_action
+migrate-1  | applied  0045_test_button_per_user_limit
+migrate-1  | applied  0046_visibility
+migrate-1  | applied  0047_notification_state_suppressed
+migrate-1  | applied  0048_unit_price_zero
+migrate-1  | applied  0049_discharge_expired_reserved_keys
+migrate-1  | applied  0050_notifications_user_page_idx
+migrate-1  | applied  0051_drop_score_alert_threshold
+migrate-1  | applied  0052_dispatch_mode_ladder
+migrate-1  | applied  0053_shadow_mode_for_every_autonomous_mutator
+migrate-1  | up: applied 54 migration(s)
+migrate-1  | set-app-password: send_byo_app password set (value not logged)
+[Kmigrate-1 exited with code 0
+seed: system user + dev worker row (11111111-1111-1111-1111-111111111111) seeded; worker can register on the send stream.
+seed: second dev worker row (22222222-2222-2222-2222-222222222222) seeded; run 'scripts/dev.sh up2' to start it.
+ Container coldmail-send-byo-dns-blackhole-1  Creating
+ Container coldmail-send-byo-postgres-1  Running
+ Container coldmail-send-byo-smtp-sink-1  Creating
+ Container coldmail-send-byo-coredns-1  Creating
+ Container coldmail-send-byo-migrate-1  Created
+ Container coldmail-send-byo-control-1  Creating
+ Container coldmail-send-byo-dns-blackhole-1  Created
+ Container coldmail-send-byo-smtp-sink-1  Created
+ Container coldmail-send-byo-control-1  Created
+ Container coldmail-send-byo-worker-1  Creating
+ Container coldmail-send-byo-coredns-1  Created
+ Container coldmail-send-byo-worker-1  Created
+ Container coldmail-send-byo-postgres-1  Waiting
+ Container coldmail-send-byo-coredns-1  Starting
+ Container coldmail-send-byo-dns-blackhole-1  Starting
+ Container coldmail-send-byo-smtp-sink-1  Starting
+ Container coldmail-send-byo-postgres-1  Healthy
+ Container coldmail-send-byo-migrate-1  Starting
+ Container coldmail-send-byo-dns-blackhole-1  Started
+ Container coldmail-send-byo-coredns-1  Started
+ Container coldmail-send-byo-smtp-sink-1  Started
+ Container coldmail-send-byo-migrate-1  Started
+ Container coldmail-send-byo-postgres-1  Waiting
+ Container coldmail-send-byo-migrate-1  Waiting
+ Container coldmail-send-byo-migrate-1  Exited
+ Container coldmail-send-byo-postgres-1  Healthy
+ Container coldmail-send-byo-control-1  Starting
+ Container coldmail-send-byo-control-1  Started
+ Container coldmail-send-byo-control-1  Waiting
+ Container coldmail-send-byo-control-1  Healthy
+ Container coldmail-send-byo-worker-1  Starting
+ Container coldmail-send-byo-worker-1  Started
+ Container coldmail-send-byo-smtp-sink-1  Waiting
+ Container coldmail-send-byo-coredns-1  Waiting
+ Container coldmail-send-byo-dns-blackhole-1  Waiting
+ Container coldmail-send-byo-postgres-1  Waiting
+ Container coldmail-send-byo-migrate-1  Waiting
+ Container coldmail-send-byo-control-1  Waiting
+ Container coldmail-send-byo-worker-1  Waiting
+ Container coldmail-send-byo-smtp-sink-1  Healthy
+ Container coldmail-send-byo-dns-blackhole-1  Healthy
+ Container coldmail-send-byo-coredns-1  Healthy
+ Container coldmail-send-byo-control-1  Healthy
+ Container coldmail-send-byo-worker-1  Healthy
+ Container coldmail-send-byo-postgres-1  Healthy
+ Container coldmail-send-byo-migrate-1  Exited
+
+::step:: Worker came up seeded on the FIRST attempt (no register-reject exit)
+worker: running=true RestartCount=0 registered=1 register_rejections=0
+
+::step:: Real-infra behavioral harness (10 checks, must be all-green)
+== preparing template DB (send_byo_template) ==
+  template ready (fresh DB, migrated + app password; platform untouched)
+──────────────────────────────────────────────────────────────
+SUITE 1+2: Go real-infra tests (migration lifecycle + DB isolation + Phase 1 data model)
+──────────────────────────────────────────────────────────────
+--- PASS: TestUp_ContiguityGap (0.06s)
+--- PASS: TestDSNScrub_MigrateNoCredentialSurvives (0.00s)
+--- PASS: TestDSNScrub_MigratePgxStillLeaksAtThisPin (0.00s)
+--- PASS: TestDSNScrub_MigrateCleanErrorsKeepTheirDetail (0.00s)
+--- PASS: TestDSNScrub_MigrateConnectionRefusedSurvives (0.00s)
+--- PASS: TestDSNScrub_MigrateMessageNamesThisToolsEnvVars (0.00s)
+--- PASS: TestDSNScrub_MigrateNilIsNil (0.00s)
+--- PASS: TestDSNScrub_MigrateCopyHasNotDriftedFromControl (0.00s)
+--- PASS: TestRunnerLifecycle (1.25s)
+ok  	github.com/coldmail-send-byo/send-byo-migrate	1.314s
+  counts: declared=9 ran=9 skipped=0
+  PASS: migration lifecycle + contiguity guard (apply/idempotent/down/gap)
+--- PASS: TestModeA_TemplateCloneIsRealAndCrossConnection (0.16s)
+--- PASS: TestModeB_RollbackLeavesNoResidue (0.05s)
+--- PASS: TestT1_ConcurrentClaimExactlyOneWinner (0.08s)
+--- PASS: TestT1b_NWorkersMJobsEachClaimedOnce (0.12s)
+--- PASS: TestT2_EventPerTransition (0.06s)
+--- PASS: TestT3_NoStateChangeWithoutEvent (0.06s)
+--- PASS: TestT4_CredentialRoundTripNoPlaintextTamperAAD (0.05s)
+--- PASS: TestT5_ModuleRoleDeniedPlatformWrite (0.06s)
+--- PASS: TestT5b_JobItemIdUnique (0.05s)
+--- PASS: TestT6_AppendOnlyJobEvents (0.07s)
+--- PASS: TestT3e_RLSDefaultDenyBackstopsMisgrant (0.06s)
+--- PASS: TestT3f_SuperuserBypassesRLSButReadsOnlyCiphertext (0.05s)
+--- PASS: TestT7_CheckConstraintsRejectInvalid (0.06s)
+--- PASS: TestT17_AccountsUserFKRestrict (0.06s)
+--- PASS: TestGrantsInvariant (0.06s)
+--- PASS: TestSendLogsWriteOnceButRetentionCanDelete (0.06s)
+--- PASS: TestGrantsInvariant_AntiVacuity (0.05s)
+ok  	github.com/coldmail-send-byo/harness	1.144s
+  counts: declared=17 ran=17 skipped=0
+  PASS: DB isolation + Phase 1 data model (claim/events/RLS/crypto/append-only)
+--- PASS: TestRootMux_UnroutedPathAnswersTheCodedEnvelope (0.03s)
+--- PASS: TestRootMux_404DoesNotEchoTheRequestedPath (0.00s)
+--- PASS: TestRootMux_404CarriesNoAllowHeader (0.00s)
+--- PASS: TestRootMux_ADocumentedPathWithAnUnmountedSurfaceStillAnswersTheEnvelope (0.00s)
+--- PASS: TestRootMux_MountedSurfacesStillReceiveTheirOwnPaths (0.00s)
+--- PASS: TestRootMux_HealthRoutesAreUntouched (0.00s)
+--- PASS: TestSanitizeLogPath_NeutralizesControlCharacters (0.00s)
+--- PASS: TestHandleNoRoute_AForgedPathCannotSplitTheLogLine (0.00s)
+--- PASS: TestNewRequestID_MatchesTheShapeTheAPIPackagesMint (0.00s)
+--- PASS: TestReadyz_CarriesTheContractEnvelope (0.00s)
+--- PASS: TestReadyz_NilDependenciesReportFalseNotAbsent (0.00s)
+--- PASS: TestReadyz_ChecksMapAgreesWithTheTopLevelFields (0.05s)
+--- PASS: TestReadyz_ChecksMapTracksEachDependencySeparately (0.05s)
+--- PASS: TestReadyz_PreExistingTopLevelFieldsAreStillThere (0.00s)
+--- PASS: TestReadyz_TopLevelFieldsAreDistinguishableFromTheNestedCopy (0.04s)
+--- PASS: TestHealthz_IsLivenessNotReadiness (0.00s)
+ok  	github.com/coldmail-send-byo/control/internal/httpapi	0.175s
+  counts: declared=16 ran=16 skipped=0
+  PASS: root-mux coded 404 + log-forgery neutralization (item 7b) + readyz uniform checks{} envelope (item 10)
+--- PASS: TestCheckFromDNSLookupTimeoutVsBudget (0.00s)
+--- PASS: TestCheckFromDNSNegativeCacheVsPositiveCache (0.00s)
+--- PASS: TestFromDNSViolationDetail (0.00s)
+ok  	github.com/coldmail-send-byo/control/internal/configordering	0.002s
+  counts: declared=3 ran=3 skipped=0
+  PASS: config key ordering/precedence (3 tests)
+--- PASS: TestInFlightMarker_ReplayedReportDoesNotFreeALiveJob (0.00s)
+--- PASS: TestInFlightMarker_ReplayOnAnIdleWorkerIsHarmless (0.00s)
+ok  	github.com/coldmail-send-byo/control/internal/workerlink	0.003s
+  counts: declared=2 ran=2 skipped=0
+  PASS: workerlink stream in-flight accounting (2 tests)
+--- PASS: TestVariation_ZeroValueNumericFieldsSurviveJSONRoundTrip (0.00s)
+ok  	github.com/coldmail-send-byo/control/internal/workerproto	0.003s
+  counts: declared=1 ran=1 skipped=0
+  PASS: variation wire-format round-trip (1 test)
+--- PASS: TestDSNScrub_NoCredentialSurvives (0.00s)
+--- PASS: TestDSNScrub_PgxStillLeaksAtThisPin (0.00s)
+--- PASS: TestDSNScrub_CleanErrorsKeepTheirDetail (0.00s)
+--- PASS: TestDSNScrub_CandidateCheckStandsAlone (0.00s)
+--- PASS: TestDSNScrub_WholeDSNCheckStandsAlone (0.00s)
+--- PASS: TestDSNScrub_ShortValuesDoNotSuppressEverything (0.00s)
+--- PASS: TestDSNScrub_StructuralValuesNeverSuppress (0.00s)
+--- PASS: TestDSNScrub_SpacedCredentialStillCaught (0.00s)
+--- PASS: TestDSNScrub_NilIsNil (0.00s)
+ok  	github.com/coldmail-send-byo/control/internal/dsnscrub	0.006s
+  counts: declared=9 ran=9 skipped=0
+  PASS: DSN credential scrub (N1/D12: pgx echoes the whole connection string; 9 tests, no DB)
+--- PASS: TestCache_PositiveResultReusedWithinTTL (0.00s)
+--- PASS: TestCache_NegativeResultExpiresBeforePositiveTTLWould (0.00s)
+--- PASS: TestCache_IgnoranceNeverCached_Deterministic (0.00s)
+--- PASS: TestRenderCopy_BannedPhrasesAbsent (0.00s)
+--- PASS: TestBannedPhraseCheck_ActuallyFires (0.00s)
+--- PASS: TestRenderCopy_HedgedFormPresent (0.00s)
+--- PASS: TestRenderCopy_AllowIsEmpty (0.00s)
+--- PASS: TestRenderCopy_T3c_EnforcingVsOrdinaryDistinguishable (0.00s)
+--- PASS: TestFromGateDNSReachable (0.18s)
+--- PASS: TestEvaluate_T1_AlignedAllowsMisalignedControlDoesNot (0.07s)
+--- PASS: TestEvaluate_T2_OnlyFullTripleConditionBlocks (0.00s)
+--- PASS: TestEvaluate_T2b_EachConditionAloneIsNotEnough (0.00s)
+--- PASS: TestEvaluate_T3_WarnedNotJustAllowed (0.06s)
+--- PASS: TestEvaluate_T3c_EnforcingPolicyDistinguishable (0.00s)
+--- PASS: TestEvaluate_T4_AliasSelfHostedVsViaProvider (0.00s)
+--- PASS: TestEvaluate_T5_TimeoutServfailVsNXDOMAIN (3.18s)
+--- PASS: TestEvaluate_NonexistentDomainFallsThroughToOrdinaryWarn (0.00s)
+--- PASS: TestEvaluate_SPFPermErrors_MultipleAndMalformed (0.00s)
+--- PASS: TestEvaluate_SPFLookupLimitPosture (0.00s)
+--- PASS: TestEvaluate_MacroNeverBlocks (0.00s)
+--- PASS: TestEvaluate_UnmatchedProviderNeverBlocks (0.00s)
+--- PASS: TestEvaluate_AmbiguousDMARCTreatedAsNoPolicy (0.00s)
+--- PASS: TestEvaluate_TotalBudgetBounded (2.00s)
+--- PASS: TestEvaluate_CanaryRealProviderFacts (0.07s)
+--- PASS: TestEvaluate_T12_GateModeHonored (0.00s)
+ok  	github.com/coldmail-send-byo/control/internal/fromgate	5.584s
+  counts: declared=25 ran=25 skipped=0
+  PASS: FROM-gate SPF/DNS evaluation + cache + copy (25 tests, real CoreDNS)
+== preparing Phase 2 admin template (send_byo_template_p2, migrated to head) ==
+  Phase 2 template ready (migrated to head + app password)
+--- PASS: TestSanitizePath_NeutralizesControlCharactersSoOneRequestIsOneLogLine (0.00s)
+--- PASS: TestSanitizePath_IsUsedByEveryLogSiteThatLogsAPath (0.01s)
+--- PASS: TestLogError_AForgedPathCannotSplitTheLogLine (0.00s)
+--- PASS: TestNotificationClear_AdminUnquarantineClearsLiveRow (0.07s)
+--- PASS: TestNotificationClear_AdminCredentialUpdateAutoClearClearsLiveRow (0.07s)
+--- PASS: TestNotificationClear_AdminRefusedUnquarantineClearsNothing (0.06s)
+--- PASS: TestNotificationClear_AdminDedupKeyMatchesDispatchWriter (0.07s)
+--- PASS: TestPhase95_UnitPriceCreditsRangeEnforced (0.05s)
+--- PASS: TestPhase95_HealthMetricsWindowSecRangeEnforced (0.06s)
+--- PASS: TestPhase95_ControlSingletonAcquireTimeoutSecRangeEnforced (0.05s)
+--- PASS: TestP8_ExpiredReservedKeysAreGone (0.06s)
+--- PASS: TestPhase95_VariationCommentIntensityRatesShapeEnforced (0.05s)
+--- PASS: TestPhase95_VariationCSSMicroParamsShapeEnforced (0.05s)
+--- PASS: TestConfigOrdering_T10_QuarantineMinSamplePUTRejectsZero (0.05s)
+--- PASS: TestConfigOrdering_T10_QuarantineFailureRatePctPUTRejectsOutOfRange (0.05s)
+--- PASS: TestPatchSmtpPortNullIsCleanReject (0.06s)
+--- PASS: TestSmtpHostRejectsPortSuffix (0.06s)
+--- PASS: TestDailyLimitSanityCeiling (0.07s)
+--- PASS: TestRouteCoverage_T10_EveryAdminRouteRequiresTheOperatorKey (0.10s)
+--- PASS: TestRouteCoverage_UndocumentedPathIs404 (0.05s)
+--- PASS: TestOverride_T9_ConcurrentGlobalLowerAndOverrideRaiseBlockOnTheSharedLock (0.81s)
+--- PASS: TestOverride_T9_ConcurrentGlobalLowerAndOverrideRaiseCannotInvertPair (0.07s)
+--- PASS: TestOverride_T6cd_AdminRouteRefusesWithoutOperatorKeyOrActorIdentity (0.05s)
+--- PASS: TestOverride_T9a_OverrideWriteInvertingResolvedPairIsRefused (0.06s)
+--- PASS: TestOverride_T9b_GlobalWriteInvertingAnExistingOverrideIsRefused (0.06s)
+--- PASS: TestOverride_T11_DeletedUsersOverridesCascade (0.06s)
+--- PASS: TestUserSuspend_T14_DoubleReinstateCreditsThePausedIntervalExactlyOnce (1.92s)
+--- PASS: TestUserSuspend_T14Control_GuardRemovedProducesA23502 (0.83s)
+--- PASS: TestUserSuspend_T14Control_DifferentUsersDoNotBlockEachOther (0.08s)
+--- PASS: TestUserSuspend_SuspendThenUnsuspend (0.06s)
+--- PASS: TestUserSuspend_UnknownUserNotFound (0.05s)
+--- PASS: TestUserSuspend_T8_ExpiryDoesNotAdvanceWhileSuspended (2.26s)
+--- PASS: TestUserSuspend_T8a_UnsuspendedCampaignUnaffectedOverTheSameRealInterval (2.25s)
+--- PASS: TestUserSuspend_T8b_SuspendedCampaignAbsentFromSweepIndexPredicate (0.06s)
+--- PASS: TestVariationConfig_BooleanToggleRoundTrips (0.05s)
+--- PASS: TestVariationConfig_EnumStringKeysRejectInvalidValues (0.07s)
+--- PASS: TestVariationConfig_PreheaderTemplatesArrayRoundTrips (0.05s)
+--- PASS: TestVariationConfig_RateParametersRoundTripAndBounds (0.08s)
+--- PASS: TestVariationConfig_QuotedNumericStringRejected (0.06s)
+ok  	github.com/coldmail-send-byo/control/internal/adminapi	15.638s
+  counts: declared=105 ran=105 skipped=0
+  PASS: Phase 2 admin API (credential intake/omit/AAD, per-user uniqueness/accounts_user_fk RESTRICT, lifecycle+audit, config, auth 401)
+──────────────────────────────────────────────────────────────
+SUITE 3: worker<->Control mTLS register/heartbeat (probed IN-NETWORK, from the worker container)
+──────────────────────────────────────────────────────────────
+  PASS: register with correct token over mTLS -> 200
+  PASS: heartbeat after register -> 200
+  PASS: register with WRONG token -> 401 (token gate enforced)
+──────────────────────────────────────────────────────────────
+SUITE 4: two-Control singleton (real second Control process must exit, no double-lock)
+──────────────────────────────────────────────────────────────
+  PASS: second Control exited cleanly (singleton lock held by the first)
+  PASS: first Control still holds the singleton lock (readyz top-level singleton_lock=true)
+──────────────────────────────────────────────────────────────
+SUITE 5: worker CANNOT read KMS key material (least-privilege container boundary)
+──────────────────────────────────────────────────────────────
+  PASS: worker cannot see /secrets/kms/dev-master.key (path absent from worker mounts)
+  PASS: worker can read its own mTLS cert (proves the worker FS is mounted; KMS absence is meaningful)
+  PASS: Control CAN read the KMS key (sole decryptor); the worker cannot — boundary is real
+──────────────────────────────────────────────────────────────
+SUITE 6: no credential leak in service logs (Rule 5/6 regression guard)
+──────────────────────────────────────────────────────────────
+  PASS: no dev token/hash found in control/worker/migrate/postgres/sink logs
+──────────────────────────────────────────────────────────────
+SUITE 7: worker unit tests (real local sink / real stream; credential + outcome-buffer paths)
+──────────────────────────────────────────────────────────────
+  FAIL: worker units ran ZERO tests — the test path or runner invocation is wrong (vacuous green)
+──────────────────────────────────────────────────────────────
+SUITE 8: Phase 3 dispatch + credential Go tests (real Postgres clones)
+──────────────────────────────────────────────────────────────
+== preparing Phase 3 dispatch template (send_byo_template_p3, migrated to head) ==
+  Phase 3 template ready
+--- PASS: TestRouting_Random (0.31s)
+--- PASS: TestDispatchRung_NoRungIsASynonymForItsNeighbour (0.58s)
+--- PASS: TestDispatchRung_StoppedFreezesTheSweepWithoutStrandingAnything (0.15s)
+--- PASS: TestDispatchRung_EnabledFalseIsAFloorNotASecondLever (0.00s)
+--- PASS: TestDispatchRung_EnabledFalseStillStopsClaimsThroughTheRealLoop (0.12s)
+--- PASS: TestDispatchRung_UnrecognizedModeFailsTowardTheSaferRungAndNotThePunitiveOne (0.00s)
+--- PASS: TestDispatchRung_UnrecognizedModeIsObeyedByTheRealLoopToo (0.12s)
+--- PASS: TestDispatchRung_OutcomeIngestionIsNeverGatedAtAnyRung (0.00s)
+--- PASS: TestDispatchRung_OutcomeIngestionSucceedsAtTheDeepestRung (0.12s)
+--- PASS: TestDispatchRung_TickIsANoOpAtEveryPausedRung (0.39s)
+--- PASS: TestDispatchRung_ConfigIsRereadEveryTickSoAPullTakesEffectWithoutRestart (0.13s)
+--- PASS: TestDispatchRung_EveryCopyOfTheLadderMatchesThisOne (0.02s)
+--- PASS: TestDispatchRung_LogLineNamesTheRungNotJustThePause (0.00s)
+--- PASS: TestComputeScore_Deterministic (0.00s)
+--- PASS: TestScore_DegradesOnFailureResetsOnSuccess (0.17s)
+--- PASS: TestScore_BounceNeverPenalizes (0.15s)
+--- PASS: TestShadowMode_LogsWithoutActing_ThenEnforceActs (0.18s)
+--- PASS: TestShadowMode_OffDisablesDecisionEntirely (0.23s)
+--- PASS: TestShadowMode_T9_FailureRateTriggerNamedCorrectly (0.32s)
+--- PASS: TestShadowMode_T9c_UnrecognizedModeFallsBackToShadowNeverEnforce (0.12s)
+--- PASS: TestKillSwitch_AutopauseDisablesOnlyAutopause (0.15s)
+--- PASS: TestKillSwitch_VariationDisablesEntireLayer (0.12s)
+--- PASS: TestStaleReplay_NotAttributedToADifferentWorkersAttempt (0.16s)
+--- PASS: TestStateMachine_ConsecutiveFailuresAutoQuarantines (0.24s)
+--- PASS: TestStateMachine_ThrottleAutoClears (0.10s)
+--- PASS: TestStateMachine_InWindowThrottleNotEligible (0.10s)
+--- PASS: TestSuspend_T13a_ClaimAfterSuspendCommitsIsRefusedEvenIfTheRingWasDecidedBefore (0.08s)
+--- PASS: TestSuspend_T13b_AJobAlreadyClaimedBeforeSuspendCommitsIsNotStrandedAssignedWithNoWorker (0.09s)
+--- PASS: TestSuspend_T7_HaltsLosslesslyThenReinstateResumes (0.13s)
+--- PASS: TestSuspend_T7a_UnsuspendedUserUnderIdenticalTrafficKeepsSending (0.11s)
+--- PASS: TestSuspend_T7b_TryDispatchAlsoRefuses (0.13s)
+--- PASS: TestSuspend_T7c_SubscriptionLapsedIdenticalToOperator (0.18s)
+--- PASS: TestSuspend_T7d_TerminalBlockedAccountsUnderSuspensionStayQueued (0.12s)
+--- PASS: TestVariation_DefaultConfigYieldsNeutralSnapshot (0.10s)
+--- PASS: TestVariation_LiveConfigChangeReachesNextPushJob (0.12s)
+--- PASS: TestVariation_RateParametersReachPushJob (0.10s)
+--- PASS: TestVariation_S11RatesReachPushJob (0.10s)
+--- PASS: TestVariation_CSSSkipBelowPxZeroSurvivesJSONRoundTrip (0.10s)
+--- PASS: TestVariation_PreheaderTemplatesOverrideReachesPushJob (0.10s)
+ok  	github.com/coldmail-send-byo/control/internal/dispatch	104.251s
+  counts: declared=231 ran=231 skipped=0
+  PASS: Phase 3 dispatch (claim/decrypt/push, idempotency, requeue, bounced, never-invent)
+--- PASS: TestDecrypt_RoundTrip (0.00s)
+--- PASS: TestDecrypt_TamperFailsClosed (0.00s)
+--- PASS: TestDecrypt_TransplantFailsClosed (0.00s)
+--- PASS: TestDecrypt_WrongKeyIDRejected (0.00s)
+ok  	github.com/coldmail-send-byo/control/internal/credential	0.003s
+  counts: declared=4 ran=4 skipped=0
+  PASS: Phase 3 credential decryptor (round-trip/tamper/transplant/key-id)
+--- PASS: TestNotificationsRead_CrossTenantSeesNothing (0.07s)
+--- PASS: TestNotificationsRead_TenantSelectorRequired (0.05s)
+--- PASS: TestNotificationsRead_KeysetPagesWithoutDuplicatingASubSecondBoundaryRow (0.06s)
+--- PASS: TestNotificationsRead_LimitAndMalformedCursor (0.06s)
+--- PASS: TestNotificationsRead_PayloadWriteSitesArePinned (0.01s)
+--- PASS: TestNotificationsRead_IsDeclaredInDescribe (0.06s)
+--- PASS: TestNotificationsRead_PayloadIsUnwrappedJSON (0.05s)
+--- PASS: TestQuoteFeasibility_ExceedsQueueCapIsInfeasibleWithReasonCode (0.06s)
+--- PASS: TestQuoteFeasibility_ControlA_RaisedPerUserOverrideBecomesFeasible (0.06s)
+--- PASS: TestQuoteFeasibility_ControlB_SlowButWithinQueueCapIsFeasible (0.06s)
+--- PASS: TestQuoteFeasibility_ControlC_DurationAlwaysPresentAndWarningTracksThreshold (0.07s)
+--- PASS: TestQuoteFeasibility_NoEligibleAccountsIsInfeasible (0.06s)
+--- PASS: TestQuoteFeasibility_DispatchDisabledIsInfeasible (0.06s)
+--- PASS: TestQuoteFeasibility_ProjectionDisabledOmitsCapacityProjection (0.06s)
+--- PASS: TestQuote_MatchesRecipientCountTimesUnit (0.06s)
+--- PASS: TestQuote_NeverOverOrUnderQuotesAcrossRetryAndDuplicateRun (0.11s)
+--- PASS: TestQuote_AbsentVsNegativeRecipientCountAreDistinctIssues (0.06s)
+--- PASS: TestQuote_WrongTypeRecipientCountNamesTheField (0.06s)
+--- PASS: TestReportNotFoundNamesTheSelectorSent (0.08s)
+--- PASS: TestReportNullConvention_CampaignNullsAndSingleJobOmits (0.07s)
+--- PASS: TestReportWidening_SingleJob_FailureSurfacesProviderTextAndClass (0.08s)
+--- PASS: TestReportWidening_SingleJob_SuccessOmitsFailureFields (0.08s)
+--- PASS: TestReportWidening_CampaignItems_FailureSurfacesProviderTextAndClass (0.07s)
+--- PASS: TestResourceCaps_MaxCampaignSize (0.08s)
+--- PASS: TestResourceCaps_MaxQueuedJobs (0.07s)
+--- PASS: TestResourceCaps_PerUserOverrideRaisesCampaignCapForThatUserOnly (0.09s)
+--- PASS: TestTenancy_CrossTenantReportIsNotFound (0.08s)
+--- PASS: TestTenancy_CrossTenantRunIsNotFound (0.07s)
+--- PASS: TestTenancy_MissingOrMalformedSelectorRejected (0.08s)
+--- PASS: TestTenancy_Unauthenticated (0.05s)
+--- PASS: TestUnitPrice_QuoteAndDescribeReflectLiveConfig (0.07s)
+--- PASS: TestUsage_AggregatesMessageCountsPerDay (0.08s)
+--- PASS: TestUsage_AccountSnapshotDistinguishesConfiguredFromEligible (0.08s)
+--- PASS: TestUsage_NoProviderTextOnFailedSends (0.09s)
+--- PASS: TestUsage_CrossTenantScoping (0.07s)
+--- PASS: TestUsage_MalformedDateRejected (0.05s)
+--- PASS: TestUserSettings_RoundTrip (0.05s)
+--- PASS: TestUserSettings_T6ae_CannotReachAnAdminDialThroughThisRoute (0.05s)
+--- PASS: TestUserSettings_CrossTenantSelectorCannotWriteAnotherUsersStrategy (0.05s)
+ok  	github.com/coldmail-send-byo/control/internal/platformapi	26.871s
+  counts: declared=160 ran=160 skipped=0
+  PASS: Platform API tenancy (OD-25) + one-campaign-per-user (Phase 4 P4-7, incl. concurrent-attempt serialization)
+──────────────────────────────────────────────────────────────
+SUITE 9: Phase 3 minimal send path — LIVE end-to-end (real worker + real Mailpit)
+──────────────────────────────────────────────────────────────
+  PASS: P3: worker registered on the mTLS send stream (live row: active + heartbeat newer than this run)
+  PASS: P3: created account (encrypted canary credential) via admin API
+  PASS: T2: POST /v1/run returned 202 immediately (async kickoff)
+  PASS: T1: job reached state=sent
+  PASS: T1: provider_message_id persisted
+  PASS: T1: job_events chain correct (system/dispatcher/dispatcher/box)
+  PASS: T1: exactly one send_logs row
+  PASS: T1: Mailpit received the message (count=1)
+  PASS: T2: GET /v1/report reflects sent + provider_message_id
+  PASS: T2: report carries only clean external state (no smtp/reason/credential)
+  PASS: T4: duplicate run is a clean no-op (200), not a raw error
+  PASS: T4: no second send (Mailpit count unchanged: 1→1)
+  PASS: T6: wrong-token register refused on the send stream (accepted:false)
+  PASS: T3: no report (worker killed) — job stays sending, never gained a provider_message_id, and never once touched a terminal state (never falsely sent)
+  PASS: S1: canary absent from service logs (plaintext)
+  PASS: S1: canary absent from service logs (base64: LOGIN padded/unpadded + PLAIN blob)
+  PASS: S1: canary absent from send_logs/jobs
+  PASS: S1: canary absent from send_logs/jobs (base64)
+  PASS: S1: credential column is ciphertext (canary bytes absent)
+  PASS: OD-7: no /v1/admin/* account route exposes plaintext (has_credential only)
+  PASS: OD-7: admin read exposes has_credential=true (positive control)
+  PASS: T7: cross-tenant report of another tenant's job → 404 (isolation enforced)
+  PASS: T7: cross-tenant 404 is identical to a nonexistent-job 404 (no existence disclosure)
+  PASS: T7: report without user_id → clean 400 validation_failed
+──────────────────────────────────────────────────────────────
+SUITE 10: Phase 8 content variation — LIVE end-to-end (real worker + real Mailpit)
+──────────────────────────────────────────────────────────────
+  PASS: P8 T1: every boolean toggle reads false via the live admin API (seeded defaults intact)
+  PASS: P8 T1: all-toggles-off job reached sent
+  FAIL: P8 T1: the delivered message deviates from the Phase 3 shape while every toggle reads off — RAW:\nReturn-Path: <sender@ourdomain.com>
+Received: from mail.ourdomain.com (coldmail-send-byo-worker-1.coldmail-send-byo_default. [172.22.0.7])
+        by 957924e64e7e (Mailpit) with SMTP
+        for <p8t1@example.com>; Sun, 8 Nov 2026 00:10:11 +0000 (UTC)
+From: "P3 Suite" <sender@ourdomain.com>
+To: p8t1@example.com
+Subject: Phase 8 T1
+Message-ID: <57192a9a-71e2-45d3-901e-fd8570dda8e8@ourdomain.com>
+Date: Sun, 08 Nov 2026 00:10:11 +0000
+MIME-Version: 1.0
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+<p>Hello Phase 8 T1</p>
+  PASS: P8 T3: variation-on job reached sent
+  PASS: P8 T3: variation-on delivered bytes differ from the all-off baseline (variation fired on the live stack)
+  PASS: P8 T3: delivered message still carries a valid Content-Type after variation
+  PASS: P8 T3: comment_injection fired live (an injected HTML comment is present)
+  PASS: P8 T3: original visible body text survived minification/comment injection
+  PASS: P8 T7: the delivered link carries a real _ref cache-buster param
+  PASS: P8 T7: no tracking/redirect surface in the delivered message (forward boundary intact, P8-10)
+  PASS: P8 S1: canary absent from service logs with variation ON (plaintext)
+  PASS: P8 S1: canary absent from service logs with variation ON (base64)
+  PASS: P8 S1: canary absent from the delivered message
+  PASS: P8 S1: canary absent from the delivered message (base64)
+  PASS: P8 S1: canary absent from send_logs/jobs with variation ON
+  PASS: P8 S1: canary absent from send_logs/jobs with variation ON (base64)
+──────────────────────────────────────────────────────────────
+SUITE 11: Module 3 Phase 3 C2 — verify-on-add LIVE end-to-end (real worker + real smtp-sink)
+──────────────────────────────────────────────────────────────
+  PASS: T2: account created despite a bad credential (§2.5: failure persists, not a rollback)
+  PASS: T2 note: dev smtp-sink accepts any AUTH — verified as expected (real AUTH-reject case covered by the Node unit suite)
+  PASS: T2c: account created for the live verify-success path
+  PASS: T2c: account verified via the LIVE push_verify/verify_report round trip
+  PASS: T2c: credential_verified_at + credential_verify_at both set
+  PASS: T2c: GET reflects verification.state=verified
+  PASS: T3b (live): account creation's mandatory verify-on-add delivered NO mail (Mailpit unchanged: 3→3)
+  PASS: S1 (live verify): both verify canaries absent from service logs (plaintext)
+  PASS: S1 (live verify): verify canary absent from service logs (base64)
+  PASS: audit: exactly one 'verified' account_events row for the live-verified account
+  PASS: C3 test button: reused push_verify path re-verified the already-good account live
+  PASS: C3 T5 (live): test button refused with 429 after the daily limit (1) was reached by verify-on-add's own attempt
+  PASS: C3 test-send: returned 202 (async kickoff)
+  PASS: C3 test-send: returned a real job_id
+  PASS: C3 test-send: job reached state=sent via the REAL push_job/report path
+  PASS: C3 test-send: recipient forced to the account's own from_address (M3-P3-OD-5)
+  PASS: C3 test-send: assigned_account_id is the CLICKED account (M3-P3-OD-16), never re-selected
+  PASS: C3 test-send: real job_events row(s) exist for the test-send job
+  PASS: C3 test-send: an ineligible (quarantined) clicked account is refused outright (409)
+  PASS: C3 test-send: no job row created for the refused ineligible-account attempt
+  PASS: C4 (live): row 1 created
+  PASS: C4 (live): row 2 (duplicate of row 1) rejected
+  PASS: C4 (live): row 3 (malformed port) rejected
+  PASS: C4 (live): row 4 created despite rows 2/3's earlier rejections (no batch-spanning transaction)
+  PASS: C4 (live): DB contains exactly the 2 created rows (1 and 4)
+  PASS: C4 (live): a batch over bulk_add_max_rows is rejected whole (422)
+  PASS: C4 (live): no rows created from the rejected over-bound batch
+  PASS: C4 (live): pacing is observable as real elapsed time (paced=6090ms, unpaced=87ms, gap=6003ms > 4000ms floor)
+  PASS: C5 (live): DELETE returned 204
+  PASS: C5 (live): deleted_at/purge_after stamped on the real row
+  PASS: C5 (live): the account row PERSISTS through the retention window (soft delete, not hard)
+  PASS: C5 (live): GET on the deleted account returns 404 (unusable, §6.2)
+  PASS: C5 (live): a second delete is idempotent (404, not a crash or a re-stamp)
+  PASS: C5 (live): a job for a deleted-account-only user FAILS promptly (M3-P4-OD-11: deletion has no auto-recovery timer), never claimed by the deleted account
+  PASS: C5 (live): at the SEEDED account_purge_mode=shadow the purge loop (the FIFTH Control loop) ticked on its own after the restart — a NEW shadow line appeared (was 1), so the loop is wired and running unattended
+  PASS: C5 (live): the shadow line NAMES a real backlog, not 0 — at shadow that count is the operator's ONLY warning before credentials become unrecoverable
+  PASS: C5 (live): at shadow that tick deleted NOTHING, though the row was already past purge_after — the ladder holds on the module's most irreversible writer
+  PASS: C5 (live): promoted to account_purge_mode=enforce, the live loop hard-deleted the expired account on its NEXT tick with no restart (config-not-code on the fifth loop), unattended
+──────────────────────────────────────────────────────────────
+HARNESS RESULT: 98 passed, 2 failed
+──────────────────────────────────────────────────────────────
+
+::step:: Durability gate — the default dev Postgres is not RAM-backed; the RAM one is opt-in (BLOCKING)
+postgres_durability: ok — default stack: no tmpfs, no fsync=off; DEV_RAM_PG=1: tmpfs on /var/lib/postgresql/data + fsync=off (control).
+
+::step:: Secret ownership gate — each dev key is readable by its container uid only, mode 600 (BLOCKING)
+own-secrets: ok — Control(uid 10001) reads control.key+dev-master.key, worker(uid 10002) reads worker.key, keys are 600, and no other uid can read them
+
+::step:: Drift gate — config reference vs seeded send_byo.config (BLOCKING)
+config_drift OK: 89 config key(s); live == manifest == config-reference.md
+
+::step:: Drift gate — served routes vs api-contract.md (BLOCKING)
+contract_drift: Phase 2+9.5+Phase5+Phase6 admin surface mounted — 21 routes gated (401), undocumented 404, 16 distinct paths wrong-verb-probed.
+contract_drift: Phase 3+Phase6+Phase7 platform surface mounted — 22 routes gated (401), quarantine correctly absent (404), 18 distinct paths wrong-verb-probed.
+contract_drift: describe declarations derived-and-served — 9 error codes (== codeStatus == the api-contract's spelled-out count), 11 db_enum + 8 module_constant vocabularies (== declaration source), pricing.model in models[].
+contract_drift: root-mux fallback answers the coded 404 (JSON, not_found, request_id, no path reflected, no Allow).
+contract_drift: wrong-verb dispatch proved on 34 paths (405 + coded envelope + request_id + Allow derived from the route table).
+contract_drift OK: served routes == documented contract (Phase 0 + Phase 2 admin).
+
+::step:: Drift gate — migration chain lint (BLOCKING)
+migration_lint OK: 54 migration(s) linted (chain contiguous, paired, self-tracking); lifecycle test covers 0053.
+
+::step:: Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)
+config_consumption OK: all 89 config key(s) have a verified consumer or an explicit, operator-visible RESERVED marker
+
+::step:: Consumption gate SELF-TEST — the RESERVED-expiry branch the real ledger no longer reaches (BLOCKING)
+config_consumption_selftest: exercising the RESERVED-expiry branch the real ledger no longer reaches
+  ok: FW-M3-N expiry is rejected as WITHDRAWN
+  ok: a FUTURE phase expiry is still accepted
+  ok: an at-or-past phase expiry still fails
+  ok: a missing expiry field still fails
+  ok: an unrecognized expiry label still fails
+  ok: RESERVED with no refdoc marker still fails
+  ok: a real code consumer is accepted
+  ok: a pattern found ONLY in a comment is rejected
+  ok: a pattern absent from code entirely is rejected with the OTHER message
+  ok: an emptied ledger fails WITH A REASON, not silently
+config_consumption_selftest OK: 10 cases (2 accept, 8 reject) — expiry branch (1-6), the
+  consumer-grep branch (7-9, incl. the comment-satisfied defect), and the emptied-ledger
+  silent-crash guard (10) — the last two both found 2026-08-05
+
+::step:: Enumeration meta-gate — every test package and gate script is actually wired (BLOCKING)
+test_enumeration OK: all 12 package(s) with test files are in tests/harness/run.sh, and all 13 gate script(s) are in .github/workflows/real-infra.yml
+
+::step:: Enumeration meta-gate SELF-TEST — the paired control (BLOCKING)
+test_enumeration_selftest: exercising the failure branches the real tree never reaches
+  ok: a fully wired skeleton passes
+  ok: an unenumerated test package fails
+  ok: an unenumerated gate script fails
+  ok: both violations are reported in ONE run
+  ok: the go_suite() definition alone is not an enumeration
+  ok: a vendored *_test.go is correctly ignored
+  ok: a COMMENTED-OUT gate step does not count as wired
+  ok: a gate invoked inside a 'run: |' block is wired
+  ok: a gate named only in a step NAME does not count as wired
+test_enumeration_selftest OK: 9 cases (3 accept, 6 reject) + both scripts confirmed wired in
+  CI — rule 1's enumeration (2,4,5), the vendor exclusion (6), and rule 2's run-command
+  matching incl. the comment-satisfied defect found 2026-08-05 (7-9)
+
+::step:: Shutdown gate — SIGTERM grace clears shutdown_drain_timeout_sec (BLOCKING)
+drain_grace OK: drain 30s < docker stop_grace_period 90s and systemd TimeoutStopSec=120
+
+::step:: Security gate — no credential leak in service logs (BLOCKING)
+no_secret_leak OK: no dev token/hash found in service logs.
+
+::step:: Security gate — every driver call site scrubs the DSN out of its error (BLOCKING)
+dsn_scrub_wiring OK: 7 driver call site(s) discovered in services/ and tools/, all 7 declared; 6 scrubbed before the next driver call, 1 re-derived as discarding their error inline.
+
+::step:: Scrub gate — last_smtp_response has one reader, last_error_message has zero readers in platformapi/ (BLOCKING)
+user_output_scrub OK: last_smtp_response has one reader, last_error_message has zero readers in platformapi/, the notifications.payload path (if it exists) uses the accessor, and every workerproto.Report.SMTPResponse consumer is ledgered.
+
+::step:: Diagnostics on failure
+NAME                                IMAGE                       COMMAND                  SERVICE         CREATED         STATUS                    PORTS
+coldmail-send-byo-control-1         coldmail-send-byo-control   "/usr/local/bin/cont…"   control         7 minutes ago   Up 42 seconds (healthy)   0.0.0.0:9080->8080/tcp, [::]:9080->8080/tcp, 0.0.0.0:9443->8443/tcp, [::]:9443->8443/tcp, 0.0.0.0:9444->8444/tcp, [::]:9444->8444/tcp
+coldmail-send-byo-coredns-1         coredns/coredns:latest      "/coredns -conf /etc…"   coredns         7 minutes ago   Up 6 minutes              0.0.0.0:9053->53/tcp, 0.0.0.0:9053->53/udp, [::]:9053->53/tcp, [::]:9053->53/udp
+coldmail-send-byo-dns-blackhole-1   python:3-alpine             "python3 -c 'import …"   dns-blackhole   7 minutes ago   Up 6 minutes              
+coldmail-send-byo-postgres-1        postgres:16-alpine          "docker-entrypoint.s…"   postgres        7 minutes ago   Up 7 minutes (healthy)    0.0.0.0:6432->5432/tcp, [::]:6432->5432/tcp
+coldmail-send-byo-smtp-sink-1       axllent/mailpit:latest      "/mailpit"               smtp-sink       7 minutes ago   Up 6 minutes (healthy)    0.0.0.0:9025->8025/tcp, [::]:9025->8025/tcp
+coldmail-send-byo-worker-1          coldmail-send-byo-worker    "node src/index.js"      worker          7 minutes ago   Up About a minute         
+worker-1  | worker 11111111-1111-1111-1111-111111111111: registered over mTLS stream; awaiting pushed jobs (buffered outcomes replayed on connect)
+worker-1  | worker 11111111-1111-1111-1111-111111111111: registered over mTLS stream; awaiting pushed jobs (buffered outcomes replayed on connect)
+worker-1  | worker 11111111-1111-1111-1111-111111111111: control stream closed; reconnecting (outcome buffer retained)
+worker-1  | worker 11111111-1111-1111-1111-111111111111: connect attempt 1 not ready (connect ECONNREFUSED 172.22.0.6:8444); retrying
+worker-1  | worker 11111111-1111-1111-1111-111111111111: registered over mTLS stream; awaiting pushed jobs (buffered outcomes replayed on connect)
+migrate-1  | preflight: OK (public.users + public.job_items exist)
+migrate-1  | applied  0000_bootstrap
+migrate-1  | applied  0001_create_schema
+migrate-1  | applied  0002_create_role
+migrate-1  | applied  0003_create_enums
+migrate-1  | applied  0004_create_pools
+migrate-1  | applied  0005_create_accounts
+migrate-1  | applied  0006_create_boxes
+migrate-1  | applied  0007_create_jobs
+migrate-1  | applied  0008_create_job_events
+migrate-1  | applied  0009_create_send_logs
+migrate-1  | applied  0010_create_config_and_seed
+migrate-1  | applied  0011_add_indexes
+migrate-1  | applied  0012_grants_and_rls
+migrate-1  | applied  0013_accounts_pool_uniqueness
+migrate-1  | applied  0014_create_account_events
+migrate-1  | applied  0015_jobs_claim_by_user_idx
+migrate-1  | applied  0016_accounts_scoring_columns
+migrate-1  | applied  0017_seed_phase5_config
+migrate-1  | applied  0018_seed_phase6_config
+migrate-1  | applied  0019_seed_phase7_config
+migrate-1  | applied  0020_jobs_attempt_token
+migrate-1  | applied  0021_operability_config
+migrate-1  | applied  0022_job_events_error_context
+migrate-1  | applied  0023_singleton_reacquire_config
+migrate-1  | applied  0024_job_events_fk_carveout
+migrate-1  | applied  0025_new_enums
+migrate-1  | applied  0026_accounts_m3_state
+migrate-1  | applied  0027_accounts_user_owned
+migrate-1  | applied  0028_drop_pools
+migrate-1  | applied  0029_create_user_settings
+migrate-1  | applied  0030_create_user_config_overrides
+migrate-1  | applied  0031_create_user_suspensions
+migrate-1  | applied  0032_create_campaigns
+migrate-1  | applied  0033_create_notifications
+migrate-1  | applied  0034_account_events_action_widen
+migrate-1  | applied  0035_account_verification_state
+migrate-1  | applied  0036_account_config_seeds
+migrate-1  | applied  0037_test_send_job_items_grant
+migrate-1  | applied  0038_bulk_add_max_rows_config
+migrate-1  | applied  0039_from_gate_config_seeds
+migrate-1  | applied  0040_from_gate_predicate
+migrate-1  | applied  0041_from_gate_override_action
+migrate-1  | applied  0042_seed_phase5_config
+migrate-1  | applied  0043_job_events_account_window_idx
+migrate-1  | applied  0044_account_events_suspend_action
+migrate-1  | applied  0045_test_button_per_user_limit
+migrate-1  | applied  0046_visibility
+migrate-1  | applied  0047_notification_state_suppressed
+migrate-1  | applied  0048_unit_price_zero
+migrate-1  | applied  0049_discharge_expired_reserved_keys
+migrate-1  | applied  0050_notifications_user_page_idx
+migrate-1  | applied  0051_drop_score_alert_threshold
+migrate-1  | applied  0052_dispatch_mode_ladder
+migrate-1  | applied  0053_shadow_mode_for_every_autonomous_mutator
+migrate-1  | up: applied 54 migration(s)
+migrate-1  | set-app-password: send_byo_app password set (value not logged)
+migrate-1  | preflight: OK (public.users + public.job_items exist)
+migrate-1  | up: no pending migrations (already current)
+migrate-1  | set-app-password: send_byo_app password set (value not logged)
+control-1  | control 2026/11/08 00:05:38 db connected
+control-1  | control 2026/11/08 00:05:38 singleton lock acquired (key=8200000001)
+control-1  | control 2026/11/08 00:05:38 singleton: mid-life lock loss will PAUSE dispatch/reclaim/retention and re-attempt acquisition every 5s (brain_singleton_reacquire_interval_sec)
+control-1  | control 2026/11/08 00:05:38 kms dev key loaded (sole decryptor; 32 bytes of key material held in-process, never logged)
+control-1  | control 2026/11/08 00:05:38 admin API mounted on :8080 under /v1/admin/* (operator-key auth; Encrypt-only; 1 key(s) configured)
+control-1  | control 2026/11/08 00:05:38 startup rescan: extended 0 orphaned in-flight lease(s) + refreshed worker heartbeats (reconnect window opened; reclaim delegated to the continuous loop)
+control-1  | control 2026/11/08 00:05:38 workerlink send-stream mTLS server on :8444 (client cert required; credential channel)
+control-1  | control 2026/11/08 00:05:38 platform API mounted under /v1/{quote,run,report,describe,send_byo/accounts...} (service-token auth; 1 token(s) configured)
+control-1  | control 2026/11/08 00:05:38 health server on :8080
+control-1  | control 2026/11/08 00:05:38 workerlink mTLS server on :8443 (client cert required)
+control-1  | control 2026/11/08 00:05:38 control ready
+control-1  | control 2026/11/08 00:05:38 retention: retention_shadow_would_delete — retention_mode="shadow", so NOTHING was deleted this tick; 0 expired send_logs row(s) would be dropped at retention_mode=enforce. send_logs GROWS WITHOUT BOUND until this dial is promoted (fix-plan item 13, go-live-checklist.md)
+control-1  | control 2026/11/08 00:05:38 purge: purge_shadow_would_delete — account_purge_mode="shadow", so NOTHING was purged this tick; 0 soft-deleted account(s) past their retention window would be hard-DELETEd at account_purge_mode=enforce. Their credential_ciphertext OUTLIVES the promised window until this dial is promoted (fix-plan item 13, go-live-checklist.md)
+control-1  | control 2026/11/08 00:05:43 workerlink stream: worker registered id="11111111-1111-1111-1111-111111111111" (token verified, mTLS client cert)
+control-1  | control 2026/11/08 00:06:19 worker registered id="dev-worker-1" (token verified, client cert CN=dev-worker-1)
+control-1  | control 2026/11/08 00:06:20 worker register REJECTED id="dev-worker-1" (token/cert mismatch) level=warn
+control-1  | control 2026/11/08 00:09:54 admin request_id=req_63595a71a3d310ab9c5b88567d7cb41c method=POST path=/v1/admin/accounts outcome=ok account_created id=c0710e62-fc8a-492a-9359-20bc45b24155
+control-1  | control 2026/11/08 00:09:54 dispatch: tick pushed 1 job(s)
+control-1  | control 2026/11/08 00:09:58 workerlink stream: register REJECTED id="11111111-1111-1111-1111-111111111111" (token/cert mismatch) — stream closed, no job/credential pushed level=warn
+control-1  | control 2026/11/08 00:10:03 workerlink stream: worker id="11111111-1111-1111-1111-111111111111" stream closed (EOF) level=warn
+control-1  | control 2026/11/08 00:10:09 workerlink stream: worker registered id="11111111-1111-1111-1111-111111111111" (token verified, mTLS client cert)
+control-1  | control 2026/11/08 00:10:10 platformapi error rid=req_d776d7ba5c1ba557930323107ae0d9e9 GET /v1/report: code=not_found reason=job_not_found level=warn
+control-1  | control 2026/11/08 00:10:10 platformapi error rid=req_483772d39bcbf967b21f310a73beb400 GET /v1/report: code=not_found reason=job_not_found level=warn
+control-1  | control 2026/11/08 00:10:10 platformapi error rid=req_75bc38e9bacf0b99ce4a88d7e4ca2645 GET /v1/report: code=validation_failed reason=user_id_required level=warn
+control-1  | control 2026/11/08 00:10:11 dispatch: tick pushed 1 job(s)
+control-1  | control 2026/11/08 00:10:11 admin request_id=req_a10f467018ac06eff91ee87667357b15 method=PUT path=/v1/admin/config/variation_html_minify outcome=ok config_updated key=variation_html_minify
+control-1  | control 2026/11/08 00:10:11 admin request_id=req_144dadc5b78e977164bb40fed62561b3 method=PUT path=/v1/admin/config/variation_unique_url_params outcome=ok config_updated key=variation_unique_url_params
+control-1  | control 2026/11/08 00:10:11 admin request_id=req_b4458da3da18548d0d8d801af309daae method=PUT path=/v1/admin/config/variation_comment_injection outcome=ok config_updated key=variation_comment_injection
+control-1  | control 2026/11/08 00:10:11 admin request_id=req_9a7f6e325734a99f8b9a76cd7086eee1 method=PUT path=/v1/admin/config/variation_comment_intensity outcome=ok config_updated key=variation_comment_intensity
+control-1  | control 2026/11/08 00:10:11 dispatch: tick pushed 1 job(s)
+control-1  | control 2026/11/08 00:10:12 admin request_id=req_a7645200295a481940bf2746bb8bae1e method=PUT path=/v1/admin/config/variation_html_minify outcome=ok config_updated key=variation_html_minify
+control-1  | control 2026/11/08 00:10:12 admin request_id=req_36dcb0a40dd1f37a25be17d26c69d0a3 method=PUT path=/v1/admin/config/variation_unique_url_params outcome=ok config_updated key=variation_unique_url_params
+control-1  | control 2026/11/08 00:10:12 admin request_id=req_69ce49c129077ebceeffbcd284e8aa80 method=PUT path=/v1/admin/config/variation_comment_injection outcome=ok config_updated key=variation_comment_injection
+control-1  | control 2026/11/08 00:10:12 admin request_id=req_32e6c2d95e437cf2406a2f68fbc9b643 method=PUT path=/v1/admin/config/variation_comment_intensity outcome=ok config_updated key=variation_comment_intensity
+control-1  | control 2026/11/08 00:10:18 platformapi error rid=req_eab81271c00b351d02f8e5d09c8f07f5 POST /v1/send-byo/accounts/6de50ae8-9717-4ca3-9566-ede4936ea7ce/test: code=rate_limited reason=test_button_rate_limited level=warn
+control-1  | control 2026/11/08 00:10:20 platformapi error rid=req_b6f91519a240bacdfa9cc68b8d73d397 POST /v1/send-byo/accounts/bebef463-6f75-4659-81b2-23ade9a0c534/test-send: code=conflict reason=account_not_eligible_for_test_send level=warn
+control-1  | control 2026/11/08 00:10:26 platformapi error rid=req_88132a85e334b14cc3e27ae2b8e362b8 POST /v1/send-byo/accounts/bulk: code=unprocessable reason=batch_too_large level=warn
+control-1  | control 2026/11/08 00:10:34 platformapi error rid=req_4ad7943b6d8191f2817a203cf5b3aa93 GET /v1/send-byo/accounts/6526f6c5-d2dc-48c2-8147-b4719dc32c1f: code=not_found reason=account_not_found:6526f6c5-d2dc-48c2-8147-b4719dc32c1f level=warn
+control-1  | control 2026/11/08 00:10:34 platformapi error rid=req_cb530c6b11879f84da0bf406aa3c416f DELETE /v1/send-byo/accounts/6526f6c5-d2dc-48c2-8147-b4719dc32c1f: code=not_found reason=account_not_found:6526f6c5-d2dc-48c2-8147-b4719dc32c1f level=warn
+control-1  | control 2026/11/08 00:10:38 shutdown signal received
+control-1  | control 2026/11/08 00:10:38 shutdown: DRAINING — dispatch stops claiming (no new queued→assigned) and stops pushing; the worker link and outcome handler stay up so in-flight sends can still REPORT and be persisted (§4.1)
+control-1  | control 2026/11/08 00:10:38 shutdown: draining 1 in-flight job(s), waiting up to 30s for their workers to report (§4.1)
+control-1  | control 2026/11/08 00:11:08 shutdown: drain timeout after 30.002s with 1 job(s) still in flight — LEAVING them exactly as stored (sending/assigned with lease; NOT requeued, NOT marked). The next boot's startup rescan extends their leases so buffered worker outcomes replay with no duplicate; genuinely-stuck ones reclaim via the continuous loop (§4.3)
+control-1  | control 2026/11/08 00:11:08 shutdown: 1 job(s) left in flight and RECOVERABLE (not requeued, not marked) — the next boot's rescan resolves them (§4.3)
+control-1  | control 2026/11/08 00:11:08 shutdown complete (no job was requeued or marked on the way out — §4.2 leave-in-place)
+control-1  | control 2026/11/08 00:11:10 db connected
+control-1  | control 2026/11/08 00:11:10 singleton lock acquired (key=8200000001)
+control-1  | control 2026/11/08 00:11:10 singleton: mid-life lock loss will PAUSE dispatch/reclaim/retention and re-attempt acquisition every 5s (brain_singleton_reacquire_interval_sec)
+control-1  | control 2026/11/08 00:11:10 kms dev key loaded (sole decryptor; 32 bytes of key material held in-process, never logged)
+control-1  | control 2026/11/08 00:11:10 admin API mounted on :8080 under /v1/admin/* (operator-key auth; Encrypt-only; 1 key(s) configured)
+control-1  | control 2026/11/08 00:11:10 startup rescan: extended 1 orphaned in-flight lease(s) + refreshed worker heartbeats (reconnect window opened; reclaim delegated to the continuous loop)
+control-1  | control 2026/11/08 00:11:10 workerlink send-stream mTLS server on :8444 (client cert required; credential channel)
+control-1  | control 2026/11/08 00:11:10 platform API mounted under /v1/{quote,run,report,describe,send_byo/accounts...} (service-token auth; 1 token(s) configured)
+control-1  | control 2026/11/08 00:11:10 health server on :8080
+control-1  | control 2026/11/08 00:11:10 workerlink mTLS server on :8443 (client cert required)
+control-1  | control 2026/11/08 00:11:10 control ready
+control-1  | control 2026/11/08 00:11:10 retention: retention_shadow_would_delete — retention_mode="shadow", so NOTHING was deleted this tick; 0 expired send_logs row(s) would be dropped at retention_mode=enforce. send_logs GROWS WITHOUT BOUND until this dial is promoted (fix-plan item 13, go-live-checklist.md)
+control-1  | control 2026/11/08 00:11:10 purge: purge_shadow_would_delete — account_purge_mode="shadow", so NOTHING was purged this tick; 1 soft-deleted account(s) past their retention window would be hard-DELETEd at account_purge_mode=enforce. Their credential_ciphertext OUTLIVES the promised window until this dial is promoted (fix-plan item 13, go-live-checklist.md)
+control-1  | control 2026/11/08 00:11:12 workerlink stream: worker registered id="11111111-1111-1111-1111-111111111111" (token verified, mTLS client cert)
+control-1  | control 2026/11/08 00:11:12 purge: hard-deleted 1 expired account(s) past their retention window (credential + record removed together)
+control-1  | control 2026/11/08 00:11:14 purge: purge_shadow_would_delete — account_purge_mode="shadow", so NOTHING was purged this tick; 0 soft-deleted account(s) past their retention window would be hard-DELETEd at account_purge_mode=enforce. Their credential_ciphertext OUTLIVES the promised window until this dial is promoted (fix-plan item 13, go-live-checklist.md)
+control-1  | control 2026/11/08 00:11:48 worker registered id="dev-worker-1" (token verified, client cert CN=dev-worker-1)
+control-1  | control 2026/11/08 00:11:48 admin request_id=req_74745a5e34adeba784b826687d518724 method=GET path=/v1/admin/accounts outcome=rejected reason=admin_key_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:48 admin request_id=req_eb127a6f03026814ef3cec0ba4899c3f method=POST path=/v1/admin/users/00000000-0000-0000-0000-000000000000/suspend outcome=rejected reason=admin_key_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:48 admin request_id=req_70a121f51b593716b3934caf0a7f67b5 method=GET path=/v1/admin/accounts/00000000-0000-0000-0000-000000000000/events outcome=rejected reason=admin_key_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:48 admin request_id=req_18bb620eec7f6f4161d48a23a294ceda method=POST path=/v1/admin/accounts/00000000-0000-0000-0000-000000000000/quarantine outcome=rejected reason=admin_key_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:48 admin request_id=req_1aab2837fd30b0f617c6d8a2753f8a3f method=POST path=/v1/admin/accounts/00000000-0000-0000-0000-000000000000/enable outcome=rejected reason=admin_key_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:48 admin request_id=req_85f1b21eb1f5b670c1eb794d7fa9206b method=POST path=/v1/admin/accounts/00000000-0000-0000-0000-000000000000/unpause outcome=rejected reason=admin_key_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:48 admin request_id=req_3e03e0e01d4b421a0b6e34498fd06307 method=POST path=/v1/admin/users/00000000-0000-0000-0000-000000000000/unsuspend outcome=rejected reason=admin_key_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:48 admin request_id=req_6b7d6e6ed4e741b7d8cb523c57932cc1 method=PUT path=/v1/admin/users/00000000-0000-0000-0000-000000000000/config outcome=rejected reason=admin_key_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:48 admin request_id=req_597afdac18e9c4ba88bcc563ac14c36e method=POST path=/v1/admin/accounts/00000000-0000-0000-0000-000000000000/unquarantine outcome=rejected reason=admin_key_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:48 admin request_id=req_6553c77d2d67ac751cc75523d9609863 method=PATCH path=/v1/admin/accounts/00000000-0000-0000-0000-000000000000 outcome=rejected reason=admin_key_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:48 admin request_id=req_018ef31ea84c686882be3c8b16ec0023 method=GET path=/v1/admin/users/00000000-0000-0000-0000-000000000000/config outcome=rejected reason=admin_key_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:48 admin request_id=req_18532be7f8e14fb565c3a4c8fb291a7a method=PUT path=/v1/admin/config/daily_limit_default outcome=rejected reason=admin_key_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:48 admin request_id=req_82808948965dadfc9ff829357ca0e1ab method=POST path=/v1/admin/accounts/00000000-0000-0000-0000-000000000000/disable outcome=rejected reason=admin_key_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:48 admin request_id=req_0830315ef67ce1ca7d873ee3e030362e method=GET path=/v1/admin/config outcome=rejected reason=admin_key_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:48 admin request_id=req_130708ebfc4aaa21d69605d9660fbb1c method=GET path=/v1/admin/health outcome=rejected reason=admin_key_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:48 admin request_id=req_cada789ecf0d9b75204928eba97ec65c method=GET path=/v1/admin/accounts outcome=rejected reason=admin_key_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:48 admin request_id=req_6c662f03b95a8843b02845cb050d6ec4 method=GET path=/v1/admin/accounts/00000000-0000-0000-0000-000000000000 outcome=rejected reason=admin_key_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:48 admin request_id=req_14e779ebd5bb971e5f9f6c52a46e05a2 method=DELETE path=/v1/admin/users/00000000-0000-0000-0000-000000000000/config/concurrency_per_user outcome=rejected reason=admin_key_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:48 admin request_id=req_399b531361572604e8b87155c6f1535f method=POST path=/v1/admin/accounts/00000000-0000-0000-0000-000000000000/pause outcome=rejected reason=admin_key_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:48 admin request_id=req_0442e5a7cb77afac35c78c70282c41a5 method=POST path=/v1/admin/accounts outcome=rejected reason=admin_key_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:48 admin request_id=req_312760875046477ee0b2726918a3e31e method=GET path=/v1/admin/config/daily_limit_default outcome=rejected reason=admin_key_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:48 admin request_id=req_50ea558db281faaf3369a57064d72319 method=DELETE path=/v1/admin/accounts/00000000-0000-0000-0000-000000000000 outcome=rejected reason=admin_key_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:48 admin request_id=req_3175a59abd39d089b5018130cac6221d method=GET path=/v1/admin/secret-undocumented outcome=error code=not_found reason=mux_no_route: GET level=warn
+control-1  | control 2026/11/08 00:11:48 admin request_id=req_0bb2806625c420ea485fa62d200b1fb2 method=GET path=/v1/admin/secret-undocumented outcome=error code=not_found reason=mux_no_route: GET level=warn
+control-1  | control 2026/11/08 00:11:48 admin request_id=req_833fa709613ae6225041a8a4ea983943 method=OPTIONS path=/v1/admin/accounts/00000000-0000-0000-0000-000000000000/events outcome=error code=method_not_allowed reason=mux_method_not_allowed: OPTIONS on /v1/admin/accounts/{id}/events level=warn
+control-1  | control 2026/11/08 00:11:48 admin request_id=req_b911d28fc5a2111f45d4f0bb2a7fcd9d method=OPTIONS path=/v1/admin/accounts/00000000-0000-0000-0000-000000000000/unquarantine outcome=error code=method_not_allowed reason=mux_method_not_allowed: OPTIONS on /v1/admin/accounts/{id}/unquarantine level=warn
+control-1  | control 2026/11/08 00:11:48 admin request_id=req_e69549ad988e9eea828195e92d5a9003 method=OPTIONS path=/v1/admin/health outcome=error code=method_not_allowed reason=mux_method_not_allowed: OPTIONS on /v1/admin/health level=warn
+control-1  | control 2026/11/08 00:11:48 admin request_id=req_b95c0abc1870cb7091246e702b2197a2 method=OPTIONS path=/v1/admin/users/00000000-0000-0000-0000-000000000000/config outcome=error code=method_not_allowed reason=mux_method_not_allowed: OPTIONS on /v1/admin/users/{id}/config level=warn
+control-1  | control 2026/11/08 00:11:48 admin request_id=req_775e87f1925d64c93b70778660dc5939 method=OPTIONS path=/v1/admin/accounts/00000000-0000-0000-0000-000000000000/unpause outcome=error code=method_not_allowed reason=mux_method_not_allowed: OPTIONS on /v1/admin/accounts/{id}/unpause level=warn
+control-1  | control 2026/11/08 00:11:48 admin request_id=req_f2ac6bf47029eb029def1f3f1d91b020 method=OPTIONS path=/v1/admin/accounts/00000000-0000-0000-0000-000000000000/enable outcome=error code=method_not_allowed reason=mux_method_not_allowed: OPTIONS on /v1/admin/accounts/{id}/enable level=warn
+control-1  | control 2026/11/08 00:11:48 admin request_id=req_faa32c09adaecc533b2d4b6e67905cf2 method=OPTIONS path=/v1/admin/accounts outcome=error code=method_not_allowed reason=mux_method_not_allowed: OPTIONS on /v1/admin/accounts level=warn
+control-1  | control 2026/11/08 00:11:48 admin request_id=req_896bbd3459e0b9b2adab6cdead5bb3e1 method=OPTIONS path=/v1/admin/users/00000000-0000-0000-0000-000000000000/suspend outcome=error code=method_not_allowed reason=mux_method_not_allowed: OPTIONS on /v1/admin/users/{id}/suspend level=warn
+control-1  | control 2026/11/08 00:11:48 admin request_id=req_8599c879e1c8f273b4ca109780b24b42 method=OPTIONS path=/v1/admin/config/daily_limit_default outcome=error code=method_not_allowed reason=mux_method_not_allowed: OPTIONS on /v1/admin/config/{key} level=warn
+control-1  | control 2026/11/08 00:11:48 admin request_id=req_080c373e24522707241b8b8045ed0a07 method=OPTIONS path=/v1/admin/config outcome=error code=method_not_allowed reason=mux_method_not_allowed: OPTIONS on /v1/admin/config level=warn
+control-1  | control 2026/11/08 00:11:48 admin request_id=req_c5e88473f108e8f8078c9892089b2ad5 method=OPTIONS path=/v1/admin/accounts/00000000-0000-0000-0000-000000000000/quarantine outcome=error code=method_not_allowed reason=mux_method_not_allowed: OPTIONS on /v1/admin/accounts/{id}/quarantine level=warn
+control-1  | control 2026/11/08 00:11:48 admin request_id=req_66fd233ea8ebbe2fbed687fc1654bc8d method=OPTIONS path=/v1/admin/accounts/00000000-0000-0000-0000-000000000000/disable outcome=error code=method_not_allowed reason=mux_method_not_allowed: OPTIONS on /v1/admin/accounts/{id}/disable level=warn
+control-1  | control 2026/11/08 00:11:49 admin request_id=req_4a803a512a6c728bdd8500a7261a0d34 method=OPTIONS path=/v1/admin/users/00000000-0000-0000-0000-000000000000/unsuspend outcome=error code=method_not_allowed reason=mux_method_not_allowed: OPTIONS on /v1/admin/users/{id}/unsuspend level=warn
+control-1  | control 2026/11/08 00:11:49 admin request_id=req_378a7a4c39ca72b1a57d5440852459f5 method=OPTIONS path=/v1/admin/accounts/00000000-0000-0000-0000-000000000000 outcome=error code=method_not_allowed reason=mux_method_not_allowed: OPTIONS on /v1/admin/accounts/{id} level=warn
+control-1  | control 2026/11/08 00:11:49 admin request_id=req_60ae27d83d32b86f1cdcf53601d720e0 method=OPTIONS path=/v1/admin/users/00000000-0000-0000-0000-000000000000/config/concurrency_per_user outcome=error code=method_not_allowed reason=mux_method_not_allowed: OPTIONS on /v1/admin/users/{id}/config/{dial} level=warn
+control-1  | control 2026/11/08 00:11:49 admin request_id=req_2404e567eb8bd42859436a61b1159219 method=OPTIONS path=/v1/admin/accounts/00000000-0000-0000-0000-000000000000/pause outcome=error code=method_not_allowed reason=mux_method_not_allowed: OPTIONS on /v1/admin/accounts/{id}/pause level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi reject rid=req_44dd87b61b3e7d53f27687b9a179980e POST /v1/run: service_token_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi reject rid=req_1aaf50ad420b0e31f0b8c3c04969b9b2 GET /v1/send-byo/accounts/00000000-0000-0000-0000-000000000000/events: service_token_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi reject rid=req_ef7ba5d4e1c87b1a04f9c062bc370e16 POST /v1/send-byo/accounts/00000000-0000-0000-0000-000000000000/unquarantine: service_token_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi reject rid=req_1c80bb19b89f1919332c96c8525971f0 PUT /v1/send-byo/settings: service_token_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi reject rid=req_fcfbd3155daf8cc0a77665ed81c7309b GET /v1/describe: service_token_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi reject rid=req_408db393b428018b99b409d3e0fd91d7 GET /v1/send-byo/accounts/00000000-0000-0000-0000-000000000000: service_token_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi reject rid=req_8349939ffaca034705df3b828f68648b POST /v1/send-byo/accounts/00000000-0000-0000-0000-000000000000/disable: service_token_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi reject rid=req_22bd896ab6067951916e2ba6be1d96c9 PATCH /v1/send-byo/accounts/00000000-0000-0000-0000-000000000000: service_token_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi reject rid=req_50baeadcd182af1ad667b048bfee93f6 POST /v1/send-byo/accounts/00000000-0000-0000-0000-000000000000/enable: service_token_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi reject rid=req_10e638f446a11391437dd6d75fc0fcd6 POST /v1/send-byo/accounts/00000000-0000-0000-0000-000000000000/pause: service_token_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi reject rid=req_5dbcd57dd7bdfef47e7f1c3666aa95e2 POST /v1/send-byo/accounts/00000000-0000-0000-0000-000000000000/test: service_token_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi reject rid=req_eac49dff1a29c19ca00ddb6f0446a206 GET /v1/send-byo/notifications: service_token_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi reject rid=req_c9c14fea4206f7e3107ce67ae309ee47 GET /v1/send-byo/settings: service_token_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi reject rid=req_c663deebe11070c444d0519bdcd3147f POST /v1/send-byo/accounts/00000000-0000-0000-0000-000000000000/unpause: service_token_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi reject rid=req_e313c40d2a11977384708faf6693d588 POST /v1/quote: service_token_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi reject rid=req_334eb177ecd0b9aa1529f95098d5ed7a POST /v1/send-byo/accounts/00000000-0000-0000-0000-000000000000/test-send: service_token_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi reject rid=req_e7112d646e573fe87680efb0b487df16 GET /v1/send-byo/accounts: service_token_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi reject rid=req_547fcb0c0da654909bbd954048a29f5b DELETE /v1/send-byo/accounts/00000000-0000-0000-0000-000000000000: service_token_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi reject rid=req_a7f04dae91bf17b4b9a68191a5998eac GET /v1/send-byo/usage: service_token_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi reject rid=req_4923d19114d15212bb93f451576c50d9 POST /v1/send-byo/accounts/bulk: service_token_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi reject rid=req_22b657cd7a7964b1c0ee471d698bfd80 POST /v1/run: service_token_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi reject rid=req_1734bb16331515ddc34e92ed2dea2b75 POST /v1/send-byo/accounts: service_token_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi reject rid=req_d1acba643da0a8eb34390ecf2f9efdcc GET /v1/report: service_token_invalid_or_missing level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi error rid=req_53fc91bfb227e189243885d579408a2b POST /v1/send-byo/accounts/00000000-0000-0000-0000-000000000000/quarantine: code=not_found reason=mux_no_route: POST level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi error rid=req_7eedbed00b09b3a67fd93c684cfb6f20 OPTIONS /v1/quote: code=method_not_allowed reason=mux_method_not_allowed: OPTIONS on /v1/quote level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi error rid=req_5e771ff489164164dfdd1b1695d56d59 OPTIONS /v1/send-byo/accounts/00000000-0000-0000-0000-000000000000/unquarantine: code=method_not_allowed reason=mux_method_not_allowed: OPTIONS on /v1/send-byo/accounts/{id}/unquarantine level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi error rid=req_6dcde3ba6916f10b156d70dac9396a54 OPTIONS /v1/run: code=method_not_allowed reason=mux_method_not_allowed: OPTIONS on /v1/run level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi error rid=req_64b6d5632ff80119a2311db57c02ad3f OPTIONS /v1/send-byo/accounts/00000000-0000-0000-0000-000000000000/disable: code=method_not_allowed reason=mux_method_not_allowed: OPTIONS on /v1/send-byo/accounts/{id}/disable level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi error rid=req_491bc6e8d955e80c45633a6d650e1d86 OPTIONS /v1/send-byo/accounts: code=method_not_allowed reason=mux_method_not_allowed: OPTIONS on /v1/send-byo/accounts level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi error rid=req_a9de328957fb7428d733b786ab92cc23 OPTIONS /v1/send-byo/notifications: code=method_not_allowed reason=mux_method_not_allowed: OPTIONS on /v1/send-byo/notifications level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi error rid=req_ed1667484e1d89de7b321e0b7a86a91e OPTIONS /v1/send-byo/accounts/00000000-0000-0000-0000-000000000000: code=method_not_allowed reason=mux_method_not_allowed: OPTIONS on /v1/send-byo/accounts/{id} level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi error rid=req_756111d2e7542dd833bb758c9ba553ff OPTIONS /v1/send-byo/settings: code=method_not_allowed reason=mux_method_not_allowed: OPTIONS on /v1/send-byo/settings level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi error rid=req_75f2926bd641cc41cc475aac60f4605e OPTIONS /v1/send-byo/accounts/00000000-0000-0000-0000-000000000000/test: code=method_not_allowed reason=mux_method_not_allowed: OPTIONS on /v1/send-byo/accounts/{id}/test level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi error rid=req_0524946e1fa145d1507471759a58c690 OPTIONS /v1/send-byo/accounts/00000000-0000-0000-0000-000000000000/test-send: code=method_not_allowed reason=mux_method_not_allowed: OPTIONS on /v1/send-byo/accounts/{id}/test-send level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi error rid=req_8341dac4ab12873c4bf12b4b50875c89 OPTIONS /v1/send-byo/accounts/bulk: code=method_not_allowed reason=mux_method_not_allowed: OPTIONS on /v1/send-byo/accounts/bulk level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi error rid=req_47348088824f100b6f91943d053d93b9 OPTIONS /v1/send-byo/usage: code=method_not_allowed reason=mux_method_not_allowed: OPTIONS on /v1/send-byo/usage level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi error rid=req_a8433bb1072109c7a7d05f0212264dc6 OPTIONS /v1/report: code=method_not_allowed reason=mux_method_not_allowed: OPTIONS on /v1/report level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi error rid=req_214ca2bd47846e03edd06684a91466dd OPTIONS /v1/send-byo/accounts/00000000-0000-0000-0000-000000000000/events: code=method_not_allowed reason=mux_method_not_allowed: OPTIONS on /v1/send-byo/accounts/{id}/events level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi error rid=req_555b055d1a35809898d454802e356550 OPTIONS /v1/describe: code=method_not_allowed reason=mux_method_not_allowed: OPTIONS on /v1/describe level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi error rid=req_0437765ea1a79d583aa3120d11d8b70d OPTIONS /v1/send-byo/accounts/00000000-0000-0000-0000-000000000000/pause: code=method_not_allowed reason=mux_method_not_allowed: OPTIONS on /v1/send-byo/accounts/{id}/pause level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi error rid=req_43efe8e5347d0e614e147151eac9f0cb OPTIONS /v1/send-byo/accounts/00000000-0000-0000-0000-000000000000/enable: code=method_not_allowed reason=mux_method_not_allowed: OPTIONS on /v1/send-byo/accounts/{id}/enable level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi error rid=req_70d779ff44797508e6f329919ac73358 OPTIONS /v1/send-byo/accounts/00000000-0000-0000-0000-000000000000/unpause: code=method_not_allowed reason=mux_method_not_allowed: OPTIONS on /v1/send-byo/accounts/{id}/unpause level=warn
+control-1  | control 2026/11/08 00:11:49 platformapi error rid=req_cbd1445aea46ad118edb7ffe3c1bb369 GET /v1/send-byo/nonexistent-path: code=not_found reason=mux_no_route: GET level=warn
+control-1  | control 2026/11/08 00:11:49 control request_id=req_fc5e06b1dfc747c03b71ed429007b8d1 method=GET path=/v1/undocumented-nonadmin outcome=error code=not_found reason=root_mux_no_route level=warn
+control-1  | control 2026/11/08 00:11:49 control request_id=req_90df0cb5467231d4614d3d4fcb1b9d0e method=GET path=/v1/undocumented-nonadmin outcome=error code=not_found reason=root_mux_no_route level=warn
+
+::step:: Tear down
+ Container coldmail-send-byo-smtp-sink-1  Stopping
+ Container coldmail-send-byo-worker-1  Stopping
+ Container coldmail-send-byo-dns-blackhole-1  Stopping
+ Container coldmail-send-byo-coredns-1  Stopping
+ Container coldmail-send-byo-worker-1  Stopped
+ Container coldmail-send-byo-worker-1  Removing
+ Container coldmail-send-byo-coredns-1  Stopped
+ Container coldmail-send-byo-coredns-1  Removing
+ Container coldmail-send-byo-smtp-sink-1  Stopped
+ Container coldmail-send-byo-smtp-sink-1  Removing
+ Container coldmail-send-byo-worker-1  Removed
+ Container coldmail-send-byo-control-1  Stopping
+ Container coldmail-send-byo-coredns-1  Removed
+ Container coldmail-send-byo-smtp-sink-1  Removed
+ Container coldmail-send-byo-dns-blackhole-1  Stopped
+ Container coldmail-send-byo-dns-blackhole-1  Removing
+ Container coldmail-send-byo-dns-blackhole-1  Removed
+ Container coldmail-send-byo-control-1  Stopped
+ Container coldmail-send-byo-control-1  Removing
+ Container coldmail-send-byo-control-1  Removed
+ Container coldmail-send-byo-migrate-1  Stopping
+ Container coldmail-send-byo-migrate-1  Stopped
+ Container coldmail-send-byo-migrate-1  Removing
+ Container coldmail-send-byo-migrate-1  Removed
+ Container coldmail-send-byo-postgres-1  Stopping
+ Container coldmail-send-byo-postgres-1  Stopped
+ Container coldmail-send-byo-postgres-1  Removing
+ Container coldmail-send-byo-postgres-1  Removed
+ Network coldmail-send-byo_default  Removing
+ Network coldmail-send-byo_default  Removed
+
+================ [replica] coldmail-send-byo / behavioral — step results ================
+skip(uses)  actions/checkout@v4
+skip(uses)  actions/setup-go@v5
+ok          Go lint — gofmt + vet (BLOCKING; keeps code/format from drifting)
+ok          Build the migrate runner (M3-P0-OD-12 — required by three template-DB steps in run.sh)
+ok          Generate dev certs/secrets + provision dev worker (writes .env)
+ok          Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)
+ok          Worker came up seeded on the FIRST attempt (no register-reject exit)
+FAILED rc=1 Real-infra behavioral harness (10 checks, must be all-green)
+ok          Durability gate — the default dev Postgres is not RAM-backed; the RAM one is opt-in (BLOCKING)
+ok          Secret ownership gate — each dev key is readable by its container uid only, mode 600 (BLOCKING)
+ok          Drift gate — config reference vs seeded send_byo.config (BLOCKING)
+ok          Drift gate — served routes vs api-contract.md (BLOCKING)
+ok          Drift gate — migration chain lint (BLOCKING)
+ok          Consumption gate — every seeded config key has a real consumer or is RESERVED (BLOCKING)
+ok          Consumption gate SELF-TEST — the RESERVED-expiry branch the real ledger no longer reaches (BLOCKING)
+ok          Enumeration meta-gate — every test package and gate script is actually wired (BLOCKING)
+ok          Enumeration meta-gate SELF-TEST — the paired control (BLOCKING)
+ok          Shutdown gate — SIGTERM grace clears shutdown_drain_timeout_sec (BLOCKING)
+ok          Security gate — no credential leak in service logs (BLOCKING)
+ok          Security gate — every driver call site scrubs the DSN out of its error (BLOCKING)
+ok          Scrub gate — last_smtp_response has one reader, last_error_message has zero readers in platformapi/ (BLOCKING)
+ok          Diagnostics on failure
+ok          Tear down
+[replica] job result: FAILURE

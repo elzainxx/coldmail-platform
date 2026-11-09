@@ -1,0 +1,24 @@
+[replica] coldmail-verify @ b212524 as uid 1001 in /var/lib/cm-linux/work/coldmail-verify (ext2/ext3 filesystem)
+
+::step:: base image pinned by digest, on supported Debian, matches .ruby-version, CI builds uncached
+base-image-pinned: ok — FROM ruby:3.2.11-slim-bookworm@sha256:84140472007d…; Ruby 3.2.11 matches .ruby-version; 2 CI docker build(s) use --pull --no-cache.
+
+::step:: base-image-pinned SELF-TEST (the paired control)
+  ok   a correct tree passes (also with the CRLF the fork stores)
+  ok   a tag-only FROM (no digest) (rejected: not pinned by digest)
+  ok   a truncated digest (rejected: not pinned by digest)
+  ok   the original EOL Debian 11 base (rejected: end-of-life Debian)
+  ok   no Debian codename at all (rejected: supported Debian release)
+  ok   Dockerfile vs .ruby-version drift (rejected: does not match)
+  ok   3.2.1 must not satisfy 3.2.11 (prefix trap) (rejected: does not match)
+  ok   a CI build with neither flag (rejected: lacks --pull --no-cache)
+  ok   a CI build missing --pull (rejected: lacks --pull --no-cache)
+  ok   a CI build missing --no-cache (rejected: lacks --pull --no-cache)
+  ok   a CI file with no docker build (vacuity) (rejected: assertion 4 would be vacuous)
+check-base-image-pinned-selftest: 11 passed, 0 failed
+
+================ [replica] coldmail-verify / base-image-pinned — step results ================
+skip(uses)  actions/checkout@v4
+ok          base image pinned by digest, on supported Debian, matches .ruby-version, CI builds uncached
+ok          base-image-pinned SELF-TEST (the paired control)
+[replica] job result: SUCCESS

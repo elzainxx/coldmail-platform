@@ -1,0 +1,191 @@
+[replica] coldmail-send-managed @ 098427e as uid 1001 in /var/lib/cm-linux/work/coldmail-send-managed (ext2/ext3 filesystem)
+
+::step:: Go lint — gofmt + vet (BLOCKING; keeps code/format from drifting)
+go: downloading github.com/jackc/pgx/v5 v5.10.0
+go: downloading golang.org/x/crypto v0.58.0
+go: downloading github.com/jackc/puddle/v2 v2.2.2
+go: downloading github.com/jackc/pgpassfile v1.0.0
+go: downloading github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761
+go: downloading golang.org/x/text v0.43.0
+go: downloading golang.org/x/sync v0.24.0
+go: downloading golang.org/x/crypto v0.31.0
+
+::step:: Generate dev certs/secrets + provision dev worker (writes .env)
+== gen-certs ==
+gen-certs: writing dev mTLS material to secrets/dev/certs
+gen-certs: done. CA + control/worker/sink/harness-client leaves in secrets/dev/certs (ca.key stays here, gitignored).
+gen-certs: keys are 600 and owned by YOU; run tools/own-secrets.sh (dev.sh certs does) to hand control.key/worker.key to their container uids.
+== gen-secrets ==
+gen-secrets: wrote dev KMS master key -> secrets/dev/kms/dev-master.key (Control-only; admin Encrypt-only)
+gen-secrets: operator admin (Domain B) key is minted (bcrypt) by 'provision-worker admin-key'
+             and written to .env by 'scripts/dev.sh certs' (ADMIN_API_KEY / ADMIN_API_KEY_HASHES).
+gen-secrets: done.
+== provision dev worker + operator admin key + write .env ==
+.env written (gitignored). TWO worker tokens/hashes + operator admin key + platform service token provisioned.
+== own-secrets ==
+own-secrets: chown'd control.key + dev-master.key -> uid 10001, worker.key -> uid 10002 (mode 600 kept)
+own-secrets: ok — Control(uid 10001) reads control.key+dev-master.key, worker(uid 10002) reads worker.key, keys are 600, and no other uid can read them
+
+::step:: Bring up the stack in the seeded order (postgres -> migrate -> seed -> rest)
+ Network coldmail-send-managed_default  Creating
+ Network coldmail-send-managed_default  Created
+ Container coldmail-send-managed-postgres-1  Creating
+ Container coldmail-send-managed-postgres-1  Created
+ Container coldmail-send-managed-postgres-1  Starting
+ Container coldmail-send-managed-postgres-1  Started
+ Container coldmail-send-managed-postgres-1  Waiting
+ Container coldmail-send-managed-postgres-1  Healthy
+ Container coldmail-send-managed-postgres-1  Running
+ Container coldmail-send-managed-migrate-1  Creating
+ Container coldmail-send-managed-migrate-1  Created
+Attaching to migrate-1
+migrate-1  | preflight: OK (public.users + public.job_items exist)
+migrate-1  | applied  0000_bootstrap
+migrate-1  | applied  0001_create_schema
+migrate-1  | applied  0002_create_role
+migrate-1  | applied  0003_create_enums
+migrate-1  | applied  0004_create_pools
+migrate-1  | applied  0005_create_accounts
+migrate-1  | applied  0006_create_boxes
+migrate-1  | applied  0007_create_jobs
+migrate-1  | applied  0008_create_job_events
+migrate-1  | applied  0009_create_send_logs
+migrate-1  | applied  0010_create_config_and_seed
+migrate-1  | applied  0011_add_indexes
+migrate-1  | applied  0012_grants_and_rls
+migrate-1  | applied  0013_accounts_pool_uniqueness
+migrate-1  | applied  0014_create_account_events
+migrate-1  | applied  0015_jobs_claim_by_user_idx
+migrate-1  | applied  0016_accounts_scoring_columns
+migrate-1  | applied  0017_seed_phase5_config
+migrate-1  | applied  0018_seed_phase6_config
+migrate-1  | applied  0019_seed_phase7_config
+migrate-1  | applied  0020_jobs_attempt_token
+migrate-1  | applied  0021_operability_config
+migrate-1  | applied  0022_job_events_error_context
+migrate-1  | applied  0023_singleton_reacquire_config
+migrate-1  | applied  0024_job_events_fk_carveout
+migrate-1  | applied  0025_dispatch_mode_ladder
+migrate-1  | applied  0026_shadow_mode_for_every_autonomous_mutator
+migrate-1  | up: applied 27 migration(s)
+migrate-1  | set-app-password: send_managed_app password set (value not logged)
+[Kmigrate-1 exited with code 0
+seed: system user + dev worker row (11111111-1111-1111-1111-111111111111) seeded; worker can register on the send stream.
+seed: second dev worker row (22222222-2222-2222-2222-222222222222) seeded; run 'scripts/dev.sh up2' to start it.
+ Container coldmail-send-managed-postgres-1  Running
+ Container coldmail-send-managed-migrate-1  Created
+ Container coldmail-send-managed-control-1  Creating
+ Container coldmail-send-managed-smtp-sink-1  Creating
+ Container coldmail-send-managed-control-1  Created
+ Container coldmail-send-managed-worker-1  Creating
+ Container coldmail-send-managed-smtp-sink-1  Created
+ Container coldmail-send-managed-worker-1  Created
+ Container coldmail-send-managed-postgres-1  Waiting
+ Container coldmail-send-managed-smtp-sink-1  Starting
+ Container coldmail-send-managed-postgres-1  Healthy
+ Container coldmail-send-managed-migrate-1  Starting
+ Container coldmail-send-managed-smtp-sink-1  Started
+ Container coldmail-send-managed-migrate-1  Started
+ Container coldmail-send-managed-postgres-1  Waiting
+ Container coldmail-send-managed-migrate-1  Waiting
+ Container coldmail-send-managed-migrate-1  Exited
+ Container coldmail-send-managed-postgres-1  Healthy
+ Container coldmail-send-managed-control-1  Starting
+ Container coldmail-send-managed-control-1  Started
+ Container coldmail-send-managed-control-1  Waiting
+ Container coldmail-send-managed-control-1  Healthy
+ Container coldmail-send-managed-worker-1  Starting
+ Container coldmail-send-managed-worker-1  Started
+ Container coldmail-send-managed-postgres-1  Waiting
+ Container coldmail-send-managed-migrate-1  Waiting
+ Container coldmail-send-managed-control-1  Waiting
+ Container coldmail-send-managed-worker-1  Waiting
+ Container coldmail-send-managed-smtp-sink-1  Waiting
+ Container coldmail-send-managed-postgres-1  Healthy
+ Container coldmail-send-managed-worker-1  Healthy
+ Container coldmail-send-managed-control-1  Healthy
+ Container coldmail-send-managed-migrate-1  Exited
+ Container coldmail-send-managed-smtp-sink-1  Healthy
+
+::step:: Worker came up seeded on the FIRST attempt (no register-reject exit)
+worker: running=true RestartCount=0 registered=1 register_rejections=0
+
+::step:: Real-infra behavioral harness (10 checks, must be all-green)
+== preparing template DB (send_managed_template) ==
+  template ready (fresh DB, migrated + app password; platform untouched)
+──────────────────────────────────────────────────────────────
+SUITE 1+2: Go real-infra tests (migration lifecycle + DB isolation + Phase 1 data model)
+──────────────────────────────────────────────────────────────
+--- PASS: TestUp_ContiguityGap (0.50s)
+--- PASS: TestDSNScrub_MigrateNoCredentialSurvives (0.00s)
+--- PASS: TestDSNScrub_MigratePgxStillLeaksAtThisPin (0.00s)
+--- PASS: TestDSNScrub_MigrateCleanErrorsKeepTheirDetail (0.00s)
+--- PASS: TestDSNScrub_MigrateConnectionRefusedSurvives (0.00s)
+--- PASS: TestDSNScrub_MigrateMessageNamesThisToolsEnvVars (0.00s)
+--- PASS: TestDSNScrub_MigrateNilIsNil (0.00s)
+--- PASS: TestDSNScrub_MigrateCopyHasNotDriftedFromControl (0.00s)
+--- PASS: TestRunnerLifecycle (5.52s)
+ok  	github.com/coldmail-send-managed/send-managed-migrate	6.030s
+  counts: declared=9 ran=9 skipped=0
+  PASS: migration lifecycle + contiguity guard (apply/idempotent/down/gap)
+--- PASS: TestModeA_TemplateCloneIsRealAndCrossConnection (5.00s)
+--- PASS: TestModeB_RollbackLeavesNoResidue (1.10s)
+--- PASS: TestT1_ConcurrentClaimExactlyOneWinner (1.88s)
+--- PASS: TestT1b_NWorkersMJobsEachClaimedOnce (2.69s)
+--- PASS: TestT2_EventPerTransition (1.32s)
+--- PASS: TestT3_NoStateChangeWithoutEvent (1.82s)
+--- PASS: TestT4_CredentialRoundTripNoPlaintextTamperAAD (1.66s)
+--- PASS: TestT5_ModuleRoleDeniedPlatformWrite (1.25s)
+--- PASS: TestT5b_JobItemIdUnique (1.09s)
+--- PASS: TestT6_AppendOnlyJobEvents (1.59s)
+--- PASS: TestT3e_RLSDefaultDenyBackstopsMisgrant (1.27s)
+--- PASS: TestT3f_SuperuserBypassesRLSButReadsOnlyCiphertext (1.35s)
+--- PASS: TestT7_CheckConstraintsRejectInvalid (1.92s)
+--- PASS: TestGrantsInvariant (1.19s)
+--- PASS: TestSendLogsWriteOnceButRetentionCanDelete (1.23s)
+--- PASS: TestGrantsInvariant_AntiVacuity (1.22s)
+ok  	github.com/coldmail-send-managed/harness	27.583s
+  counts: declared=16 ran=16 skipped=0
+  PASS: DB isolation + Phase 1 data model (claim/events/RLS/crypto/append-only)
+--- PASS: TestRootMux_UnknownPathIsACodedEnvelopeNotPlainText (0.01s)
+--- PASS: TestRootMux_UnmountedSurfacePathAnswersTheEnvelopeToo (0.00s)
+--- PASS: TestRootMux_EveryVerbOnAnUnknownPathIsTheSameEnvelope (0.00s)
+--- PASS: TestRootMux_RequestIDIsUniquePerRequest (0.00s)
+--- PASS: TestRootMux_CatchAllDoesNotShadowAMountedRoute (0.00s)
+--- PASS: TestRootMux_ForgedPathCannotSplitALogLine (0.00s)
+--- PASS: TestRootMux_ForgedPathIsNotReflectedIntoTheBody (0.00s)
+--- PASS: TestSanitizeLogPath_NeutralizesControlCharacters (0.00s)
+--- PASS: TestNewRequestID_ShapeMatchesTheOtherSurfaces (0.00s)
+--- PASS: TestReadyz_CarriesTheContractEnvelope (0.00s)
+--- PASS: TestReadyz_NilDependenciesReportFalseNotAbsent (0.00s)
+--- PASS: TestReadyz_ChecksMapAgreesWithTheTopLevelFields (2.00s)
+--- PASS: TestReadyz_ChecksMapTracksEachDependencySeparately (0.98s)
+--- PASS: TestReadyz_PreExistingTopLevelFieldsAreStillThere (0.00s)
+--- PASS: TestReadyz_TopLevelFieldsAreDistinguishableFromTheNestedCopy (1.05s)
+--- PASS: TestHealthz_IsLivenessNotReadiness (0.00s)
+ok  	github.com/coldmail-send-managed/control/internal/httpapi	4.054s
+  counts: declared=16 ran=16 skipped=0
+  PASS: root-mux coded 404 + log-forgery neutralization (item 7b) + readyz uniform checks{} envelope (item 10)
+--- PASS: TestInFlightMarker_ReplayedReportDoesNotFreeALiveJob (0.00s)
+--- PASS: TestInFlightMarker_ReplayOnAnIdleWorkerIsHarmless (0.00s)
+ok  	github.com/coldmail-send-managed/control/internal/workerlink	0.002s
+  counts: declared=2 ran=2 skipped=0
+  PASS: workerlink stream in-flight accounting (2 tests)
+--- PASS: TestVariation_ZeroValueNumericFieldsSurviveJSONRoundTrip (0.00s)
+ok  	github.com/coldmail-send-managed/control/internal/workerproto	0.002s
+  counts: declared=1 ran=1 skipped=0
+  PASS: variation wire-format round-trip (1 test)
+--- PASS: TestDSNScrub_NoCredentialSurvives (0.00s)
+--- PASS: TestDSNScrub_PgxStillLeaksAtThisPin (0.00s)
+--- PASS: TestDSNScrub_CleanErrorsKeepTheirDetail (0.00s)
+--- PASS: TestDSNScrub_CandidateCheckStandsAlone (0.00s)
+--- PASS: TestDSNScrub_WholeDSNCheckStandsAlone (0.00s)
+--- PASS: TestDSNScrub_ShortValuesDoNotSuppressEverything (0.00s)
+--- PASS: TestDSNScrub_StructuralValuesNeverSuppress (0.00s)
+--- PASS: TestDSNScrub_SpacedCredentialStillCaught (0.00s)
+--- PASS: TestDSNScrub_NilIsNil (0.00s)
+ok  	github.com/coldmail-send-managed/control/internal/dsnscrub	0.005s
+  counts: declared=9 ran=9 skipped=0
+  PASS: DSN credential scrub (N1/D12: pgx echoes the whole connection string; 9 tests, no DB)
+== preparing Phase 2 admin template (send_managed_template_p2, migrated 0000..0014) ==
+  Phase 2 template ready (migrated 0000..0014 + app password)
