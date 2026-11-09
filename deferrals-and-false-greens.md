@@ -213,15 +213,18 @@ from theory:
   (no `:latest`/untagged image anywhere; Mailpit, CoreDNS and the DNS black-hole fixture pinned by digest; 13-case selftest);
   `check-gemfile-lock` (a committed `Gemfile.lock` installed frozen, agreeing with Door 5's pin; 14-case selftest); and the
   Postgres-outage drill on a runner for both senders (22/22 each — see `verification-runs.md`).
-- **Not controlled — stated so it is not mistaken for coverage:** the builder and base images are tagged but **not**
-  digest-pinned (postgres, golang, alpine, node — `image_pins` reports them on every run; pinning a builder freezes its security
-  patches, which is the owner's call); Ruby 3.2 is past end-of-life (M1 ADR-0018) and the 3.3/3.4 move has not been attempted;
-  the Ruby verifier node resolves with `Resolv`, which cannot tell NXDOMAIN from SERVFAIL and, with a search list, can resolve
-  *another domain's* MX (measured; it cannot mint an `invalid`, so the residue is deployment hygiene — no search domain, no
-  dotted hostname — not code); and **module 1 calls a domain with an A record and no MX `invalid / no_mx`** because its
-  implicit-MX fallback is dead code against real DNS (measured through the production layers; **not fixed, needs a ruling**).
+- **Not controlled — stated so it is not mistaken for coverage** (rewritten 2026-11-09; four items that stood here are now controls — see
+  `verification-runs.md`, "Third pass"): Ruby 3.2 is past end-of-life (M1 ADR-0018) and the 3.3/3.4 move has not been attempted — tied to
+  M1's go-live; `node:20-alpine` and `alpine:3.20` (now digest-pinned, so frozen) are old releases whose support status was **not verified**
+  from the build host — treat as the same shape as the Ruby question; the SMTP probe's **destination is unfiltered** (loopback, RFC 1918,
+  link-local, metadata on port 25; pre-existing, found by the implicit-MX audit, M1 ADR-0020 — needs an egress policy or a fork pre-flight);
+  the `image_pins` shell-tooling scan is a **heuristic** (an image from a repository name it does not know is invisible to it);
+  macro-bearing SPF targets are looked up as literals and can reach a false BLOCK under posture `block` (M3-CI-OD-3, flagged, awaiting a ruling).
+  *Closed 2026-11-09:* builder/base tags are digest-pinned and the gate rejects any unpinned reference (all three repos + the parent's tool
+  images); the node's resolver rule is a control (the audit goes red; M1 ADR-0019 addendum); the A-only false `invalid` is fixed (M1 ADR-0020);
+  the SPF `a/24` misparse is fixed (M3-CI-OD-2).
   One failure remains **unexplained**: module 3's `Phase 3 dispatch` package once failed with all 231 of 231 tests having run and
-  no `--- FAIL` line (run 42438687947), never again in the seven M3 harness runs since (five CI runs, two drill runs). It is deliberately not being chased;
+  no `--- FAIL` line (run 42438687947), never again in the harness runs since. It is deliberately not being chased;
   if it recurs, check the `go_suite` SIGPIPE race first (`go_suite_selftest.sh` pins that class).
 
 **What the five new ones from Chunk 4 have in common, and why it is worth saying.** All five are failures in the

@@ -11,11 +11,67 @@ evidence — a green from it would be the absence of an execution, not the succe
 
 ---
 
-> **Four records live in this file.** The section directly below is the **current** one (2026-11-08, second pass: all three
-> code repositories green on GitHub Actions). Under it, the *first pass* of the same day (module 3 still red) is kept as
+> **Five records live in this file.** The section directly below is the **current** one (2026-11-09, third pass: all three code> repositories green on GitHub Actions). Under it, the second pass (2026-11-08) and the *first pass* of the same day (module 3 still red)
 > written, as is the 2026-11-07 section, which describes **local** Docker Desktop runs — read that one as a record of what ran
 > locally, **not** of what is green. Everything from "The four repos" onward is the **August 2026 record, kept as written**:
 > its commit hashes and counts describe the trees as they were on 2026-08-07.
+
+---
+
+## Third pass, 2026-11-09 — implicit MX, SPF CIDR lengths, resolver hygiene and digest pins; all three green on GitHub Actions
+
+**The result.** Every run below was checked against GitHub (`gh run view`) for its head commit and conclusion before being written here.
+
+| repo | head | GitHub Actions run | result |
+|---|---|---|---|
+| `coldmail-verify` (M1) | `848fc7e` | [42616710285](https://github.com/elzainxx/coldmail-verify/actions/runs/42616710285) | **success, 10 of 10 jobs** — incl. the DNS job (search-domain gate + implicit-MX gate, each with its self-test), the new resolver-hygiene job, RSpec (91 examples) and Door 5 |
+| `coldmail-send-managed` (M2) | `15a6b90` | [42616715632](https://github.com/elzainxx/coldmail-send-managed/actions/runs/42616715632) | **success** — harness `62 passed, 0 failed`; `image_pins` 9 references, 23-case self-test |
+| `coldmail-send-byo` (M3) | `36bc7ed` | [42616719618](https://github.com/elzainxx/coldmail-send-byo/actions/runs/42616719618) | **success** — harness `100 passed, 0 failed`; `image_pins` 11 references; `dns_search_domain` **45 of 45** under an injected search domain |
+
+Intermediate green runs, one per chunk: M1 C1 [42610984679](https://github.com/elzainxx/coldmail-verify/actions/runs/42610984679) (`1b3d083`, 9/9);
+M3 C2 [42612618352](https://github.com/elzainxx/coldmail-send-byo/actions/runs/42612618352) (`ce206aa`, harness 100/0); M1 C3a
+[42614985930](https://github.com/elzainxx/coldmail-verify/actions/runs/42614985930) (`f092e02`, 10/10).
+
+### C1 — M1: implicit MX (RFC 5321 §5.1), M1 ADR-0020
+A domain with no MX but an A/AAAA record receives mail at that host; M1 called it `invalid / no_mx`. The old A/AAAA fallback was **dead code
+against real DNS**: Go reports NODATA on an MX query as a not-found *error*, never an empty list, and every fixture was a fake that returned the
+impossible empty list. Ruling implemented: no MX + A/AAAA → that host is the mail host and the SMTP probe runs; probe cannot run → `risky`
+(never `invalid`); null MX stays `invalid` even with an A record; no MX and no A/AAAA stays `invalid`; an outage of ours is `unknown`.
+Found while building it: Go's combined A+AAAA lookup keeps whichever error arrives *last* (a goroutine race), so A=NODATA + AAAA=SERVFAIL
+answered "not found" or "SERVFAIL" at random — the follow-up asks `ip4` and `ip6` separately. Proof: a real-protocol in-process DNS server
+(real NODATA shapes, SOA in authority) driving the production resolver; paired controls (A-only → not invalid; no records, NXDOMAIN, null MX
+→ invalid); a frozen copy of the old logic that must fail the same fixture; two mutants (follow-up removed; AAAA failure counted as absent)
+that must go red in the right test, end to end through `Verify`. The ADR-0019 search-domain gate's mutant signature had to move (the follow-up
+masks the plain-SERVFAIL collapse) — found by re-running the mutant instead of assuming it.
+
+### C2 — M3: SPF `a`/`mx` CIDR lengths (M3-CI-OD-2)
+`a/24` was looked up as the host "24". One RFC 7208 §5.3/§5.4 parser now serves the grammar check, bare detection and the void-lookup name.
+Verdicts that flipped, each with a control that did not: `a/24`, `mx/24`, `a/24//64 mx/24//64` from warn → **allow** (self-hosted exception);
+a valid record with four length-bearing terms under `p=reject` + posture `block` from **BLOCK** → warn; `a/33` is now `from_spf_record_invalid`.
+A 20-form table drives parser, lookup name, bare detection and grammar; a frozen copy of the old logic is wrong on every length-bearing form;
+with the three behaviours reverted in a scratch copy the verdict tests fail with exactly the old verdicts (a one-off, stated as such).
+**Flagged, not changed (M3-CI-OD-3):** a macro-bearing target is looked up as a literal and counted void; with three of them
+`macroPresent=true` *and* a lookup-limit PermError that `decide()` reads first → a false BLOCK under posture `block` + `p=reject`.
+
+### C3 — hardening
+(a) **Resolver hygiene is a control (M1 ADR-0019 addendum, FORK.md row 16).** The node's `GET /v1/audit` adds a `resolver` warning for a
+`search`/`domain` line, `ndots` > 1 — and a dotted hostname, **added beyond the ruling**: Ruby derives a search domain from the hostname
+whenever none is explicit, including in `dns:`-servers mode where resolv.conf is never read, so a resolv.conf-only check would have passed
+the PTR-style FQDN boxes most at risk. Gate: the real fork module under the node image's digest-pinned Ruby against a real mounted
+resolv.conf, with Ruby's own `Resolv::DNS` as an oracle (the check may over-approximate, never miss), three mutants (one per rule). The brain
+needed no change; pinned on the exact wrapper JSON and end to end (real scheduler → node never called → `risky/plausible`). Operational
+consequence: **give the verifier box a short hostname** (runbook Stage 1 step 2b).
+(b) **Every image pinned by digest.** `postgres:16-alpine`, `golang:1.26-alpine`, `alpine:3.20`, `node:20-alpine` in M2/M3, M1's CI postgres
+service, and the parent's tool images (`ubuntu`, `golang`, `node`, `docker:27-cli`, `alpine:3`). `image_pins` (M2/M3) now rejects *any*
+reference without a digest, with no exception list; its scope was widened because the old one is how `alpine:3` sat in `tools/own-secrets.sh`
+(the key-ownership tool the CI gate runs) while the gate said OK — now `tools/*/Dockerfile`, workflow `image:` lines and a **heuristic** scan of
+shell tooling. Against the pre-pin trees the new gate fails on all 7 tag-only references. M1's base-image gate gained the same rule for
+workflow images. **Not verified:** `node:20-alpine` and `alpine:3.20` are old releases; the lookup of their support status failed from the
+build host, so nothing is asserted — flagged for the owner.
+
+**A mistake of mine, kept visible.** My first image inventory was cut off at 30 lines by `head`, which hid `alpine:3` in `own-secrets.sh`; the
+parent's `docker:27-cli` was hidden by a name list that did not include `docker`. Both were found by redoing the inventory with the noise filtered
+instead of truncated — the same shape of error as the gate scope they exposed.
 
 ---
 
