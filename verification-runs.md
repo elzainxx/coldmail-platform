@@ -11,8 +11,9 @@ evidence — a green from it would be the absence of an execution, not the succe
 
 ---
 
-> **Five records live in this file.** The section directly below is the **current** one (2026-11-09, third pass: all three code> repositories green on GitHub Actions). Under it, the second pass (2026-11-08) and the *first pass* of the same day (module 3 still red)
-> written, as is the 2026-11-07 section, which describes **local** Docker Desktop runs — read that one as a record of what ran
+> **Five records live in this file.** The section directly below is the **current** one (2026-11-09, third pass: all three code
+> repositories green on GitHub Actions). Under it, the second pass (2026-11-08) and the *first pass* of the same day (module 3 still
+> red) are kept as written, as is the 2026-11-07 section, which describes **local** Docker Desktop runs — read that one as a record of what ran
 > locally, **not** of what is green. Everything from "The four repos" onward is the **August 2026 record, kept as written**:
 > its commit hashes and counts describe the trees as they were on 2026-08-07.
 
