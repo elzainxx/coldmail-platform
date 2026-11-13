@@ -287,7 +287,7 @@ that cover them. The same rule applies as in August: **"verified" is a claim abo
 | Vulnerable pgx / `x/text` / `x/net` and Go stdlib cleared by upgrading the **builder** (`golang:1.23-alpine` → `golang:1.26-alpine`, go1.26.10), not by reverting | M2, M3 (and `x/net`, `x/text` in M1) | `future-work.md` row + `go-live-checklist.md` §9 in each |
 | `verification_raw` partition cliff: migration `0014`, a maintenance loop, dial `TM_RAW_PARTITION_MONTHS_AHEAD` | M1 | `Docs/adr/ADR-0017-raw-partition-maintenance.md` |
 | #141: `acknowledge_alignment_warning` accepted but not recorded (admin create; both PATCH handlers) | M3 | `Docs/api-contract.md` |
-| #131: RAM-backed Postgres made opt-in (`DEV_RAM_PG=1`), with a new gate `postgres_durability.sh` | M3 | `scripts/dev.sh`, `Docs/module-3-local-test-guide.md` |
+| #131: RAM-backed Postgres made opt-in (`DEV_RAM_PG=1`), with a new gate `postgres_durability.sh` | M3 | `scripts/dev.sh`, `Docs/module-3-local-test-guide.md` (merged into `Docs/install-and-deploy.md#developing-and-testing-locally` on 2026-11-13; original in `Docs/history/`) |
 | LICENSE + NOTICE (M2), `.gitignore` (platform), default branch `main` | M2, platform; M2/M3/platform | each repo |
 | `.gitattributes` forcing LF — **found while verifying the published result**, see below | all four | each repo's `.gitattributes` |
 

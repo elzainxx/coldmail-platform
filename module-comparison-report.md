@@ -312,7 +312,7 @@ Surfaced by skeptics while hunting refutations. Filed as **D21–D29**; none cha
 | **D26** | M3 | `campaignItem`'s five new fields lack `omitempty` — always-emitted explicit nulls, inconsistent with the single-job shape two files away |
 | **D27** | M1 | The grant tests would **also** pass vacuously on a *different* failure (missing table / dropped connection → no assertions follow). `postgres_test.go:212` closes the gap circularly: *"proven in the migration itself + CI"* — CI **is** the superuser DSN |
 | **D28** | M2 | **No per-user volume caps at all** (no campaign-size, queued-jobs, or account-count cap) — in the repo *with* non-zero pricing. See §0b.5 |
-| **D29** | M1 | `Docs/kill-switch-ladder.md:53` and `OPERATIONS.md:143` document a mechanism that does not exist (*"accept-and-defer stops the drainer"*); `drainer.go` has **zero** config references, and `secrets.example.env:50` advertises the setting to operators |
+| **D29** | M1 | `Docs/kill-switch-ladder.md:53` and `OPERATIONS.md:143` (as audited; both files have since moved — `Docs/history/kill-switch-ladder.md`, `Docs/operator-runbook.md`) document a mechanism that does not exist (*"accept-and-defer stops the drainer"*); `drainer.go` has **zero** config references, and `secrets.example.env:50` advertises the setting to operators |
 
 **D29 strengthens D2 materially:** the rung is not merely unconsumed on the API side — the drainer-side
 mechanism its own operator documentation names does not exist either, and the value is actively advertised in

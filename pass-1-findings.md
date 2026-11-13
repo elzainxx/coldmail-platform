@@ -84,7 +84,7 @@ PASS/PASS/PASS, killed worker → PASS/**FAIL**/PASS. Re-run after `up -d`: **58
   from the directory (`verifier-node`). M2 and M3 both declare `name:` explicitly and produce
   the brief's `<repo>-control-1` / `<repo>-worker-1` container shape. Not a collision, but not
   the specified naming either. Adding the key is a behaviour change, hence Pass 2.
-- **M1 has no `Docs/future-work.md`.** Its deferral ledger is `Docs/pending-ledger.md`
+- **M1 has no `Docs/future-work.md`.** Its deferral ledger is `Docs/pending-ledger.md` (renamed `Docs/future-work.md` on 2026-11-13, so M1 now has the same file name as M2 and M3)
   (M2 and M3 both use `Docs/future-work.md`). Pass 3 must empty the right file per repo.
 - Also open from earlier passes: **FW-M3-13/14** and **FW-M2-B/C**.
 

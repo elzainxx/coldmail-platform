@@ -414,7 +414,7 @@ committed-state differential), which is the part the HIGH estimate was hiding.
 "drainer-1"` (`main.go:229`) and the per-batch `locked_at` cannot fire in the shipped topology: there is
 exactly one sequential drain goroutine (`drainer.go:145`; the only `go func` in `main.go` is at `:77` and
 is not the drainer), reclaim runs only at the top of `drainTick`, and multi-drainer coordination is an
-explicit documented deferral (`phase-5-queue-spec.md:425` GAP-34, `arc-closing.md:56`,
+explicit documented deferral (`phase-5-queue-spec.md:425` GAP-34, `arc-closing.md:56` — both now under `Docs/history/` in their module repo —
 `config-manifest.md:276`, GAP-25/OQ-P4-8). The load-bearing CAS clause is `AND status='in_flight'`.
 **This is a test-strength defect, not a production one** — which is what the row should have said.
 
@@ -640,7 +640,7 @@ M1's bulk results omitting `email` (plaintext purged on settle, a deliberate pri
 > `REVOKE` on `api_callers` that **`git revert` cannot undo** — reverting the commit removes the SQL, not its
 > effect on the live database. So M1 has no rollback path for a bad deploy, which is a go-live blocker that
 > this section's phrasing would have let a reader classify as a settled design choice. Recorded in
-> [`../coldmail-verify/Docs/go-live-rollback-posture.md`](../coldmail-verify/Docs/go-live-rollback-posture.md).
+> [`../coldmail-verify/Docs/operator-runbook.md`](../coldmail-verify/Docs/operator-runbook.md) §9 (the file this originally cited, `go-live-rollback-posture.md`, was merged there on 2026-11-13; the original is kept at `coldmail-verify/Docs/history/go-live-rollback-posture.md`).
 > The convention is still deliberate; what was missing was anyone having written down what it costs.
 
 Also not in this plan: the credential-hash choice (bcrypt vs sha256-indexed-lookup are both correct for their

@@ -79,7 +79,7 @@ the right thing expensively.
 | Item | What blocks it |
 |---|---|
 | **`request_id` in every log line** | A **scope ruling**, not work. `canonical-module-contract.md:297` says "Every log line"; `:74` says "at least one". M1 satisfies the narrow clause and fails the broad one at **47 Go sites plus 2 Ruby logger references**. LOW vs HIGH turns entirely on which clause governs. **The contract contradicts itself** — that is the thing to fix first. |
-| **Dedicated schema (D7)** and **migration tracking (D6)** | Both interact with M1 having **no down-migration mechanism at all**. A tracking table recording what ran, in a system that cannot un-run anything, records a fact nobody can act on. See [`coldmail-verify/Docs/go-live-rollback-posture.md`](../coldmail-verify/Docs/go-live-rollback-posture.md) — tracking is worth adopting **before the second environment exists**, and that is the one time-sensitive item in this whole record. |
+| **Dedicated schema (D7)** and **migration tracking (D6)** | Both interact with M1 having **no down-migration mechanism at all**. A tracking table recording what ran, in a system that cannot un-run anything, records a fact nobody can act on. See [`coldmail-verify/Docs/operator-runbook.md`](../coldmail-verify/Docs/operator-runbook.md) §9 (the rollback posture, merged there from `go-live-rollback-posture.md` on 2026-11-13) — tracking is worth adopting **before the second environment exists**, and that is the one time-sensitive item in this whole record. |
 | **Prometheus `/metrics` (all three modules)** | Nothing exists in any module. Genuinely MEDIUM and correctly sized — the only row here that was estimated right. |
 | **GAP-37 adjudication** | Re-estimated **MEDIUM–HIGH**. `SKIP LOCKED` never lock-waits, so M3's `pg_stat_activity`-blocked-count harness is **structurally inapplicable** and a different instrument is required. Two claimed defects here (hardcoded `WorkerID`, per-batch `locked_at`) were investigated and **REJECTED** — unreachable in the single-drainer shipped topology. |
 | **M1 `TM_*` → `VERIFY_*` env prefix** | **RULED: keep `TM_*`**, honouring ADR-0005. A rename needs a superseding ADR, not a silent change. |
@@ -122,7 +122,7 @@ exist only as headings in this repo's own [`pass-1-findings.md`](pass-1-findings
 M3-P8-OD-6 was RULED-ACCEPTED on 2026-07-31 with the disposition *"Register as `FW-M3-6`, do not build
 in Phase 8."* The do-not-build half was honoured; **the register half was not.** `FW-M3-6`, `-7`, and
 `-8` were cited by other documents while being defined nowhere in `Docs/future-work.md` — including
-`shared-code-manifest.md:184`, which claimed of `FW-M3-8`: *"Also tracked here, not only in
+`shared-code-manifest.md:184` (merged into `architecture.md#relationship-to-module-2-the-shared-code-manifest` on 2026-11-13), which claimed of `FW-M3-8`: *"Also tracked here, not only in
 `future-work.md`"*, an explicit and false claim about a file. **All now registered** in that file's new
 §9a, along with `FW-M3-18` (an id-resolvability gate) and `FW-M3-19` (a link-integrity gate). The M3
 ledger's own disposition table also still said **"STILL NEEDING A RULING — 2"** while its prose said, correctly, that both were ruled on 2026-08-04; corrected in place.
@@ -134,10 +134,10 @@ and nothing checks that a disposition of that form was carried out.
 
 ## 5. Genuinely unclosable — module 1's twenty real-world-gated rows
 
-[`coldmail-verify/Docs/pending-ledger.md`](../coldmail-verify/Docs/pending-ledger.md) holds twenty rows
+[`coldmail-verify/Docs/future-work.md`](../coldmail-verify/Docs/future-work.md) (renamed from `pending-ledger.md` on 2026-11-13; the twenty rows are its §1–§3.5) holds twenty rows
 (B1–B8, V1–V5, S1–S5, H1–H2) and **all twenty stay open**. Each was tested against one question: is the
 blocker a real-world input that does not exist yet, or is it a decision/build someone is avoiding?
-**All twenty fail to be closable for the first reason** — §6 of that file records the per-row grouping.
+**All twenty fail to be closable for the first reason** — §9 of that file (§6 before the 2026-11-13 renumbering) records the per-row grouping.
 Summarised: 6 need a machine with a specific network identity · 3 need an un-simulatable counterparty ·
 2 need a commercial or legal act · 2 need a system that does not exist yet · 4 need accumulated time or
 volume · 3 need go-live infrastructure. **Zero are blocked on a decision.**
