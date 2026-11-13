@@ -11,11 +11,46 @@ evidence — a green from it would be the absence of an execution, not the succe
 
 ---
 
-> **Six records live in this file.** The section directly below is the **current** one (2026-11-09, fourth pass: the last code fixes and the final close). Under it, the third pass (2026-11-09: all three code
-> repositories green on GitHub Actions). Under it, the second pass (2026-11-08) and the *first pass* of the same day (module 3 still
+> **Seven records live in this file.** The section directly below is the **current** one (2026-11-13, fifth pass: the documentation unification and the close). Under it, the fourth pass (2026-11-09: the last
+> code fixes), then the third pass (2026-11-09: all three code repositories green on GitHub Actions). Under it, the second pass (2026-11-08) and the *first pass* of the same day (module 3 still
 > red) are kept as written, as is the 2026-11-07 section, which describes **local** Docker Desktop runs — read that one as a record of what ran
 > locally, **not** of what is green. Everything from "The four repos" onward is the **August 2026 record, kept as written**:
 > its commit hashes and counts describe the trees as they were on 2026-08-07.
+
+---
+
+## Fifth pass, 2026-11-13 — one documentation structure across all three modules, and the close
+
+**Result — every run checked against GitHub (`gh run view`) for its head commit and conclusion before being written here:**
+
+| repo | head | GitHub Actions run | result |
+|---|---|---|---|
+| `coldmail-verify` (M1) | `de8b2a5` | [43445703791](https://github.com/elzainxx/coldmail-verify/actions/runs/43445703791) | **success, 11 of 11 jobs** (Go build + vet + test, both DNS gates, resolver hygiene, probe-destination guard, RSpec, Door 5, docs-updated) |
+| `coldmail-send-managed` (M2) | `7a1a2ff` | [43445710598](https://github.com/elzainxx/coldmail-send-managed/actions/runs/43445710598) | **success** — harness `62 passed, 0 failed`; `image_pins` 9 references, 23-case self-test |
+| `coldmail-send-byo` (M3) | `566ad42` | [43449231568](https://github.com/elzainxx/coldmail-send-byo/actions/runs/43449231568) | **success, first attempt** — harness `100 passed, 0 failed`; `dns_search_domain` 53 of 53; `image_pins` 11 references |
+
+**The M3 run for `ceb87c2` was red once and is kept visible.** [43445719147](https://github.com/elzainxx/coldmail-send-byo/actions/runs/43445719147), attempt 1: harness
+`99 passed, 1 failed` — `TestAccountConsume_NeverExceedsDailyLimit_ConcurrentLanes` at `eligibility_test.go:301`, its *anti-vacuity* assertion ("only 1 worker(s) ever succeeded").
+Attempt 2 of the same run, same commit: `100 passed, 0 failed`. The commit changed no executable line (comments, `echo` text and one test failure message only), and the test's
+invariants (exactly 50 consumes, none after the limit) held in the failing attempt, so the cause is the test's non-deterministic proof of overlap, not the product. It is registered
+as **FW-M3-22** in M3's `Docs/future-work.md` with a fix shape and a control that must go red; the assertion was **not** weakened to get a green.
+
+**What this pass changed.** Documentation only, in every module: the same layout (`README.md`; `Docs/` with `architecture`, `install-and-deploy`, `operator-runbook`,
+`config-reference`, `api-contract`, `security-posture`, `go-live-checklist`, `future-work`, `open-decisions`; `Docs/adr/ADR-NNNN-*.md`; `Docs/history/`); every go-live checklist
+row carries a real status; every decision ledger is at **zero open**. M1 also had a handful of comment/string-only edits in Go files (doc paths) and one comment line in migration 0010.
+The moves are recorded per module in `Docs/history/MOVED-DOCS.md` (M2) and the commit messages (M1, M3); this repository's citations of those paths were repointed.
+
+**Honest limits of this pass.**
+- **Docker was unavailable for the secret scan.** Docker Desktop could not start (the BIOS had stopped exposing VT-x, `HCS_E_HYPERV_NOT_INSTALLED`; the hypervisor log shows it failing on every boot
+  from 2026-11-12 19:29:18). With the owner's agreement the full-history scan of all five repositories was run with a **native `gitleaks` 8.30.1**, checksum-verified against its release's
+  `checksums.txt` (the release carries no signature or attestation, so that proves the download, not the publisher), after controls: a clean repo exits 0, a planted token is caught, a token
+  present only in deleted history is still caught, and this repository without its allowlist shows the same 297 findings as before and none with it. All five were clean. The Docker-based scan the
+  earlier passes used was **not** run for this push.
+- **No Go was built on the host or in Docker for M1's comment edits before the push**; the proof is the runner's `control-plane (Go build + vet + test)` job in run 43445703791.
+- **`tools/platform-check.sh` had a silent false green.** Its link check wrote to `/tmp/cm-audit/`, which the cleanup had deleted, so after the cleanup it examined nothing. Fixed (a `mktemp` file),
+  and proved with a planted broken link, which makes it red. `Docs/history/audit-scratch/` (verbatim captured scratch whose relative links point at files never copied) is excluded from that check by design.
+- **A crash zero-filled one file.** A PC restart during the M1 documentation work replaced `open-decisions.md` with NUL bytes in the working tree; it was restored from `HEAD` and the edits redone.
+  All five repositories were then scanned for NUL bytes in every tracked file: none.
 
 ---
 
