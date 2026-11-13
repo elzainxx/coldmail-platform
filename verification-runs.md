@@ -26,8 +26,12 @@ evidence — a green from it would be the absence of an execution, not the succe
 | repo | head | GitHub Actions run | result |
 |---|---|---|---|
 | `coldmail-verify` (M1) | `de8b2a5` | [43445703791](https://github.com/elzainxx/coldmail-verify/actions/runs/43445703791) | **success, 11 of 11 jobs** (Go build + vet + test, both DNS gates, resolver hygiene, probe-destination guard, RSpec, Door 5, docs-updated) |
-| `coldmail-send-managed` (M2) | `7a1a2ff` | [43445710598](https://github.com/elzainxx/coldmail-send-managed/actions/runs/43445710598) | **success** — harness `62 passed, 0 failed`; `image_pins` 9 references, 23-case self-test |
-| `coldmail-send-byo` (M3) | `566ad42` | [43449231568](https://github.com/elzainxx/coldmail-send-byo/actions/runs/43449231568) | **success, first attempt** — harness `100 passed, 0 failed`; `dns_search_domain` 53 of 53; `image_pins` 11 references |
+| `coldmail-send-managed` (M2) | `aeeb496` (**final**) | [43451719729](https://github.com/elzainxx/coldmail-send-managed/actions/runs/43451719729) | **success** — harness `62 passed, 0 failed`; `image_pins` 9 references, 23-case self-test |
+| `coldmail-send-byo` (M3) | `09a2fc3` (**final**) | [43451723420](https://github.com/elzainxx/coldmail-send-byo/actions/runs/43451723420) | **success, first attempt** — harness `100 passed, 0 failed` |
+
+The two final heads differ from the heads of the documentation work by one commit each (`NOTICE`: the Mailpit line said `:latest`, the compose file pins `v1.33.1@sha256:…`; found by grepping the fresh clone for
+`:latest`). Their predecessors were green too: M2 `7a1a2ff` [43445710598](https://github.com/elzainxx/coldmail-send-managed/actions/runs/43445710598) (62/0); M3 `566ad42`
+[43449231568](https://github.com/elzainxx/coldmail-send-byo/actions/runs/43449231568) (100/0, first attempt; `dns_search_domain` 53 of 53; `image_pins` 11 references).
 
 **The M3 run for `ceb87c2` was red once and is kept visible.** [43445719147](https://github.com/elzainxx/coldmail-send-byo/actions/runs/43445719147), attempt 1: harness
 `99 passed, 1 failed` — `TestAccountConsume_NeverExceedsDailyLimit_ConcurrentLanes` at `eligibility_test.go:301`, its *anti-vacuity* assertion ("only 1 worker(s) ever succeeded").
