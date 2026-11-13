@@ -11,11 +11,46 @@ evidence — a green from it would be the absence of an execution, not the succe
 
 ---
 
-> **Five records live in this file.** The section directly below is the **current** one (2026-11-09, third pass: all three code
+> **Six records live in this file.** The section directly below is the **current** one (2026-11-09, fourth pass: the last code fixes and the final close). Under it, the third pass (2026-11-09: all three code
 > repositories green on GitHub Actions). Under it, the second pass (2026-11-08) and the *first pass* of the same day (module 3 still
 > red) are kept as written, as is the 2026-11-07 section, which describes **local** Docker Desktop runs — read that one as a record of what ran
 > locally, **not** of what is green. Everything from "The four repos" onward is the **August 2026 record, kept as written**:
 > its commit hashes and counts describe the trees as they were on 2026-08-07.
+
+---
+
+## Fourth pass, 2026-11-09 — the last code fixes (probe destination, SPF macros, Node 24 / Alpine 3.24, Ruby 3.4) and the final close
+
+**C1 result — every run checked against GitHub before being written here:**
+
+| repo | head | GitHub Actions run | result |
+|---|---|---|---|
+| `coldmail-verify` (M1) | `4b73326` | [42633652063](https://github.com/elzainxx/coldmail-verify/actions/runs/42633652063) | **success, 11 of 11 jobs** — the node image built from scratch on **Ruby 3.4.12**; the new `probe destination guard` job; both DNS gates; RSpec; Door 5 |
+| `coldmail-send-managed` (M2) | `96a189f` | [42633655325](https://github.com/elzainxx/coldmail-send-managed/actions/runs/42633655325) | **success** — harness `62 passed, 0 failed` on the `node:24-alpine` / `alpine:3.24` images |
+| `coldmail-send-byo` (M3) | `3453080` | [42633661635](https://github.com/elzainxx/coldmail-send-byo/actions/runs/42633661635) | **success** — harness `100 passed, 0 failed`; `dns_search_domain` 53 of 53 under an injected search domain |
+
+- **The SMTP probe never connects to a non-public address** (M1 ADR-0021). A pre-flight in the forked wrapper refuses loopback, RFC 1918, link-local / cloud
+  metadata, CGNAT and every other non-public range before the gem's SMTP step; a post-check discards a transcript that leaked through DNS rebinding; the brain
+  turns the refusal into `risky` / the new additive reason `non_public_mx` (migration 0015) — never `invalid`, never cached. Proved against an **independent oracle**
+  (Python's `ipaddress`, with test points generated from its own transcription of the IANA registries — the first version generated them from the guard's own table,
+  so deleting a range deleted its test points; found by asking why a mutant produced 2 violations and not 4+), against **real DNS with a counting listener**
+  (guard on: 0 connections; control: 2), against a golden wire fixture shared with the Go side, and against Postgres (`TestVocabMirrorsTheDatabaseCheckConstraints`).
+  The egress firewall ruleset (`verifier_egress.nft`) is checked against the guard's ranges and with `nft -c`, and was seen to count packets for port-25 attempts to
+  metadata, RFC 1918 and CGNAT addresses.
+- **SPF macros are undecidable and never contribute to a BLOCK** (M3-CI-OD-3). Two independent layers — a macro target is not looked up (the lookup is still counted),
+  and `decide()`'s lookup-limit BLOCK requires `!macroPresent`. With both reverted the original false BLOCK returns; with either alone it does not.
+- **Node 20 → 24, Alpine 3.20 → 3.24**, digest-pinned everywhere (worker image, `engines.node`, both workflows' `setup-node`, Go final stages, `own-secrets.sh`, the DNS fixtures).
+  `node:26-alpine` also exists in the registry; the ruling named 24.
+- **Ruby 3.2 → 3.4.12, truemail 3.3.1 unchanged** (M1 ADR-0018 addendum 2). The bounded attempt passed: a lock regenerated under 3.4 changed exactly one line;
+  RSpec 180/0; `assert-gem-unmodified` OK; the socket-level proof (real gem, real `net-smtp`, real sockets) 11/11 on 3.4; every image-Ruby gate green on 3.4.
+- **Cleanup (C2).** The audit scratch the records cite moved into `Docs/history/` (this repository), each directory with a manifest of why it is cited; the uncited remainder
+  was deleted. A GitHub-token-shaped secret planted in an allowlisted log is still caught by the scan, and a generic-key secret planted elsewhere too (controls recorded in
+  `Docs/history/audit-scratch/README.md`).
+
+**Mistakes of mine in this pass, kept visible.** (1) I sized every folder under `D:\Mnfi` with `du` — including unrelated projects — and had to stop it. (2) I moved 48 cited
+files into `Docs/history/` and committed with `git add -A`, and 21 of them (the CI run logs) were silently ignored by the platform's own `*.log` rule; counting tracked files
+against the manifest before deleting any original caught it. (3) The 297 `generic-api-key` findings in those logs were request ids, not secrets — but I only said so after
+reading all of them, and my first "they all match one shape" check was wrong (two shapes were missing), which is why the check was kept honest instead of widened until it passed.
 
 ---
 
