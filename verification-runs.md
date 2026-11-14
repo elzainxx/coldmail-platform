@@ -59,6 +59,30 @@ backticked hex string that is no commit in the four repositories unless `tools/n
 private *parent* repository (`1a6536b`, verified from the parent's own clone), which the three-key layout cannot resolve and which has no key of its own. **What this does not claim:** that a SHA resolves to a commit says nothing about whether the prose
 around it is true, and the allowlist's reasons are human statements.
 
+### C3 — the MVCC re-check path, forced (M3 and M2): **Option A closed it**
+
+The gap recorded in the sixth pass: a peer whose statement snapshot *predates* the holder's commit but whose row lock *follows* it is refused only by Postgres's re-check of the eligibility predicate against the committed row version
+(the consume's UPDATE has no guard of its own); from outside the statement there is no point at which to hold such a peer, so the path was covered by volume only. **Option A — a volatile function injected into the scan, test-only — worked on the first
+runner attempt**, because Postgres evaluates a row-level-security policy's qualifier in the scan, after the statement snapshot and before the row lock, and `accounts` already has `FORCE ROW LEVEL SECURITY`. So Option B (prove the CHECK constraint alone holds
+the limit) was not needed as the closing argument; its property is nevertheless visible in the mutant below.
+
+`TestAccountConsume_StaleSnapshotPeerIsRefused` (own test, own mutants): a test-only restrictive policy calls a gate function; the gate parks only the backend with `application_name = 'zz_mvcc_peer'` on a test-held advisory lock; the peer is
+proven parked (scoped `pg_stat_activity`: this database, not this session, that `application_name`, `Lock`/`advisory`, the consume's text); the holder takes the last slot and **commits**; the peer is released and must be refused with no error and the count
+must stay at the limit; the gate's own log must show the peer was shown the row with capacity (`seen_count = limit-1`, a version that existed only before the holder's commit). **Production code is unchanged** (`git diff` of the three commits
+touches tests, gate scripts, workflow text and docs only). Recorded in ADR-0019 (M3) and ADR-0015 (M2).
+
+| proof | M3 `coldmail-send-byo` | M2 `coldmail-send-managed` |
+|---|---|---|
+| first runner execution of the new test (`consume-contention-repeat`, count 1): both tests pass, both evidence lines | [43633541528](https://github.com/elzainxx/coldmail-send-byo/actions/runs/43633541528) | — |
+| **both tests 50 times each** (`workflow_dispatch` on `main`): 50 passed, 0 failed, 100 evidence lines | [43633871146](https://github.com/elzainxx/coldmail-send-byo/actions/runs/43633871146) | [43633874895](https://github.com/elzainxx/coldmail-send-managed/actions/runs/43633874895) |
+| `real-infra` with the **six-mutant self-test** (`noskip`, `mutex`, `noceiling`, `nogate` on the first test; **`norecheck`, `nopolicy` on the new one**), each red with its own signature | [43633823232](https://github.com/elzainxx/coldmail-send-byo/actions/runs/43633823232) — harness `101 passed, 0 failed` | [43633826951](https://github.com/elzainxx/coldmail-send-managed/actions/runs/43633826951) — harness `62 passed, 0 failed` |
+
+The new mutants: **`norecheck`** removes `FOR UPDATE SKIP LOCKED` (no row lock, so no re-check): the test goes red with `MVCC RE-CHECK PATH FAILED`, and the peer's error is `ERROR: new row for relation …` — the CHECK constraint
+`accounts_daily_sent_check` stopped it, nothing else did (Option B's property, observed). **`nopolicy`** makes the gate unreachable: the test goes red with `MVCC forced interleave did not engage` (a run that did not force the interleave says so and fails).
+
+**What it does not prove.** It does not assert that the *gate* was called again with the committed version (the planner may order a user qualifier ahead of a policy qualifier); the capacity sighting and the refusal are asserted, and the
+rest is logged. The injection point is row-level security: were `accounts` ever to lose RLS the peer would never park and the test would fail with "did not engage" — red, never silently green.
+
 ---
 
 ## Sixth pass, 2026-11-14 — the concurrency test made deterministic, the user-copy ledger gate built, and the secret scan and JSON check moved onto the runner
@@ -90,7 +114,7 @@ test-held advisory-lock gate while it holds that slot (proven parked by a `pg_st
 | `real-infra` on main after the merge | [43594916402](https://github.com/elzainxx/coldmail-send-byo/actions/runs/43594916402), 100/0 | [43595025876](https://github.com/elzainxx/coldmail-send-managed/actions/runs/43595025876), 62/0 |
 
 **Not forced, and said so in the code, the docs and `future-work.md`:** the MVCC re-check path (a peer whose statement snapshot predates the holder's commit but whose scan follows it). Under SKIP LOCKED a peer never waits between snapshot and
-scan, so there is no point at which to hold it from outside the statement. The volume phase still exercises it, and asserts its invariants, but no longer claims to prove its overlap.
+scan, so there is no point at which to hold it from outside the statement. The volume phase still exercises it, and asserts its invariants, but no longer claims to prove its overlap. **Closed the same day — see the seventh pass, C3 (ADR-0019 / ADR-0015): it is now forced from inside the statement.**
 
 ### C2 — loose ends
 
