@@ -83,6 +83,23 @@ The new mutants: **`norecheck`** removes `FOR UPDATE SKIP LOCKED` (no row lock, 
 **What it does not prove.** It does not assert that the *gate* was called again with the committed version (the planner may order a user qualifier ahead of a policy qualifier); the capacity sighting and the refusal are asserted, and the
 rest is logged. The injection point is row-level security: were `accounts` ever to lose RLS the peer would never park and the test would fail with "did not engage" — red, never silently green.
 
+### C4 — final state, all on the runner
+
+| repo | final head | GitHub Actions run | result |
+|---|---|---|---|
+| `coldmail-verify` (M1) | `fa19f3b` (no change this pass) | [ci 43596190815](https://github.com/elzainxx/coldmail-verify/actions/runs/43596190815) | **success, 11 of 11 jobs** |
+| `coldmail-send-managed` (M2) | `bcb499b` | [real-infra 43634876139](https://github.com/elzainxx/coldmail-send-managed/actions/runs/43634876139) | **success** — harness `62 passed, 0 failed`; consume-contention gate and all six mutants red-as-required |
+| `coldmail-send-byo` (M3) | `d6ac497` | [real-infra 43634873264](https://github.com/elzainxx/coldmail-send-byo/actions/runs/43634873264) | **success** — harness `101 passed, 0 failed`; both new gates and the six-mutant self-test |
+| `coldmail-platform` | `284b22e` + this record | [platform-check 43634953293](https://github.com/elzainxx/coldmail-platform/actions/runs/43634953293) | **success, checks 3 and 4 RUNNING**: fetched M1 `fa19f3b`, M2 `bcb499b`, M3 `d6ac497` over SSH (each key confirmed read-only), 3 citations / 0 broken, 101 SHA candidates / 92 commits / 9 listed / 0 unlisted / 0 stale; ten controls held |
+
+**gitleaks, full history, on the runner, at the final heads of all five repositories — all success:** M1 [43633038119](https://github.com/elzainxx/coldmail-verify/actions/runs/43633038119) (`workflow_dispatch`, after the deploy keys existed) · M2
+[43634876149](https://github.com/elzainxx/coldmail-send-managed/actions/runs/43634876149) · M3 [43634873160](https://github.com/elzainxx/coldmail-send-byo/actions/runs/43634873160) · platform [43634953289](https://github.com/elzainxx/coldmail-platform/actions/runs/43634953289) ·
+parent [43634958312](https://github.com/elzainxx/coldmail/actions/runs/43634958312). Before every push of this pass a full-history scan was also run with a checksum-verified native gitleaks 8.30.1 (Docker being down): no leaks, and no key
+material was ever written inside a repository.
+
+**Two things that were found, not planned.** (1) The `read-only` control for the deploy-key assertion proved nothing at first (C2). (2) Four commits of this pass (three in M3, one in M2) printed `error: unable to write file .git/objects/…: Permission denied` — the host's
+antivirus locking a loose object — yet completed; each was checked before its push (`git diff HEAD` empty, `git fsck --connectivity-only` clean, and for the first the pushed blobs compared with GitHub's) rather than assumed.
+
 ---
 
 ## Sixth pass, 2026-11-14 — the concurrency test made deterministic, the user-copy ledger gate built, and the secret scan and JSON check moved onto the runner
