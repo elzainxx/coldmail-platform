@@ -77,8 +77,8 @@ jobs:
           expect_red "malformed key"               coldmail-send-byo     "not a usable private key"   -- "DEPLOY_KEY_COLDMAIL_SEND_BYO=this is not a key"
           expect_red "unknown or revoked key"      coldmail-send-byo     "could not clone over SSH"   -- "DEPLOY_KEY_COLDMAIL_SEND_BYO=$UNKNOWN"
           expect_red "another repository's key"    coldmail-send-managed "could not clone over SSH"   -- "DEPLOY_KEY_COLDMAIL_SEND_MANAGED=$DEPLOY_KEY_COLDMAIL_VERIFY"
-          # the read-only assertion is only proven to discriminate: aim its write probe at a repository the keys cannot see, so GitHub answers anything but "marked as read only"
-          expect_red "read-only not confirmed"     coldmail-verify       "could not confirm the deploy key is read-only" -- FETCH_PROBE_REPO=coldmail-platform
+          # the read-only assertion must go red on every answer except GitHub's "marked as read only": point its write probe at a closed local port, so the answer is "connection refused"
+          expect_red "read-only not confirmed"     coldmail-verify       "could not confirm the deploy key is read-only" -- FETCH_PROBE_URL=ssh://git@127.0.0.1:1/x.git
           rm -rf "$D"; echo "controls hold: five ways of a bad key are each red"
 
       - name: Checks 3 and 4 — cross-repo citations resolve; cited commit SHAs exist (against fresh full clones)

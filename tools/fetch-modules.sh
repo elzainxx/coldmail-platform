@@ -51,9 +51,11 @@ for pair in coldmail-verify:DEPLOY_KEY_COLDMAIL_VERIFY coldmail-send-managed:DEP
     continue
   fi
   # The key must be READ-ONLY. `push --dry-run` asks GitHub whether this key may write, and sends nothing: a read-only deploy key is refused with "marked as read only".
-  # Anything else — success (a writable key!), "Repository not found", a timeout — is red, because the property is then unproven. FETCH_PROBE_REPO exists only so the
-  # workflow's control can aim the probe at a repository the key cannot see and prove this assertion goes red on any answer other than the read-only refusal.
-  probe="$(git -C "$DEST/$repo" push --dry-run "git@github.com:${OWNER}/${FETCH_PROBE_REPO:-$repo}.git" HEAD:refs/heads/zz-platform-ci-write-probe 2>&1)"
+  # Anything else — success (a writable key!), "Repository not found", a refused connection — is red, because the property is then unproven. FETCH_PROBE_URL exists only so the
+  # workflow's control can point the probe somewhere that cannot answer "marked as read only" and prove this assertion goes red on every other answer. (GitHub refuses a
+  # read-only key's WRITE before it looks the repository up, so aiming the probe at a different GitHub repository does NOT change the answer — the first version of the
+  # control did exactly that and the runner showed it proved nothing.)
+  probe="$(git -C "$DEST/$repo" push --dry-run "${FETCH_PROBE_URL:-git@github.com:${OWNER}/${repo}.git}" HEAD:refs/heads/zz-platform-ci-write-probe 2>&1)"
   case "$probe" in
     *"marked as read only"*) ;;
     *) oops "$repo: could not confirm the deploy key is read-only (expected GitHub to refuse a write with 'marked as read only'; got: $(printf '%s' "$probe" | tr '\n' ' ' | cut -c1-140))"; rm -rf "${DEST:?}/$repo"; continue;;
