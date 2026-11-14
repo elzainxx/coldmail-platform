@@ -3,8 +3,12 @@
 Cross-module documentation for the **coldmail** platform. This repo holds no product code —
 it holds the decisions that span the three modules, plus the evidence behind them. Two things run on it in CI
 (`.github/workflows/`): a full-history secret scan (`gitleaks.yml`) and `tools/platform-check.sh`
-(`platform-check.yml`: every JSON file parses, every internal link resolves; the cross-repo citation and
-cited-SHA checks run too when the `CROSS_REPO_READ` secret lets the workflow read the private modules).
+(`platform-check.yml`: every JSON file parses, every internal link resolves, every cross-repo citation resolves, every cited
+commit SHA exists — all four on every push). The last two need the three private modules, which `tools/fetch-modules.sh`
+clones over SSH with one **read-only deploy key per module repository** (secrets `DEPLOY_KEY_COLDMAIL_VERIFY`,
+`DEPLOY_KEY_COLDMAIL_SEND_MANAGED`, `DEPLOY_KEY_COLDMAIL_SEND_BYO` on this repository); a missing, wrong or revoked key turns the
+job red — it never skips. Hex strings that look like commits but are not (agent ids, a commit of the private parent) are listed
+with reasons in `tools/non-commit-hex.txt`.
 
 The three modules live as sibling directories under `coldmail/`, each its own independent git
 repository with its own history, its own `CLAUDE.md` / `PROJECT_RULES.md`, and its own CI gates:

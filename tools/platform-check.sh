@@ -8,9 +8,13 @@
 #   3. every cross-repo citation (../coldmail-*/path) resolves in <layout-root>          needs the three module repositories
 #   4. every commit sha cited in a `backtick` resolves to a commit in one of the four    needs the three module repositories
 #
-# --checks selects a subset (default: all four). The CI workflow runs 1 and 2 on every push (they need only this repository); 3 and 4 need the private module
-# repositories checked out beside it, which the workflow does only when the CROSS_REPO_READ secret exists, and says so loudly when it does not.
-# Skipped checks are NAMED in the output — a check that did not run is never silently green.
+# --checks selects a subset (default: all four). The CI workflow runs ALL FOUR on every push: 3 and 4 need the three private module repositories beside this one,
+# which tools/fetch-modules.sh clones over SSH with read-only per-repository deploy keys (and goes RED if any key is missing, wrong or revoked — there is no skip path).
+# Check 3 and check 4 each refuse to run (red) when a module repository is absent from the layout. Checks not selected are NAMED in the output — never silently green.
+#
+# Check 4 is strict: a backticked 7–40 hex string that resolves to no commit in any of the four repositories is RED unless tools/non-commit-hex.txt lists it with the
+# reason it is not a commit (an agent id, a commit of the private parent repository, …); and a listed entry that no document cites any more is RED too (a stale list
+# hides the next real miss).
 #
 # History: this is a RE-IMPLEMENTATION of four of the five checks of the original runner (cprun.sh, which no longer exists). It is NOT byte-for-byte the
 # original, and the original's check 5 (every sha attributed to a NAMED repo is in that repo) is not re-implemented. A green means the CITATIONS resolve;
@@ -62,10 +66,13 @@ if want 2; then
   [ "$checked" -gt 0 ] || bad "no internal links examined — check 2 would be vacuous"
 else echo "[2] internal markdown links: NOT RUN (not in --checks $CHECKS)"; fi
 
+MODULES="coldmail-verify coldmail-send-managed coldmail-send-byo"
+need_modules() { for m in $MODULES; do [ -d "$ROOT/$m/.git" ] || bad "the layout has no $m (a git repository) beside coldmail-platform — check $1 needs all three module repositories"; done; }
+
 # 3. cross-repo citations
 if want 3; then
   echo "[3] cross-repo citations (../coldmail-*/...)"; xr=0; xbad=0
-  [ -d "$ROOT/coldmail-verify" ] || bad "the layout has no coldmail-verify beside coldmail-platform — check 3 needs the module repositories"
+  need_modules 3
   for f in $(git ls-files '*.md'); do
     d=$(dirname "$f")
     for l in $(grep -o -E '\.\./coldmail-[a-z-]+/[^) `"'"'"'#:]+' "$f" | sort -u); do
@@ -77,14 +84,27 @@ else echo "[3] cross-repo citations: NOT RUN (not in --checks $CHECKS)"; fi
 # 4. cited shas
 miss="n/a"
 if want 4; then
-  echo "[4] cited commit shas"; tot=0; ok=0; miss=0
-  for s in $(git ls-files '*.md' | xargs grep -h -o -E '`[0-9a-f]{7,40}`' | tr -d '`' | sort -u); do
+  echo "[4] cited commit shas"; tot=0; ok=0; miss=0; allowed=0; AL="$P/tools/non-commit-hex.txt"
+  need_modules 4
+  [ -f "$AL" ] || bad "tools/non-commit-hex.txt is missing — check 4 has no way to tell an id from a commit"
+  cited=$(git ls-files '*.md' | xargs grep -h -o -E '`[0-9a-f]{7,40}`' | tr -d '`' | sort -u)
+  for s in $cited; do
     tot=$((tot+1)); found=0
     for r in coldmail-verify coldmail-send-managed coldmail-send-byo coldmail-platform .; do
       [ -e "$ROOT/$r/.git" ] && git -C "$ROOT/$r" cat-file -e "$s^{commit}" 2>/dev/null && { found=1; break; }
     done
-    if [ $found = 1 ]; then ok=$((ok+1)); else miss=$((miss+1)); echo "  UNRESOLVED (may be a non-commit hex string, e.g. an id or hash): $s"; fi
-  done; echo "    candidates: $tot  resolve to a commit: $ok  unresolved: $miss"
+    if [ $found = 1 ]; then ok=$((ok+1))
+    elif [ -f "$AL" ] && grep -q -E "^$s\|" "$AL"; then allowed=$((allowed+1))
+    else miss=$((miss+1)); bad "$s is cited as a commit, resolves to none in the four repositories, and is not in tools/non-commit-hex.txt"; fi
+  done
+  # a listed entry nothing cites any more is stale, and a stale list hides the next real miss
+  stale=0
+  if [ -f "$AL" ]; then
+    for h in $(grep -v -E '^[[:space:]]*(#|$)' "$AL" | cut -d'|' -f1); do
+      printf '%s\n' "$cited" | grep -q -x "$h" || { stale=$((stale+1)); bad "tools/non-commit-hex.txt lists $h but no document cites it any more — remove the entry"; }
+    done
+  fi
+  echo "    candidates: $tot  resolve to a commit: $ok  listed as not-a-commit: $allowed  unresolved and unlisted: $miss  stale list entries: $stale"
 else echo "[4] cited commit shas: NOT RUN (not in --checks $CHECKS)"; fi
 echo "RESULT: checks run = $CHECKS ; structural failures = $fail ; unresolved sha candidates (4) = $miss"
 [ "$fail" -eq 0 ]

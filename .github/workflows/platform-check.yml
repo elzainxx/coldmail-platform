@@ -1,21 +1,24 @@
-# coldmail-platform is a documentation-only repository, so "the suite" is its citations. tools/platform-check.sh is that suite.
+# coldmail-platform is a documentation-only repository, so "the suite" is its citations. tools/platform-check.sh is that suite, and ALL FOUR of its checks run here on every push:
 #
-# Checks 1 and 2 need only this repository and run on EVERY push and pull request:
-#   1. every tracked JSON file parses   — python in Docker (digest-pinned), on the runner. This was the check that could not run on the owner's machine
-#                                         after Docker stopped starting (2026-11-12); it used to be stubbed there. It now runs here, for real.
+#   1. every tracked JSON file parses           — python in Docker (digest-pinned), on the runner
 #   2. every relative markdown link resolves to a file
+#   3. every cross-repo citation (../coldmail-*/path) resolves in the three module repositories
+#   4. every cited commit SHA resolves to a commit in one of the four repositories (non-commit hex ids are listed, with reasons, in tools/non-commit-hex.txt)
 #
-# Checks 3 and 4 (cross-repo citations resolve; cited commit SHAs exist) need the three module repositories checked out beside this one. They are PRIVATE, and
-# a workflow's default token cannot read a sibling repository, so those two run only when a repository secret CROSS_REPO_READ exists (a fine-grained token with
-# read access to contents on coldmail-verify, coldmail-send-managed and coldmail-send-byo). Without it the job says, in a warning annotation, that 3 and 4 did NOT
-# run — a skipped check is never reported as a pass. Setting that secret is an owner action (coldmail-parent/OWNER-ACTIONS.md).
+# Checks 3 and 4 need the three PRIVATE module repositories beside this one. A workflow's default token cannot read a sibling repository and a personal access token
+# would carry the owner's whole account, so tools/fetch-modules.sh clones each module over SSH with its OWN read-only DEPLOY KEY (one key per repository, created with
+# `gh repo deploy-key add`, no --allow-write; the private half is an Actions secret here: DEPLOY_KEY_COLDMAIL_VERIFY, DEPLOY_KEY_COLDMAIL_SEND_MANAGED, DEPLOY_KEY_COLDMAIL_SEND_BYO).
 #
-# Each run first proves the checks can fail: a scratch copy with an unparseable JSON file must fail check 1, and one with a broken link must fail check 2.
+# There is NO skip path: no `if:` around the fetch, no warning-and-continue. A missing, empty, malformed, unknown, revoked or wrong-repository key turns the job red. A check
+# that silently did not run is a false green. The controls below prove each of those ways of being wrong — and a missing module, a broken citation, an unlisted unresolved
+# SHA and a stale list entry — really does go red. The weekly schedule exists so a key revoked or expired while nobody pushes shows up as a red run, not as silence.
 name: platform-check
 on:
   push:
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: '17 5 * * 1'
 
 permissions:
   contents: read
@@ -24,7 +27,9 @@ jobs:
   check:
     runs-on: ubuntu-latest
     env:
-      CROSS_REPO_TOKEN: ${{ secrets.CROSS_REPO_READ }}
+      DEPLOY_KEY_COLDMAIL_VERIFY: ${{ secrets.DEPLOY_KEY_COLDMAIL_VERIFY }}
+      DEPLOY_KEY_COLDMAIL_SEND_MANAGED: ${{ secrets.DEPLOY_KEY_COLDMAIL_SEND_MANAGED }}
+      DEPLOY_KEY_COLDMAIL_SEND_BYO: ${{ secrets.DEPLOY_KEY_COLDMAIL_SEND_BYO }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -34,7 +39,7 @@ jobs:
       - name: Checks 1 and 2 — every tracked JSON file parses; every internal link resolves
         run: bash coldmail-platform/tools/platform-check.sh "$GITHUB_WORKSPACE" --checks 1,2
 
-      - name: Controls — the checks go red on a bad JSON file and on a broken link (a scratch copy)
+      - name: Controls 1 and 2 — the checks go red on a bad JSON file and on a broken link (a scratch copy)
         run: |
           set -u +e   # the checks are EXPECTED to exit non-zero here; the runner starts bash with -e
           S="$RUNNER_TEMP/control"; rm -rf "$S"; mkdir -p "$S"; cp -r coldmail-platform "$S/coldmail-platform"
@@ -50,19 +55,56 @@ jobs:
           [ "$rc" -ne 0 ] && grep -q "zz-control-does-not-exist.md" "$RUNNER_TEMP/c2.log" || { echo "CONTROL FAILED: check 2 did not go red on a broken link (rc=$rc)"; exit 1; }
           echo "controls hold: check 1 red on bad JSON, check 2 red on a broken link"
 
-      - name: Check out the three module repositories beside this one (needs the CROSS_REPO_READ secret)
-        if: env.CROSS_REPO_TOKEN != ''
-        run: |
-          set -euo pipefail
-          for r in coldmail-verify coldmail-send-managed coldmail-send-byo; do
-            git clone -q --no-tags "https://x-access-token:${CROSS_REPO_TOKEN}@github.com/${GITHUB_REPOSITORY_OWNER}/${r}.git" "$GITHUB_WORKSPACE/$r"
-          done
+      - name: Fetch the three module repositories over SSH with their read-only deploy keys (red if any key is missing, wrong or revoked)
+        run: bash coldmail-platform/tools/fetch-modules.sh "$GITHUB_WORKSPACE"
 
-      - name: Checks 3 and 4 — cross-repo citations resolve; cited commit SHAs exist
-        if: env.CROSS_REPO_TOKEN != ''
-        run: bash coldmail-platform/tools/platform-check.sh "$GITHUB_WORKSPACE"
-
-      - name: Say plainly that checks 3 and 4 did not run
-        if: env.CROSS_REPO_TOKEN == ''
+      - name: Controls — the fetch goes red on a missing key, a malformed key, an unknown (revoked) key, another repository's key, and a key it cannot prove read-only
         run: |
-          echo "::warning title=platform-check 3 and 4 did NOT run::The cross-repo citation check and the cited-SHA check need the three private module repositories, and the CROSS_REPO_READ secret is not set. Checks 1 and 2 ran and passed; 3 and 4 are unverified by CI (run tools/platform-check.sh locally with the four repositories side by side)."
+          set -u +e   # every case below EXPECTS a non-zero exit; the runner starts bash with -e
+          F="$GITHUB_WORKSPACE/coldmail-platform/tools/fetch-modules.sh"; D="$RUNNER_TEMP/fetch-control"
+          # a perfectly well-formed ed25519 key that GitHub has never seen: exactly what a revoked or never-registered key looks like to GitHub
+          ssh-keygen -q -t ed25519 -N '' -C unknown-to-github -f "$RUNNER_TEMP/unknown-key"; UNKNOWN="$(cat "$RUNNER_TEMP/unknown-key")"
+          expect_red() {   # <case name> <repo that must be named in a FAIL line> <substring that FAIL line must carry> -- then VAR=value overrides for the fetch
+            name="$1"; repo="$2"; sub="$3"; shift 4; rm -rf "$D"
+            out="$(env "$@" bash "$F" "$D" 2>&1)"; rc=$?
+            printf '%s\n' "$out" | sed 's/^/    | /'
+            [ "$rc" -ne 0 ] || { echo "CONTROL FAILED [$name]: the fetch exited 0"; exit 1; }
+            printf '%s\n' "$out" | grep -q "FAIL: $repo: .*$sub" || { echo "CONTROL FAILED [$name]: no FAIL line for $repo carrying '$sub'"; exit 1; }
+            printf '%s\n' "$out" | grep -q "PRIVATE KEY" && { echo "CONTROL FAILED [$name]: key material appeared in the output"; exit 1; }
+            echo "  control holds: $name -> red, naming $repo"
+          }
+          expect_red "missing key"                 coldmail-send-managed "is missing or empty"        -- DEPLOY_KEY_COLDMAIL_SEND_MANAGED=
+          expect_red "malformed key"               coldmail-send-byo     "not a usable private key"   -- "DEPLOY_KEY_COLDMAIL_SEND_BYO=this is not a key"
+          expect_red "unknown or revoked key"      coldmail-send-byo     "could not clone over SSH"   -- "DEPLOY_KEY_COLDMAIL_SEND_BYO=$UNKNOWN"
+          expect_red "another repository's key"    coldmail-send-managed "could not clone over SSH"   -- "DEPLOY_KEY_COLDMAIL_SEND_MANAGED=$DEPLOY_KEY_COLDMAIL_VERIFY"
+          # the read-only assertion is only proven to discriminate: aim its write probe at a repository the keys cannot see, so GitHub answers anything but "marked as read only"
+          expect_red "read-only not confirmed"     coldmail-verify       "could not confirm the deploy key is read-only" -- FETCH_PROBE_REPO=coldmail-platform
+          rm -rf "$D"; echo "controls hold: five ways of a bad key are each red"
+
+      - name: Checks 3 and 4 — cross-repo citations resolve; cited commit SHAs exist (against fresh full clones)
+        run: bash coldmail-platform/tools/platform-check.sh "$GITHUB_WORKSPACE" --checks 3,4
+
+      - name: Controls 3 and 4 — the checks go red on a broken citation, an unlisted unresolved SHA, a stale list entry, and a missing module repository (a scratch copy)
+        run: |
+          set -u +e
+          S="$RUNNER_TEMP/control34"
+          fresh() { rm -rf "$S"; mkdir -p "$S"; cp -r coldmail-platform "$S/coldmail-platform"; for m in coldmail-verify coldmail-send-managed coldmail-send-byo; do ln -s "$GITHUB_WORKSPACE/$m" "$S/$m"; done; }
+          expect_red() {   # <name> <checks> <substring the output must carry>
+            name="$1"; checks="$2"; sub="$3"
+            out="$(bash "$S/coldmail-platform/tools/platform-check.sh" "$S" --checks "$checks" 2>&1)"; rc=$?
+            printf '%s\n' "$out" | sed 's/^/    | /'
+            [ "$rc" -ne 0 ] && printf '%s\n' "$out" | grep -q -F -- "$sub" || { echo "CONTROL FAILED [$name]: rc=$rc and no '$sub' in the output"; exit 1; }
+            echo "  control holds: $name -> red"
+          }
+          # sanity: the scratch layout itself is green, so the reds below are caused by the planted fault and nothing else
+          fresh; out="$(bash "$S/coldmail-platform/tools/platform-check.sh" "$S" --checks 3,4 2>&1)"; rc=$?; [ "$rc" -eq 0 ] || { printf '%s\n' "$out"; echo "CONTROL FAILED: the unmodified scratch layout is not green (rc=$rc)"; exit 1; }
+          fresh; printf '\nSee ../coldmail-verify/zz-control-no-such-file.md for nothing.\n' >> "$S/coldmail-platform/README.md"
+          expect_red "check 3: a broken cross-repo citation" 3 "zz-control-no-such-file.md"
+          fresh; printf '\nA made-up commit `0123456789abcdef` cited in prose.\n' >> "$S/coldmail-platform/README.md"
+          expect_red "check 4: a cited SHA that is no commit and is not listed" 4 "0123456789abcdef is cited as a commit"
+          fresh; printf 'deadbeefcafe0|control: an entry no document cites\n' >> "$S/coldmail-platform/tools/non-commit-hex.txt"
+          expect_red "check 4: a stale list entry" 4 "lists deadbeefcafe0 but no document cites it"
+          fresh; rm "$S/coldmail-send-byo"
+          expect_red "check 3: a module repository absent from the layout" 3 "the layout has no coldmail-send-byo"
+          expect_red "check 4: a module repository absent from the layout" 4 "the layout has no coldmail-send-byo"
+          rm -rf "$S"; echo "controls hold: checks 3 and 4 are red on a broken citation, an unlisted SHA, a stale entry and a missing module"

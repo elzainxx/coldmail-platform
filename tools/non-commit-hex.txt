@@ -1,0 +1,16 @@
+# non-commit-hex.txt — backticked hex strings in the platform's documents that are NOT commits of the four repositories.
+# platform-check.sh check 4 resolves every backticked 7-40 hex string as a commit; one that resolves to none is RED unless it is listed here with the reason.
+# An entry that no document cites any more is RED too, so this list cannot rot. Format: <hex>|<what it is> (lines starting with # and blank lines are ignored).
+#
+# Agent ids of the 2026-08 module-comparison run (module-comparison-report.md): identifiers of subagents, not commits.
+a3a34c35|agent id: module-comparison inventory of M1
+adb4a833|agent id: module-comparison inventory of M2
+a3e64160|agent id: module-comparison inventory of M3
+af46521e|agent id: module-comparison verification of the M2 inventory
+a057ed3c|agent id: module-comparison verification of the M3 inventory (interrupted, unanswered)
+a47cf8a0|agent id: module-comparison verification agent (interrupted, unanswered)
+abb27526|agent id: module-comparison verification agent (never returned, unanswered)
+a47dd609|agent id: module-comparison verification agent (never returned, unanswered)
+# A commit of the PRIVATE PARENT repository (elzainxx/coldmail, 2026-11-07 "Re-pin all four modules: force LF line endings"). The parent is not one of the four repositories
+# this check resolves against and no deploy key is issued for it, so CI cannot resolve it; it was verified from the parent's own clone on 2026-11-14.
+1a6536b|commit of the private parent repository (outside the four-repository layout)

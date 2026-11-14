@@ -92,7 +92,8 @@ scan, so there is no point at which to hold it from outside the statement. The v
   **Its first run was red** ([43595733248](https://github.com/elzainxx/coldmail-platform/actions/runs/43595733248)): checks 1 and 2 passed for real, then the control step died silently on the first *expected* red exit, because the runner
   starts `bash -e`. Fixed with `set +e`. **Checks 3 and 4** (cross-repo citations; cited SHAs) need the three private module repositories, which a workflow's token cannot read: they run in CI only when the owner adds the
   `CROSS_REPO_READ` secret, and until then the job says so in a warning annotation. They were run here with all four repositories side by side: 3 citations, 0 broken; 90 cited-SHA candidates, 81 resolve, 9 do not (they are
-  hex-shaped ids and hashes, not commits — the same nine as before).
+  hex-shaped ids and hashes, not commits — the same nine as before). **Superseded the same day (seventh pass, C2):** checks 3 and 4 now run in CI on every push through read-only deploy keys, and check 4 was made able to
+  fail — in this pass it only *printed* the nine unresolved strings and could never go red.
 
 ---
 
