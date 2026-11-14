@@ -20,6 +20,23 @@ evidence — a green from it would be the absence of an execution, not the succe
 
 ---
 
+## Seventh pass, 2026-11-14 — rulings recorded, merged branches deleted, cross-repo read access by deploy keys, the last unforced path forced
+
+**Ground rule of this pass.** Unchanged: Docker is down on the owner's machine, so the GitHub runner is the only test environment, and every run below was read back from GitHub (`gh api`) for its head commit and
+conclusion before it was written here. The sections are filled in chunk by chunk, each after its runner result.
+
+### C1 — rulings
+
+- **Copy verdicts.** The owner accepted the two PASS verdicts for the account-event reason strings (ruling 2026-11-14). Recorded in `coldmail-send-byo/Docs/user-facing-copy.md` §2.4 with both strings quoted verbatim, and
+  the item removed from `OWNER-ACTIONS.md`.
+- **Merged branches deleted — with the owner's authorization, three branches, nothing else.** Before each delete, GitHub's compare API (`compare/main...<branch>`) had to say `ahead_by=0` with `merge_base` equal to the branch tip,
+  i.e. the tip is an ancestor of `main`: `coldmail-send-byo/contention-fix` tip `be30ddee28`; `coldmail-send-byo/copy-ledger-2` tip `54d9d34fd6`; `coldmail-send-managed/contention-fix` tip `6a06e0d795`. After the deletes the
+  branch lists are `main` only in M2 and M3. **Every one of the 53 run URLs cited in this file was read from GitHub before and after the deletes: the two listings are byte-identical** (42 success, 11 failure — the failures are the
+  runs that record a red control or a defect found, and are cited as such), and the head commits of the seven runs that were on the deleted branches still resolve. Runs belong to the repository, not to the branch.
+  `coldmail-verify` still has four `phase-*` branches; they were not part of the authorization and were not touched.
+
+---
+
 ## Sixth pass, 2026-11-14 — the concurrency test made deterministic, the user-copy ledger gate built, and the secret scan and JSON check moved onto the runner
 
 **Ground rule of this pass.** Docker does not start on the owner's machine (VT-x off in firmware since 2026-11-12), so **the GitHub runner was the only test environment**. No Go was run anywhere else. Every run below was checked
@@ -60,7 +77,7 @@ scan, so there is no point at which to hold it from outside the statement. The v
   [43595376630](https://github.com/elzainxx/coldmail-send-byo/actions/runs/43595376630)): the three-way equality passed, and the completeness scan flagged six SQL `CASE` expressions as prose — a defect in my heuristic, fixed
   (SQL-only tokens are not copy) and re-proven ([43595584182](https://github.com/elzainxx/coldmail-send-byo/actions/runs/43595584182)).
   **What it found:** two user-visible strings the 2026-08 audit never covered — `account_events.reason` is returned to the user verbatim and two fixed strings are written there. They are now a fourth surface in the ledger with
-  PASS verdicts in `user-facing-copy.md` §2.4; **those two verdicts are my judgment, and the ruling reserves that judgment for the owner** (listed in `OWNER-ACTIONS.md`). **It cannot** check that a row's evidence is true, and its list of
+  PASS verdicts in `user-facing-copy.md` §2.4; **those two verdicts were my judgment, and the ruling reserved that judgment for the owner — who accepted both on 2026-11-14 (seventh pass).** **It cannot** check that a row's evidence is true, and its list of
   files that render copy is curated (`copySites`): a NEW file that renders copy has to be added to it.
 - **Doc status stamps.** Every "checked against the code on / Verified / Status date / re-measured" stamp in the living docs of all five repositories said 2026-11-09 (the brief's date); they now carry the date the document was
   actually last changed (2026-11-13, or 2026-11-14 for the M3 documents edited that day). Ruling dates and C1 landing dates of 2026-11-09 stay: they are events, not currency claims. The stamps that cited evidence (M1's
