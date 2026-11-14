@@ -11,11 +11,71 @@ evidence — a green from it would be the absence of an execution, not the succe
 
 ---
 
-> **Seven records live in this file.** The section directly below is the **current** one (2026-11-13, fifth pass: the documentation unification and the close). Under it, the fourth pass (2026-11-09: the last
+> **Eight records live in this file.** The section directly below is the **current** one (2026-11-14, sixth pass: the concurrency test, the user-copy ledger gate, secret scans and JSON check on the runner). Under it, the fifth
+> pass (2026-11-13: the documentation unification and the close), the fourth pass (2026-11-09: the last
 > code fixes), then the third pass (2026-11-09: all three code repositories green on GitHub Actions). Under it, the second pass (2026-11-08) and the *first pass* of the same day (module 3 still
 > red) are kept as written, as is the 2026-11-07 section, which describes **local** Docker Desktop runs — read that one as a record of what ran
 > locally, **not** of what is green. Everything from "The four repos" onward is the **August 2026 record, kept as written**:
 > its commit hashes and counts describe the trees as they were on 2026-08-07.
+
+---
+
+## Sixth pass, 2026-11-14 — the concurrency test made deterministic, the user-copy ledger gate built, and the secret scan and JSON check moved onto the runner
+
+**Ground rule of this pass.** Docker does not start on the owner's machine (VT-x off in firmware since 2026-11-12), so **the GitHub runner was the only test environment**. No Go was run anywhere else. Every run below was checked
+against GitHub (`gh run view`) for its head commit and conclusion before being written here.
+
+**Final heads, all green on the runner:**
+
+| repo | head | GitHub Actions run | result |
+|---|---|---|---|
+| `coldmail-verify` (M1) | `fa19f3b` | [43596190815](https://github.com/elzainxx/coldmail-verify/actions/runs/43596190815) | **success, 11 of 11 jobs** (docs-only commit over the green `de8b2a5`) |
+| `coldmail-send-managed` (M2) | `1a1e678` | [43596231677](https://github.com/elzainxx/coldmail-send-managed/actions/runs/43596231677) | **success** — harness `62 passed, 0 failed`; 17 gate scripts |
+| `coldmail-send-byo` (M3) | `477a8da` | [43597197507](https://github.com/elzainxx/coldmail-send-byo/actions/runs/43597197507) | **success** — harness `101 passed, 0 failed`; 22 gate scripts; both new gates and both paired controls green |
+| `coldmail-platform` | `6a97ffa` + this record | — | `gitleaks` and `platform-check` green, below |
+
+### C1 — FW-M3-22, the concurrency test (M3 and M2)
+
+`TestAccountConsume_NeverExceedsDailyLimit_ConcurrentLanes` (M3) and `TestAccountConsume_NeverExceedsDailyLimit` (M2) guard the double-booking ceiling and had failed once on a commit with no executable change (M3 run
+43445719147: "only 1 worker(s) ever succeeded"). The proof that the race was real was statistical, and under `SKIP LOCKED` nothing makes the lock fair. Rewritten so the contention is **built**: one slot left, one consume parked on a
+test-held advisory-lock gate while it holds that slot (proven parked by a `pg_stat_activity` scoped by database, query fragment and `wait_event`), seven peers released against it and all required to be refused while
+`daily_sent_count` is still `limit-1` (so a refusal can only be contention, never exhaustion), then the holder completes and capacity is gone for everyone. The volume phase keeps every invariant and *logs* the overlap instead of judging it.
+
+| proof | M3 | M2 |
+|---|---|---|
+| the gate on the real code, and four mutants that must each go red (`noskip` SKIP LOCKED removed, `mutex` consume serialised, `noceiling` limit and paused predicates removed, `nogate` the gate trigger disarmed) — each with its own signature | [43593853877](https://github.com/elzainxx/coldmail-send-byo/actions/runs/43593853877), harness 100/0 | [43594048091](https://github.com/elzainxx/coldmail-send-managed/actions/runs/43594048091), harness 62/0 |
+| the test **50 times** on a branch push: `count=50 passed=50 failed=0 forced_evidence=50` | [43593853940](https://github.com/elzainxx/coldmail-send-byo/actions/runs/43593853940) | [43594048182](https://github.com/elzainxx/coldmail-send-managed/actions/runs/43594048182) |
+| the same 50x by `workflow_dispatch` on **main** (`consume-contention-repeat.yml`): 50 passed, 0 failed | [43595052970](https://github.com/elzainxx/coldmail-send-byo/actions/runs/43595052970) | [43595056121](https://github.com/elzainxx/coldmail-send-managed/actions/runs/43595056121) |
+| `real-infra` on main after the merge | [43594916402](https://github.com/elzainxx/coldmail-send-byo/actions/runs/43594916402), 100/0 | [43595025876](https://github.com/elzainxx/coldmail-send-managed/actions/runs/43595025876), 62/0 |
+
+**Not forced, and said so in the code, the docs and `future-work.md`:** the MVCC re-check path (a peer whose statement snapshot predates the holder's commit but whose scan follows it). Under SKIP LOCKED a peer never waits between snapshot and
+scan, so there is no point at which to hold it from outside the statement. The volume phase still exercises it, and asserts its invariants, but no longer claims to prove its overlap.
+
+### C2 — loose ends
+
+- **FW-M3-21, the user-copy ledger gate (M3).** `services/control/internal/copyledger` (three tests, in the harness) + `user_copy_ledger.sh` + `user_copy_ledger_selftest.sh`. Every site that renders or passes through a user-facing
+  string carries `// copy-ledger: <id>`; the code's ids, `Docs/user-copy-strings.txt` and the tables of `Docs/user-facing-copy.md` must be the same set (each direction named), every row needs a real evidence claim, and every prose literal
+  in a file that renders copy must be marked. Six deliberate breaks of a scratch copy (row deleted, unledgered sentence added, orphan row, verdict deleted, marker deleted, placeholder evidence) each turn it red with their own signature:
+  [43596392147](https://github.com/elzainxx/coldmail-send-byo/actions/runs/43596392147) (branch tip, harness 101/0) and the final main run above. **The gate's first run was red once** (quick workflow
+  [43595376630](https://github.com/elzainxx/coldmail-send-byo/actions/runs/43595376630)): the three-way equality passed, and the completeness scan flagged six SQL `CASE` expressions as prose — a defect in my heuristic, fixed
+  (SQL-only tokens are not copy) and re-proven ([43595584182](https://github.com/elzainxx/coldmail-send-byo/actions/runs/43595584182)).
+  **What it found:** two user-visible strings the 2026-08 audit never covered — `account_events.reason` is returned to the user verbatim and two fixed strings are written there. They are now a fourth surface in the ledger with
+  PASS verdicts in `user-facing-copy.md` §2.4; **those two verdicts are my judgment, and the ruling reserves that judgment for the owner** (listed in `OWNER-ACTIONS.md`). **It cannot** check that a row's evidence is true, and its list of
+  files that render copy is curated (`copySites`): a NEW file that renders copy has to be added to it.
+- **Doc status stamps.** Every "checked against the code on / Verified / Status date / re-measured" stamp in the living docs of all five repositories said 2026-11-09 (the brief's date); they now carry the date the document was
+  actually last changed (2026-11-13, or 2026-11-14 for the M3 documents edited that day). Ruling dates and C1 landing dates of 2026-11-09 stay: they are events, not currency claims. The stamps that cited evidence (M1's
+  `future-work.md` and `go-live-checklist.md`) now cite the final green run.
+- **Secret scan on the runner.** `gitleaks.yml` in all five repositories: gitleaks 8.30.1, SHA-256 verified before it runs, and proven on every run (clean repository → 0, planted token → 1, token only in deleted history → 1) before
+  it scans the full history. Runs: platform [43595733212](https://github.com/elzainxx/coldmail-platform/actions/runs/43595733212), M1 [43595923111](https://github.com/elzainxx/coldmail-verify/actions/runs/43595923111), M2
+  [43595929003](https://github.com/elzainxx/coldmail-send-managed/actions/runs/43595929003), parent [43595937875](https://github.com/elzainxx/coldmail/actions/runs/43595937875), M3
+  [43597197485](https://github.com/elzainxx/coldmail-send-byo/actions/runs/43597197485) — all success. It does not replace the scan **before** a push, which was run with a checksum-verified native gitleaks (Docker being down), the release
+  carrying no signature or attestation.
+- **`platform-check` check 1, un-stubbed, on the runner.** `tools/platform-check.sh` moved into this repository (with a `--checks` selector; the old path is a wrapper) and runs on every push: check 1 parses the 5 tracked JSON files with
+  python in Docker (digest-pinned), check 2 resolves the internal links, and two controls must go red (an unparseable JSON file; a broken link). [43595865171](https://github.com/elzainxx/coldmail-platform/actions/runs/43595865171) is green.
+  **Its first run was red** ([43595733248](https://github.com/elzainxx/coldmail-platform/actions/runs/43595733248)): checks 1 and 2 passed for real, then the control step died silently on the first *expected* red exit, because the runner
+  starts `bash -e`. Fixed with `set +e`. **Checks 3 and 4** (cross-repo citations; cited SHAs) need the three private module repositories, which a workflow's token cannot read: they run in CI only when the owner adds the
+  `CROSS_REPO_READ` secret, and until then the job says so in a warning annotation. They were run here with all four repositories side by side: 3 citations, 0 broken; 90 cited-SHA candidates, 81 resolve, 9 do not (they are
+  hex-shaped ids and hashes, not commits — the same nine as before).
 
 ---
 
