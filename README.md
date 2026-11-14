@@ -1,7 +1,10 @@
 # coldmail-platform
 
-Cross-module documentation for the **coldmail** platform. This repo holds nothing that runs —
-it holds the decisions that span the three modules, plus the evidence behind them.
+Cross-module documentation for the **coldmail** platform. This repo holds no product code —
+it holds the decisions that span the three modules, plus the evidence behind them. Two things run on it in CI
+(`.github/workflows/`): a full-history secret scan (`gitleaks.yml`) and `tools/platform-check.sh`
+(`platform-check.yml`: every JSON file parses, every internal link resolves; the cross-repo citation and
+cited-SHA checks run too when the `CROSS_REPO_READ` secret lets the workflow read the private modules).
 
 The three modules live as sibling directories under `coldmail/`, each its own independent git
 repository with its own history, its own `CLAUDE.md` / `PROJECT_RULES.md`, and its own CI gates:

@@ -1,0 +1,68 @@
+# coldmail-platform is a documentation-only repository, so "the suite" is its citations. tools/platform-check.sh is that suite.
+#
+# Checks 1 and 2 need only this repository and run on EVERY push and pull request:
+#   1. every tracked JSON file parses   — python in Docker (digest-pinned), on the runner. This was the check that could not run on the owner's machine
+#                                         after Docker stopped starting (2026-11-12); it used to be stubbed there. It now runs here, for real.
+#   2. every relative markdown link resolves to a file
+#
+# Checks 3 and 4 (cross-repo citations resolve; cited commit SHAs exist) need the three module repositories checked out beside this one. They are PRIVATE, and
+# a workflow's default token cannot read a sibling repository, so those two run only when a repository secret CROSS_REPO_READ exists (a fine-grained token with
+# read access to contents on coldmail-verify, coldmail-send-managed and coldmail-send-byo). Without it the job says, in a warning annotation, that 3 and 4 did NOT
+# run — a skipped check is never reported as a pass. Setting that secret is an owner action (coldmail-parent/OWNER-ACTIONS.md).
+#
+# Each run first proves the checks can fail: a scratch copy with an unparseable JSON file must fail check 1, and one with a broken link must fail check 2.
+name: platform-check
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      CROSS_REPO_TOKEN: ${{ secrets.CROSS_REPO_READ }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: coldmail-platform
+          fetch-depth: 0
+
+      - name: Checks 1 and 2 — every tracked JSON file parses; every internal link resolves
+        run: bash coldmail-platform/tools/platform-check.sh "$GITHUB_WORKSPACE" --checks 1,2
+
+      - name: Controls — the checks go red on a bad JSON file and on a broken link (a scratch copy)
+        run: |
+          set -uo pipefail
+          S="$RUNNER_TEMP/control"; rm -rf "$S"; mkdir -p "$S"; cp -r coldmail-platform "$S/coldmail-platform"
+          git -C "$S/coldmail-platform" config user.email ci@example.invalid; git -C "$S/coldmail-platform" config user.name ci
+          printf '{ this is not json' > "$S/coldmail-platform/zz-control-bad.json"; git -C "$S/coldmail-platform" add zz-control-bad.json
+          bash "$S/coldmail-platform/tools/platform-check.sh" "$S" --checks 1 >"$RUNNER_TEMP/c1.log" 2>&1; rc=$?
+          cat "$RUNNER_TEMP/c1.log"
+          [ "$rc" -ne 0 ] && grep -q "zz-control-bad.json" "$RUNNER_TEMP/c1.log" || { echo "CONTROL FAILED: check 1 did not go red on an unparseable JSON file (rc=$rc)"; exit 1; }
+          git -C "$S/coldmail-platform" rm -q -f zz-control-bad.json
+          printf '\nSee [nowhere](./zz-control-does-not-exist.md).\n' >> "$S/coldmail-platform/README.md"
+          bash "$S/coldmail-platform/tools/platform-check.sh" "$S" --checks 2 >"$RUNNER_TEMP/c2.log" 2>&1; rc=$?
+          cat "$RUNNER_TEMP/c2.log"
+          [ "$rc" -ne 0 ] && grep -q "zz-control-does-not-exist.md" "$RUNNER_TEMP/c2.log" || { echo "CONTROL FAILED: check 2 did not go red on a broken link (rc=$rc)"; exit 1; }
+          echo "controls hold: check 1 red on bad JSON, check 2 red on a broken link"
+
+      - name: Check out the three module repositories beside this one (needs the CROSS_REPO_READ secret)
+        if: env.CROSS_REPO_TOKEN != ''
+        run: |
+          set -euo pipefail
+          for r in coldmail-verify coldmail-send-managed coldmail-send-byo; do
+            git clone -q --no-tags "https://x-access-token:${CROSS_REPO_TOKEN}@github.com/${GITHUB_REPOSITORY_OWNER}/${r}.git" "$GITHUB_WORKSPACE/$r"
+          done
+
+      - name: Checks 3 and 4 — cross-repo citations resolve; cited commit SHAs exist
+        if: env.CROSS_REPO_TOKEN != ''
+        run: bash coldmail-platform/tools/platform-check.sh "$GITHUB_WORKSPACE"
+
+      - name: Say plainly that checks 3 and 4 did not run
+        if: env.CROSS_REPO_TOKEN == ''
+        run: |
+          echo "::warning title=platform-check 3 and 4 did NOT run::The cross-repo citation check and the cited-SHA check need the three private module repositories, and the CROSS_REPO_READ secret is not set. Checks 1 and 2 ran and passed; 3 and 4 are unverified by CI (run tools/platform-check.sh locally with the four repositories side by side)."
