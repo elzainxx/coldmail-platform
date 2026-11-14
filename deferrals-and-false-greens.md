@@ -213,7 +213,7 @@ from theory:
   (no `:latest`/untagged image anywhere; Mailpit, CoreDNS and the DNS black-hole fixture pinned by digest; 13-case selftest);
   `check-gemfile-lock` (a committed `Gemfile.lock` installed frozen, agreeing with Door 5's pin; 14-case selftest); and the
   Postgres-outage drill on a runner for both senders (22/22 each — see `verification-runs.md`).
-- **Not controlled — stated so it is not mistaken for coverage** (rewritten 2026-11-09, final close): the `image_pins` shell-tooling scan is a **heuristic** — an image from
+- **Not controlled — stated so it is not mistaken for coverage** (rewritten 2026-11-13, final close): the `image_pins` shell-tooling scan is a **heuristic** — an image from
   a repository name it does not know is invisible to it; in the sender repositories a `${...}`-interpolated `image:` line cannot be read statically (it is counted in the gate's output,
   not checked); the ESP / provider behaviour that only a real send can show (the real-provider smoke tests) and the real port-25 host (V1–V5) are owner-only steps in the parent
   repository's `OWNER-ACTIONS.md`, not tests. *Closed 2026-11-09 and therefore no longer listed as open:* Ruby 3.2 end-of-life (moved to 3.4.12, M1 ADR-0018 addendum 2); the
