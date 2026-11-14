@@ -34,6 +34,30 @@ conclusion before it was written here. The sections are filled in chunk by chunk
   branch lists are `main` only in M2 and M3. **Every one of the 53 run URLs cited in this file was read from GitHub before and after the deletes: the two listings are byte-identical** (42 success, 11 failure — the failures are the
   runs that record a red control or a defect found, and are cited as such), and the head commits of the seven runs that were on the deleted branches still resolve. Runs belong to the repository, not to the branch.
   `coldmail-verify` still has four `phase-*` branches; they were not part of the authorization and were not touched.
+- **C1's runs on the runner.** `coldmail-send-byo` `9677267` (the ruling): [real-infra 43631809891](https://github.com/elzainxx/coldmail-send-byo/actions/runs/43631809891) — success, harness `101 passed, 0 failed`; its
+  [gitleaks 43631809940](https://github.com/elzainxx/coldmail-send-byo/actions/runs/43631809940) success. Platform `df7d8cc`: [platform-check 43631812473](https://github.com/elzainxx/coldmail-platform/actions/runs/43631812473) and
+  [gitleaks 43631812523](https://github.com/elzainxx/coldmail-platform/actions/runs/43631812523) success. Parent 6d27f13 (a commit of the private parent repository, so not backticked — check 4 cannot resolve it): [gitleaks 43631815659](https://github.com/elzainxx/coldmail/actions/runs/43631815659) success.
+
+### C2 — cross-repo read access without a personal access token
+
+Three ed25519 keypairs, one per module repository (a deploy key belongs to exactly one repository), created with `ssh-keygen` and registered with `gh repo deploy-key add` **without** `--allow-write`: GitHub reports each as
+`read_only=true, verified=true` (ids 169900977 `coldmail-verify`, 169900980 `coldmail-send-managed`, 169900981 `coldmail-send-byo`). The private halves are Actions secrets on `coldmail-platform`
+(`DEPLOY_KEY_COLDMAIL_VERIFY`, `DEPLOY_KEY_COLDMAIL_SEND_MANAGED`, `DEPLOY_KEY_COLDMAIL_SEND_BYO`) and were overwritten and deleted from the machine straight after; no key text was ever written inside a repository. Tested before the
+private files were deleted: each key reads its own repository; a write is refused by GitHub ("The key you are authenticating with has been marked as read only"); `coldmail-verify`'s key cannot see `coldmail-send-byo`.
+
+`tools/fetch-modules.sh` clones the three modules over SSH with them (GitHub's ed25519 host key pinned, `StrictHostKeyChecking=yes`) and has **no skip path**: a missing, empty, malformed, unknown/revoked or wrong-repository key is
+red and names the repository, and each key must be provable read-only (a `push --dry-run` must be refused as read-only; anything else is red). `platform-check.yml` has no `if:` around it and no warning-and-continue; a weekly schedule makes a
+key revoked while nobody pushes show up as a red run. Checks 3 and 4 therefore run on every push, against **fresh full clones**:
+
+| run | head | result |
+|---|---|---|
+| [43632395307](https://github.com/elzainxx/coldmail-platform/actions/runs/43632395307) | `cccc07b` | **red, and the red was the control doing its job.** The real fetch passed (all three keys, read-only confirmed) and four of the five fetch controls held (missing key, malformed key, unknown/revoked key, another repository's key). The fifth — "the read-only assertion goes red when it cannot confirm read-only" — **failed**: I had aimed the write probe at a repository the key cannot see, assuming GitHub would then answer something else; GitHub refuses a read-only key's *write* before it looks the repository up and answers "marked as read only" regardless. The control proved nothing, and said so. |
+| [43632591866](https://github.com/elzainxx/coldmail-platform/actions/runs/43632591866) | `09a5851` | **success.** The probe control now points at a closed local port (`ssh: connect … Connection refused`, never the read-only message), and the assertion goes red on it. All of: checks 1–2 and their controls; the real fetch (`coldmail-verify` @ `fa19f3b` 87 commits, `coldmail-send-managed` @ `1a1e678` 221, `coldmail-send-byo` @ `9677267` 296, each key confirmed read-only); five fetch controls; **check 3: 3 citations, 0 broken; check 4: 97 candidates, 88 resolve to a commit, 9 listed as not-a-commit, 0 unresolved and unlisted, 0 stale**; and five controls on 3 and 4 (a broken citation, an unlisted unresolved SHA, a stale list entry, and a missing module repository — for check 3 and for check 4 — each red). |
+
+**What the first real run of check 4 found out about check 4.** It used to *print* "UNRESOLVED (may be a non-commit hex string)" for nine strings and then pass: it could not go red, so running it in CI would have been a false green. It now fails on any
+backticked hex string that is no commit in the four repositories unless `tools/non-commit-hex.txt` lists it with a reason, and on a listed entry nothing cites. The nine are eight subagent ids in `module-comparison-report.md` and one commit of the
+private *parent* repository (`1a6536b`, verified from the parent's own clone), which the three-key layout cannot resolve and which has no key of its own. **What this does not claim:** that a SHA resolves to a commit says nothing about whether the prose
+around it is true, and the allowlist's reasons are human statements.
 
 ---
 
