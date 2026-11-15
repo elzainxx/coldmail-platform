@@ -6,7 +6,7 @@
 #   run.sh --dsn DSN --platform-dir DIR --modules-root DIR [--known FILE] [--preprovision FILE] [--label NAME]
 #     DSN             the NON-superuser `postgres` role of the Supabase image, e.g. postgres://postgres:ci@localhost:5432/postgres (the database in it is the one migrated)
 #     --known         the committed list of expected blockers for THIS pass; default: known-blockers.txt beside this script
-#     --preprovision  a SQL file applied as `postgres` after the pre-flight and BEFORE the chains, with ON_ERROR_STOP=1 (tests/supabase/preprovision.sql is the proposed no-module-change
+#     --preprovision  a SQL file applied as `postgres` right after stage a and BEFORE every chain, with ON_ERROR_STOP=1 (tests/supabase/preprovision.sql is the proposed no-module-change
 #                     fix). If it fails the pass is RED and the chains are not run: a report about a provisioning that did not happen would be a report about nothing.
 #                     Without it the pass shows what the migrations do with NO provisioning at all (the baseline).
 #     --label         a name for the pass (letters, digits, . _ -), printed in every banner and in the result line; the workflow runs two passes, BASELINE and FIXED
@@ -19,14 +19,15 @@
 #
 # STAGES (each prints a banner; each ends in a hard assertion; a failed assertion is remembered and the run goes on where that still produces evidence, and the verdict is RED):
 #   0  inputs      the platform checkout, the three module checkouts and psql exist
-#   a  instrument  the migrating role is `f|t` for (rolsuper, rolcreaterole) — a superuser is RED: "not Supabase-shaped"; facts about the image are printed; a CONTROL file of three
-#                  statements whose outcome is known (one refused, one failing on a missing table, one fine) is run through the REAL psql and the classifier must read exactly that
-#   b  pre-flight  the platform fixture tables (module 2's own 00-platform-fixtures.sql, applied as `postgres` IN THE DATABASE OF THE DSN; reported, never counted as a blocker), then
-#                  module 2's and module 3's db/preflight/check_platform_tables.sql, which must pass
+#   a  instrument  the migrating role is `f|t` for (rolsuper, rolcreaterole) — a superuser is RED: "not Supabase-shaped"; auth.users must exist in the pass's database (RED: "it was not
+#                  cloned from the pristine image database"); facts about the image are printed; a CONTROL file of three statements whose outcome is known (one refused, one failing on a
+#                  missing table, one fine) is run through the REAL psql and the classifier must read exactly that
 #   p  provisioning  --preprovision FILE applied with ON_ERROR_STOP=1 (or "none"); the migrator's memberships of the two owner roles are printed afterwards
-#   c  chains     platform, module 1, module 2, module 3 — each file on its own, `psql -X -b -v ON_ERROR_STOP=0 -v VERBOSITY=verbose -f FILE` (no -1: every statement autocommits, so one
-#                  failure does not poison the rest). Each chain must contain at least one file. Every failure is classified (BLOCKER | CASCADE; see classify.sh) and tabulated
-#   d  compare     the BLOCKER set against known-blockers.txt: NEW BLOCKER / STALE ENTRY / malformed / duplicate is red; exit 0 only when none
+#   b  chains      the PLATFORM chain first (platform_0001 creates public.users and public.job_items: there is no module fixture), then those two tables are asserted to exist and be owned by
+#                  platform_owner, then module 2's and module 3's db/preflight/check_platform_tables.sql (a failing one is red with its output), then module 1, module 2, module 3 — each file
+#                  on its own, `psql -X -b -v ON_ERROR_STOP=0 -v VERBOSITY=verbose -f FILE` (no -1: every statement autocommits, so one failure does not poison the rest). Each chain must
+#                  contain at least one file. Every failure is classified (BLOCKER | CASCADE; see classify.sh) and tabulated
+#   c  compare     the BLOCKER set against known-blockers.txt: NEW BLOCKER / STALE ENTRY / malformed / duplicate is red; exit 0 only when none
 # and finally prints what it did NOT check.
 #
 # INSTRUMENT GUARDS (a classifier that silently reads nothing would be a green with no subject): psql must exit 0 on every file (a failed statement is not a failed psql); the number of
@@ -117,6 +118,9 @@ case "$shape" in
   t\|*)  die "not Supabase-shaped: the migrating role is a superuser ((rolsuper, rolcreaterole) = ($shape)). Every privilege failure this job exists to find would be invisible.";;
   *)     die "not Supabase-shaped: (rolsuper, rolcreaterole) of the migrating role is ($shape), expected (f|t)";;
 esac
+au="$(q "select to_regclass('auth.users') is not null")" || die "could not ask the database whether auth.users exists"
+if [ "$au" = t ]; then echo "  ok: auth.users exists in this pass's database (the pass database is a clone of the pristine image database; platform_0001 needs it)"
+else die "the pass database has no auth.users: it was not cloned from the pristine image database"; fi
 echo "  facts (what the image is; none of these is an assertion):"
 echo "  version:"; fact "select version()"
 echo "  auth schema / auth.users:"; fact "select to_regnamespace('auth') is not null as auth_schema_exists, to_regclass('auth.users') is not null as auth_users_exists"
@@ -190,29 +194,6 @@ else
   raw_dump "$WORK/raw/control.zz_instrument_control.sql.stderr"
 fi
 
-# ── b. pre-flight ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-STAGE=preflight; banner b "PRE-FLIGHT — the platform fixture tables, then each module's check_platform_tables.sql"
-FIXTURE="$M2/deploy/pg-init/00-platform-fixtures.sql"
-echo "  the platform's real public.users / public.job_items do not exist until Phase 1 chunk B2; module 2's own fixture stands in (applied as postgres, recorded as 'fixture', never a blocker)"
-if [ -f "$FIXTURE" ]; then
-  run_file fixture "$FIXTURE"
-  if [ "$RF_FAILS" -eq 0 ]; then echo "  fixture: applied cleanly"
-  else echo "  fixture: $RF_FAILS statement(s) FAILED (reported, not counted as blockers):"; bash "$CLASSIFY" --table "$WORK/rec.fixture.tsv" | sed 's/^/  /'; fi
-else
-  red "the fixture file is missing: $FIXTURE"
-fi
-have="$(q "select to_regclass('public.users') is not null, to_regclass('public.job_items') is not null")" || have="query failed"
-if [ "$have" = "t|t" ]; then echo "  public.users and public.job_items exist"
-else red "PRE-FLIGHT: public.users / public.job_items do not both exist after the fixture ((users, job_items) = $have): the module chains will fail on their foreign keys"; fi
-for pair in "m2:$M2" "m3:$M3"; do
-  mod="${pair%%:*}"; dir="${pair#*:}"; pf="$dir/db/preflight/check_platform_tables.sql"
-  if [ ! -f "$pf" ]; then red "PRE-FLIGHT: $(basename "$dir") ships no db/preflight/check_platform_tables.sql (its migrator runs it before the chain)"; continue; fi
-  run_file "preflight-$mod" "$pf"
-  if [ "$RF_FAILS" -eq 0 ] && [ "$RF_PROBLEM" -eq 0 ]; then echo "  pre-flight $mod: PASS"
-  else red "PRE-FLIGHT $mod: check_platform_tables.sql FAILED ($RF_FAILS failure(s)): $(awk -F'\t' 'NR==1 {print $6}' "$WORK/rec.preflight-$mod.tsv" | bash "$CLASSIFY" --decode | head -1)"; fi
-done
-echo "  module 1 (coldmail-verify) ships no pre-flight file: its chain has no foreign key into a platform table"
-
 # ── p. provisioning ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 STAGE=provision
 if [ -n "$PREPROV" ]; then banner p "PROVISIONING — $(basename "$PREPROV") applied as postgres with ON_ERROR_STOP=1, before the chains"
@@ -231,8 +212,10 @@ else
   echo "  none: nothing is applied before the chains (roles are cluster-wide: a role an earlier pass created in this cluster is already here)"
 fi
 
-# ── c. chains ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-STAGE=chains; banner c "CHAINS — one file at a time, every statement autocommitted, every failure recorded"
+# ── b. chains ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+# Order: the PLATFORM chain first (platform_0001 creates public.users and public.job_items itself: there is no module fixture any more), then the two tables are asserted, then module 2's and
+# module 3's pre-flight (a failing one is red with its output, not a cascade), then module 1, module 2, module 3.
+STAGE=chains; banner b "CHAINS — platform, then the module pre-flights, then module 1, 2, 3; one file at a time, every statement autocommitted, every failure recorded"
 chain_files() {
   case "$1" in
     platform) find "$PLATFORM_DIR/db/migrations" -maxdepth 1 -type f -name 'platform_*.up.sql';;
@@ -242,10 +225,11 @@ chain_files() {
   esac 2> /dev/null | LC_ALL=C sort
 }
 declare -A NFILES=()
-for c in platform m1 m2 m3; do
+run_chain() {   # run_chain NAME — every file of the chain in order; the count is printed and kept in NFILES; a chain that matched nothing is red
+  local c="$1" list n f
   list="$(chain_files "$c")"; n=0; [ -z "$list" ] || n="$(printf '%s\n' "$list" | wc -l | tr -d ' ')"
   NFILES[$c]="$n"
-  if [ "$n" -lt 1 ]; then red "chain $c matched 0 migration files: the instrument matched nothing, so it would have passed vacuously"; continue; fi
+  if [ "$n" -lt 1 ]; then red "chain $c matched 0 migration files: the instrument matched nothing, so it would have passed vacuously"; return 0; fi
   echo "  chain $c: $n file(s), $(basename "$(printf '%s\n' "$list" | head -1)") .. $(basename "$(printf '%s\n' "$list" | tail -1)")"
   : > "$WORK/rec.$c.tsv"
   while IFS= read -r f; do
@@ -253,10 +237,31 @@ for c in platform m1 m2 m3; do
     if [ "$RF_FAILS" -eq 0 ]; then echo "    [$c] $(basename "$f"): clean"
     else echo "    [$c] $(basename "$f"): $RF_FAILS failure(s) ($RF_BLK blocker, $RF_CAS cascade)"; fi
   done <<< "$list"
+}
+run_chain platform
+
+echo "  the platform's own tables (platform_0001), asserted before any module runs:"
+tabs="$(q "select coalesce((select pg_get_userbyid(relowner)::text from pg_class where oid = to_regclass('public.users')), '-') || '|' || coalesce((select pg_get_userbyid(relowner)::text from pg_class where oid = to_regclass('public.job_items')), '-')")" || tabs="query failed"
+if [ "$tabs" = "platform_owner|platform_owner" ]; then echo "  ok: public.users and public.job_items exist and are owned by platform_owner (created by the platform's own migrations)"
+else red "platform_0001 did not create the public tables: (owner of public.users | owner of public.job_items) = ($tabs), want (platform_owner|platform_owner); '-' means the table does not exist. The module pre-flights and chains below depend on them."; fi
+
+echo "  module pre-flights (each module's db/preflight/check_platform_tables.sql, run as postgres; module 1 ships none: its chain has no foreign key into a platform table):"
+for pair in "m2:$M2" "m3:$M3"; do
+  mod="${pair%%:*}"; dir="${pair#*:}"; pf="$dir/db/preflight/check_platform_tables.sql"
+  if [ ! -f "$pf" ]; then red "PRE-FLIGHT: $(basename "$dir") ships no db/preflight/check_platform_tables.sql (its migrator runs it before the chain)"; continue; fi
+  run_file "preflight-$mod" "$pf"
+  if [ "$RF_FAILS" -eq 0 ] && [ "$RF_PROBLEM" -eq 0 ]; then echo "  pre-flight $mod: PASS"
+  else
+    red "PRE-FLIGHT $mod: check_platform_tables.sql FAILED ($RF_FAILS failure(s)): $(awk -F'\t' 'NR==1 {print $6}' "$WORK/rec.preflight-$mod.tsv" | bash "$CLASSIFY" --decode | head -1)"
+    echo "    its output (the statement that failed and its message):"; bash "$CLASSIFY" --table "$WORK/rec.preflight-$mod.tsv" | sed 's/^/  /'
+  fi
 done
+run_chain m1
+run_chain m2
+run_chain m3
 
 { printf '#chain\tfile\tline\tsqlstate\tclass\tmessage\tstatement\tdetail\n'
-  for c in control fixture preflight-m2 preflight-m3 platform m1 m2 m3; do [ ! -f "$WORK/rec.$c.tsv" ] || cat "$WORK/rec.$c.tsv"; done; } > "$REPORT"
+  for c in control platform preflight-m2 preflight-m3 m1 m2 m3; do [ ! -f "$WORK/rec.$c.tsv" ] || cat "$WORK/rec.$c.tsv"; done; } > "$REPORT"
 
 echo
 echo "  EVERY FAILED STATEMENT (chain, file:line, SQLSTATE, class, first 160 characters of the statement, then the message):"
@@ -269,8 +274,8 @@ for c in platform m1 m2 m3; do
 done
 echo "  machine-readable report: $REPORT"
 
-# ── d. compare ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-STAGE=compare; banner d "COMPARE — the observed BLOCKER set against $(basename "$KNOWN")"
+# ── c. compare ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+STAGE=compare; banner c "COMPARE — the observed BLOCKER set against $(basename "$KNOWN")"
 cmpout="$(bash "$CLASSIFY" --compare "$KNOWN" --chains "$CHAINS_JUDGED" "$REPORT" 2>&1)"; cmprc=$?
 printf '%s\n' "$cmpout" | sed 's/^/  /'
 [ "$cmprc" -eq 0 ] || red "the observed blocker set differs from $(basename "$KNOWN") (see NEW BLOCKER / STALE ENTRY / MALFORMED / DUPLICATE above)"
@@ -295,8 +300,7 @@ cat <<'EOF'
   - runtime behaviour of the modules: migrations only. No service, worker or integration test ran on this image.
   - transaction shape: psql ran each statement in autocommit, one by one. The modules' migrators run each file in ONE transaction, so there a failing statement aborts the rest of the
     file (25P02 for everything after it) and keeps nothing of it; here the later statements run, so some CASCADE rows above would not occur there and others would read 25P02.
-  - the platform's real public.users / public.job_items: module 2's fixture stands in until Phase 1 chunk B2.
-  - the database is the one in the DSN: roles are CLUSTER-wide, so a role that an earlier pass of the same job created in this cluster is already here (and is found by the modules' IF NOT EXISTS guards); tables, schemas and fixtures are per database.
+  - the database is the one in the DSN: roles are CLUSTER-wide, so a role that an earlier pass of the same job created in this cluster is already here (and is found by the modules' IF NOT EXISTS guards); tables and schemas are per database (each pass runs in its own clone of the pristine image database, so the platform's public.users and public.job_items are created by the platform's own migrations in each).
   - which failures are blockers is a classification of SQLSTATE and message text (see classify.sh); a non-privilege failure that is a real incompatibility (a missing extension, say)
     is listed as a CASCADE and is not judged, so the CASCADE rows are read by a person.
 EOF
