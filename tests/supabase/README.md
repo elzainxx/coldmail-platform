@@ -6,25 +6,26 @@
 |---|---|
 | [`run.sh`](run.sh) | one pass: instrument check, optional provisioning, the platform chain, the module pre-flights, the three module chains, the table of failures, the comparison with a known list, and the list of what it did not check |
 | [`classify.sh`](classify.sh) | the text half: psql's failure output to records, the BLOCKER / CASCADE classification, the comparison. No database needed |
-| [`classify-selftest.sh`](classify-selftest.sh) | the paired control: recorded-shape psql output, every way the comparison can go red, and `run.sh` itself driven with a fake psql (options, provisioning failure path, the two-pass design of the workflow); each reject case asserts its reason |
+| [`classify-selftest.sh`](classify-selftest.sh) | the paired control: recorded-shape psql output, every way the comparison can go red, and `run.sh` itself driven with a fake psql (options, provisioning failure path, the two-leg, two-container structure of the workflow); each reject case asserts its reason |
 | [`preprovision.sql`](preprovision.sql) | the proposed no-module-change fix (see below) |
 | [`baseline-blockers.txt`](baseline-blockers.txt) | the blockers expected WITHOUT the fix (pass BASELINE) |
 | [`known-blockers.txt`](known-blockers.txt) | the blockers expected WITH the fix (pass FIXED); the goal is an empty list |
 
-## Two passes, one job
+## Two legs, two containers
 
-The workflow runs `run.sh` twice against the **same cluster**, each pass in its **own clone of the pristine image database**, so that the effect of the fix is measured and not assumed. A step before both passes runs `CREATE DATABASE baseline TEMPLATE postgres` and `CREATE DATABASE fixed TEMPLATE postgres` (as `postgres`, which must hold `CREATEDB`; asserted). It connects to `template1`, because a session on `postgres` would make the template "in use", and retries up to five times when Postgres still says the template is being accessed by other sessions (Supabase may have background workers connected for a moment), saying so. The database `postgres` itself is never touched. Both clones carry the image's own `auth` schema, `auth.users` and extensions, which `platform_0001` needs.
+`supabase-migrations` is a **matrix of exactly two legs**, `BASELINE` and `FIXED`, and every leg has its **own service container**: each pass starts from a pristine image database `postgres` (with the image's own `auth` schema, `auth.users` and extensions, which `platform_0001` needs) and a pristine cluster, so the effect of the fix is measured and not assumed, and **roles are no longer shared between the passes**. Both legs migrate the database `postgres` as the role `postgres`.
 
-| Pass | Database | Provisioning | Compared with |
-|---|---|---|---|
-| `BASELINE` | `baseline` | none | `baseline-blockers.txt` — what fails without the fix: the evidence that it is needed |
-| `FIXED` | `fixed` | `preprovision.sql`, applied with `ON_ERROR_STOP=1` before the chains | `known-blockers.txt` |
+| Leg | Provisioning | Compared with |
+|---|---|---|
+| `BASELINE` | none | `baseline-blockers.txt` — what fails without the fix: the evidence that it is needed |
+| `FIXED` | `preprovision.sql`, applied with `ON_ERROR_STOP=1` before the chains | `known-blockers.txt` |
 
-- Both passes run even if the first is red (`if: always()` on the FIXED step only), and the job fails if either failed.
-- **Roles are cluster-wide**, so pass FIXED sees the roles pass BASELINE created. That is intended: `preprovision.sql` is idempotent and grants the migrator on roles that already exist, which is the state of a real project whose roles an earlier, failed migration created. Schemas and tables are per database, so each pass creates its own, **including `public.users` and `public.job_items`: they are the platform's (`platform_0001`), and there is no module fixture any more**.
+- **Why a container per pass and not two databases in one.** The first design cloned the image's `postgres` database twice (`CREATE DATABASE ... TEMPLATE postgres`). On the runner that failed five times out of five with `source database "postgres" is being accessed by other users`: Supabase's own background workers hold connections that a non-superuser cannot terminate, so `postgres` cannot be used as a template. A fresh container per pass is the clean way to isolate them.
+- Matrix legs run independently (`fail-fast: false`), so there is no `if:` anywhere in the workflow; the workflow is red when either leg is. The matrix entry names the known list and the provisioning file (empty = none), and the run step builds `--label`, `--known` and, only when the entry names a file, `--preprovision`. Each leg has its own work directory.
+- Schemas and tables are per container, so each pass creates its own, **including `public.users` and `public.job_items`: they are the platform's (`platform_0001`), and there is no module fixture any more**.
 - `run.sh` options: `--known FILE` (the list of this pass), `--preprovision FILE` (applied as `postgres` right after stage a and before every chain; if it fails the pass is RED and the chains are **not** run), `--label NAME` (printed in every banner and in the result line).
 
-**Why the fix.** On PostgreSQL 16+ the creator of a role gets only `ADMIN OPTION` on it (no `SET`, no `INHERIT`), so on Supabase the migrator `postgres` cannot `CREATE SCHEMA ... AUTHORIZATION <owner>` (`must be able to SET ROLE`) or `ALTER DEFAULT PRIVILEGES FOR ROLE <owner>` (`permission denied to change default privileges`). The platform's own bootstrap and module 1's `0016` now grant the migrator their owner roles themselves. Modules 2 and 3 may not be changed from this repository, but their bootstraps create their owner role only if it is missing, so `preprovision.sql` — run once by the migrator before their chains — creates `send_managed_owner` and `send_byo_owner` (NOLOGIN) and grants them to the migrator `WITH INHERIT TRUE, SET TRUE`. It is a proposal: pass FIXED is what shows whether it is enough.
+**Why the fix.** On PostgreSQL 16+ the creator of a role gets only `ADMIN OPTION` on it (no `SET`, no `INHERIT`), so on Supabase the migrator `postgres` cannot `CREATE SCHEMA ... AUTHORIZATION <owner>` (`must be able to SET ROLE`) or `ALTER DEFAULT PRIVILEGES FOR ROLE <owner>` (`permission denied to change default privileges`). The platform's own bootstrap and module 1's `0016` now grant the migrator their owner roles themselves. Modules 2 and 3 may not be changed from this repository, but their bootstraps create their owner role only if it is missing, so `preprovision.sql` — run once by the migrator before their chains — creates `send_managed_owner` and `send_byo_owner` (NOLOGIN) and grants them to the migrator `WITH INHERIT TRUE, SET TRUE`. It is a proposal: leg FIXED is what shows whether it is enough.
 
 ## How to read a run
 
@@ -43,7 +44,7 @@ One line per blocker: `FILE|SQLSTATE|MESSAGE-SUBSTRING` (file = basename; `#` co
 
 - **Module 1 / module 2 / module 3 migrations are not changed from this repository.** An entry for one of them is added **only with the owner's ruling** that the failure is accepted or is being fixed in that module's own repository; when that module is re-pinned and the statement no longer fails, the job goes red with a `STALE ENTRY` and the line is removed.
 - **A `platform_*` migration may be changed.** Fix the migration and remove its entry in the same commit; the job is red until both are done.
-- `preprovision.sql` is the platform's provisioning proposal, not a module file: changing it is changing what pass FIXED measures. If pass FIXED lists nothing, the proposal is sufficient for the pinned modules.
+- `preprovision.sql` is the platform's provisioning proposal, not a module file: changing it is changing what pass FIXED measures. If leg FIXED lists nothing, the proposal is sufficient for the pinned modules.
 - Never list a CASCADE; never loosen a substring to cover two different failures.
 
 ## What this decides

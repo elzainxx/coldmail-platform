@@ -1,30 +1,28 @@
 # The Supabase-shaped migration run: EVERY migration of the platform and of the three modules, run as the NON-superuser `postgres` against a digest-pinned supabase/postgres image,
 # with every failed statement reported (file, line, SQLSTATE, the exact statement) and each pass red unless the set of real BLOCKERS equals its committed list.
 #
-# TWO PASSES in ONE job, against the SAME cluster, each in its OWN CLONE of the pristine image database `postgres` (which stays untouched):
-#   a clone step first runs `CREATE DATABASE baseline TEMPLATE postgres` and `CREATE DATABASE fixed TEMPLATE postgres` (both clones carry the image's own auth schema, auth.users and extensions,
-#   which platform_0001 needs; each pass asserts auth.users in its stage a)
-#   BASELINE  database `baseline`, NO provisioning        -> compared with tests/supabase/baseline-blockers.txt  (what fails without the fix: the evidence that it is needed)
-#   FIXED     database `fixed`, tests/supabase/preprovision.sql applied first (the proposed no-module-change fix: the migrator is granted the module owner roles WITH INHERIT, SET
-#             before the module bootstraps run) -> compared with tests/supabase/known-blockers.txt (goal: empty)
-# Roles are CLUSTER-WIDE, so pass FIXED sees the roles that pass BASELINE created (send_managed_owner, platform_owner, verify_app ...). That is fine and intended: preprovision.sql is
-# idempotent and grants the migrator on roles that already exist, which is exactly the state of a real project whose roles were created by an earlier, failed migration. Schemas and tables
-# are PER DATABASE, so each pass creates its own: public.users and public.job_items are the PLATFORM's (platform_0001), there is no module fixture any more.
-# A clone needs the template to have no other session: the clone step connects to template1 (never to `postgres`), and retries up to five times when Postgres says the template is in use
-# (Supabase may have background workers connected for a moment). The migrating role needs CREATEDB, which the clone step asserts.
-# Both passes run even if the first is red (`if: always()` on the second pass step ONLY), and the job fails if either failed.
+# TWO LEGS, TWO CONTAINERS. `supabase-migrations` is a matrix of exactly two legs, and every leg has its OWN service container, so each pass starts from a pristine image database
+# `postgres` (with the image's own auth schema, auth.users and extensions, which platform_0001 needs) and a pristine cluster: roles are no longer shared between the passes.
+#   BASELINE  NO provisioning                                  -> compared with tests/supabase/baseline-blockers.txt  (what fails without the fix: the evidence that it is needed)
+#   FIXED     tests/supabase/preprovision.sql applied first    -> compared with tests/supabase/known-blockers.txt     (goal: empty). The proposed no-module-change fix: the migrator is
+#             granted the module owner roles WITH INHERIT, SET before the module bootstraps run.
+# Both legs migrate the database `postgres` as the role `postgres`. Why not two databases cloned in one container: the image's own background workers keep connections open on
+# `postgres` that a non-superuser cannot terminate, so `CREATE DATABASE ... TEMPLATE postgres` fails ("being accessed by other users", measured on the runner); a fresh container per pass is
+# the clean way to isolate the passes. Matrix legs run independently (`fail-fast: false`), so no `if:` is needed to make the second leg run when the first is red; the workflow is red when
+# either leg is. public.users and public.job_items are the PLATFORM's (platform_0001); there is no module fixture.
 #
 # WHAT IT PROVES. On Supabase the migrating role `postgres` is not a superuser (the real superuser is `supabase_admin`), while the main harness runs stock Postgres with a superuser,
 # so a migration that needs one (CREATE ROLE with attributes, ALTER ... OWNER TO a role the migrator cannot SET ROLE to, CREATE SCHEMA ... AUTHORIZATION, extensions,
 # ALTER DEFAULT PRIVILEGES FOR ROLE, GRANT ... WITH ADMIN) has never been exercised. This job exercises them and states which ones fail, on the image the platform will really run on.
-# It also proves its own instrument: the role is asserted to be a non-superuser, and a control file of known outcome is read through the real psql before any chain runs.
+# It also proves its own instrument: the role is asserted to be a non-superuser, auth.users is asserted to exist, and a control file of known outcome is read through the real psql
+# before any chain runs.
 #
 # WHAT IT DOES NOT PROVE (tests/supabase/run.sh prints the full list on every run): the pooler (Supavisor), Supabase Auth / GoTrue, PostgREST and the exposed schemas, a real project's
 # RLS defaults, the extensions of the hosted service, a real project's role grants (they differ by project age), the runtime behaviour of any module (migrations only), and the
 # modules' per-file transaction (psql runs each statement in autocommit, so one failure does not abort the rest of its file). It does not change a single migration.
 #
 # The modules are private repositories: tools/fetch-modules.sh clones each with its own READ-ONLY deploy key, at the commits tools/modules.lock pins. There is no skip
-# path: a missing or wrong key turns this job red. The weekly schedule exists so a revoked key, or a moved image, shows up as a red run and not as silence.
+# path: a missing or wrong key turns a leg red. The weekly schedule exists so a revoked key, or a moved image, shows up as a red run and not as silence.
 # The password `ci` is a throwaway for a database that exists only for the duration of the job; it protects nothing.
 name: supabase
 on:
@@ -39,8 +37,19 @@ permissions:
 
 jobs:
   supabase-migrations:
+    name: supabase-migrations (${{ matrix.label }})
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: BASELINE
+            known: baseline-blockers.txt
+            preprovision: ''
+          - label: FIXED
+            known: known-blockers.txt
+            preprovision: tests/supabase/preprovision.sql
     env:
       DEPLOY_KEY_COLDMAIL_VERIFY: ${{ secrets.DEPLOY_KEY_COLDMAIL_VERIFY }}
       DEPLOY_KEY_COLDMAIL_SEND_MANAGED: ${{ secrets.DEPLOY_KEY_COLDMAIL_SEND_MANAGED }}
@@ -68,56 +77,25 @@ jobs:
       - name: Toolchain (printed so a run says what it ran on)
         run: psql --version
 
-      - name: Selftest — the classifier reads psql's failure output, the known-blockers comparison goes red for the named reason on every way it can be wrong, and run.sh's options, stage order and provisioning failure path are exercised with a fake psql (no database)
+      - name: Selftest — the classifier reads psql's failure output, the known-blockers comparison goes red for the named reason on every way it can be wrong, run.sh's options, stage order and provisioning failure path are exercised with a fake psql, and this workflow's two-leg structure is asserted (no database)
         run: bash coldmail-platform/tests/supabase/classify-selftest.sh
 
       - name: Fetch the three modules at the commits tools/modules.lock pins (red if a key is missing or wrong, or a pin is unknown or unreachable)
         run: bash coldmail-platform/tools/fetch-modules.sh --lock coldmail-platform/tools/modules.lock "$GITHUB_WORKSPACE"
 
-      - name: Clone the pristine image database twice — baseline and fixed, each CREATE DATABASE ... TEMPLATE postgres (postgres needs CREATEDB; retried while the template is in use); no pass touches postgres itself
+      - name: Pass ${{ matrix.label }} — every migration as the non-superuser postgres in database postgres of this leg's own container; blockers compared with tests/supabase/${{ matrix.known }}
+        env:
+          S_WORK: ${{ runner.temp }}/supabase-${{ matrix.label }}
+          PASS_LABEL: ${{ matrix.label }}
+          PASS_KNOWN: ${{ matrix.known }}
+          PASS_PREPROVISION: ${{ matrix.preprovision }}
         run: |
           set -euo pipefail
-          # connect to template1: a session on `postgres` would itself make the template "in use"
-          admin=postgres://postgres:ci@localhost:5432/template1
-          can="$(psql -X -w -At -v ON_ERROR_STOP=1 -c "select rolcreatedb from pg_roles where rolname = current_user" "$admin")"
-          [ "$can" = t ] || { echo "RED: the migrating role postgres does not have CREATEDB (rolcreatedb = '$can'), so the clones cannot be created"; exit 1; }
-          clone() {
-            local name="$1" i out
-            for i in 1 2 3 4 5; do
-              if out="$(psql -X -w -v ON_ERROR_STOP=1 -c "CREATE DATABASE $name TEMPLATE postgres" "$admin" 2>&1)"; then
-                echo "created database $name as a clone of postgres (attempt $i)"; return 0
-              fi
-              case "$out" in
-                *"being accessed by other users"*) echo "attempt $i/5: the template database postgres is in use by another session (a Supabase background worker?), so it cannot be cloned yet: $out"; sleep 3;;
-                *) echo "RED: CREATE DATABASE $name TEMPLATE postgres failed for a reason other than the template being in use: $out"; return 1;;
-              esac
-            done
-            echo "RED: the template database postgres stayed in use by other sessions through 5 attempts, so $name could not be cloned from it: $out"; return 1
-          }
-          clone baseline
-          clone fixed
-
-      - name: Pass BASELINE — every migration as the non-superuser postgres in database baseline (a clone of postgres), NO provisioning; blockers compared with tests/supabase/baseline-blockers.txt
-        env:
-          S_WORK: ${{ runner.temp }}/supabase-baseline
-        run: >-
-          bash coldmail-platform/tests/supabase/run.sh
-          --label BASELINE
-          --dsn postgres://postgres:ci@localhost:5432/baseline
-          --platform-dir coldmail-platform
-          --modules-root "$GITHUB_WORKSPACE"
-          --known coldmail-platform/tests/supabase/baseline-blockers.txt
-
-      - name: Pass FIXED — every migration in database fixed (a clone of postgres), tests/supabase/preprovision.sql applied first; blockers compared with tests/supabase/known-blockers.txt
-        # the ONLY `if:` in this job: this pass must run, and report, when pass BASELINE is red. The job still fails if either pass failed.
-        if: always()
-        env:
-          S_WORK: ${{ runner.temp }}/supabase-fixed
-        run: >-
-          bash coldmail-platform/tests/supabase/run.sh
-          --label FIXED
-          --dsn postgres://postgres:ci@localhost:5432/fixed
-          --platform-dir coldmail-platform
-          --modules-root "$GITHUB_WORKSPACE"
-          --preprovision coldmail-platform/tests/supabase/preprovision.sql
-          --known coldmail-platform/tests/supabase/known-blockers.txt
+          args=(--label "$PASS_LABEL"
+                --dsn postgres://postgres:ci@localhost:5432/postgres
+                --platform-dir coldmail-platform
+                --modules-root "$GITHUB_WORKSPACE"
+                --known "coldmail-platform/tests/supabase/$PASS_KNOWN")
+          # the provisioning flag exists only for the leg whose matrix entry names a file (empty = none: the baseline)
+          if [ -n "$PASS_PREPROVISION" ]; then args+=(--preprovision "coldmail-platform/$PASS_PREPROVISION"); fi
+          bash coldmail-platform/tests/supabase/run.sh "${args[@]}"

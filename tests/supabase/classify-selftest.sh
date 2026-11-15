@@ -3,7 +3,7 @@
 # format classify.sh documents) and asserts, for every case, the EXACT chain, file, line, SQLSTATE, class, message and statement text of each record; then it feeds the
 # comparison against known-blockers.txt every way it can be wrong. A second half drives run.sh itself with a FAKE psql (a script that answers the scalar queries, logs each `-f FILE`
 # call with its options and DSN, and prints canned stderr) over a miniature module tree: --label, --preprovision (order, ON_ERROR_STOP=1, the DSN's database, and the failure and
-# missing-file paths, which must be RED and must not run the chains), --known per pass, and the guards. It also reads supabase.yml and preprovision.sql for the two-pass design.
+# missing-file paths, which must be RED and must not run the chains), --known per pass, and the guards. It also reads supabase.yml and preprovision.sql for the two-leg, two-container design.
 #
 # Every REJECT case (a compare that must go red, a usage error) asserts three things, not only a non-zero exit (false-green class 10): the exit status, the REASON text, and
 # the exact NUMBER of each kind of finding (so a fixture that trips a second rule is caught here and not read as the first).
@@ -17,7 +17,7 @@
 set -u -o pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLS="$HERE/classify.sh"
-MIN_CASES=103
+MIN_CASES=105
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 FX="$TMP/fx"; mkdir -p "$FX"
 
@@ -624,34 +624,59 @@ eq not-a-blocker "$(printf '%s\n' "$ROUT" | grep -c 'NEW BLOCKER' || true)" 0; e
 begin "run.sh: a chain that matches no migration file is RED (the instrument matched nothing)"
 fake_reset; rm -f "$TREE"/coldmail-send-byo/db/migrations/*.up.sql; runsh --known "$EMPTYK"; eq rc "$RRC" 1; has reason "$ROUT" 'chain m3 matched 0 migration files: the instrument matched nothing'; finish
 
-echo "classify-selftest: the workflow and preprovision.sql are the two-pass design they claim to be"
+echo "classify-selftest: the workflow is the two-leg, two-container design it claims to be; preprovision.sql is the fix it claims to be"
 WF="$HERE/../../.github/workflows/supabase.yml"; PV="$HERE/preprovision.sql"
-step_block() { awk -v start="$1" 'index($0, "- name: " start) { on = 1; print; next } on && /^      - / { exit } on { print }' "$WF"; }   # one step of the workflow, from its `- name:` line to the next step
-CLONE_BLOCK="$(step_block 'Clone the pristine')"; BASE_BLOCK="$(step_block 'Pass BASELINE')"; FIXED_BLOCK="$(step_block 'Pass FIXED')"
-begin "supabase.yml: exactly ONE step has an if:, it is 'if: always()', and it is the FIXED pass (the baseline pass has none; the job fails if either failed)"
+NONCOMMENT="$(grep -v '^ *#' "$WF" 2> /dev/null || true)"   # the workflow without its comment lines: the claims below are about what it DOES, not about what its header says
+step_block() { awk -v start="$1" 'index($0, "- name: " start) { on = 1; print; next } on && /^      - / { exit } on { print }' "$WF"; }   # one step, from its `- name:` line to the next step
+PASS_BLOCK="$(step_block 'Pass ')"
+legs() {         # one line per matrix leg:  label|known|preprovision   (quotes dropped: an empty preprovision is  '')
+  awk -v q="'" '
+    { line = $0; match(line, /^ */); ind = RLENGTH }
+    /^ +include:/ { on = 1; next }
+    on && line !~ /^ *$/ && ind <= 8 { on = 0 }
+    on && /^ +- label:/ { if (l != "") print l "|" k "|" p; l = $3; k = ""; p = ""; next }
+    on && /^ +known:/ { k = $2; next }
+    on && /^ +preprovision:/ { p = line; sub(/^ +preprovision: */, "", p); gsub(q, "", p); next }
+    END { if (l != "") print l "|" k "|" p }' "$WF"
+}
+begin "supabase.yml: ONE job that is a matrix of EXACTLY two legs, fail-fast off; BASELINE = baseline-blockers.txt and NO provisioning, FIXED = known-blockers.txt and tests/supabase/preprovision.sql"
 eq workflow-exists "$([ -f "$WF" ] && echo yes || echo no)" yes
-eq if-count "$(grep -c '^ *if:' "$WF" || true)" 1; eq if-always "$(grep '^ *if:' "$WF" | sed 's/^ *//; s/ *$//')" 'if: always()'
-has if-in-fixed "$FIXED_BLOCK" 'if: always()'; hasnot if-in-baseline "$BASE_BLOCK" 'if:'; has baseline-found "$BASE_BLOCK" 'Pass BASELINE'; finish
+eq legs "$(legs | tr '\n' ' ')" 'BASELINE|baseline-blockers.txt| FIXED|known-blockers.txt|tests/supabase/preprovision.sql '
+eq leg-count "$(grep -c '^ *- label:' "$WF" || true)" 2; has fail-fast "$NONCOMMENT" 'fail-fast: false'; has matrix "$NONCOMMENT" 'matrix:'
+eq one-job "$(awk '/^jobs:/ { on = 1; next } on && /^  [A-Za-z0-9_-]+:/ { n++ } END { print n + 0 }' "$WF")" 1; finish
 
-begin "supabase.yml: two distinct step names; BASELINE = database baseline, baseline-blockers.txt, NO --preprovision; FIXED = database fixed, --preprovision preprovision.sql, known-blockers.txt, and no CREATE DATABASE of its own"
-eq distinct-names "$(grep -c '^      - name: Pass ' "$WF")" 2
-has b-label "$BASE_BLOCK" '--label BASELINE'; has b-db "$BASE_BLOCK" 'localhost:5432/baseline'; hasnot f-no-create "$FIXED_BLOCK" 'CREATE DATABASE'; has b-known "$BASE_BLOCK" '--known coldmail-platform/tests/supabase/baseline-blockers.txt'; hasnot b-no-prov "$BASE_BLOCK" '--preprovision'
-has f-label "$FIXED_BLOCK" '--label FIXED'; has f-db "$FIXED_BLOCK" 'localhost:5432/fixed'; has f-prov "$FIXED_BLOCK" '--preprovision coldmail-platform/tests/supabase/preprovision.sql'; has f-known "$FIXED_BLOCK" '--known coldmail-platform/tests/supabase/known-blockers.txt'
-hasnot f-not-baseline-list "$FIXED_BLOCK" 'baseline-blockers.txt'; finish
+begin "supabase.yml: ONE service container, declared at JOB level (so every matrix leg gets its own), digest-pinned, with the port, password and health-check options kept"
+eq service-count "$(awk '/^    services:/ { on = 1; next } on && /^    [a-z]/ { on = 0 } on && /^      [A-Za-z0-9_-]+:/ { n++ } END { print n + 0 }' "$WF")" 1
+eq image-count "$(printf '%s\n' "$NONCOMMENT" | grep -c 'image:' || true)" 1
+has image "$NONCOMMENT" 'image: supabase/postgres:17.12.0.000@sha256:8630950b489ecc70563300180287a98c192a4a48f5ae00b4febdaeea1abe85de'
+has password "$NONCOMMENT" 'POSTGRES_PASSWORD: ci'; has port "$NONCOMMENT" '- 5432:5432'; has health-cmd "$NONCOMMENT" '--health-cmd "pg_isready -U postgres -h localhost"'
+has health-retries "$NONCOMMENT" '--health-retries 60'; has health-start "$NONCOMMENT" '--health-start-period 30s'
+l_st="$(grep -n '^    strategy:' "$WF" | head -1 | cut -d: -f1)"; l_sv="$(grep -n '^    services:' "$WF" | head -1 | cut -d: -f1)"
+eq strategy-and-services-in-the-same-job "$([ -n "$l_st" ] && [ -n "$l_sv" ] && echo yes || echo no)" yes; finish
 
-begin "supabase.yml: ONE clone step, with no if:, BEFORE both passes: asserts rolcreatedb, then clones baseline AND fixed from TEMPLATE postgres, from a connection to template1, retrying up to 5 times when the template is in use and saying so"
-eq clone-step-found "$([ -n "$CLONE_BLOCK" ] && echo yes || echo no)" yes; hasnot clone-no-if "$CLONE_BLOCK" 'if:'
-has asserts "$CLONE_BLOCK" 'select rolcreatedb'; has clone-baseline "$CLONE_BLOCK" 'clone baseline'; has clone-fixed "$CLONE_BLOCK" 'clone fixed'; has template "$CLONE_BLOCK" 'CREATE DATABASE $name TEMPLATE postgres'
-has connects-template1 "$CLONE_BLOCK" 'localhost:5432/template1'; hasnot never-on-postgres "$CLONE_BLOCK" 'localhost:5432/postgres'
-has retries "$CLONE_BLOCK" 'for i in 1 2 3 4 5'; has in-use-detected "$CLONE_BLOCK" 'being accessed by other users'; has in-use-said "$CLONE_BLOCK" 'the template database postgres is in use by another session'; has gives-up "$CLONE_BLOCK" 'stayed in use by other sessions through 5 attempts'
-na="$(printf '%s\n' "$CLONE_BLOCK" | grep -n 'select rolcreatedb' | head -1 | cut -d: -f1)"; nc="$(printf '%s\n' "$CLONE_BLOCK" | grep -n -- '-c "CREATE DATABASE' | head -1 | cut -d: -f1)"   # the statement itself, not the step's name
-eq assert-before-create "$([ -n "$na" ] && [ -n "$nc" ] && [ "$na" -lt "$nc" ] && echo yes || echo no)" yes
-l_c="$(grep -n '^      - name: Clone the pristine' "$WF" | head -1 | cut -d: -f1)"; l_b="$(grep -n '^      - name: Pass BASELINE' "$WF" | head -1 | cut -d: -f1)"; l_f="$(grep -n '^      - name: Pass FIXED' "$WF" | head -1 | cut -d: -f1)"
-eq clone-before-both-passes "$([ -n "$l_c" ] && [ "$l_c" -lt "$l_b" ] && [ "$l_b" -lt "$l_f" ] && echo yes || echo no)" yes; finish
+begin "supabase.yml: no if: anywhere (a step or a job) and no continue-on-error: matrix legs run independently, so the workflow is red when either leg is"
+eq no-if "$(grep -cE '^ *(- +)?if:' "$WF" || true)" 0; hasnot no-continue-on-error "$NONCOMMENT" 'continue-on-error'; hasnot no-always "$NONCOMMENT" 'always()'; finish
 
-begin "supabase.yml: no pass and no step touches database postgres (it stays pristine): the only DSNs are template1 (the clone step), baseline and fixed"
-eq no-dsn-on-postgres "$(grep -v '^ *#' "$WF" | grep -c '5432/postgres' || true)" 0
-eq dsn-databases "$(grep -v '^ *#' "$WF" | grep -o 'localhost:5432/[a-z0-9]*' | sort | uniq | tr '\n' ' ')" 'localhost:5432/baseline localhost:5432/fixed localhost:5432/template1 '; finish
+begin "supabase.yml: the clone design is gone — no CREATE DATABASE, createdb, TEMPLATE, rolcreatedb or template1 in what the workflow does — and every DSN is the database postgres"
+for w in 'CREATE DATABASE' 'createdb' 'TEMPLATE' 'rolcreatedb' 'template1'; do eq "no $w" "$(printf '%s\n' "$NONCOMMENT" | grep -ci -- "$w" || true)" 0; done
+eq dsn-databases "$(printf '%s\n' "$NONCOMMENT" | grep -o 'localhost:5432/[a-z0-9]*' | sort -u | tr '\n' ' ')" 'localhost:5432/postgres '; finish
+
+begin "supabase.yml: ONE pass step; label, known list and provisioning come from the matrix through env; --preprovision is built only inside the non-empty conditional (no if: key); each leg has its own work directory"
+eq pass-steps "$(grep -c '^      - name: Pass ' "$WF" || true)" 1; has name-label "$PASS_BLOCK" 'Pass ${{ matrix.label }}'
+has env-label "$PASS_BLOCK" 'PASS_LABEL: ${{ matrix.label }}'; has env-known "$PASS_BLOCK" 'PASS_KNOWN: ${{ matrix.known }}'; has env-prov "$PASS_BLOCK" 'PASS_PREPROVISION: ${{ matrix.preprovision }}'
+has work-dir "$PASS_BLOCK" 'S_WORK: ${{ runner.temp }}/supabase-${{ matrix.label }}'
+has label-flag "$PASS_BLOCK" '--label "$PASS_LABEL"'; has known-flag "$PASS_BLOCK" '--known "coldmail-platform/tests/supabase/$PASS_KNOWN"'; has dsn "$PASS_BLOCK" '--dsn postgres://postgres:ci@localhost:5432/postgres'
+eq prov-flag-once "$(printf '%s\n' "$PASS_BLOCK" | grep -c -- '--preprovision' || true)" 1
+has prov-conditional "$PASS_BLOCK" 'if [ -n "$PASS_PREPROVISION" ]; then args+=(--preprovision "coldmail-platform/$PASS_PREPROVISION"); fi'
+has runs-run-sh "$PASS_BLOCK" 'bash coldmail-platform/tests/supabase/run.sh "${args[@]}"'; hasnot no-hardcoded-list "$PASS_BLOCK" 'baseline-blockers.txt'; hasnot no-hardcoded-label "$PASS_BLOCK" '--label BASELINE'; finish
+
+begin "supabase.yml: checkout, toolchain print, selftest and module fetch are all still there, in that order, before the pass step; 40-minute cap on ubuntu-latest; the three deploy keys"
+l_t="$(grep -n '^      - name: Toolchain' "$WF" | head -1 | cut -d: -f1)"; l_s="$(grep -n '^      - name: Selftest' "$WF" | head -1 | cut -d: -f1)"; l_f="$(grep -n '^      - name: Fetch the three modules' "$WF" | head -1 | cut -d: -f1)"; l_p="$(grep -n '^      - name: Pass ' "$WF" | head -1 | cut -d: -f1)"
+eq step-order "$([ -n "$l_t" ] && [ -n "$l_s" ] && [ -n "$l_f" ] && [ -n "$l_p" ] && [ "$l_t" -lt "$l_s" ] && [ "$l_s" -lt "$l_f" ] && [ "$l_f" -lt "$l_p" ] && echo yes || echo no)" yes
+has checkout "$NONCOMMENT" 'path: coldmail-platform'; has fetch-depth "$NONCOMMENT" 'fetch-depth: 0'; has psql-version "$NONCOMMENT" 'run: psql --version'
+has selftest-run "$NONCOMMENT" 'run: bash coldmail-platform/tests/supabase/classify-selftest.sh'; has fetch-lock "$NONCOMMENT" 'fetch-modules.sh --lock coldmail-platform/tools/modules.lock "$GITHUB_WORKSPACE"'
+has timeout "$NONCOMMENT" 'timeout-minutes: 40'; has runs-on "$NONCOMMENT" 'runs-on: ubuntu-latest'
+has key-verify "$NONCOMMENT" 'DEPLOY_KEY_COLDMAIL_VERIFY: ${{ secrets.DEPLOY_KEY_COLDMAIL_VERIFY }}'; has key-managed "$NONCOMMENT" 'DEPLOY_KEY_COLDMAIL_SEND_MANAGED: ${{ secrets.DEPLOY_KEY_COLDMAIL_SEND_MANAGED }}'; has key-byo "$NONCOMMENT" 'DEPLOY_KEY_COLDMAIL_SEND_BYO: ${{ secrets.DEPLOY_KEY_COLDMAIL_SEND_BYO }}'; finish
 
 begin "preprovision.sql: both owner roles, the WITH INHERIT TRUE, SET TRUE grant, and the 'SET' privilege name only after a >= 160000 test (never evaluated on PostgreSQL < 16)"
 has managed "$(cat "$PV")" 'send_managed_owner'; has byo "$(cat "$PV")" 'send_byo_owner'; has grant "$(cat "$PV")" 'GRANT %I TO %I WITH INHERIT TRUE, SET TRUE'; has create "$(cat "$PV")" 'CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB'
