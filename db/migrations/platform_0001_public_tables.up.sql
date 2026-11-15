@@ -76,8 +76,22 @@ COMMENT ON TABLE public.job_items IS 'One rendered message per recipient. Read b
 COMMENT ON COLUMN public.job_items.status IS 'Written as ''pending'' by module 3, never read by a module. The platform owns the vocabulary; it must keep accepting ''pending''.';
 
 -- Ownership: platform_owner owns every object the platform creates. The migrator may SET ROLE to it (platform_0000).
-ALTER TABLE public.users     OWNER TO platform_owner;
-ALTER TABLE public.job_items OWNER TO platform_owner;
+-- ALTER ... OWNER TO needs the NEW owner to hold CREATE on the table's schema (a superuser is exempt, so stock Postgres hides this; Supabase's non-superuser migrator does not: "permission denied
+-- for schema public", measured by the `supabase` workflow). public gives CREATE to nobody by default (PG 15+), so grant it for the two statements and take it away again: no net change. If
+-- platform_owner already held it, nothing is granted and nothing is revoked.
+DO $$
+DECLARE had_create boolean := has_schema_privilege('platform_owner', 'public', 'CREATE');
+BEGIN
+    IF NOT had_create THEN
+        EXECUTE 'GRANT CREATE ON SCHEMA public TO platform_owner';
+    END IF;
+    ALTER TABLE public.users     OWNER TO platform_owner;
+    ALTER TABLE public.job_items OWNER TO platform_owner;
+    IF NOT had_create THEN
+        EXECUTE 'REVOKE CREATE ON SCHEMA public FROM platform_owner';
+    END IF;
+END
+$$;
 
 -- Privileges. Nothing to PUBLIC, and nothing to Supabase's API roles: a table created in public on a Supabase project is otherwise readable through the Data API by anon and authenticated.
 REVOKE ALL ON public.users, public.job_items FROM PUBLIC;

@@ -94,14 +94,14 @@ func TestConstraints_Users(t *testing.T) {
 	})
 }
 
-// TestConstraints_AppSessionTimezoneIsUTC proves platform_0001's `ALTER ROLE platform_app SET timezone = 'UTC'` where it
+// TestConstraints_AppSessionTimezoneIsUTC proves platform_0001's `ALTER ROLE platform_app IN DATABASE <this database> SET timezone = 'UTC'` (database-scoped: roles are cluster-wide) where it
 // matters: on a REAL LOGIN as platform_app (a SET ROLE does not apply a role's settings, so it would prove nothing). The
 // control is that the session setting is live (SET changes what SHOW reports) and that RESET returns to the role's setting.
 // It fails if the role setting is missing, or is not UTC.
 func TestConstraints_AppSessionTimezoneIsUTC(t *testing.T) {
 	s, admin := migratedScratch(t)
 	var settings []string
-	if err := admin.QueryRow(testCtx(t), "SELECT COALESCE((SELECT setconfig FROM pg_db_role_setting WHERE setrole = 'platform_app'::regrole AND setdatabase = 0), ARRAY[]::text[])").Scan(&settings); err != nil {
+	if err := admin.QueryRow(testCtx(t), "SELECT COALESCE((SELECT setconfig FROM pg_db_role_setting WHERE setrole = 'platform_app'::regrole AND setdatabase = (SELECT oid FROM pg_database WHERE datname = current_database())), ARRAY[]::text[])").Scan(&settings); err != nil {
 		t.Fatal(err)
 	}
 	found := false
