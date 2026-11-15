@@ -112,7 +112,7 @@ Ordering principle: the most irreversible parts and the contract test come first
 - **The admin surface is a parallel write path.** Every user-path rule is enforced in the store layer, where all writers pass.
 - Config, not code. Every dial is seeded with a consumer at the commit that seeds it.
 - Base images pinned by digest; CI builds without cache.
-- `Docs/deferrals-and-false-greens.md` lists the twenty false-green classes found so far. Read it before writing gates.
+- [`deferrals-and-false-greens.md`](../deferrals-and-false-greens.md) (repository root) lists the twenty false-green classes found so far. Read it before writing gates.
 
 ---
 

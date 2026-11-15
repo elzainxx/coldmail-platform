@@ -4,7 +4,7 @@
 #   check-test-floors   per-package test-count floor        (also run, on real logs, by the go and web workflows)
 #   check-image-pins    every container image carries a digest, none is :latest
 #   check-migrations    the migration naming / pairing / chain convention
-#   check-gitleaksignore the secret scanner's ignore file may hold only the fingerprints of the planted fault-injection commits
+#   check-gitleaksignore the secret scanner's ignore file holds no entries (fault proofs are patches now, not commits)
 #
 # NOT covered by this file: the secret scan (gitleaks.yml), the docs/citation checks (platform-check.yml), the Go/web builds (go.yml, web.yml)
 # and the real-Postgres + real-module harness (harness.yml).
@@ -23,7 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0       # check-gitleaksignore needs every branch
+          fetch-depth: 0
 
       - name: Selftests — each gate goes red, for the named reason, on each fault it exists to catch
         run: |
