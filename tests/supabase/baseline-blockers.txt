@@ -1,0 +1,25 @@
+# baseline-blockers.txt — the BASELINE pass of the supabase job: the migration statements that FAIL when the platform's and the three modules' migrations are run by the
+# NON-superuser `postgres` of the pinned supabase/postgres image with NO provisioning at all (no --preprovision), in the database `postgres`. Read by tests/supabase/run.sh
+# (--label BASELINE), compared by tests/supabase/classify.sh --compare. The FIXED pass (preprovision.sql applied first, database `fixed`) is compared with known-blockers.txt.
+#
+# FORMAT. Exactly that of known-blockers.txt; one blocker per line:   FILE|SQLSTATE|MESSAGE-SUBSTRING
+#   FILE               the BASENAME of the migration file, e.g. send_managed_0000_bootstrap.up.sql  (no directory)
+#   SQLSTATE           five characters, upper case, e.g. 42501
+#   MESSAGE-SUBSTRING  text that occurs in the error message psql printed (everything after the second bar; it may contain bars). Not empty.
+# Blank lines and lines whose first non-blank character is # are ignored; carriage returns are stripped. The job is red when an observed blocker is covered by no line
+# ("NEW BLOCKER ...") and when a line covers no observed blocker ("STALE ENTRY ..."). Only blockers are listed, never cascades.
+#
+# WHAT BELONGS HERE. The blockers expected WITHOUT the fix, with the module pins of tools/modules.lock and the platform's own migrations as they are: once the platform
+# bootstrap and module 1's 0016 grant their owner roles to the migrator themselves, what remains are module 2's and module 3's (CREATE SCHEMA ... AUTHORIZATION and
+# ALTER DEFAULT PRIVILEGES FOR ROLE their owner, 42501). This file is the evidence that the fix in preprovision.sql is needed; when the modules no longer fail without it, the
+# STALE ENTRY lines say so and the entries are removed. The lead fills it from the first run, as for known-blockers.txt (the run prints ready-to-paste lines).
+#
+# ENTRIES (measured on the runner, supabase/postgres 17.12, run 43763964974 on platform 4f699f3: the platform bootstrap and module 1 0016 no longer appear; these eight are module 2 and module 3 only):
+send_managed_0000_bootstrap.up.sql|42501|must be able to SET ROLE "send_managed_owner"
+send_managed_0000_bootstrap.up.sql|42501|permission denied to change default privileges
+send_managed_0001_create_schema.up.sql|42501|must be able to SET ROLE "send_managed_owner"
+send_managed_0002_create_role.up.sql|42501|permission denied to change default privileges
+send_byo_0000_bootstrap.up.sql|42501|must be able to SET ROLE "send_byo_owner"
+send_byo_0000_bootstrap.up.sql|42501|permission denied to change default privileges
+send_byo_0001_create_schema.up.sql|42501|must be able to SET ROLE "send_byo_owner"
+send_byo_0002_create_role.up.sql|42501|permission denied to change default privileges

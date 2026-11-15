@@ -3,9 +3,13 @@
 # statement that fails (file, line, SQLSTATE, the exact statement). It then passes only if the set of real BLOCKERS equals the committed list tests/supabase/known-blockers.txt:
 # a new blocker, or a listed one that no longer fails, is red. Run by .github/workflows/supabase.yml on a GitHub runner; a run anywhere else is rehearsal, not evidence.
 #
-#   run.sh --dsn DSN --platform-dir DIR --modules-root DIR [--known FILE]
-#     DSN          the NON-superuser `postgres` role of the Supabase image, e.g. postgres://postgres:ci@localhost:5432/postgres
-#     --known      default: known-blockers.txt beside this script
+#   run.sh --dsn DSN --platform-dir DIR --modules-root DIR [--known FILE] [--preprovision FILE] [--label NAME]
+#     DSN             the NON-superuser `postgres` role of the Supabase image, e.g. postgres://postgres:ci@localhost:5432/postgres (the database in it is the one migrated)
+#     --known         the committed list of expected blockers for THIS pass; default: known-blockers.txt beside this script
+#     --preprovision  a SQL file applied as `postgres` after the pre-flight and BEFORE the chains, with ON_ERROR_STOP=1 (tests/supabase/preprovision.sql is the proposed no-module-change
+#                     fix). If it fails the pass is RED and the chains are not run: a report about a provisioning that did not happen would be a report about nothing.
+#                     Without it the pass shows what the migrations do with NO provisioning at all (the baseline).
+#     --label         a name for the pass (letters, digits, . _ -), printed in every banner and in the result line; the workflow runs two passes, BASELINE and FIXED
 #   env: S_WORK = the work directory (default: a new temp directory; raw psql output, per-file records and last-report.tsv are written there, never into the repository)
 #        S_WAIT_SECONDS = how long to wait for the database to accept connections (default 180)
 #
@@ -17,9 +21,10 @@
 #   0  inputs      the platform checkout, the three module checkouts and psql exist
 #   a  instrument  the migrating role is `f|t` for (rolsuper, rolcreaterole) — a superuser is RED: "not Supabase-shaped"; facts about the image are printed; a CONTROL file of three
 #                  statements whose outcome is known (one refused, one failing on a missing table, one fine) is run through the REAL psql and the classifier must read exactly that
-#   b  pre-flight  the platform fixture tables (module 2's own 00-platform-fixtures.sql, applied as `postgres`; reported, never counted as a blocker), then module 2's and module 3's
-#                  db/preflight/check_platform_tables.sql, which must pass
-#   c  chains      platform, module 1, module 2, module 3 — each file on its own, `psql -X -b -v ON_ERROR_STOP=0 -v VERBOSITY=verbose -f FILE` (no -1: every statement autocommits, so one
+#   b  pre-flight  the platform fixture tables (module 2's own 00-platform-fixtures.sql, applied as `postgres` IN THE DATABASE OF THE DSN; reported, never counted as a blocker), then
+#                  module 2's and module 3's db/preflight/check_platform_tables.sql, which must pass
+#   p  provisioning  --preprovision FILE applied with ON_ERROR_STOP=1 (or "none"); the migrator's memberships of the two owner roles are printed afterwards
+#   c  chains     platform, module 1, module 2, module 3 — each file on its own, `psql -X -b -v ON_ERROR_STOP=0 -v VERBOSITY=verbose -f FILE` (no -1: every statement autocommits, so one
 #                  failure does not poison the rest). Each chain must contain at least one file. Every failure is classified (BLOCKER | CASCADE; see classify.sh) and tabulated
 #   d  compare     the BLOCKER set against known-blockers.txt: NEW BLOCKER / STALE ENTRY / malformed / duplicate is red; exit 0 only when none
 # and finally prints what it did NOT check.
@@ -31,19 +36,24 @@ export LC_ALL=C
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLASSIFY="$HERE/classify.sh"
-DSN=""; PLATFORM_DIR=""; MODULES_ROOT=""; KNOWN="$HERE/known-blockers.txt"
-usage() { echo "usage: run.sh --dsn DSN --platform-dir DIR --modules-root DIR [--known FILE]" >&2; exit 2; }
+DSN=""; PLATFORM_DIR=""; MODULES_ROOT=""; KNOWN="$HERE/known-blockers.txt"; PREPROV=""; LABEL=""
+usage() { echo "usage: run.sh --dsn DSN --platform-dir DIR --modules-root DIR [--known FILE] [--preprovision FILE] [--label NAME]" >&2; exit 2; }
 while [ $# -gt 0 ]; do
   case "$1" in
     --dsn)           [ $# -ge 2 ] || usage; DSN="$2"; shift 2;;
     --platform-dir)  [ $# -ge 2 ] || usage; PLATFORM_DIR="$2"; shift 2;;
     --modules-root)  [ $# -ge 2 ] || usage; MODULES_ROOT="$2"; shift 2;;
     --known)         [ $# -ge 2 ] || usage; KNOWN="$2"; shift 2;;
+    --preprovision)  [ $# -ge 2 ] || usage; PREPROV="$2"; shift 2;;
+    --label)         [ $# -ge 2 ] || usage; LABEL="$2"; shift 2;;
     -h|--help)       usage;;
     *)               echo "run.sh: unknown argument: $1" >&2; usage;;
   esac
 done
 [ -n "$DSN" ] && [ -n "$PLATFORM_DIR" ] && [ -n "$MODULES_ROOT" ] || usage
+case "$LABEL" in
+  *[!A-Za-z0-9._-]*) echo "run.sh: invalid --label '$LABEL': letters, digits, . _ - only" >&2; exit 2;;
+esac
 
 WAIT="${S_WAIT_SECONDS:-180}"
 WORK="${S_WORK:-$(mktemp -d)}"; mkdir -p "$WORK/raw" "$WORK/control" || { echo "run.sh: cannot create the work directory $WORK" >&2; exit 2; }
@@ -51,12 +61,12 @@ REPORT="$WORK/last-report.tsv"
 rm -f "$WORK"/rec.*.tsv "$WORK"/raw/* "$REPORT"       # a reused work directory must not carry the records of an earlier run into this one
 CHAINS_JUDGED="platform,m1,m2,m3"
 
-banner() { echo; echo "================ [$1] $2"; }
+banner() { echo; echo "================ ${LABEL:+$LABEL }[$1] $2"; }
 scrub() { printf '%s' "$1" | sed 's#\(://[^:/@]*\):[^@]*@#\1:***@#'; }
 REDS=()
 red() { REDS+=("$1"); [ "${#REDS[@]}" -gt 30 ] || echo "  RED: $1"; }          # after 30 the lines are kept for the final list but no longer echoed (a broken instrument would otherwise print one per file)
 STAGE=start
-die() { echo; echo "SUPABASE-MIGRATIONS RED at stage [$STAGE]: $*"; exit 1; }
+die() { echo; echo "SUPABASE-MIGRATIONS RED${LABEL:+ [$LABEL]} at stage [$STAGE]: $*"; exit 1; }
 q() { psql -X -w -At -F '|' -v ON_ERROR_STOP=1 -c "$1" "$DSN" < /dev/null; }                 # one statement, tuples only, `|`-separated
 fact() { psql -X -w -v ON_ERROR_STOP=1 -c "$1" "$DSN" < /dev/null 2>&1 | sed 's/^/  | /' || true; }   # a fact for the report: never an assertion
 statv() { sed -n "s/^$2=//p" "$1" 2> /dev/null | head -1; }
@@ -80,7 +90,15 @@ echo "  psql:           $(psql --version)"
 echo "  target:         $(scrub "$DSN")"
 echo "  platform:       $PLATFORM_DIR"
 for m in "$M1" "$M2" "$M3"; do echo "  $(basename "$m"):  $(git -C "$m" rev-parse --short HEAD 2> /dev/null || echo 'not a git checkout')"; done
+echo "  pass label:     ${LABEL:-(none)}"
 echo "  known blockers: $KNOWN"
+if [ -n "$PREPROV" ]; then
+  [ -f "$PREPROV" ] || die "--preprovision $PREPROV is not a file: a provisioning step that is named and missing is red, never skipped"
+  PREPROV="$(cd "$(dirname "$PREPROV")" && pwd)/$(basename "$PREPROV")"
+  echo "  preprovision:   $PREPROV"
+else
+  echo "  preprovision:   none (this pass shows what the migrations do with no provisioning at all)"
+fi
 echo "  work directory: $WORK"
 
 # ── a. instrument ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -195,6 +213,24 @@ for pair in "m2:$M2" "m3:$M3"; do
 done
 echo "  module 1 (coldmail-verify) ships no pre-flight file: its chain has no foreign key into a platform table"
 
+# ── p. provisioning ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+STAGE=provision
+if [ -n "$PREPROV" ]; then banner p "PROVISIONING — $(basename "$PREPROV") applied as postgres with ON_ERROR_STOP=1, before the chains"
+else banner p "PROVISIONING — none: the chains run on whatever the cluster already holds"; fi
+if [ -n "$PREPROV" ]; then
+  pdir="$(dirname "$PREPROV")"; pbase="$(basename "$PREPROV")"
+  ( cd "$pdir" && PGCONNECT_TIMEOUT=15 psql -X -w -v ON_ERROR_STOP=1 -f "$pbase" "$DSN" > "$WORK/raw/preprovision.stdout" 2> "$WORK/raw/preprovision.stderr" < /dev/null )
+  prc=$?
+  if [ "$prc" -ne 0 ]; then
+    echo "  psql exited $prc applying $pbase; its output:"; sed 's/^/    | /' "$WORK/raw/preprovision.stderr" "$WORK/raw/preprovision.stdout" | head -60
+    die "PROVISIONING FAILED: $pbase did not apply cleanly (psql exit $prc). The chains were NOT run: a report on a provisioning that did not happen would be a report on nothing."
+  fi
+  echo "  ok: $pbase applied (psql exit 0, ON_ERROR_STOP=1); the migrator's memberships of the two owner roles now:"
+  fact "select m.roleid::regrole as member_of, m.admin_option, m.inherit_option, m.set_option from pg_auth_members m where m.member = (select oid from pg_roles where rolname = current_user) and m.roleid::regrole::text in ('send_managed_owner', 'send_byo_owner') order by 1"
+else
+  echo "  none: nothing is applied before the chains (roles are cluster-wide: a role an earlier pass created in this cluster is already here)"
+fi
+
 # ── c. chains ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 STAGE=chains; banner c "CHAINS — one file at a time, every statement autocommitted, every failure recorded"
 chain_files() {
@@ -260,15 +296,16 @@ cat <<'EOF'
   - transaction shape: psql ran each statement in autocommit, one by one. The modules' migrators run each file in ONE transaction, so there a failing statement aborts the rest of the
     file (25P02 for everything after it) and keeps nothing of it; here the later statements run, so some CASCADE rows above would not occur there and others would read 25P02.
   - the platform's real public.users / public.job_items: module 2's fixture stands in until Phase 1 chunk B2.
+  - the database is the one in the DSN: roles are CLUSTER-wide, so a role that an earlier pass of the same job created in this cluster is already here (and is found by the modules' IF NOT EXISTS guards); tables, schemas and fixtures are per database.
   - which failures are blockers is a classification of SQLSTATE and message text (see classify.sh); a non-privilege failure that is a real incompatibility (a missing extension, say)
     is listed as a CASCADE and is not judged, so the CASCADE rows are read by a person.
 EOF
 echo
 if [ "${#REDS[@]}" -eq 0 ]; then
-  echo "SUPABASE-MIGRATIONS RESULT: GREEN — the migrating role is not a superuser; ${NFILES[platform]} + ${NFILES[m1]} + ${NFILES[m2]} + ${NFILES[m3]} migration files ran (platform + module 1 + module 2 + module 3); the observed blocker set equals $(basename "$KNOWN")"
+  echo "SUPABASE-MIGRATIONS RESULT${LABEL:+ [$LABEL]}: GREEN — the migrating role is not a superuser; ${NFILES[platform]} + ${NFILES[m1]} + ${NFILES[m2]} + ${NFILES[m3]} migration files ran (platform + module 1 + module 2 + module 3); the observed blocker set equals $(basename "$KNOWN")"
   exit 0
 fi
-echo "SUPABASE-MIGRATIONS RESULT: RED — ${#REDS[@]} reason(s):"
+echo "SUPABASE-MIGRATIONS RESULT${LABEL:+ [$LABEL]}: RED — ${#REDS[@]} reason(s):"
 i=0; for r in "${REDS[@]}"; do i=$((i + 1)); [ "$i" -le 30 ] || continue; echo "  - $r"; done
 [ "${#REDS[@]}" -le 30 ] || echo "  - ... and $(( ${#REDS[@]} - 30 )) more (the first reason is usually the cause of the rest)"
 exit 1

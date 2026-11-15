@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # classify-selftest.sh — the PAIRED CONTROL for tests/supabase/classify.sh. No database, no psql: it feeds the classifier recorded-shape psql output (written inline below, in the
 # format classify.sh documents) and asserts, for every case, the EXACT chain, file, line, SQLSTATE, class, message and statement text of each record; then it feeds the
-# comparison against known-blockers.txt every way it can be wrong.
+# comparison against known-blockers.txt every way it can be wrong. A second half drives run.sh itself with a FAKE psql (a script that answers the scalar queries, logs each `-f FILE`
+# call with its options and DSN, and prints canned stderr) over a miniature module tree: --label, --preprovision (order, ON_ERROR_STOP=1, the DSN's database, and the failure and
+# missing-file paths, which must be RED and must not run the chains), --known per pass, and the guards. It also reads supabase.yml and preprovision.sql for the two-pass design.
 #
 # Every REJECT case (a compare that must go red, a usage error) asserts three things, not only a non-zero exit (false-green class 10): the exit status, the REASON text, and
 # the exact NUMBER of each kind of finding (so a fixture that trips a second rule is caught here and not read as the first).
@@ -15,7 +17,7 @@
 set -u -o pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLS="$HERE/classify.sh"
-MIN_CASES=79
+MIN_CASES=98
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 FX="$TMP/fx"; mkdir -p "$FX"
 
@@ -442,6 +444,176 @@ usage_ "--compare with a records file that is gone" 'classify: records file miss
 usage_ "--summary without --chains"               'classify: --summary needs --chains'            --summary "$recs"
 usage_ "--chains without a value"                 'classify: --chains needs a comma-separated list' --chains
 usage_ "--stats without a value"                  'classify: --stats needs a file'                --stats
+
+echo "classify-selftest: RUN.SH — options and control flow, driven with a FAKE psql over a miniature module tree (no database)"
+RUN="$HERE/run.sh"
+FAKEBIN="$TMP/fakebin"; FAKE="$TMP/fake"; TREE="$TMP/tree"; EMPTYK="$TMP/empty-known.txt"; PREP="$TMP/preprovision.sql"
+mkdir -p "$FAKEBIN"; : > "$EMPTYK"; echo 'select 1;' > "$PREP"
+# the fake: answers the scalar queries run.sh asks, logs every `-f FILE` call as  FILE|-v options|flags|DSN, prints FILE.err to stderr and exits with FILE.rc if they exist in $FAKE_DIR
+cat > "$FAKEBIN/psql" <<'FAKEPSQL'
+#!/usr/bin/env bash
+D="${FAKE_DIR:?}"; cmd=""; file=""; vs=""; fl=""; dsn=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -c) cmd="$2"; shift 2;;
+    -f) file="$2"; shift 2;;
+    -v) vs="$vs $2"; shift 2;;
+    -F) shift 2;;
+    --version) echo "psql (PostgreSQL) 17.0 (fake)"; exit 0;;
+    -*) fl="$fl $1"; shift;;
+    *) dsn="$1"; shift;;
+  esac
+done
+if [ -n "$cmd" ]; then
+  case "$cmd" in
+    "select 1") echo 1;;
+    "select current_user") echo postgres;;
+    "select rolsuper, rolcreaterole from pg_roles where rolname = current_user") if [ -f "$D/shape" ]; then cat "$D/shape"; else echo "f|t"; fi;;
+    "select to_regclass('public.users') is not null, to_regclass('public.job_items') is not null") echo "t|t";;
+    *) echo " (a fact the fake does not model)";;
+  esac
+  exit 0
+fi
+b="$(basename "$file")"
+echo "$b|$vs|$fl|$dsn" >> "$D/calls.log"
+if [ -f "$D/$b.err" ]; then cat "$D/$b.err" >&2; fi
+if [ -f "$D/$b.rc" ]; then exit "$(cat "$D/$b.rc")"; fi
+exit 0
+FAKEPSQL
+chmod +x "$FAKEBIN/psql"
+fake_reset() {   # a pristine fake: the control file's real-shaped output, and the miniature tree of one file per chain
+  rm -rf "$FAKE" "$TREE"; mkdir -p "$FAKE" "$TREE/coldmail-platform/db/migrations" "$TREE/coldmail-verify/control-plane/migrations" \
+    "$TREE/coldmail-send-managed/db/migrations" "$TREE/coldmail-send-managed/db/preflight" "$TREE/coldmail-send-managed/deploy/pg-init" \
+    "$TREE/coldmail-send-byo/db/migrations" "$TREE/coldmail-send-byo/db/preflight"
+  for f in coldmail-platform/db/migrations/platform_0000_bootstrap.up.sql coldmail-verify/control-plane/migrations/0001_init.sql \
+           coldmail-send-managed/db/migrations/send_managed_0000_bootstrap.up.sql coldmail-send-byo/db/migrations/send_byo_0000_bootstrap.up.sql \
+           coldmail-send-managed/db/preflight/check_platform_tables.sql coldmail-send-byo/db/preflight/check_platform_tables.sql \
+           coldmail-send-managed/deploy/pg-init/00-platform-fixtures.sql; do echo 'select 1;' > "$TREE/$f"; done
+  cat > "$FAKE/zz_instrument_control.sql.err" <<'EOF'
+psql:zz_instrument_control.sql:2: ERROR:  42501: permission denied to create role
+LOCATION:  CreateRole, user.c:318
+psql:zz_instrument_control.sql:2: STATEMENT:  CREATE ROLE zz_instrument_probe SUPERUSER;
+psql:zz_instrument_control.sql:5: ERROR:  42P01: relation "zz_instrument_probe_missing_table" does not exist
+LINE 2:   FROM zz_instrument_probe_missing_table
+               ^
+LOCATION:  parserOpenTable, parse_relation.c:1449
+psql:zz_instrument_control.sql:5: STATEMENT:  SELECT 1
+  FROM zz_instrument_probe_missing_table
+ WHERE true;
+EOF
+}
+RN=0; ROUT=""; RRC=0
+runsh() {        # runsh [extra run.sh args]  -> ROUT (stdout+stderr), RRC
+  RN=$((RN + 1))
+  ROUT="$(PATH="$FAKEBIN:$PATH" FAKE_DIR="$FAKE" S_WORK="$TMP/w$RN" S_WAIT_SECONDS=5 bash "$RUN" --dsn postgres://postgres:ci@localhost:5432/postgres \
+          --platform-dir "$TREE/coldmail-platform" --modules-root "$TREE" "$@" 2>&1 < /dev/null)"; RRC=$?
+}
+ncalls() { if [ -f "$FAKE/calls.log" ]; then grep -c -- "$1" "$FAKE/calls.log" || true; else echo 0; fi; }   # how many logged psql -f calls match
+callno() { if [ -f "$FAKE/calls.log" ]; then grep -n -- "$1" "$FAKE/calls.log" | head -1 | cut -d: -f1; fi; }   # line number (order) of the first match
+
+begin "run.sh --label: every banner and the result line carry the label; no provisioning is reported as 'none'; a clean tree is GREEN, rc 0"
+fake_reset; runsh --label FIXED --known "$EMPTYK"; eq rc "$RRC" 0
+has banner-a "$ROUT" 'FIXED [a] INSTRUMENT VALID'; has banner-b "$ROUT" 'FIXED [b] PRE-FLIGHT'; has banner-p "$ROUT" 'FIXED [p] PROVISIONING'; has banner-c "$ROUT" 'FIXED [c] CHAINS'; has banner-d "$ROUT" 'FIXED [d] COMPARE'
+has result "$ROUT" 'SUPABASE-MIGRATIONS RESULT [FIXED]: GREEN'; has label-line "$ROUT" 'pass label:     FIXED'; has none "$ROUT" 'preprovision:   none'
+hasnot unlabelled-result "$ROUT" 'RESULT: GREEN'; eq provision-calls "$(ncalls '^preprovision')" 0; finish
+
+begin "run.sh without --label: banners and result line are exactly the unlabelled ones"
+fake_reset; runsh --known "$EMPTYK"; eq rc "$RRC" 0
+has banner "$ROUT" '================ [a] INSTRUMENT VALID'; has result "$ROUT" 'SUPABASE-MIGRATIONS RESULT: GREEN'; has label-line "$ROUT" 'pass label:     (none)'; finish
+
+begin "run.sh --preprovision FILE: applied once, with ON_ERROR_STOP=1, AFTER the fixture and BEFORE the first chain file; chain files keep ON_ERROR_STOP=0 and -b; the DSN's database is the one used"
+fake_reset; runsh --label FIXED --preprovision "$PREP" --known "$EMPTYK" --dsn postgres://postgres:ci@localhost:5432/fixed; eq rc "$RRC" 0
+eq provision-calls "$(ncalls '^preprovision.sql|')" 1; has on-error-stop "$(grep '^preprovision.sql|' "$FAKE/calls.log")" ' ON_ERROR_STOP=1|'
+fx="$(callno '^00-platform-fixtures.sql|')"; pv="$(callno '^preprovision.sql|')"; pf="$(callno '^check_platform_tables.sql|')"; ch="$(callno '^platform_0000_bootstrap.up.sql|')"
+eq order-fixture-before-provision "$([ "$fx" -lt "$pv" ] && echo yes || echo no)" yes; eq order-preflight-before-provision "$([ "$pf" -lt "$pv" ] && echo yes || echo no)" yes
+eq order-provision-before-chain "$([ "$pv" -lt "$ch" ] && echo yes || echo no)" yes
+has chain-flags "$(grep '^platform_0000_bootstrap.up.sql|' "$FAKE/calls.log")" 'ON_ERROR_STOP=0 VERBOSITY=verbose| -X -w -b|'
+eq all-calls-fixed-db "$(grep -c '/fixed$' "$FAKE/calls.log")" "$(grep -c . "$FAKE/calls.log")"; eq no-call-in-postgres-db "$(grep -c '/postgres$' "$FAKE/calls.log" || true)" 0
+has banner "$ROUT" 'FIXED [p] PROVISIONING'; has applied "$ROUT" 'preprovision.sql applied (psql exit 0, ON_ERROR_STOP=1)'; has result "$ROUT" 'RESULT [FIXED]: GREEN'; finish
+
+begin "run.sh --preprovision that FAILS (psql exit 3): RED at stage [provision], reason PROVISIONING FAILED, its error shown, and NO chain file is run"
+fake_reset; echo 3 > "$FAKE/preprovision.sql.rc"
+printf '%s\n' 'psql:preprovision.sql:12: ERROR:  42501: permission denied to grant role "send_byo_owner"' > "$FAKE/preprovision.sql.err"
+runsh --label FIXED --preprovision "$PREP" --known "$EMPTYK"; eq rc "$RRC" 1
+has reason "$ROUT" 'PROVISIONING FAILED: preprovision.sql did not apply cleanly (psql exit 3)'; has stage "$ROUT" 'SUPABASE-MIGRATIONS RED [FIXED] at stage [provision]'; has shown "$ROUT" 'permission denied to grant role "send_byo_owner"'
+eq no-platform-chain "$(ncalls '^platform_0000')" 0; eq no-m2-chain "$(ncalls '^send_managed_0000')" 0; eq no-m3-chain "$(ncalls '^send_byo_0000')" 0; hasnot no-result-green "$ROUT" ': GREEN'; finish
+
+begin "run.sh --preprovision naming a file that does not exist: RED at stage [inputs], saying a named and missing provisioning step is never skipped; nothing is run"
+fake_reset; runsh --label FIXED --preprovision "$TMP/no-such-provision.sql" --known "$EMPTYK"; eq rc "$RRC" 1
+has reason "$ROUT" 'is not a file: a provisioning step that is named and missing is red, never skipped'; has stage "$ROUT" 'RED [FIXED] at stage [inputs]'; eq no-calls "$(ncalls .)" 0; finish
+
+begin "run.sh --label with a character outside letters, digits, . _ -: usage error, exit 2, with the reason"
+fake_reset; runsh --label 'a b' --known "$EMPTYK"; eq rc "$RRC" 2; has reason "$ROUT" "run.sh: invalid --label 'a b': letters, digits, . _ - only"; eq no-calls "$(ncalls .)" 0; finish
+
+begin "run.sh --preprovision / --label given without a value: usage error, exit 2"
+fake_reset; runsh --label; eq rc-label "$RRC" 2; has usage-label "$ROUT" 'usage: run.sh --dsn DSN --platform-dir DIR --modules-root DIR [--known FILE] [--preprovision FILE] [--label NAME]'
+runsh --preprovision; eq rc-prov "$RRC" 2; has usage-prov "$ROUT" 'usage: run.sh'; finish
+
+begin "run.sh: a blocker in a chain file is NEW against an empty list: RED, rc 1, NEW BLOCKER naming file and SQLSTATE, the result line carries the label, the paste-ready line is printed"
+fake_reset
+cat > "$FAKE/send_managed_0000_bootstrap.up.sql.err" <<'EOF'
+psql:send_managed_0000_bootstrap.up.sql:26: ERROR:  42501: must be able to SET ROLE "send_managed_owner"
+LOCATION:  check_can_set_role, acl.c:5237
+psql:send_managed_0000_bootstrap.up.sql:26: STATEMENT:  CREATE SCHEMA IF NOT EXISTS send_managed AUTHORIZATION send_managed_owner;
+EOF
+runsh --label BASELINE --known "$EMPTYK"; eq rc "$RRC" 1
+has new "$ROUT" 'NEW BLOCKER file=send_managed_0000_bootstrap.up.sql line=26 sqlstate=42501 chain=m2'; has result "$ROUT" 'SUPABASE-MIGRATIONS RESULT [BASELINE]: RED'
+has verdict "$ROUT" 'compare: RED - NEW=1 STALE=0'; has paste "$ROUT" 'send_managed_0000_bootstrap.up.sql|42501|must be able to SET ROLE "send_managed_owner"'; finish
+
+begin "run.sh --known selects the list of THIS pass: the same blocker is covered by a list that names it (GREEN, rc 0) and is NEW against an empty one (the two passes of the workflow)"
+printf '%s\n' '# baseline list' 'send_managed_0000_bootstrap.up.sql|42501|must be able to SET ROLE' > "$TMP/baseline-known.txt"
+runsh --label BASELINE --known "$TMP/baseline-known.txt"; eq rc "$RRC" 0; has ok "$ROUT" 'compare: OK - the 1 observed blocker(s)'; has result "$ROUT" 'RESULT [BASELINE]: GREEN'; finish
+
+begin "run.sh: a STALE entry in the pass's list (the listed blocker is not observed): RED, rc 1, STALE ENTRY"
+fake_reset; printf '%s\n' 'send_managed_0000_bootstrap.up.sql|42501|must be able to SET ROLE' > "$TMP/stale-known.txt"
+runsh --label FIXED --known "$TMP/stale-known.txt"; eq rc "$RRC" 1; has stale "$ROUT" 'STALE ENTRY stale-known.txt line 1: send_managed_0000_bootstrap.up.sql|42501|must be able to SET ROLE'; has verdict "$ROUT" 'compare: RED - NEW=0 STALE=1'; finish
+
+begin "run.sh: psql exiting 1 on a chain file is RED (a failed statement exits 0; a failed psql does not)"
+fake_reset; echo 1 > "$FAKE/platform_0000_bootstrap.up.sql.rc"; runsh --known "$EMPTYK"; eq rc "$RRC" 1; has reason "$ROUT" 'platform/platform_0000_bootstrap.up.sql: psql exited 1 (a failed statement still exits 0 with ON_ERROR_STOP=0'; finish
+
+begin "run.sh: a superuser migrating role is RED at stage [instrument]: not Supabase-shaped, and nothing is run"
+fake_reset; echo "t|t" > "$FAKE/shape"; runsh --label BASELINE --known "$EMPTYK"; eq rc "$RRC" 1
+has reason "$ROUT" 'not Supabase-shaped: the migrating role is a superuser'; has stage "$ROUT" 'RED [BASELINE] at stage [instrument]'; eq no-calls "$(ncalls .)" 0; finish
+
+begin "run.sh: a control file whose psql output the classifier cannot read (unprefixed error) is RED: INSTRUMENT INVALID"
+fake_reset; printf '%s\n' 'ERROR:  42501: permission denied to create role' > "$FAKE/zz_instrument_control.sql.err"; runsh --known "$EMPTYK"; eq rc "$RRC" 1
+has reason "$ROUT" 'INSTRUMENT INVALID: the classifier did not read psql'; has why "$ROUT" 'carry no psql:FILE:LINE: prefix'; finish
+
+begin "run.sh: a failing fixture is REPORTED and never counted as a blocker (the pass stays GREEN when the chains are clean)"
+fake_reset
+cat > "$FAKE/00-platform-fixtures.sql.err" <<'EOF'
+psql:00-platform-fixtures.sql:12: ERROR:  42501: permission denied for schema public
+psql:00-platform-fixtures.sql:12: STATEMENT:  CREATE TABLE IF NOT EXISTS public.users (id uuid PRIMARY KEY);
+EOF
+runsh --label FIXED --known "$EMPTYK"; eq rc "$RRC" 0; has reported "$ROUT" 'fixture: 1 statement(s) FAILED (reported, not counted as blockers)'; has ok "$ROUT" 'compare: OK - the 0 observed blocker(s)'; finish
+
+begin "run.sh: a chain that matches no migration file is RED (the instrument matched nothing)"
+fake_reset; rm -f "$TREE"/coldmail-send-byo/db/migrations/*.up.sql; runsh --known "$EMPTYK"; eq rc "$RRC" 1; has reason "$ROUT" 'chain m3 matched 0 migration files: the instrument matched nothing'; finish
+
+echo "classify-selftest: the workflow and preprovision.sql are the two-pass design they claim to be"
+WF="$HERE/../../.github/workflows/supabase.yml"; PV="$HERE/preprovision.sql"
+step_block() { awk -v start="$1" 'index($0, "- name: " start) { on = 1; print; next } on && /^      - / { exit } on { print }' "$WF"; }   # one step of the workflow, from its `- name:` line to the next step
+BASE_BLOCK="$(step_block 'Pass BASELINE')"; FIXED_BLOCK="$(step_block 'Pass FIXED')"
+begin "supabase.yml: exactly ONE step has an if:, it is 'if: always()', and it is the FIXED pass (the baseline pass has none; the job fails if either failed)"
+eq workflow-exists "$([ -f "$WF" ] && echo yes || echo no)" yes
+eq if-count "$(grep -c '^ *if:' "$WF" || true)" 1; eq if-always "$(grep '^ *if:' "$WF" | sed 's/^ *//; s/ *$//')" 'if: always()'
+has if-in-fixed "$FIXED_BLOCK" 'if: always()'; hasnot if-in-baseline "$BASE_BLOCK" 'if:'; has baseline-found "$BASE_BLOCK" 'Pass BASELINE'; finish
+
+begin "supabase.yml: two distinct step names; BASELINE = database postgres, baseline-blockers.txt, NO --preprovision; FIXED = database fixed, --preprovision preprovision.sql, known-blockers.txt"
+eq distinct-names "$(grep -c '^      - name: Pass ' "$WF")" 2
+has b-label "$BASE_BLOCK" '--label BASELINE'; has b-db "$BASE_BLOCK" 'localhost:5432/postgres'; has b-known "$BASE_BLOCK" '--known coldmail-platform/tests/supabase/baseline-blockers.txt'; hasnot b-no-prov "$BASE_BLOCK" '--preprovision'
+has f-label "$FIXED_BLOCK" '--label FIXED'; has f-db "$FIXED_BLOCK" 'localhost:5432/fixed'; has f-prov "$FIXED_BLOCK" '--preprovision coldmail-platform/tests/supabase/preprovision.sql'; has f-known "$FIXED_BLOCK" '--known coldmail-platform/tests/supabase/known-blockers.txt'
+hasnot f-not-baseline-list "$FIXED_BLOCK" 'baseline-blockers.txt'; finish
+
+begin "supabase.yml: pass FIXED asserts rolcreatedb BEFORE it creates the database fixed (and creates it itself, so the step also works when BASELINE failed)"
+has asserts "$FIXED_BLOCK" 'select rolcreatedb'; has creates "$FIXED_BLOCK" 'CREATE DATABASE fixed'
+na="$(printf '%s\n' "$FIXED_BLOCK" | grep -n 'select rolcreatedb' | head -1 | cut -d: -f1)"; nc="$(printf '%s\n' "$FIXED_BLOCK" | grep -n 'CREATE DATABASE fixed' | head -1 | cut -d: -f1)"
+eq assert-before-create "$([ -n "$na" ] && [ -n "$nc" ] && [ "$na" -lt "$nc" ] && echo yes || echo no)" yes; finish
+
+begin "preprovision.sql: both owner roles, the WITH INHERIT TRUE, SET TRUE grant, and the 'SET' privilege name only after a >= 160000 test (never evaluated on PostgreSQL < 16)"
+has managed "$(cat "$PV")" 'send_managed_owner'; has byo "$(cat "$PV")" 'send_byo_owner'; has grant "$(cat "$PV")" 'GRANT %I TO %I WITH INHERIT TRUE, SET TRUE'; has create "$(cat "$PV")" 'CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB'
+eq plain-grant "$(grep -c "EXECUTE format('GRANT %I TO %I', r, current_user)" "$PV")" 1
+eq set-guarded "$(awk -v q="'" '/^--/ { next } /server_version_num/ { last = $0 } index($0, q "SET" q) { n++; if (last !~ />= 160000/) bad++ } END { print (n > 0 ? bad + 0 : "none") }' "$PV")" 0; finish
 
 # ---- the control for THIS file: prove the assertions can say no -------------------------------------------------------------------------------------------------------------
 # Inside a subshell (its counters cannot leak into ours) feed two WRONG expectations: a BLOCKER claimed to be a CASCADE, and an exact-match compare claimed to be red.
