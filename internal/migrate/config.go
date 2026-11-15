@@ -12,8 +12,10 @@
 //   - down needs PLATFORM_MIGRATE_ALLOW_DOWN=true, refuses while a higher version is applied, and verifies the row is gone;
 //   - no error that leaves the process carries the connection string or the app password.
 //
-// Every configuration value is an environment variable (see Vars and Docs/migrator-reference.md). The one fixed
-// value in the package is the connect bound, which the connection string's own connect_timeout overrides.
+// Every configuration value is an environment variable (see Vars and Docs/migrator-reference.md). Three fixed values
+// remain, none of them a tuning dial: the 15 s connect bound (which the connection string's own connect_timeout
+// overrides), the 250 ms pacing of the lock retry loop, and the 5 s bound on the unlock, rollback and close that run
+// after the work.
 package migrate
 
 import (

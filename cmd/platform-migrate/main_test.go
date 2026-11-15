@@ -119,7 +119,9 @@ func TestRun_UsageAndConfigurationErrorsExitTwoBeforeConnecting(t *testing.T) {
 		{"down while forbidden", full, []string{"down", "0000"}, migrate.EnvAllowDown + "=true"},
 		{"set-app-password without a password", full, []string{"set-app-password"}, migrate.EnvAppPassword},
 		{"up-and-set-password without a password", full, []string{"up-and-set-password"}, migrate.EnvAppPassword},
-		{"unparseable connection string", with(migrate.EnvDatabaseURL, "postgres://migrator:"+leakProbe+"@db.example:notaport/platform"), []string{"status"}, migrate.EnvDatabaseURL},
+		{"unparseable connection string (URL)", with(migrate.EnvDatabaseURL, "postgres://migrator:"+leakProbe+"@db.example:notaport/platform"), []string{"status"}, migrate.EnvDatabaseURL},
+		// the spaced keyword spelling is one pgx quotes back whole: the scrub (internal/migrate tests) and the output redaction (TestFail_Redacts...) each keep it out, and this proves the two together
+		{"unparseable connection string (keyword, spaced password)", with(migrate.EnvDatabaseURL, "host=db.example port=notaport user=migrator password = "+leakProbe), []string{"status"}, migrate.EnvDatabaseURL},
 	}
 	for _, c := range cases {
 		got := invoke(t, c.env, c.args...)

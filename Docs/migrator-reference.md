@@ -35,7 +35,9 @@ not be able to run migrations (see `config-reference.md`). The migrator's login 
 creates roles and re-owns objects, which only a superuser or a role with `CREATEROLE` can do.
 
 `connect_timeout` in the connection string bounds the connection attempt. Without one the runner bounds it at 15 seconds, so an
-unreachable database fails fast; this is the one fixed value in the runner, and the connection string's own value replaces it.
+unreachable database fails fast; the connection string's own value replaces it. Two other values are fixed and are not tuning
+dials: the lock retry loop polls every 250 milliseconds (how long it may run is `PLATFORM_MIGRATE_LOCK_TIMEOUT_SEC`), and the
+unlock, rollback and close that run after the work are bounded at 5 seconds.
 
 ## Commands and exit status
 
