@@ -4,6 +4,7 @@ package harness
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -280,12 +281,33 @@ func TestRunnerDownGuards(t *testing.T) {
 		t.Fatalf("after up: applied = %v, want %v", got, full)
 	}
 
-	// Refused while a higher version is applied: the bootstrap's CASCADE would destroy the probe table unseen.
+	// Refused while a higher version is applied: the bootstrap's CASCADE would destroy the probe table unseen. With one migration below the probe the runner could only name the probe;
+	// with the chain 0000..0003 it names ONE of the higher versions that are applied, whichever it meets first (it walks a map), so the assertion is that the version it names is one of
+	// them - not that it is the probe - and that the refusal says what to do.
 	res := runMigrator(t, envGood, "down", "0000")
 	mustExit(t, res, 1, "down 0000 while "+v+" is applied")
-	mustContain(t, res.Stderr, "refusing to roll back 0000 while higher version "+v+" is still applied", "down 0000 while "+v+" is applied")
+	named := regexp.MustCompile(`refusing to roll back 0000 while higher version ([0-9]{4}) is still applied; roll back highest-first`).FindStringSubmatch(res.Stderr)
+	if named == nil {
+		t.Fatalf("down 0000 while %s is applied: the refusal does not read 'refusing to roll back 0000 while higher version NNNN is still applied; roll back highest-first':\n%s", v, res.Stderr)
+	}
+	if !containsString(full[1:], named[1]) {
+		t.Fatalf("down 0000 names higher version %s, but the versions above 0000 that are applied are %v", named[1], full[1:])
+	}
 	if got := appliedVersions(t, admin); !sameStrings(got, full) || !relationExists(t, admin, "platform.zz_down_probe") {
 		t.Fatalf("a refused down changed the database: applied = %v", got)
+	}
+	// The same rule in the middle of the chain: 0001 cannot be rolled back while 0002, 0003 and the probe are applied.
+	if len(chain) > 2 {
+		mid := chain[1]
+		res = runMigrator(t, envGood, "down", mid)
+		mustExit(t, res, 1, "down "+mid+" while higher versions are applied")
+		named = regexp.MustCompile(`refusing to roll back ` + mid + ` while higher version ([0-9]{4}) is still applied; roll back highest-first`).FindStringSubmatch(res.Stderr)
+		if named == nil || !containsString(full[2:], named[1]) {
+			t.Fatalf("down %s while %v are applied: the refusal does not name one of the higher versions %v:\n%s", mid, full, full[2:], res.Stderr)
+		}
+		if got := appliedVersions(t, admin); !sameStrings(got, full) {
+			t.Fatalf("a refused down %s changed the database: applied = %v", mid, got)
+		}
 	}
 
 	// A down file that leaves the row behind fails, and the whole down is rolled back (the table is still there).

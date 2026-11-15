@@ -1,0 +1,13 @@
+diff --git a/db/migrations/platform_0002_registry_and_money.up.sql b/db/migrations/platform_0002_registry_and_money.up.sql
+index 630274e..8b8b829 100644
+--- a/db/migrations/platform_0002_registry_and_money.up.sql
++++ b/db/migrations/platform_0002_registry_and_money.up.sql
+@@ -64,7 +64,7 @@ CREATE TABLE platform.unit_costs (
+     unit          text        PRIMARY KEY,
+     module_id     text        NOT NULL REFERENCES platform.modules (id),
+     description   text        NOT NULL,
+-    cost          integer     NOT NULL,
++    cost          numeric     NOT NULL,
+     changed_by    uuid        REFERENCES platform.admins (id),
+     change_reason text,
+     updated_at    timestamptz NOT NULL DEFAULT now(),

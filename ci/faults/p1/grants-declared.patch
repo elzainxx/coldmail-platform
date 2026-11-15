@@ -1,0 +1,13 @@
+diff --git a/db/migrations/platform_0001_public_tables.up.sql b/db/migrations/platform_0001_public_tables.up.sql
+index 809a9b8..81ca76a 100644
+--- a/db/migrations/platform_0001_public_tables.up.sql
++++ b/db/migrations/platform_0001_public_tables.up.sql
+@@ -88,7 +88,7 @@ END
+ $$;
+ 
+ -- The platform's own runtime: read, create and update, never delete. platform_admin is break-glass and read-only.
+-GRANT SELECT, INSERT, UPDATE ON public.users TO platform_app;
++GRANT SELECT, INSERT, UPDATE, DELETE ON public.users TO platform_app;
+ GRANT SELECT                 ON public.users TO platform_admin;
+ GRANT SELECT, INSERT, UPDATE ON public.job_items TO platform_app;
+ GRANT SELECT                 ON public.job_items TO platform_admin;

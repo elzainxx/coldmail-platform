@@ -1,0 +1,8 @@
+# public.job_items must have the shape the modules read (db/module-reads.txt, derived from module code). The fault turns campaign_id into text (the modules bind and join it as a uuid).
+GATE=module-shape
+TARGET=platform
+SETUP=
+STEP=go test TestShape_CatalogMatchesDeclaration (the catalog against the declared module reads)
+CMD=H_PG_ADMIN_DSN="$FAULT_ADMIN_DSN" bash tests/harness/run-db-tests.sh '^TestShape_CatalogMatchesDeclaration$'
+MESSAGE=--- FAIL: TestShape_CatalogMatchesDeclaration
+MESSAGE=public.job_items.campaign_id: type text, declared uuid

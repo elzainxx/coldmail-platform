@@ -1,0 +1,49 @@
+# db/module-statements.txt — every non-test SQL statement in modules 2 (send-managed) and 3 (send-byo) that touches the platform tables public.users or public.job_items.
+#
+# WHAT THIS IS. The list of what module CODE actually runs against the two platform-owned tables, copied from the source at the pins in tools/modules.lock (M2 02a71fc, M3 d6ac497) and held
+# there by two gates, so the platform's declared shape (db/module-reads.txt) cannot drift away from the code it exists to serve:
+#   * scripts/check-module-reads.sh  (selftest: scripts/check-module-reads-selftest.sh) checks, on the module checkouts, that every statement below still appears in its source file (whitespace
+#     normalised, comment-only lines ignored) and that NO other non-test Go file, and no other place in a declared file, references public.users / public.job_items. A new statement, a changed
+#     one, a moved one: red, with the file named. It does NOT judge SQL in migrations, dynamically built SQL, or a table reached through a helper that hides its name (it says so when it runs).
+#   * tests/harness/modules_live_test.go EXECUTES every line below as the module's own database role against the real tables (TestModulesLive_*), so "the statements prepare/run" is observed, not read.
+#
+# FORMAT (one statement per line, `|` separated; the SQL is the LAST field and is exactly the statement text normalised to ONE line with single spaces, `$n` placeholders kept):
+#   module-dir|<module id>|<directory of the module checkout, under the modules root>
+#   <module id>|<role>|<label>|<file relative to the module root>|<SQL>
+# <role> is the database role the module's service connects as (send_managed_app, send_byo_app). The role `ref` marks a NON-SQL reference to the table names (a log line): it is declared so the
+# gate's "every reference is accounted for" rule holds, it is checked for presence like a statement, and it is never executed.
+# Labels: U* = `SELECT EXISTS(...)` on public.users; J* = statements on public.job_items (J1 read the campaign, J2 freeze the row into the module's jobs table, J3 M3's campaign upsert (it names
+# no platform table but takes the campaign id J1 read, and its foreign key to public.users is what makes the user row a requirement), J4 M3's own INSERT into public.job_items); P* = a ref.
+# Line numbers are cited in the comment above each entry and are information only: the gate matches TEXT, so a reformat or a move does not turn it red and a change of wording does.
+# SQL that contains `|` is not supported (none does); keep it that way.
+
+module-dir|m2|coldmail-send-managed
+module-dir|m3|coldmail-send-byo
+
+# ---- module 2 (send-managed): reads only. Its role holds SELECT on both tables and nothing else. ----
+# services/control/internal/adminapi/pool_store.go:58 — the reserved system user must exist (shared pools and accounts answer 409 without it; finding F19). $1 = 00000000-0000-0000-0000-000000000000
+m2|send_managed_app|U1|services/control/internal/adminapi/pool_store.go|SELECT EXISTS(SELECT 1 FROM public.users WHERE id=$1)
+# services/control/internal/adminapi/pool_store.go:65 — the owner of a dedicated pool must be a real user. Same text as U1, a different call site: the gate counts both.
+m2|send_managed_app|U2|services/control/internal/adminapi/pool_store.go|SELECT EXISTS(SELECT 1 FROM public.users WHERE id=$1)
+# services/control/internal/platformapi/store.go:62-64 — POST /v1/run reads the campaign of the job item, scoped to the calling tenant. $1 = job_item id, $2 = user id
+m2|send_managed_app|J1|services/control/internal/platformapi/store.go|SELECT campaign_id FROM public.job_items WHERE id = $1 AND user_id = $2
+# services/control/internal/platformapi/store.go:88-94 — freeze the job item into send_managed.jobs (the genesis job_events row is written by a trigger). A NULL in the source row is a 23502 the module turns into a 500.
+m2|send_managed_app|J2|services/control/internal/platformapi/store.go|INSERT INTO send_managed.jobs (job_item_id, campaign_id, user_id, recipient_email, rendered_subject, rendered_body, reply_to, state, next_attempt_at) SELECT ji.id, ji.campaign_id, ji.user_id, ji.recipient_email, ji.rendered_subject, ji.rendered_body, ji.reply_to, 'queued', NOW() FROM public.job_items ji WHERE ji.id = $1 AND ji.user_id = $2 RETURNING id
+# tools/send-managed-migrate/runner.go:99 — the migrator's pre-flight success message (the check itself is db/preflight/check_platform_tables.sql, which the harness runs against the live database).
+m2|ref|P1|tools/send-managed-migrate/runner.go|preflight: OK (public.users + public.job_items exist)
+
+# ---- module 3 (send-byo): the same reads, plus ONE WRITE: test-send inserts a public.job_items row (its role holds SELECT and INSERT on that table, never UPDATE or DELETE). ----
+# services/control/internal/adminapi/account_store.go:209 — a user must exist before an account, a config override or a suspension is accepted.
+m3|send_byo_app|U1|services/control/internal/adminapi/account_store.go|SELECT EXISTS(SELECT 1 FROM public.users WHERE id=$1)
+# services/control/internal/platformapi/account_store.go:218 — the same check on the platform-facing API (account create, bulk add).
+m3|send_byo_app|U2|services/control/internal/platformapi/account_store.go|SELECT EXISTS(SELECT 1 FROM public.users WHERE id=$1)
+# services/control/internal/platformapi/store.go:84-86 — POST /v1/run reads the campaign of the job item, scoped to the calling tenant.
+m3|send_byo_app|J1|services/control/internal/platformapi/store.go|SELECT campaign_id FROM public.job_items WHERE id = $1 AND user_id = $2
+# services/control/internal/platformapi/store.go:134-138 — upsert the campaign row on the first job of a campaign. $1 = the campaign_id J1 read, $2 = user id, $3 = expiry seconds (int).
+m3|send_byo_app|J3|services/control/internal/platformapi/store.go|INSERT INTO send_byo.campaigns (id, user_id, expires_at) VALUES ($1, $2, NOW() + make_interval(secs => $3)) ON CONFLICT (id) DO NOTHING
+# services/control/internal/platformapi/store.go:146-153 — freeze the job item into send_byo.jobs (the genesis job_events row is written by a trigger).
+m3|send_byo_app|J2|services/control/internal/platformapi/store.go|INSERT INTO send_byo.jobs (job_item_id, campaign_id, user_id, recipient_email, rendered_subject, rendered_body, reply_to, state, next_attempt_at) SELECT ji.id, ji.campaign_id, ji.user_id, ji.recipient_email, ji.rendered_subject, ji.rendered_body, ji.reply_to, 'queued', NOW() FROM public.job_items ji WHERE ji.id = $1 AND ji.user_id = $2 RETURNING id
+# services/control/internal/dispatch/send_test_action.go:96-99 — test-send WRITES a job item: campaign_id and user_id are the SAME parameter ($1 = the tenant's id), id/reply_to/created_at are NOT supplied.
+m3|send_byo_app|J4|services/control/internal/dispatch/send_test_action.go|INSERT INTO public.job_items (campaign_id, user_id, recipient_email, rendered_subject, rendered_body, status) VALUES ($1, $1, $2, $3, $4, 'pending') RETURNING id
+# tools/send-byo-migrate/runner.go:99 — the migrator's pre-flight success message.
+m3|ref|P1|tools/send-byo-migrate/runner.go|preflight: OK (public.users + public.job_items exist)

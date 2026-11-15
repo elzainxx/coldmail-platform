@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS platform.schema_migrations (
     applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ALTER TABLE platform.schema_migrations OWNER TO platform_owner;
+COMMENT ON TABLE platform.schema_migrations IS 'The platform migrator''s tracking table: one row per applied migration, written by each migration file itself (self-recording). Read-only to the service.';
 REVOKE ALL ON platform.schema_migrations FROM PUBLIC;
 GRANT SELECT ON platform.schema_migrations TO platform_app, platform_admin;
 

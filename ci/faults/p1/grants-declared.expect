@@ -1,0 +1,9 @@
+# Grants are proven per role against DECLARED classes. The fault grants DELETE on public.users to platform_app (a hard delete would cascade through every module's history). The grants checker
+# must name the table, the role and the privilege.
+GATE=grants-declared
+TARGET=platform
+SETUP=
+STEP=go test TestGrantsInvariant (the declared privilege classes against a migrated database)
+CMD=H_PG_ADMIN_DSN="$FAULT_ADMIN_DSN" bash tests/harness/run-db-tests.sh '^TestGrantsInvariant$'
+MESSAGE=--- FAIL: TestGrantsInvariant
+MESSAGE=public.users: over-grant: platform_app has DELETE

@@ -40,13 +40,13 @@ services:
     networks: [private]
 
   # ── one-shot jobs (run with `docker compose run --rm <name>`) ─────────────────────────────────────────────────────────────────────────────────────────────────────
-  # FIXTURE ONLY: public.users / public.job_items in the shape the modules' own dev fixtures give them, taken from the pinned M2 checkout. The platform's real tables
-  # are Phase 1; until then this is the minimum that lets M2 and M3 migrate (their pre-flight and foreign keys need these two tables to exist).
+  # FIXTURE ONLY: a minimal stand-in for Supabase Auth's auth.users (tests/harness/fixtures/auth-users.sql), which platform_0001 needs (public.users.auth_user_id references it).
+  # Since Phase 1 chunk B2 the platform creates public.users and public.job_items ITSELF (platform_0001) before module 2 and 3 migrate: no module fixture is used any more.
   fixtures:
     image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
     environment: { PGPASSWORD: "${H_PG_SUPERPASS:?}" }
     volumes:
-      - ${H_MODULES_ROOT:?}/coldmail-send-managed/deploy/pg-init/00-platform-fixtures.sql:/fixture.sql:ro
+      - ${H_PLATFORM_DIR:?}/tests/harness/fixtures/auth-users.sql:/fixture.sql:ro
     command: ["psql", "-v", "ON_ERROR_STOP=1", "-h", "postgres", "-U", "postgres", "-d", "platform", "-f", "/fixture.sql"]
     depends_on: { postgres: { condition: service_healthy } }
     networks: [private]
@@ -237,9 +237,11 @@ services:
       HARNESS_PLATFORM_APP_PASSWORD: ${H_PLATFORM_APP_PASSWORD:?}
       HARNESS_MIGRATE_BIN: /h/platform-migrate
       HARNESS_REPO_ROOT: /repo
+      HARNESS_MODULES_ROOT: /modules
     volumes:
       - ${H_WORK:?}/out:/h:ro
       - ${H_PLATFORM_DIR:?}:/repo:ro
+      - ${H_MODULES_ROOT:?}:/modules:ro
     depends_on: { postgres: { condition: service_healthy } }
     networks: [private]
     restart: "no"

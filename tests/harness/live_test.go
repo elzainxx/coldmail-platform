@@ -113,8 +113,8 @@ func TestLive_StackCoexists(t *testing.T) {
 		t.Fatalf("the live platform chain is %v, the repository has %v", got, want)
 	}
 
-	// The modules are there (module 1's tables in public are not asserted: that is module 1's own tests' business).
-	for _, schema := range []string{"send_managed", "send_byo"} {
+	// The modules are there (module 1 lives in its own schema, verify, since Phase 1 chunk A2).
+	for _, schema := range []string{"send_managed", "send_byo", "verify"} {
 		if !schemaExists(t, live, schema) {
 			t.Fatalf("the harness stack has not migrated the modules: schema %s does not exist in the live database", schema)
 		}
@@ -127,7 +127,7 @@ func TestLive_StackCoexists(t *testing.T) {
 	}
 
 	app := dial(t, requireEnv(t, envAdminURL), appDial(requireEnv(t, envAppPassword)))
-	for _, schema := range []string{"send_managed", "send_byo"} {
+	for _, schema := range []string{"send_managed", "send_byo", "verify"} {
 		var usage bool
 		if err := live.QueryRow(ctx, "SELECT has_schema_privilege('platform_app', $1, 'USAGE')", schema).Scan(&usage); err != nil {
 			t.Fatal(err)

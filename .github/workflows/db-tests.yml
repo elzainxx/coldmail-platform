@@ -1,0 +1,46 @@
+# The harness's DATABASE-ONLY integration tests (grants, roles, the ledger, constraints, the balance invariant, module shapes, schema locks, the migration lifecycle) against a real
+# Postgres on a GitHub runner, in a few minutes. The full `harness` workflow runs every test inside a private Docker network beside the three modules (~20 minutes); this one needs only
+# a Postgres service and Go, so a database mistake is seen in minutes. It is admissible evidence on its own (real Postgres, real binary, a runner). What it does NOT do: run the tests that
+# need the modules (TestLive_StackCoexists, TestModulesLive_*; the full harness runs those), or enforce the per-package test-count floors (the full harness enforces them).
+# tests/harness/run-db-tests.sh is the whole job; the fault-proofs legs call the same script with a narrow -run regexp.
+name: db-tests
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  db-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
+        env:
+          POSTGRES_PASSWORD: ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Toolchain (printed so a run says what it ran on)
+        run: |
+          go version
+          psql --version
+          openssl version
+
+      - name: The database-only integration tests
+        run: bash tests/harness/run-db-tests.sh

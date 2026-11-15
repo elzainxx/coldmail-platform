@@ -183,7 +183,18 @@ func newScratch(t *testing.T) scratch {
 	})
 	u.Path = "/" + name
 	u.RawPath = ""
-	return scratch{Name: name, DSN: u.String()}
+	s := scratch{Name: name, DSN: u.String()}
+	// platform_0001 needs auth.users (Supabase Auth). A scratch database gets the same minimal fixture the harness applies to the real one, so `up` on the repository's chain can run.
+	fixture := filepath.Join(requireEnv(t, envRepoRoot), "tests", "harness", "fixtures", "auth-users.sql")
+	body, err := os.ReadFile(fixture)
+	if err != nil || len(body) == 0 {
+		t.Fatalf("the auth.users fixture %s is missing or empty (%v): every scratch database needs it", fixture, err)
+	}
+	conn := dial(t, s.DSN, nil)
+	if _, err := conn.Exec(testCtx(t), string(body)); err != nil {
+		t.Fatalf("apply the auth.users fixture to scratch database %s: %s", name, scrubbed(err, s.DSN))
+	}
+	return s
 }
 
 // admin opens a superuser connection to the scratch database, closed before the database is dropped.

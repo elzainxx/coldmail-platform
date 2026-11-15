@@ -1,0 +1,8 @@
+# The ledger is append-only for the OWNER too, by trigger. The fault removes the two triggers; the owner's UPDATE/DELETE/TRUNCATE must then be seen to be ALLOWED and the test must go red.
+GATE=ledger-no-trigger
+TARGET=platform
+SETUP=
+STEP=go test TestLedger_AppendOnly_OwnerIsStoppedByTriggers (the owner is refused with 23001)
+CMD=H_PG_ADMIN_DSN="$FAULT_ADMIN_DSN" bash tests/harness/run-db-tests.sh '^TestLedger_AppendOnly_OwnerIsStoppedByTriggers$'
+MESSAGE=--- FAIL: TestLedger_AppendOnly_OwnerIsStoppedByTriggers
+MESSAGE=was ALLOWED

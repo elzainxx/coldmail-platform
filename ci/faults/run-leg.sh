@@ -203,6 +203,8 @@ tok_platform_up() {
   case "$(go env GOOS)" in windows) ext=".exe";; esac
   bin="$WORK/platform-migrate-$SIDE$ext"
   ( cd "$FAULT_PLATFORM" && CGO_ENABLED=0 GOTOOLCHAIN=local go build -o "$bin" ./cmd/platform-migrate ) || { echo "platform-up: go build ./cmd/platform-migrate failed"; return 1; }
+  # platform_0001 needs auth.users (Supabase Auth); a fresh database has none, so apply the same minimal fixture the harness uses (a no-op when a leg's own SETUP already made it)
+  psql "$FAULT_DSN" -X -q -v ON_ERROR_STOP=1 -f "$FAULT_PLATFORM/tests/harness/fixtures/auth-users.sql" || { echo "platform-up: could not apply tests/harness/fixtures/auth-users.sql"; return 1; }
   PLATFORM_MIGRATE_DATABASE_URL="$FAULT_DSN" PLATFORM_MIGRATIONS_DIR="$FAULT_PLATFORM/db/migrations" "$bin" up || { echo "platform-up: platform-migrate up failed"; return 1; }
 }
 tok_m1_chain() {

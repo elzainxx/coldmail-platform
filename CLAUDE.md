@@ -32,6 +32,15 @@ The platform is the product users and the admin touch. The three modules do the 
 9. **The platform uses advisory-lock band `7_xxx_xxx_xxx`** and no other (M3 holds `8_`, M2 holds `9_`).
 10. **The platform's database identity is `platform_app`** (LOGIN, not a superuser, no DDL). Migrations run as a separate, privileged identity and are never run by the service.
 
+## Rules added in Phase 1
+
+11. **Fault proofs are patches, not branches.** `ci/faults/<phase>/<gate>.patch` + `.expect`, run by the `fault-proofs` workflow on a scratch copy; a leg is red unless the control is green and the fault is red for the named reason. Prove only gates new or changed in the phase, in one or two dispatches. `check-fault-patches` keeps a patch from rotting between dispatches.
+12. **Every module has its own schema and nothing of a module lives in `public`.** `public` may hold only `users` and `job_items` (`tests/public-allowlist.txt`, gate `check-public-schema`, run on every chain in the harness). Every SQL statement a module issues names its schema (`verify.`, `send_managed.`, `send_byo.`).
+13. **A CHECK that evaluates to NULL passes.** Every constraint over a nullable column says IS NULL / IS NOT NULL or COALESCEs; the tests insert the NULL case.
+14. **Money is integers and the ledger is append-only for everyone.** `bigint` credits, no numeric/float/money column (a catalog test); UPDATE/DELETE/TRUNCATE on the ledger, price history, price snapshot and admin audit are refused by privileges AND by triggers; the balance has exactly one writer, the ledger trigger, and `platform.balance_drift` proves it.
+15. **The platform fits the module tables as built.** The shape of `public.users` and `public.job_items` is derived from module CODE (`db/module-reads.txt`); every module statement against them is executed as that module's role in the harness. A column no module reads must be nullable or defaulted; the platform grants the module roles nothing and never deletes from either table.
+16. **Migrations that create objects run `SET LOCAL ROLE platform_owner`** (the migrator is made able to by `platform_0000`), so ownership needs no ALTER step; the one exception is the public tables, which need CREATE on `public` and are re-owned.
+
 ## Repository layout
 
 | Path | What |
@@ -43,7 +52,10 @@ The platform is the product users and the admin touch. The three modules do the 
 | `web/` | React + TypeScript + Tailwind (Vite). A placeholder page only until Phase 6 |
 | `tests/harness/` | the real-infrastructure harness: `run.sh`, `docker-compose.yml`, the module-1 Dockerfile, the integration tests (`*_test.go`, tag `harness`), the exposure check |
 | `tests/floors-go.txt`, `floors-web.txt`, `floors-harness.txt` | the per-package test-count floors |
-| `scripts/` | the gates and their selftests: `check-test-floors`, `check-image-pins`, `check-migrations` |
+| `scripts/` | the gates and their selftests: `check-test-floors`, `check-image-pins`, `check-migrations`, `check-gitleaksignore`, `check-public-schema` (+ `public-schema-listing.sql`), `check-fault-patches`, `check-balance-invariant`, `check-module-reads` |
+| `db/module-reads.txt`, `db/module-statements.txt` | what modules 2 and 3 require of `public.users` / `public.job_items`, derived from their code (columns; the exact statements), and the drift gate that fails when a pinned module starts referencing something not listed |
+| `ci/faults/<phase>/` | fault proofs: a `.patch` and a `.expect` per gate, run by the `fault-proofs` workflow (`ci/faults/README.md`); `ci/faults-archive/` holds the Phase 0 diffs (a record) |
+| `tests/supabase/` | the Supabase-shaped migration job: every migration as the non-superuser `postgres` of a digest-pinned `supabase/postgres`, blockers compared with committed lists |
 | `tools/` | `fetch-modules.sh` (clone + `--lock`), `modules.lock`, `check-modules-lock.sh`, `platform-check.sh` (docs citations) |
 | `Docs/` | the build plan, the diagram, the phase specs, the config / migrator / probe references. **`Docs/go.mod` is deliberate**: `Docs/` holds preserved raw Go sources that must stay out of the root module, so CI runs `gofmt -l cmd internal tests`, never `gofmt -l .` |
 | repository root `*.md` | the cross-module record: contract, comparison report, deferrals and false greens, verification runs |
@@ -55,6 +67,9 @@ The platform is the product users and the admin touch. The three modules do the 
 | `go` | gofmt clean, build, vet (plain and `-tags harness`), unit tests, the per-package floor |
 | `web` | `npm ci` from the lockfile, type-check, build, the built CSS contains the Tailwind utilities, tests, the test-count floor |
 | `gates` | every gate's selftest, then `check-migrations` and `check-image-pins` on the real repository |
+| `db-tests` | the harness's database-only integration tests (grants, roles, ledger, constraints, balance invariant, module shapes, schema locks, migration lifecycle) against a real Postgres, in minutes (`tests/harness/run-db-tests.sh`); the full `harness` runs them too, plus the module-dependent ones |
+| `supabase` | every migration, as the non-superuser `postgres` of the pinned `supabase/postgres` image: BASELINE (no provisioning) and FIXED (the proposed role-provisioning step) |
+| `fault-proofs` | dispatch-only: one matrix leg per `ci/faults/<phase>/*.expect`; a leg passes only if its gate is green unpatched and red, at the named step with the named message, patched |
 | `harness` | the three modules built from their pinned commits and running as real services beside the platform and one real Postgres; the integration tests; the end-to-end probe; the exposure check; the outage check |
 | `gitleaks` | the full-history secret scan, with the scanner proven before it is trusted on every run |
 | `platform-check` | every JSON file parses, every internal link resolves, every cross-repo citation resolves, every cited commit exists |

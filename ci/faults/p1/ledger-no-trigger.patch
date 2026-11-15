@@ -1,0 +1,14 @@
+diff --git a/db/migrations/platform_0002_registry_and_money.up.sql b/db/migrations/platform_0002_registry_and_money.up.sql
+index 630274e..915f7fa 100644
+--- a/db/migrations/platform_0002_registry_and_money.up.sql
++++ b/db/migrations/platform_0002_registry_and_money.up.sql
+@@ -298,8 +298,7 @@ COMMENT ON FUNCTION platform.ledger_apply_to_balance() IS 'SECURITY DEFINER (own
+ CREATE TRIGGER ledger_apply_to_balance AFTER INSERT ON platform.ledger FOR EACH ROW EXECUTE FUNCTION platform.ledger_apply_to_balance();
+ REVOKE ALL ON FUNCTION platform.ledger_apply_to_balance() FROM PUBLIC;
+ 
+-CREATE TRIGGER ledger_append_only BEFORE UPDATE OR DELETE ON platform.ledger FOR EACH ROW EXECUTE FUNCTION platform.reject_mutation();
+-CREATE TRIGGER ledger_no_truncate BEFORE TRUNCATE ON platform.ledger FOR EACH STATEMENT EXECUTE FUNCTION platform.reject_mutation();
++-- FAULT: the ledger triggers are gone
+ 
+ -- ── the recompute: the alarm that notices if the trigger was ever disabled or bypassed ───────────────────────────────────────────────────────────────────────────
+ CREATE VIEW platform.balance_drift AS

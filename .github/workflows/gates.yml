@@ -7,6 +7,8 @@
 #   check-gitleaksignore the secret scanner's ignore file holds no entries (fault proofs are patches now, not commits)
 #   check-fault-patches  every ci/faults/<phase>/ fault proof parses and its platform patch still applies (the fault-proofs workflow is dispatch-only)
 #   check-public-schema  schema public holds only the allowlisted platform tables (the selftest here; the live check runs in the harness)
+#   check-module-reads   the declared module statements still appear in the pinned module sources, and no undeclared file references public.users / public.job_items (the selftest here; the live check runs in the harness)
+#   check-balance-invariant  the balance_drift / reserve_overdrawn gate (the selftest here; the live check runs in the harness and in the fault legs)
 #   run-leg              the fault-proof leg runner (ci/faults/run-leg.sh) passes only a good fault and fails, for the named reason, on every bad one
 #
 # NOT covered by this file: the secret scan (gitleaks.yml), the docs/citation checks (platform-check.yml), the Go/web builds (go.yml, web.yml)
@@ -32,7 +34,7 @@ jobs:
         run: |
           set -u
           rc=0
-          for t in scripts/check-test-floors-selftest.sh scripts/check-image-pins-selftest.sh scripts/check-migrations-selftest.sh scripts/check-gitleaksignore-selftest.sh scripts/check-fault-patches-selftest.sh ci/faults/run-leg-selftest.sh scripts/check-public-schema-selftest.sh; do
+          for t in scripts/check-test-floors-selftest.sh scripts/check-image-pins-selftest.sh scripts/check-migrations-selftest.sh scripts/check-gitleaksignore-selftest.sh scripts/check-fault-patches-selftest.sh ci/faults/run-leg-selftest.sh scripts/check-public-schema-selftest.sh scripts/check-module-reads-selftest.sh scripts/check-balance-invariant-selftest.sh; do
             echo "::group::$t"; bash "$t" || { echo "SELFTEST FAILED: $t"; rc=1; }; echo "::endgroup::"
           done
           exit $rc

@@ -1,0 +1,47 @@
+# db/module-reads.txt — the shape that modules 2 (send-managed) and 3 (send-byo) REQUIRE of the two platform-owned tables public.users and public.job_items.
+#
+# SOURCE. Read from the modules' CODE at the pins in tools/modules.lock (M2 02a71fc, M3 d6ac497), not from their comments, fixtures or pre-flight text: Docs/phase-1-spec.md "Inventory" (the module
+# constraints) and findings F19-F22. Each statement behind a line below is in db/module-statements.txt, which scripts/check-module-reads.sh holds against the module source (red when the code starts
+# reading something this file does not list). tests/harness/shape_test.go compares THIS file with the catalog of a migrated database (TestShape_*), and platform_0001_public_tables.up.sql is written to it.
+#
+# THE RULE THIS FILE ENCODES. Module 3's test-send runs `INSERT INTO public.job_items (campaign_id, user_id, recipient_email, rendered_subject, rendered_body, status) VALUES (...)` as send_byo_app
+# (statement J4): six columns. So EVERY OTHER column of public.job_items must be nullable or defaulted, whatever the platform adds later (a test fails on one that is not, whether declared here or not).
+# public.users is never written by module code (its role holds SELECT only), so the rule does not apply there; its columns are declared in full so that the table cannot change unnoticed.
+#
+# LINES (`|` separated; the whole file is read by a parser that refuses a malformed line, tests/harness/shape_helpers_test.go):
+#   <table>|<column>|<type as format_type prints it>|NOT NULL or NULL|default (yes or no: a default expression, an identity or a generated column)|required_by|note
+#   pk|<table>|<column>                               the primary key is exactly this one column
+#   fk-present|<table>|<column>|<schema.table>        the column has a foreign key to that table
+#   fk-absent|<table>|<column>                        NO foreign key of any kind involves the column (either direction)
+#   row|<table>|<column>|<value>|<required_by>|note   a row with that value must exist
+#   accepts|<table>|<column>|<value>|<required_by>|note   the column must accept that value (a probe INSERT, rolled back)
+# required_by: m2 / m3 / m2,m3 = module CODE (non-test) reads or writes the column; test-only = only the modules' own test seeders touch it (module code never does); platform = only the platform needs it.
+
+# ---- public.users: module code reads exactly one column, id (EXISTS on it, and 7 + 11 foreign keys point at it) ----
+public.users|id|uuid|NOT NULL|yes|m2,m3|primary key and foreign-key target of 7 (m2) + 11 (m3) module constraints; the only column module code reads (SELECT EXISTS(...WHERE id=$1), statements U1/U2). A text id would break every FK from the modules' uuid columns.
+public.users|auth_user_id|uuid|NULL|no|platform|the link to Supabase auth.users (foreign key, unique). NULL only for the all-zero system user (users_auth_link; finding F19).
+public.users|email|text|NOT NULL|no|test-only|no module code reads it; the modules' test seeders insert it (INSERT INTO public.users (email, is_active) ...). Normalised: trimmed, lower-case, unique.
+public.users|is_active|boolean|NOT NULL|yes|test-only|no module code reads it; the modules' test seeders insert it. The platform's own switch for a login that may no longer act.
+public.users|created_at|timestamp with time zone|NOT NULL|yes|test-only|no module code reads it; the modules' manual scripts ORDER BY it.
+
+# ---- public.job_items: read by M2 and M3 (J1, J2), WRITTEN by M3's test-send (J4: the six columns named above) ----
+public.job_items|id|uuid|NOT NULL|yes|m2,m3|primary key and foreign-key target (jobs.job_item_id ... ON DELETE CASCADE); M3's INSERT omits it, so it must have a default (gen_random_uuid()); RETURNING id.
+public.job_items|campaign_id|uuid|NOT NULL|no|m2,m3|read into a non-pointer Go string (a NULL is an opaque 500); copied into jobs.campaign_id UUID NOT NULL; J4 binds ONE parameter to this column and to user_id, so both are uuid. NO foreign key and NO check: M3's test-send writes the user's own id here.
+public.job_items|user_id|uuid|NOT NULL|no|m2,m3|read (WHERE user_id = $2, tenant scoping) and copied; written by J4. Must exist in public.users or the job's genesis event fails its foreign key.
+public.job_items|recipient_email|text|NOT NULL|no|m2,m3|copied into jobs.recipient_email TEXT NOT NULL; written by J4. A NULL becomes an opaque 500 (SQLSTATE 23502 is not mapped by the modules), not a 4xx.
+public.job_items|rendered_subject|text|NOT NULL|no|m2,m3|copied into jobs.rendered_subject TEXT NOT NULL; written by J4.
+public.job_items|rendered_body|text|NOT NULL|no|m2,m3|copied into jobs.rendered_body TEXT NOT NULL; written by J4.
+public.job_items|reply_to|text|NULL|no|m2,m3|copied into jobs.reply_to TEXT (nullable); J4 omits it, so it must stay nullable or defaulted.
+public.job_items|status|text|NOT NULL|yes|m3|WRITTEN by J4 as the literal 'pending'; never read by any module (M2's tests insert it too). Must accept 'pending'; the platform owns the rest of the vocabulary.
+public.job_items|created_at|timestamp with time zone|NOT NULL|yes|platform|used by no module and no module test. Defaulted because J4 omits it.
+
+# ---- keys ----
+pk|public.users|id
+pk|public.job_items|id
+fk-present|public.job_items|user_id|public.users|not required by any module statement (the module's own job_events foreign key already needs the user); the platform keeps it so a job item cannot outlive or invent its owner. ON DELETE RESTRICT.
+fk-present|public.users|auth_user_id|auth.users|every real user IS its Supabase auth user; the one exception is the system user (users_auth_link).
+fk-absent|public.job_items|campaign_id
+
+# ---- rows and values ----
+row|public.users|id|00000000-0000-0000-0000-000000000000|m2|module 2 hard-requires the all-zero system user (shared pools and accounts answer 409 system_user_not_provisioned without it); it has no auth account, is inactive, and is the only user without an auth link.
+accepts|public.job_items|status|pending|m3|the only value any module writes

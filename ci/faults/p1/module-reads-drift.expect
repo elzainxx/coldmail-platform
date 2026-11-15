@@ -1,0 +1,9 @@
+# The platform fits the module tables as built, so it must notice when a pinned module starts referencing public.users / public.job_items in a way nobody derived a shape from. The fault adds a
+# new file to module 2 that selects from public.users; the drift gate must name it.
+GATE=module-reads-drift
+TARGET=module:coldmail-send-managed
+SETUP=
+STEP=check-module-reads against the (patched) module 2 source
+CMD=bash "$FAULT_PLATFORM/scripts/check-module-reads.sh" --modules "$FAULT_MODULES" --statements "$FAULT_PLATFORM/db/module-statements.txt"
+MESSAGE=DRIFT:
+MESSAGE=zz_fault.go references public.users/public.job_items but is not declared

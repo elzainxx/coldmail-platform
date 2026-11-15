@@ -1,0 +1,13 @@
+diff --git a/db/migrations/platform_0001_public_tables.up.sql b/db/migrations/platform_0001_public_tables.up.sql
+index 809a9b8..d563073 100644
+--- a/db/migrations/platform_0001_public_tables.up.sql
++++ b/db/migrations/platform_0001_public_tables.up.sql
+@@ -54,7 +54,7 @@ VALUES ('00000000-0000-0000-0000-000000000000', NULL, 'system@platform.invalid',
+ 
+ CREATE TABLE public.job_items (
+     id               uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+-    campaign_id      uuid        NOT NULL,
++    campaign_id      text        NOT NULL,
+     user_id          uuid        NOT NULL REFERENCES public.users (id) ON DELETE RESTRICT,
+     recipient_email  text        NOT NULL,
+     rendered_subject text        NOT NULL,

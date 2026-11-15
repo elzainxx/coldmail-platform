@@ -1,0 +1,9 @@
+# The ledger is append-only for platform_app and platform_admin at the PRIVILEGE layer: UPDATE is refused with 42501. The fault grants UPDATE on platform.ledger; the trigger layer still stops the
+# write (23001), so only a test that pins the privilege layer separately notices - which is exactly what this proves.
+GATE=ledger-grant-update
+TARGET=platform
+SETUP=
+STEP=go test TestLedger_AppendOnly_PrivilegesRefuseMutation (UPDATE/DELETE/TRUNCATE refused, INSERT allowed, for app and admin)
+CMD=H_PG_ADMIN_DSN="$FAULT_ADMIN_DSN" bash tests/harness/run-db-tests.sh '^TestLedger_AppendOnly_PrivilegesRefuseMutation$'
+MESSAGE=--- FAIL: TestLedger_AppendOnly_PrivilegesRefuseMutation
+MESSAGE=want 42501

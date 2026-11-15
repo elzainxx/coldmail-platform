@@ -1,0 +1,13 @@
+diff --git a/db/migrations/platform_0002_registry_and_money.up.sql b/db/migrations/platform_0002_registry_and_money.up.sql
+index 630274e..39dfb1b 100644
+--- a/db/migrations/platform_0002_registry_and_money.up.sql
++++ b/db/migrations/platform_0002_registry_and_money.up.sql
+@@ -344,7 +344,7 @@ GRANT SELECT, INSERT, UPDATE ON platform.jobs TO platform_app;
+ GRANT SELECT ON platform.jobs TO platform_admin;
+ GRANT SELECT, INSERT ON platform.job_unit_prices TO platform_app;
+ GRANT SELECT ON platform.job_unit_prices TO platform_admin;
+-GRANT SELECT, INSERT ON platform.ledger TO platform_app, platform_admin;
++GRANT SELECT, INSERT, UPDATE ON platform.ledger TO platform_app, platform_admin;
+ GRANT SELECT, INSERT, UPDATE ON platform.m3_entitlements TO platform_app;
+ GRANT SELECT ON platform.m3_entitlements TO platform_admin;
+ 

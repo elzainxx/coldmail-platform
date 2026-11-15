@@ -1,0 +1,9 @@
+diff --git a/services/control/internal/adminapi/zz_fault.go b/services/control/internal/adminapi/zz_fault.go
+new file mode 100644
+--- /dev/null
++++ b/services/control/internal/adminapi/zz_fault.go
+@@ -0,0 +1,4 @@
++package adminapi
++
++// FAULT: a new statement against a platform table that no declaration covers.
++const zzFault = `SELECT 1 FROM public.users WHERE id = $1`

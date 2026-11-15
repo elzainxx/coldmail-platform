@@ -5,12 +5,13 @@
 #   1  pins      each module checkout is EXACTLY the commit tools/modules.lock pins, shallow-free, with a clean tree
 #   2  secrets   per-run secrets, minted with each module's OWN tools (gen-certs / gen-secrets / own-secrets / provision-worker); never printed, never committed
 #   3  build     every image built from source with --pull --no-cache (no layer from a previous run can earn a green)
-#   4  database  ONE real Postgres; fixture public.users/job_items; the platform's, module 1's, module 2's and module 3's own migrations, in that order
+#   4  database  ONE real Postgres; the auth.users fixture, then the platform's (which creates public.users and public.job_items), module 1's, module 2's and module 3's own migrations, in that order
 #   5  services  the three module Controls and the platform, started and waited healthy on a network that is `internal` and publishes nothing
 #   6  tests     the integration tests (tests/harness, build tag `harness`) compiled on the runner, run INSIDE the network, then the per-package floor gate
 #   7  probe     platform-probe calls every module over the private network with the service token (health, readyz, describe) — the Phase 0 end-to-end call
 #   8  exposure  no service publishes a port; the network is internal (two independent instruments)
 #   9  outage    the platform's /readyz follows the database: 200, then 503 with Postgres stopped, then 200 again
+#  10  ledger    the balance invariant: the live ledger trigger is intact (a rolled-back exercise through the ledger leaves no drift and no overdrawn reserve)
 # and finally prints what it did NOT check. Nothing here is mocked: every module is the real, unmodified pinned source running as a real service.
 set -u
 PINS_ONLY=0; [ "${1:-}" = "--pins-only" ] && PINS_ONLY=1   # stage 1 only: used by the workflow to prove the pin check goes red on a wrong checkout
@@ -45,6 +46,9 @@ for m in coldmail-verify coldmail-send-managed coldmail-send-byo; do
 done
 
 if [ "$PINS_ONLY" = 1 ]; then echo "pins-only: the three modules are exactly the pinned commits"; trap - EXIT; exit 0; fi
+
+# the declared module statements (db/module-statements.txt) still appear in the pinned module sources, and no undeclared file references the platform tables
+bash "$PLATFORM_DIR/scripts/check-module-reads.sh" --modules "$MODULES_ROOT" --statements "$PLATFORM_DIR/db/module-statements.txt" || die "the module-reads drift gate is red: a pinned module references public.users / public.job_items in a way db/module-statements.txt does not declare"
 
 # ── 2. secrets ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 STAGE=secrets; banner 2 "per-run secrets, minted with the modules' own tools"
@@ -94,7 +98,7 @@ echo "  built from the pinned sources; base images are the digests pinned in eac
 # ── 4. database ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 STAGE=database; banner 4 "one real Postgres, four migration chains"
 DC up -d --wait --wait-timeout 120 postgres || die "postgres did not become healthy"
-DC run --rm -T fixtures || die "the fixture tables (public.users, public.job_items) could not be created"
+DC run --rm -T fixtures || die "the auth.users fixture could not be created"
 for s in migrate-platform migrate-m1 migrate-m2 migrate-m3; do
   echo "  -- $s"; DC run --rm -T "$s" > "$WORK/$s.log" 2>&1; rc=$?; sed 's/^/     | /' "$WORK/$s.log" | tail -25
   [ "$rc" = 0 ] || die "$s exited $rc"
@@ -163,6 +167,10 @@ DC start postgres >/dev/null 2>&1 || die "could not restart postgres"
 wait_for 200 || die "readyz did not return to 200 after the database came back"
 echo "  readyz: 200 -> 503 (postgres stopped) -> 200 (postgres back)"
 
+# ── 10. ledger ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+STAGE=ledger; banner 10 "the balance invariant holds on the live database (rolled-back exercise through the ledger)"
+bash "$PLATFORM_DIR/scripts/check-balance-invariant.sh" --psql-cmd "docker compose --project-directory $HERE -f $HERE/docker-compose.yml --env-file $WORK/harness.env --profile probe --profile tests exec -T postgres psql -U postgres -d platform" --exercise || die "the balance invariant gate is red on the live database"
+
 # ── result ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 STAGE=done
 echo
@@ -171,7 +179,8 @@ cat <<'EOF'
   - workers, the SMTP sink and CoreDNS: not started. No module sent, verified or billed anything; only health, readiness and describe were called.
   - real Supabase: this is stock Postgres 16 with a superuser `postgres`. Supabase's `postgres` role is not a superuser, so the module migrations (CREATE ROLE, OWNER TO)
     are untested against the real project; neither are its pooler, its `auth` schema or its roles.
-  - the platform's real public.users / public.job_items: the tables here are the modules' own FIXTURES (Phase 1 builds the real ones and runs each module's pre-flight against them).
+  - Supabase Auth: auth.users is a minimal FIXTURE (id, email); the real table, GoTrue and the exposed schemas are not here (the supabase workflow has the real auth schema, migrations only).
+  - module BEHAVIOUR on the platform's tables beyond the statements the modules issue against public.users / public.job_items (db/module-statements.txt, executed as each module's role in a rolled-back transaction): no job was run end to end (Phase 3).
   - module behaviour beyond health, readiness and describe (Phase 3); module 1 has NO describe at all (Docs/phase-0-spec.md F1) and runs here as the least-privilege login verify_app (since Phase 1, A2).
   - reachability from another host, a firewall or a cloud security group; TLS termination; the modules' mTLS worker ports (they are up, unexercised).
   - that every module commit other than the three pins in tools/modules.lock still works with the platform.

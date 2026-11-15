@@ -1,0 +1,8 @@
+# The balance invariant: the stored balance equals the sum of the ledger rows. The fault deletes the one trigger that maintains platform.balances (the ledger's only writer of it), i.e. the way
+# the invariant would silently break. The gate's own exercise (a rolled-back grant/reserve/charge/release through the ledger) must then show drift and go RED.
+GATE=balance-invariant
+TARGET=platform
+SETUP=platform-up
+STEP=check-balance-invariant --exercise on a migrated database
+CMD=bash scripts/check-balance-invariant.sh --dsn "$FAULT_DSN" --exercise
+MESSAGE=BALANCE DRIFT

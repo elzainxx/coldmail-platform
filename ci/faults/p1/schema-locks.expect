@@ -1,0 +1,8 @@
+# Credits are integers: no numeric, real, double precision or money column in schema platform. The fault makes platform.unit_costs.cost a numeric.
+GATE=schema-locks
+TARGET=platform
+SETUP=
+STEP=go test TestSchemaLocks_CreditsAreIntegers (a catalog test over schema platform)
+CMD=H_PG_ADMIN_DSN="$FAULT_ADMIN_DSN" bash tests/harness/run-db-tests.sh '^TestSchemaLocks_CreditsAreIntegers$'
+MESSAGE=--- FAIL: TestSchemaLocks_CreditsAreIntegers
+MESSAGE=platform.unit_costs.cost: type numeric is not allowed
