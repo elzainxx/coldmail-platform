@@ -1,0 +1,9 @@
+# Module 1 must run as the least-privilege login verify_app. The fault removes ONE grant from migration 0016 (INSERT on verify.policies, which EnsurePolicy needs at startup - the grant the old
+# runtime role never had). The real store is driven as a verify_app login by TestRuntimeAsVerifyApp: it must fail naming the table, not pass because the tests run as a superuser.
+GATE=m1-runtime-grants
+TARGET=module:coldmail-verify
+SETUP=
+STEP=go test TestRuntimeAsVerifyApp (the real store as a verify_app login)
+CMD=cd control-plane && TM_TEST_DATABASE_URL="$FAULT_ADMIN_DSN" go test -count=1 -v -run '^TestRuntimeAsVerifyApp$' ./internal/store/
+MESSAGE=--- FAIL: TestRuntimeAsVerifyApp
+MESSAGE=permission denied for table policies

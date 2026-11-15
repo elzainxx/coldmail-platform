@@ -69,7 +69,7 @@ services:
   # Module 1 has no migration tool: its own CI applies the numbered files with a psql loop in lexical order, stopping at the first error. So does this.
   migrate-m1:
     image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
-    environment: { PGPASSWORD: "${H_PG_SUPERPASS:?}" }
+    environment: { PGPASSWORD: "${H_PG_SUPERPASS:?}", M1_APP_PASSWORD: "${H_M1_APP_PASSWORD:?}" }
     volumes:
       - ${H_MODULES_ROOT:?}/coldmail-verify/control-plane/migrations:/m:ro
     entrypoint: ["sh", "-ec"]
@@ -81,6 +81,9 @@ services:
           n=$$((n+1))
         done
         echo "migrate-m1: applied $$n files"
+        # verify_app is created by migration 0016 as a LOGIN role without a password; the password is set out of band, never in SQL (psql interpolates :'pw' from stdin)
+        printf "ALTER ROLE verify_app PASSWORD :'pw';\n" | psql -v ON_ERROR_STOP=1 -h postgres -U postgres -d platform -q -v "pw=$$M1_APP_PASSWORD" >/dev/null
+        echo "migrate-m1: verify_app password set"
     depends_on: { postgres: { condition: service_healthy } }
     networks: [private]
     restart: "no"
@@ -118,8 +121,8 @@ services:
     # Module 1 ships no Dockerfile for its control plane: this one is the platform's (tests/harness/m1/Dockerfile) and builds the pinned source unmodified.
     build: { context: "${H_MODULES_ROOT:?}/coldmail-verify", dockerfile: "${H_PLATFORM_DIR:?}/tests/harness/m1/Dockerfile" }
     environment:
-      # Module 1 needs an OWNER or SUPERUSER connection today (startup writes `policies`; cp_runtime has only SELECT) — Docs/phase-0-spec.md F3.
-      TM_DATABASE_URL: postgres://postgres:${H_PG_SUPERPASS:?}@postgres:5432/platform
+      # Module 1 connects as verify_app, a plain LOGIN role that owns nothing (its migration 0016 gives it exactly the grants the code needs; Docs/phase-1-spec.md A2). It used to need a superuser (Phase 0 F3).
+      TM_DATABASE_URL: postgres://verify_app:${H_M1_APP_PASSWORD:?}@postgres:5432/platform
       TM_PEPPER: ${H_M1_PEPPER:?}
       TM_QUEUE_ADDR_KEY: ${H_M1_QUEUE_KEY:?}      # without it the bulk and job routes answer 503 `unavailable` even to an authenticated caller (module 1: main.go, api.go)
       TM_ENV: development

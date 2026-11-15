@@ -1,0 +1,12 @@
+diff --git a/control-plane/cmd/control-plane/main.go b/control-plane/cmd/control-plane/main.go
+index a2bfd82..e971c25 100644
+--- a/control-plane/cmd/control-plane/main.go
++++ b/control-plane/cmd/control-plane/main.go
+@@ -212,7 +212,6 @@ func buildQueue(appCtx context.Context, cfg config.Config, sec *secrets.Secrets,
+ 	key, prev, ok := sec.QueueAddrKey()
+ 	if !ok {
+ 		log.Printf("queue: %s not set — bulk endpoint disabled (won't store plaintext without the DR-4 key)", secrets.EnvQueueAddrKey)
+-		srv.WithQueueStatus(false, secrets.EnvQueueAddrKey+" is not set: the bulk and job routes answer 503 until it is")
+ 		return
+ 	}
+ 	cipher, err := queue.NewAddrCipher(key, prev)

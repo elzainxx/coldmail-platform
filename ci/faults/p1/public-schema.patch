@@ -1,0 +1,7 @@
+diff --git a/control-plane/migrations/0017_zz_leak.sql b/control-plane/migrations/0017_zz_leak.sql
+new file mode 100644
+--- /dev/null
++++ b/control-plane/migrations/0017_zz_leak.sql
+@@ -0,0 +1,2 @@
++-- FAULT: an unqualified CREATE, the habit that put module 1 in public in the first place
++CREATE TABLE IF NOT EXISTS zz_leak (id integer);

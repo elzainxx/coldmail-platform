@@ -63,8 +63,8 @@ M3_TOKEN="$(printf '%s\n' "$t3" | field ADMIN_API_KEY)"; M3_HASH="$(printf '%s\n
 [ "$M2_TOKEN" != "$M3_TOKEN" ] || die "the two module service tokens are identical — each module must have its own credential"
 M1_KEY="$(openssl rand -hex 32)"; M1_KEY_SHA="$(printf '%s' "$M1_KEY" | sha256sum | cut -d' ' -f1)"
 for v in "$M2_TOKEN" "$M3_TOKEN" "$M1_KEY"; do mask "$v"; done
-PG_PASS="$(openssl rand -hex 16)"; PL_PASS="$(openssl rand -hex 16)"; M2_PASS="$(openssl rand -hex 16)"; M3_PASS="$(openssl rand -hex 16)"; M1_PEPPER="$(openssl rand -hex 32)"; M1_QUEUE_KEY="$(openssl rand -hex 32)"
-for v in "$PG_PASS" "$PL_PASS" "$M2_PASS" "$M3_PASS" "$M1_PEPPER" "$M1_QUEUE_KEY"; do mask "$v"; done
+PG_PASS="$(openssl rand -hex 16)"; PL_PASS="$(openssl rand -hex 16)"; M2_PASS="$(openssl rand -hex 16)"; M3_PASS="$(openssl rand -hex 16)"; M1_PEPPER="$(openssl rand -hex 32)"; M1_QUEUE_KEY="$(openssl rand -hex 32)"; M1_APP_PASS="$(openssl rand -hex 16)"
+for v in "$PG_PASS" "$PL_PASS" "$M2_PASS" "$M3_PASS" "$M1_PEPPER" "$M1_QUEUE_KEY" "$M1_APP_PASS"; do mask "$v"; done
 esc() { printf '%s' "$1" | sed 's/\$/$$/g'; }       # bcrypt hashes contain '$', which compose would interpolate
 ( umask 077; cat > "$WORK/harness.env" <<EOF
 H_PLATFORM_DIR=$PLATFORM_DIR
@@ -74,6 +74,7 @@ H_PG_SUPERPASS=$PG_PASS
 H_PLATFORM_APP_PASSWORD=$PL_PASS
 H_M1_PEPPER=$M1_PEPPER
 H_M1_QUEUE_KEY=$M1_QUEUE_KEY
+H_M1_APP_PASSWORD=$M1_APP_PASS
 H_M1_CALLER_KEY=$M1_KEY
 H_M2_APP_PASSWORD=$M2_PASS
 H_M3_APP_PASSWORD=$M3_PASS
@@ -103,10 +104,13 @@ m1_got="$(sed -n 's/.*migrate-m1: applied \([0-9]*\) files.*/\1/p' "$WORK/migrat
 [ "${m1_want:-0}" -ge 1 ] || die "module 1's migration directory has no numbered files — the loop would have applied nothing"
 [ "$m1_got" = "$m1_want" ] || die "module 1: the checkout has $m1_want migration files but the loop applied '${m1_got:-none}'"
 psql_() { DC exec -T postgres psql -U postgres -d platform -v ON_ERROR_STOP=1 -tAc "$1"; }
-n="$(psql_ "select count(*) from pg_namespace where nspname in ('platform','send_managed','send_byo')")"; [ "$n" = 3 ] || die "expected the platform, send_managed and send_byo schemas, found $n of them"
-[ "$(psql_ "select to_regclass('public.api_callers') is not null")" = t ] || die "module 1's public.api_callers does not exist after its migrations"
-psql_ "INSERT INTO api_callers (caller_id, key_sha256, not_before, user_id) VALUES ('harness-caller', decode('$M1_KEY_SHA','hex'), now() - interval '1 hour', '00000000-0000-0000-0000-0000000000a1')" >/dev/null || die "could not seed module 1's per-caller key"
-echo "  schemas: platform, send_managed, send_byo present; module 1 applied $m1_got of $m1_want files into public; one module-1 caller key seeded"
+n="$(psql_ "select count(*) from pg_namespace where nspname in ('platform','send_managed','send_byo','verify')")"; [ "$n" = 4 ] || die "expected the platform, send_managed, send_byo and verify schemas, found $n of them"
+[ "$(psql_ "select to_regclass('verify.api_callers') is not null")" = t ] || die "module 1's verify.api_callers does not exist after its migrations"
+psql_ "INSERT INTO verify.api_callers (caller_id, key_sha256, not_before, user_id) VALUES ('harness-caller', decode('$M1_KEY_SHA','hex'), now() - interval '1 hour', '00000000-0000-0000-0000-0000000000a1')" >/dev/null || die "could not seed module 1's per-caller key"
+echo "  schemas: platform, send_managed, send_byo, verify present; module 1 applied $m1_got of $m1_want files; one module-1 caller key seeded"
+# schema public may hold only the platform's own tables (tests/public-allowlist.txt): module 1 must have left it, and no module may have put anything there
+DC exec -T postgres psql -X -At -F '|' -v ON_ERROR_STOP=1 -U postgres -d platform < "$PLATFORM_DIR/scripts/public-schema-listing.sql" > "$WORK/public-listing.txt" || die "the public-schema listing query failed"
+bash "$PLATFORM_DIR/scripts/check-public-schema.sh" --allowlist "$PLATFORM_DIR/tests/public-allowlist.txt" --listing "$WORK/public-listing.txt" || die "schema public holds something that is not allowlisted"
 
 # ── 5. services ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 STAGE=services; banner 5 "the three Controls and the platform, healthy on the private network"
@@ -165,7 +169,7 @@ cat <<'EOF'
   - real Supabase: this is stock Postgres 16 with a superuser `postgres`. Supabase's `postgres` role is not a superuser, so the module migrations (CREATE ROLE, OWNER TO)
     are untested against the real project; neither are its pooler, its `auth` schema or its roles.
   - the platform's real public.users / public.job_items: the tables here are the modules' own FIXTURES (Phase 1 builds the real ones and runs each module's pre-flight against them).
-  - module behaviour beyond health, readiness and describe (Phase 3); module 1 has NO describe at all (Docs/phase-0-spec.md F1) and runs here as a superuser (F3).
+  - module behaviour beyond health, readiness and describe (Phase 3); module 1 has NO describe at all (Docs/phase-0-spec.md F1) and runs here as the least-privilege login verify_app (since Phase 1, A2).
   - reachability from another host, a firewall or a cloud security group; TLS termination; the modules' mTLS worker ports (they are up, unexercised).
   - that every module commit other than the three pins in tools/modules.lock still works with the platform.
 EOF

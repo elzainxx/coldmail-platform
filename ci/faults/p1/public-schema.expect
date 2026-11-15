@@ -1,0 +1,9 @@
+# Schema public may hold only the allowlisted platform tables. The fault is a new module-1 migration that creates a table UNQUALIFIED (the habit that put module 1 in public in the
+# first place); the gate must name it. The leg applies the Phase 0 module fixture (public.users / public.job_items, from the pinned module 2 checkout) so the allowlisted tables exist.
+GATE=public-schema
+TARGET=module:coldmail-verify
+SETUP=m1-chain
+STEP=check-public-schema on a migrated database
+CMD=psql -X -q -v ON_ERROR_STOP=1 -f "$FAULT_MODULES/coldmail-send-managed/deploy/pg-init/00-platform-fixtures.sql" "$FAULT_DSN" >/dev/null && bash "$FAULT_PLATFORM/scripts/check-public-schema.sh" --allowlist "$FAULT_PLATFORM/tests/public-allowlist.txt" --dsn "$FAULT_DSN"
+MESSAGE=table zz_leak is in public and not allowlisted
+MESSAGE=check-public-schema: RED

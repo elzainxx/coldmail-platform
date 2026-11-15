@@ -1,0 +1,18 @@
+# known-blockers.txt — the migration statements that FAIL when the platform's and the three modules' migrations are run by the NON-superuser `postgres` of the pinned
+# supabase/postgres image (the shape of a real Supabase project). Read by tests/supabase/run.sh, compared by tests/supabase/classify.sh --compare.
+#
+# FORMAT. One blocker per line:   FILE|SQLSTATE|MESSAGE-SUBSTRING
+#   FILE               the BASENAME of the migration file, e.g. send_managed_0000_bootstrap.up.sql  (no directory)
+#   SQLSTATE           five characters, upper case, e.g. 42501
+#   MESSAGE-SUBSTRING  text that occurs in the error message psql printed (everything after the second bar; it may contain bars). Not empty.
+# Blank lines and lines whose first non-blank character is # are ignored; carriage returns are stripped.
+# A line covers every observed blocker with the same FILE and SQLSTATE whose message contains the substring. The job is red when an observed blocker is covered by no line
+# ("NEW BLOCKER ...") and when a line covers no observed blocker ("STALE ENTRY ..."): the committed list and the real blockers must be the same set.
+# Only BLOCKERS are listed (SQLSTATE 42501, or a privilege-shaped message; see classify.sh). Cascades (42P01, 3F000, 42704, 42710 ... usually caused by an earlier blocker) are
+# reported by every run and are never listed here.
+#
+# WHO MAY EDIT. The lead fills this file from the first runner run: the run prints its observed blockers as ready-to-paste lines under "OBSERVED BLOCKERS". An entry for a
+# MODULE 2 or MODULE 3 migration is added only with the owner's ruling (those migrations are not changed from this repository); an entry for a platform_* migration is
+# removed in the same commit that fixes the migration. The goal state is an EMPTY list: then nothing blocks the platform's migrations on Supabase.
+#
+# ENTRIES: none yet. The first run on the runner is expected to be red with NEW BLOCKER lines; those lines are the report.

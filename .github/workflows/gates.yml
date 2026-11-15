@@ -46,6 +46,5 @@ jobs:
       - name: check-gitleaksignore on the real repository
         run: bash scripts/check-gitleaksignore.sh
 
-      # enable when the first ci/faults/p1 fault lands (today the gate is red on purpose: "found 0 faults: the instrument matched nothing"):
-      # - name: check-fault-patches on the real repository
-      #   run: bash scripts/check-fault-patches.sh --min-faults 1
+      - name: check-fault-patches on the real repository (every ci/faults fault parses; every platform patch still applies)
+        run: bash scripts/check-fault-patches.sh --min-faults 1

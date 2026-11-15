@@ -1,0 +1,67 @@
+# The Supabase-shaped migration run: EVERY migration of the platform and of the three modules, run as the NON-superuser `postgres` against a digest-pinned supabase/postgres image,
+# with every failed statement reported (file, line, SQLSTATE, the exact statement) and the job red unless the set of real BLOCKERS equals tests/supabase/known-blockers.txt.
+#
+# WHAT IT PROVES. On Supabase the migrating role `postgres` is not a superuser (the real superuser is `supabase_admin`), while the main harness runs stock Postgres with a superuser,
+# so a migration that needs one (CREATE ROLE with attributes, ALTER ... OWNER TO a role the migrator cannot SET ROLE to, CREATE SCHEMA ... AUTHORIZATION, extensions,
+# ALTER DEFAULT PRIVILEGES FOR ROLE, GRANT ... WITH ADMIN) has never been exercised. This job exercises them and states which ones fail, on the image the platform will really run on.
+# It also proves its own instrument: the role is asserted to be a non-superuser, and a control file of known outcome is read through the real psql before any chain runs.
+#
+# WHAT IT DOES NOT PROVE (tests/supabase/run.sh prints the full list on every run): the pooler (Supavisor), Supabase Auth / GoTrue, PostgREST and the exposed schemas, a real project's
+# RLS defaults, the extensions of the hosted service, a real project's role grants (they differ by project age), the runtime behaviour of any module (migrations only), and the
+# modules' per-file transaction (psql runs each statement in autocommit, so one failure does not abort the rest of its file). It does not change a single migration.
+#
+# The modules are private repositories: tools/fetch-modules.sh clones each with its own READ-ONLY deploy key, at the commits tools/modules.lock pins. There is no skip path: a missing
+# or wrong key turns this job red. The weekly schedule exists so a revoked key, or a moved image, shows up as a red run and not as silence.
+# The password `ci` is a throwaway for a database that exists only for the duration of the job; it protects nothing.
+name: supabase
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '53 5 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  supabase-migrations:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      DEPLOY_KEY_COLDMAIL_VERIFY: ${{ secrets.DEPLOY_KEY_COLDMAIL_VERIFY }}
+      DEPLOY_KEY_COLDMAIL_SEND_MANAGED: ${{ secrets.DEPLOY_KEY_COLDMAIL_SEND_MANAGED }}
+      DEPLOY_KEY_COLDMAIL_SEND_BYO: ${{ secrets.DEPLOY_KEY_COLDMAIL_SEND_BYO }}
+    services:
+      postgres:
+        image: supabase/postgres:17.12.0.000@sha256:8630950b489ecc70563300180287a98c192a4a48f5ae00b4febdaeea1abe85de
+        env:
+          POSTGRES_PASSWORD: ci
+        ports:
+          - 5432:5432
+        # the image runs its init scripts at first start (roles, the auth schema, extensions): allow several minutes before the job gives up on it
+        options: >-
+          --health-cmd "pg_isready -U postgres -h localhost"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 60
+          --health-start-period 30s
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: coldmail-platform
+          fetch-depth: 0
+
+      - name: Toolchain (printed so a run says what it ran on)
+        run: psql --version
+
+      - name: Selftest — the classifier reads psql's failure output and the known-blockers comparison goes red, for the named reason, on every way it can be wrong (no database)
+        run: bash coldmail-platform/tests/supabase/classify-selftest.sh
+
+      - name: Fetch the three modules at the commits tools/modules.lock pins (red if a key is missing or wrong, or a pin is unknown or unreachable)
+        run: bash coldmail-platform/tools/fetch-modules.sh --lock coldmail-platform/tools/modules.lock "$GITHUB_WORKSPACE"
+
+      - name: Every migration as the non-superuser postgres — report each failed statement, then compare the blockers with tests/supabase/known-blockers.txt
+        env:
+          S_WORK: ${{ runner.temp }}/supabase
+        run: bash coldmail-platform/tests/supabase/run.sh --dsn postgres://postgres:ci@localhost:5432/postgres --platform-dir coldmail-platform --modules-root "$GITHUB_WORKSPACE"

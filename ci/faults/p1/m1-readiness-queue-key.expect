@@ -1,0 +1,9 @@
+# Module 1's /readyz must say NOT READY, naming TM_QUEUE_ADDR_KEY, when the key is missing (before Phase 1 it said ready while every job route answered 503). The fault deletes the one line in
+# buildQueue that declares the not-ready queue on the missing-key path, i.e. restores the old silent misconfiguration; the real buildQueue is called by the test, so it must go red.
+GATE=m1-readiness-queue-key
+TARGET=module:coldmail-verify
+SETUP=
+STEP=go test TestBuildQueue_MissingKeyMakesReadyzNotReady (the real buildQueue, no key)
+CMD=cd control-plane && go test -count=1 -v -run '^TestBuildQueue_MissingKeyMakesReadyzNotReady$' ./cmd/control-plane/
+MESSAGE=--- FAIL: TestBuildQueue_MissingKeyMakesReadyzNotReady
+MESSAGE=TM_QUEUE_ADDR_KEY must make /readyz not_ready/503, got 200

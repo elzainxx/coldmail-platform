@@ -1,0 +1,12 @@
+diff --git a/control-plane/migrations/0016_verify_schema.sql b/control-plane/migrations/0016_verify_schema.sql
+index 7094772..72d9dbb 100644
+--- a/control-plane/migrations/0016_verify_schema.sql
++++ b/control-plane/migrations/0016_verify_schema.sql
+@@ -117,7 +117,6 @@ $$;
+ -- EnsurePolicy (control-plane startup, store/postgres.go) INSERTs a policy row and flips is_default. Before this migration the runtime role held
+ -- only SELECT on policies, so a login holding exactly the old grants failed at startup (42501) and never served. UPDATE is column-level: the rows
+ -- stay immutable except for the default flag.
+-GRANT INSERT ON verify.policies TO verify_app;
+ GRANT UPDATE (is_default) ON verify.policies TO verify_app;
+ 
+ -- 6. The partition-maintenance functions, rebuilt in verify -----------------------------------------------------------------------------
