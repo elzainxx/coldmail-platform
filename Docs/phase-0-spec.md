@@ -36,15 +36,16 @@ False-green classes every gate below must avoid: [`../deferrals-and-false-greens
 |---|---|---|---|
 | Go build / vet / gofmt | compile error | _pending_ | _pending_ |
 | Unit tests | assertion made false | _pending_ | _pending_ |
-| Test-count floor | tests deleted from a package / a test skipped | _pending_ | _pending_ |
-| Digest-pin gate | `FROM alpine:3.24` without a digest, and a `:latest` | _pending_ | _pending_ |
+| Test-count floor | a test deleted from a package (everything still passes) and, separately, a `t.Skip` | _pending_ | _pending_ |
+| Digest-pin gate | `FROM alpine:latest` | _pending_ | _pending_ |
 | Web build and test | type error; render test broken | _pending_ | _pending_ |
 | Migration lint | an up file without its down / a gap in the chain | _pending_ | _pending_ |
 | Grant proof | `GRANT UPDATE` on `schema_migrations` to `platform_app` | _pending_ | _pending_ |
-| Pinned-module check | `modules.lock` SHA that is not the checkout | _pending_ | _pending_ |
+| Pinned-module check | `modules.lock` names a commit that does not exist in the module | _pending_ | _pending_ |
 | Harness probe | wrong service token for one module | _pending_ | _pending_ |
 | Exposure check | `ports:` added to one module | _pending_ | _pending_ |
 | Secret scan | planted token (fingerprint then ignored — see above) | _pending_ | _pending_ |
+| Ignore-file gate (`check-gitleaksignore`) | an ignore entry for a commit on `main` | _pending_ | _pending_ |
 | Docs check (`platform-check`) | a broken internal link | _pending_ | _pending_ |
 
 ## What the harness will state it did NOT check (printed on every run)

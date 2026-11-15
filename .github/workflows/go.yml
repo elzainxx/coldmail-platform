@@ -1,0 +1,60 @@
+# Go: format, build, vet, unit tests, and the per-package test-count floor — all on a GitHub runner, which is the only admissible evidence.
+#
+# `go test ./...` here never needs a database: the integration tests live in tests/harness behind the build tag `harness` and run in the
+# `harness` workflow against a real Postgres. A test that cannot run must FAIL, never skip, so the floor gate also fails on any skipped test.
+#
+# The floor gate (scripts/check-test-floors.sh) reads the two logs this job captures: it asserts, per package, that the tests that RAN equal the
+# tests DECLARED (`go test -list`), meet the floor in tests/floors-go.txt, none were skipped or failed, and that the SET of packages with tests
+# equals the set in the floors file — so a vanished package, or a new package nobody gave a floor, is red.
+# No module/build cache: a green must not be earned from a stale artifact (class 13).
+name: go
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Toolchain (printed, so a run says what it ran on)
+        run: |
+          go version
+          go env GOFLAGS GOTOOLCHAIN
+
+      - name: gofmt — nothing may need formatting
+        run: |
+          out="$(gofmt -l cmd internal tests)"   # never `.`: Docs/ holds preserved raw Go sources (Docs/go.mod keeps them out of the module)
+          if [ -n "$out" ]; then echo "gofmt would change:"; echo "$out"; exit 1; fi
+          echo "gofmt: clean"
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet (plain and with the harness tag, so the integration tests are compiled too)
+        run: |
+          go vet ./...
+          go vet -tags harness ./...
+
+      - name: Unit tests (verbose log captured for the floor gate)
+        run: |
+          set -o pipefail
+          go test -race -v -count=1 ./... 2>&1 | tee "$RUNNER_TEMP/go-run.log"
+
+      - name: Declared tests (go test -list, captured for the floor gate)
+        run: |
+          set -o pipefail
+          go test -list '.*' ./... 2>&1 | tee "$RUNNER_TEMP/go-list.log"
+
+      - name: Per-package test-count floor
+        run: bash scripts/check-test-floors.sh --floors tests/floors-go.txt --go-run-log "$RUNNER_TEMP/go-run.log" --go-list-log "$RUNNER_TEMP/go-list.log"

@@ -1,0 +1,241 @@
+# The platform harness stack: ONE real Postgres, the three module Controls built from the PINNED checkouts (tools/modules.lock), and the platform itself, all on a
+# Docker network that is `internal: true` and publishes NO port to the host. Run by tests/harness/run.sh on a GitHub runner; every H_* variable comes from the env-file
+# run.sh writes (secrets are minted per run and never committed).
+#
+# What is real here: Postgres 16 (the modules' own digest), each module's own migration tool and Control image built from its unmodified pinned source, the platform's
+# own migrator and service. What is NOT here, on purpose: the workers, the SMTP sink, CoreDNS (nothing in Phase 0 sends mail), and Supabase itself — the list is printed
+# by run.sh on every run.
+#
+# No service sets `image:` for something it builds (the digest-pin gate reads every `image:` as a registry reference). The platform image is built once per service that
+# runs it; that costs a minute of CI time and keeps the compose file free of unpinned names.
+#
+# Ordering is done by run.sh (one-shot services are run with `docker compose run`, then the long-running ones are started with `up --wait`), so the long-running
+# services depend only on a healthy Postgres: a `service_completed_successfully` dependency on a container that `run --rm` already removed would start it a second time.
+name: coldmail-platform-harness
+
+networks:
+  private:
+    internal: true      # no route to the outside; nothing in the stack needs one at runtime (images are built before `up`)
+
+
+x-platform-build: &platform-build
+  context: "${H_PLATFORM_DIR:?}"
+  dockerfile: Dockerfile
+
+services:
+  postgres:
+    image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
+    environment:
+      POSTGRES_DB: platform
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${H_PG_SUPERPASS:?}
+    command: ["postgres", "-c", "fsync=off"]         # CI-only: durability is not under test, speed is
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d platform"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks: [private]
+
+  # ── one-shot jobs (run with `docker compose run --rm <name>`) ─────────────────────────────────────────────────────────────────────────────────────────────────────
+  # FIXTURE ONLY: public.users / public.job_items in the shape the modules' own dev fixtures give them, taken from the pinned M2 checkout. The platform's real tables
+  # are Phase 1; until then this is the minimum that lets M2 and M3 migrate (their pre-flight and foreign keys need these two tables to exist).
+  fixtures:
+    image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
+    environment: { PGPASSWORD: "${H_PG_SUPERPASS:?}" }
+    volumes:
+      - ${H_MODULES_ROOT:?}/coldmail-send-managed/deploy/pg-init/00-platform-fixtures.sql:/fixture.sql:ro
+    command: ["psql", "-v", "ON_ERROR_STOP=1", "-h", "postgres", "-U", "postgres", "-d", "platform", "-f", "/fixture.sql"]
+    depends_on: { postgres: { condition: service_healthy } }
+    networks: [private]
+    restart: "no"
+
+  migrate-platform:
+    build: *platform-build
+    entrypoint: ["/usr/local/bin/platform-migrate"]
+    command: ["up-and-set-password"]
+    environment:
+      PLATFORM_MIGRATE_DATABASE_URL: postgres://postgres:${H_PG_SUPERPASS:?}@postgres:5432/platform
+      PLATFORM_MIGRATIONS_DIR: /db/migrations
+      PLATFORM_APP_PASSWORD: ${H_PLATFORM_APP_PASSWORD:?}
+    volumes:
+      - ${H_PLATFORM_DIR:?}/db:/db:ro
+    depends_on: { postgres: { condition: service_healthy } }
+    networks: [private]
+    restart: "no"
+
+  # Module 1 has no migration tool: its own CI applies the numbered files with a psql loop in lexical order, stopping at the first error. So does this.
+  migrate-m1:
+    image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
+    environment: { PGPASSWORD: "${H_PG_SUPERPASS:?}" }
+    volumes:
+      - ${H_MODULES_ROOT:?}/coldmail-verify/control-plane/migrations:/m:ro
+    entrypoint: ["sh", "-ec"]
+    command:
+      - |
+        n=0
+        for f in $$(ls /m/[0-9][0-9][0-9][0-9]_*.sql | sort); do
+          psql -v ON_ERROR_STOP=1 -h postgres -U postgres -d platform -q -f "$$f" >/dev/null
+          n=$$((n+1))
+        done
+        echo "migrate-m1: applied $$n files"
+    depends_on: { postgres: { condition: service_healthy } }
+    networks: [private]
+    restart: "no"
+
+  migrate-m2:
+    build: { context: "${H_MODULES_ROOT:?}/coldmail-send-managed", dockerfile: tools/send-managed-migrate/Dockerfile }
+    environment:
+      MIGRATE_DATABASE_URL: postgres://postgres:${H_PG_SUPERPASS:?}@postgres:5432/platform
+      MIGRATIONS_DIR: /db/migrations
+      PREFLIGHT_SQL: /db/preflight/check_platform_tables.sql
+      SEND_MANAGED_MODULE_PASSWORD: ${H_M2_APP_PASSWORD:?}
+    volumes:
+      - ${H_MODULES_ROOT:?}/coldmail-send-managed/db:/db:ro
+    command: ["up-and-set-password"]
+    depends_on: { postgres: { condition: service_healthy } }
+    networks: [private]
+    restart: "no"
+
+  migrate-m3:
+    build: { context: "${H_MODULES_ROOT:?}/coldmail-send-byo", dockerfile: tools/send-byo-migrate/Dockerfile }
+    environment:
+      MIGRATE_DATABASE_URL: postgres://postgres:${H_PG_SUPERPASS:?}@postgres:5432/platform
+      MIGRATIONS_DIR: /db/migrations
+      PREFLIGHT_SQL: /db/preflight/check_platform_tables.sql
+      SEND_BYO_MODULE_PASSWORD: ${H_M3_APP_PASSWORD:?}
+    volumes:
+      - ${H_MODULES_ROOT:?}/coldmail-send-byo/db:/db:ro
+    command: ["up-and-set-password"]
+    depends_on: { postgres: { condition: service_healthy } }
+    networks: [private]
+    restart: "no"
+
+  # ── the three modules (long-running; no `ports:` anywhere — that is what the exposure check asserts) ───────────────────────────────────────────────────────────────
+  m1:
+    # Module 1 ships no Dockerfile for its control plane: this one is the platform's (tests/harness/m1/Dockerfile) and builds the pinned source unmodified.
+    build: { context: "${H_MODULES_ROOT:?}/coldmail-verify", dockerfile: "${H_PLATFORM_DIR:?}/tests/harness/m1/Dockerfile" }
+    environment:
+      # Module 1 needs an OWNER or SUPERUSER connection today (startup writes `policies`; cp_runtime has only SELECT) — Docs/phase-0-spec.md F3.
+      TM_DATABASE_URL: postgres://postgres:${H_PG_SUPERPASS:?}@postgres:5432/platform
+      TM_PEPPER: ${H_M1_PEPPER:?}
+      TM_ENV: development
+      TM_LISTEN_ADDR: ":8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/readyz >/dev/null || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    depends_on: { postgres: { condition: service_healthy } }
+    networks: [private]
+
+  m2:
+    build: { context: "${H_MODULES_ROOT:?}/coldmail-send-managed", dockerfile: services/control/Dockerfile }
+    environment:
+      DATABASE_URL: postgres://send_managed_app:${H_M2_APP_PASSWORD:?}@postgres:5432/platform
+      CONTROL_SINGLETON_ACQUIRE_TIMEOUT_SEC: "60"
+      CONTROL_HEALTH_ADDR: ":8080"
+      CONTROL_WORKERLINK_ADDR: ":8443"
+      CONTROL_WORKERLINK_STREAM_ADDR: ":8444"
+      KMS_DEV_KEY_FILE: /secrets/kms/dev-master.key
+      MTLS_SERVER_CERT: /secrets/mtls/control.crt
+      MTLS_SERVER_KEY: /secrets/mtls/control.key
+      MTLS_CA_CERT: /secrets/mtls/ca.crt
+      CREDENTIAL_KEY_ID: cred-dek-v1
+      PLATFORM_TOKEN_HASHES: ${H_M2_TOKEN_HASH:?}
+    volumes:
+      - ${H_MODULES_ROOT:?}/coldmail-send-managed/secrets/dev/kms/dev-master.key:/secrets/kms/dev-master.key:ro
+      - ${H_MODULES_ROOT:?}/coldmail-send-managed/secrets/dev/certs/control.crt:/secrets/mtls/control.crt:ro
+      - ${H_MODULES_ROOT:?}/coldmail-send-managed/secrets/dev/certs/control.key:/secrets/mtls/control.key:ro
+      - ${H_MODULES_ROOT:?}/coldmail-send-managed/secrets/dev/certs/ca.crt:/secrets/mtls/ca.crt:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/readyz >/dev/null || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    stop_grace_period: 90s        # the module's own constraint: SIGTERM must be allowed to drain (module 2's docker-compose.yml)
+    depends_on: { postgres: { condition: service_healthy } }
+    networks: [private]
+
+  m3:
+    build: { context: "${H_MODULES_ROOT:?}/coldmail-send-byo", dockerfile: services/control/Dockerfile }
+    environment:
+      DATABASE_URL: postgres://send_byo_app:${H_M3_APP_PASSWORD:?}@postgres:5432/platform
+      CONTROL_SINGLETON_ACQUIRE_TIMEOUT_SEC: "60"
+      CONTROL_HEALTH_ADDR: ":8080"
+      CONTROL_WORKERLINK_ADDR: ":8443"
+      CONTROL_WORKERLINK_STREAM_ADDR: ":8444"
+      KMS_DEV_KEY_FILE: /secrets/kms/dev-master.key
+      MTLS_SERVER_CERT: /secrets/mtls/control.crt
+      MTLS_SERVER_KEY: /secrets/mtls/control.key
+      MTLS_CA_CERT: /secrets/mtls/ca.crt
+      CREDENTIAL_KEY_ID: cred-dek-v1
+      PLATFORM_TOKEN_HASHES: ${H_M3_TOKEN_HASH:?}
+    volumes:
+      - ${H_MODULES_ROOT:?}/coldmail-send-byo/secrets/dev/kms/dev-master.key:/secrets/kms/dev-master.key:ro
+      - ${H_MODULES_ROOT:?}/coldmail-send-byo/secrets/dev/certs/control.crt:/secrets/mtls/control.crt:ro
+      - ${H_MODULES_ROOT:?}/coldmail-send-byo/secrets/dev/certs/control.key:/secrets/mtls/control.key:ro
+      - ${H_MODULES_ROOT:?}/coldmail-send-byo/secrets/dev/certs/ca.crt:/secrets/mtls/ca.crt:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/readyz >/dev/null || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    stop_grace_period: 90s
+    depends_on: { postgres: { condition: service_healthy } }
+    networks: [private]
+
+  # ── the platform ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  platform:
+    build: *platform-build
+    environment:
+      PLATFORM_DATABASE_URL: postgres://platform_app:${H_PLATFORM_APP_PASSWORD:?}@postgres:5432/platform
+      PLATFORM_HTTP_ADDR: ":8080"
+      PLATFORM_ENV: development
+      PLATFORM_LOG_LEVEL: debug
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/readyz || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    depends_on: { postgres: { condition: service_healthy } }
+    networks: [private]
+
+  # ── the callers, run INSIDE the private network (profiles: only started by name) ──────────────────────────────────────────────────────────────────────────────────
+  probe:
+    profiles: [probe]
+    build: *platform-build
+    entrypoint: ["/usr/local/bin/platform-probe"]
+    environment:
+      PROBE_PLATFORM_URL: http://platform:8080
+      PROBE_M1_URL: http://m1:8080
+      PROBE_M1_KEY: ${H_M1_CALLER_KEY:?}
+      PROBE_M2_URL: http://m2:8080
+      PROBE_M2_TOKEN: ${H_M2_TOKEN:?}
+      PROBE_M3_URL: http://m3:8080
+      PROBE_M3_TOKEN: ${H_M3_TOKEN:?}
+      PROBE_MIN_CHECKS: "42"       # a healthy run executes 42 checks; the default floor (25) would let a whole module's 16 checks vanish unnoticed
+    networks: [private]
+    restart: "no"
+
+  # The integration tests (tests/harness, build tag `harness`) are compiled on the runner with `go test -c` into a static binary and run here, so they reach the
+  # database over the private network and nothing needs a published port.
+  harness-tests:
+    profiles: [tests]
+    image: alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
+    entrypoint: ["/h/harness.test"]
+    working_dir: /repo
+    environment:
+      HARNESS_ADMIN_DATABASE_URL: postgres://postgres:${H_PG_SUPERPASS:?}@postgres:5432/platform
+      HARNESS_ADMIN_DATABASE_HOST_URL: postgres://postgres:${H_PG_SUPERPASS:?}@postgres:5432/postgres
+      HARNESS_PLATFORM_APP_PASSWORD: ${H_PLATFORM_APP_PASSWORD:?}
+      HARNESS_MIGRATE_BIN: /h/platform-migrate
+      HARNESS_REPO_ROOT: /repo
+    volumes:
+      - ${H_WORK:?}/out:/h:ro
+      - ${H_PLATFORM_DIR:?}:/repo:ro
+    depends_on: { postgres: { condition: service_healthy } }
+    networks: [private]
+    restart: "no"

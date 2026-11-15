@@ -1,0 +1,7 @@
+/*
+ * Tailwind v4, CSS-first. Class scanning is limited to this directory plus index.html,
+ * and test files are excluded, so a utility only reaches the built CSS if app code uses it.
+ */
+@import "tailwindcss" source("./");
+@source "../index.html";
+@source not "./**/*.test.{ts,tsx}";

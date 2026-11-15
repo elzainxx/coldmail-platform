@@ -1,0 +1,3 @@
+# Minimum test counts — the web app (vitest). A floor is a reviewed commitment: lowering one is a diff someone has to read.
+# Format: vitest|<label>|<floor>   (scripts/check-test-floors.sh; the JSON comes from `npm run test:json`)
+vitest|web|3

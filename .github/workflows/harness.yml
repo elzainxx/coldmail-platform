@@ -1,0 +1,77 @@
+# The real-infrastructure harness: one real Postgres, the THREE MODULES built from the commits tools/modules.lock pins and running as real services, and the platform
+# itself, all on a Docker network that is internal and publishes no port. Then the integration tests, the end-to-end probe (platform -> each module's health, readiness
+# and describe, with the service token), the exposure check and the outage check. See tests/harness/run.sh for the stages and for the list of what it does NOT check.
+#
+# The modules are private repositories: tools/fetch-modules.sh clones each with its own READ-ONLY deploy key (the same three keys platform-check uses). There is no skip
+# path: a missing, wrong or revoked key turns this job red (platform-check proves each of those ways). A weekly schedule exists so a key revoked while nobody pushes shows
+# up as a red run and not as silence.
+#
+# Docker is down on the owner's machine: this workflow, on a GitHub runner, is the only admissible evidence that the harness works.
+name: harness
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '41 5 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  harness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      DEPLOY_KEY_COLDMAIL_VERIFY: ${{ secrets.DEPLOY_KEY_COLDMAIL_VERIFY }}
+      DEPLOY_KEY_COLDMAIL_SEND_MANAGED: ${{ secrets.DEPLOY_KEY_COLDMAIL_SEND_MANAGED }}
+      DEPLOY_KEY_COLDMAIL_SEND_BYO: ${{ secrets.DEPLOY_KEY_COLDMAIL_SEND_BYO }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: coldmail-platform
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: coldmail-platform/go.mod
+          cache: false
+
+      - name: Toolchain (printed so a run says what it ran on)
+        run: |
+          go version
+          docker version --format 'docker {{.Server.Version}}'
+          docker compose version
+          openssl version
+
+      - name: Selftests that need neither keys nor Docker — the exposure check and the lock validation each go red for the reason they name
+        run: |
+          set -u
+          rc=0
+          for t in coldmail-platform/tests/harness/check-exposure-selftest.sh coldmail-platform/tools/fetch-modules-lock-selftest.sh; do
+            echo "::group::$t"; bash "$t" || { echo "SELFTEST FAILED: $t"; rc=1; }; echo "::endgroup::"
+          done
+          exit $rc
+
+      - name: Fetch the three modules at the commits tools/modules.lock pins (red if a key is missing or wrong, or a pin is unknown or unreachable)
+        run: bash coldmail-platform/tools/fetch-modules.sh --lock coldmail-platform/tools/modules.lock "$GITHUB_WORKSPACE"
+
+      - name: Control — the pin check goes red when a module is not at its pinned commit (and green again once it is restored)
+        run: |
+          set -u +e
+          for m in coldmail-verify coldmail-send-managed coldmail-send-byo; do
+            pin="$(git -C "$m" rev-parse HEAD)"
+            git -C "$m" -c advice.detachedHead=false checkout -q --detach "$pin~1" || { echo "CONTROL SETUP FAILED: $m has no parent commit"; exit 1; }
+            out="$(H_MODULES_ROOT="$GITHUB_WORKSPACE" bash coldmail-platform/tests/harness/run.sh --pins-only 2>&1)"; rc=$?
+            printf '%s\n' "$out" | tail -4 | sed 's/^/    | /'
+            git -C "$m" -c advice.detachedHead=false checkout -q --detach "$pin"
+            [ "$rc" -ne 0 ] && printf '%s\n' "$out" | grep -q "$m is at .* but tools/modules.lock pins $pin" || { echo "CONTROL FAILED: the pin check did not go red for $m (rc=$rc)"; exit 1; }
+            echo "  control holds: $m one commit behind its pin -> red, naming it"
+          done
+          H_MODULES_ROOT="$GITHUB_WORKSPACE" bash coldmail-platform/tests/harness/run.sh --pins-only || { echo "CONTROL FAILED: the pin check is red after restoring the pins"; exit 1; }
+
+      - name: The harness
+        env:
+          H_MODULES_ROOT: ${{ github.workspace }}
+          H_WORK: ${{ runner.temp }}/harness
+        run: bash coldmail-platform/tests/harness/run.sh

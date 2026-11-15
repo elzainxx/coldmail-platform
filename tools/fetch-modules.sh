@@ -18,7 +18,17 @@
 # host key this script fails closed ("Host key verification failed"); the new value is at https://api.github.com/meta (.ssh_keys) — compare its fingerprint with
 # https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints before updating the line.
 set -u
-DEST="${1:?usage: fetch-modules.sh <dest-directory>}"
+# --lock FILE: after cloning, check each module out at the exact commit FILE pins (tools/modules.lock) and assert HEAD == the pin. Without --lock the clones are left at
+# the default branch's head, which is what platform-check (documentation citations) wants.
+LOCK=""; DEST=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --lock) LOCK="${2:?--lock needs a file}"; shift 2;;
+    -*) echo "fetch-modules: unknown option '$1'" >&2; exit 2;;
+    *) DEST="$1"; shift;;
+  esac
+done
+[ -n "$DEST" ] || { echo "usage: fetch-modules.sh [--lock FILE] <dest-directory>" >&2; exit 2; }
 OWNER="${FETCH_OWNER:-${GITHUB_REPOSITORY_OWNER:-elzainxx}}"
 # SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU  (GitHub, ed25519; same value from api.github.com/meta and ssh-keyscan on 2026-11-14)
 GITHUB_HOST_KEY='github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl'
@@ -31,6 +41,21 @@ mkdir -p "$DEST" || exit 2
 
 fail=0
 oops() { echo "  FAIL: $*"; echo "::error title=module checkout failed::$*"; fail=$((fail+1)); }
+
+# The lock is read ONCE, here, and validated as a whole: exactly one 40-hex entry for each of the three repositories and nothing else. A stale or duplicated entry is
+# red because a lock that names a module nobody builds (or two commits for one) says something false about what was tested.
+if [ -n "$LOCK" ]; then
+  [ -f "$LOCK" ] || { oops "the lock file $LOCK does not exist"; echo "fetch-modules: RED"; exit 1; }
+  for repo in coldmail-verify coldmail-send-managed coldmail-send-byo; do
+    n=$(tr -d '\r' < "$LOCK" | awk -v r="$repo" '/^[[:space:]]*#/ || NF==0 {next} $1==r {c++} END{print c+0}')
+    [ "$n" = 1 ] || oops "$LOCK has $n entries for $repo, want exactly 1"
+  done
+  others=$(tr -d '\r' < "$LOCK" | awk '/^[[:space:]]*#/ || NF==0 {next} $1!="coldmail-verify" && $1!="coldmail-send-managed" && $1!="coldmail-send-byo" {print $1}')
+  [ -z "$others" ] || oops "$LOCK names a repository that is not one of the three modules: $(printf '%s' "$others" | tr '\n' ' ')"
+  bad=$(tr -d '\r' < "$LOCK" | awk '/^[[:space:]]*#/ || NF==0 {next} $2 !~ /^[0-9a-f]{40}$/ {print $1}')
+  [ -z "$bad" ] || oops "$LOCK: the pin for $(printf '%s' "$bad" | tr '\n' ' ') is not a full 40-hex commit id"
+  [ "$fail" -eq 0 ] || { echo "fetch-modules: the lock file is unusable — RED"; exit 1; }
+fi
 
 for pair in coldmail-verify:DEPLOY_KEY_COLDMAIL_VERIFY coldmail-send-managed:DEPLOY_KEY_COLDMAIL_SEND_MANAGED coldmail-send-byo:DEPLOY_KEY_COLDMAIL_SEND_BYO; do
   repo="${pair%%:*}"; var="${pair##*:}"; key="${!var:-}"
@@ -63,7 +88,16 @@ for pair in coldmail-verify:DEPLOY_KEY_COLDMAIL_VERIFY coldmail-send-managed:DEP
   # the cited commits must all be present: every branch came with the clone; fetch tags too (a tag can point at history no branch holds)
   git -C "$DEST/$repo" fetch -q --tags origin 2>/dev/null || oops "$repo: cloned, but fetching tags failed"
   if [ "$(git -C "$DEST/$repo" rev-parse --is-shallow-repository)" != "false" ]; then oops "$repo: the clone is shallow — check 4 would miss commits"; continue; fi
-  echo "  ok: $repo @ $(git -C "$DEST/$repo" rev-parse --short HEAD) ($(git -C "$DEST/$repo" rev-list --count --all) commits; deploy key $var confirmed read-only)"
+  pinned=""
+  if [ -n "$LOCK" ]; then
+    pin="$(tr -d '\r' < "$LOCK" | awk -v r="$repo" '/^[[:space:]]*#/ || NF==0 {next} $1==r {print $2}')"
+    if ! git -C "$DEST/$repo" cat-file -e "$pin^{commit}" 2>/dev/null; then oops "$repo: the pinned commit $pin does not exist in the repository"; continue; fi
+    if ! git -C "$DEST/$repo" merge-base --is-ancestor "$pin" origin/HEAD 2>/dev/null; then oops "$repo: the pinned commit $pin is not reachable from the default branch"; continue; fi
+    git -C "$DEST/$repo" -c advice.detachedHead=false checkout -q --detach "$pin" 2>/dev/null || { oops "$repo: could not check out the pinned commit $pin"; continue; }
+    [ "$(git -C "$DEST/$repo" rev-parse HEAD)" = "$pin" ] || { oops "$repo: after checkout HEAD is not the pinned commit $pin"; continue; }
+    pinned="; PINNED at $pin == HEAD"
+  fi
+  echo "  ok: $repo @ $(git -C "$DEST/$repo" rev-parse --short HEAD) ($(git -C "$DEST/$repo" rev-list --count --all) commits; deploy key $var confirmed read-only$pinned)"
 done
 unset GIT_SSH_COMMAND
 [ "$fail" -eq 0 ] || { echo "fetch-modules: $fail repositor$([ "$fail" -eq 1 ] && echo y || echo ies) could not be fetched — RED"; exit 1; }

@@ -1,0 +1,47 @@
+# Web: type-check, build, tests, a check that Tailwind actually generated CSS, and the test-count floor — on a GitHub runner.
+# `npm ci` from the committed lockfile, no npm cache (a green must not be earned from a stale artifact).
+name: web
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: web/.node-version
+
+      - name: Toolchain
+        run: |
+          node --version
+          npm --version
+
+      - name: Install from the lockfile
+        run: npm ci
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: The built CSS contains the Tailwind utilities the page uses
+        run: npm run check:css
+
+      - name: Tests (JSON result captured for the floor gate)
+        run: npm run test:json
+
+      - name: Test-count floor
+        working-directory: .
+        run: bash scripts/check-test-floors.sh --floors tests/floors-web.txt --vitest-json web/test-results/vitest.json

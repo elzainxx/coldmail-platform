@@ -1,14 +1,18 @@
 # coldmail-platform
 
-Cross-module documentation for the **coldmail** platform. This repo holds no product code —
-it holds the decisions that span the three modules, plus the evidence behind them. Two things run on it in CI
-(`.github/workflows/`): a full-history secret scan (`gitleaks.yml`) and `tools/platform-check.sh`
-(`platform-check.yml`: every JSON file parses, every internal link resolves, every cross-repo citation resolves, every cited
-commit SHA exists — all four on every push). The last two need the three private modules, which `tools/fetch-modules.sh`
-clones over SSH with one **read-only deploy key per module repository** (secrets `DEPLOY_KEY_COLDMAIL_VERIFY`,
-`DEPLOY_KEY_COLDMAIL_SEND_MANAGED`, `DEPLOY_KEY_COLDMAIL_SEND_BYO` on this repository); a missing, wrong or revoked key turns the
-job red — it never skips. Hex strings that look like commits but are not (agent ids, a commit of the private parent) are listed
-with reasons in `tools/non-commit-hex.txt`.
+The **coldmail platform**: the product shell that users and the admin touch, plus the cross-module record that the three modules were built against.
+It is the first real caller of the module contract. Operating rules: [`CLAUDE.md`](CLAUDE.md). Roadmap and locked decisions: [`Docs/coldmail-platform-build-plan.md`](Docs/coldmail-platform-build-plan.md).
+Phase 0 (groundwork) is specified in [`Docs/phase-0-spec.md`](Docs/phase-0-spec.md).
+
+**Code** (Phase 0 ships skeletons only — no screens, no business tables): a Go service at the repository root (`cmd/`, `internal/`), a React + TypeScript + Tailwind app in `web/`,
+migrations in `db/migrations/`, and a real-infrastructure harness in `tests/harness/` that builds the three modules from the commits pinned in `tools/modules.lock` and runs them as
+real services beside the platform and one real Postgres.
+
+**CI** (`.github/workflows/`, all on a GitHub runner — the only admissible evidence): `go`, `web`, `gates`, `harness`, `gitleaks` (full-history secret scan) and `platform-check`
+(`tools/platform-check.sh`: every JSON file parses, every internal link resolves, every cross-repo citation resolves, every cited commit SHA exists). The last needs the three private
+modules, which `tools/fetch-modules.sh` clones over SSH with one **read-only deploy key per module repository** (secrets `DEPLOY_KEY_COLDMAIL_VERIFY`,
+`DEPLOY_KEY_COLDMAIL_SEND_MANAGED`, `DEPLOY_KEY_COLDMAIL_SEND_BYO` on this repository); a missing, wrong or revoked key turns the job red — it never skips. Hex strings that look like
+commits but are not (agent ids, a commit of the private parent) are listed with reasons in `tools/non-commit-hex.txt`.
 
 The three modules live as sibling directories under `coldmail/`, each its own independent git
 repository with its own history, its own `CLAUDE.md` / `PROJECT_RULES.md`, and its own CI gates:
@@ -35,14 +39,14 @@ repository with its own history, its own `CLAUDE.md` / `PROJECT_RULES.md`, and i
 | `verification-runs.md` | What was actually executed at the close of Chunk 4 — which commit, which container, what it produced, twice per repo. The evidence behind the word "verified". |
 | `Docs/history/scratch/` | The raw per-module interface inventories the audit was built from (`_inv_*`; moved here from `scratch/` on 2026-11-09, with `Docs/history/audit-scratch/` — the logs and drafts the records cite, each with a manifest). Kept because a conclusion whose inputs were thrown away cannot be re-checked — not because anyone should read them straight through. Also `_deferrals.md`, the working notes that fed `deferrals-and-false-greens.md`. |
 
-## Why this is a separate repo
+## Why the cross-module record lives here, and not in a module
 
 The three modules are deliberately independent: separate histories, separate rule files, no shared
 code path, no build-time coupling. A finding that spans them has nowhere honest to live inside any
 one of them — filing it in M2 would make M1 and M3 look like M2's dependents, which they are not.
 This repo is that neutral ground.
 
-It also stays deliberately small. Anything that governs how ONE module is built belongs in that
+Anything that governs how ONE module is built belongs in that
 module's own repo and rule file; this repo does not get to override them. Where a cross-module
 decision needs to change a module's behaviour, the change lands in that module, under that
 module's rules and gates.

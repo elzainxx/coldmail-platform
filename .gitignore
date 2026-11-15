@@ -1,5 +1,5 @@
-# coldmail-platform holds documents and the evidence behind them -- never code, never credentials.
-# This file exists so that stays true when someone drops a stray file into the working tree.
+# coldmail-platform holds the platform's code (Go service, web app, migrations, harness) and the cross-module documents and evidence behind the modules.
+# Never credentials: this file exists so that stays true when someone drops a stray file into the working tree.
 # NOTE: scratch/ is TRACKED on purpose (the raw per-module inventories the audit was built from, kept
 # so a conclusion's inputs can be re-checked). Do not ignore it.
 
@@ -29,3 +29,9 @@ desktop.ini
 # EXCEPTION: the run logs under Docs/history/audit-scratch/ are the evidence the records cite by run ID (verification-runs.md). Keep them.
 !Docs/history/audit-scratch/**/*.log
 *.tmp
+
+# Build and harness output
+/out/
+/bin/
+*.test
+tests/harness/work/
