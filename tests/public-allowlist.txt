@@ -1,0 +1,5 @@
+# The ONLY objects that may exist in schema public after every migration chain has run (scripts/check-public-schema.sh).
+# `table NAME` allows the table plus its own indexes and owned sequences. Anything else in public — a module table, a function, a type, a view — is a leak and fails the gate.
+# These two are platform-owned and read by modules 2 and 3 (Docs/phase-1-spec.md, "Inventory"). Phase 1 chunk B2 replaces the Phase 0 fixtures with the real tables; the names stay.
+table users
+table job_items
