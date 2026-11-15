@@ -1,0 +1,5 @@
+# The ONE finding gitleaks is told to ignore: the fake token planted on the throwaway branch fault/p0-secret to prove the secret scan goes red (Docs/phase-0-spec.md, "Gates and the
+# fault each one is proven against"). The scan reads every branch (--log-opts=--all) and that branch cannot be deleted by the agent that made it, so its commit would otherwise
+# turn every run red for ever. scripts/check-gitleaksignore.sh makes this file exactly that size: each entry must be a gitleaks fingerprint of a commit that is reachable
+# from a fault/p0-* branch and NOT from HEAD. Delete this line when the owner deletes the branch (OWNER-ACTIONS.md).
+499da5d14d762a4e770d7f73b3d9845f6dadcabe:internal/zz_fault_secret.txt:generic-api-key:1
