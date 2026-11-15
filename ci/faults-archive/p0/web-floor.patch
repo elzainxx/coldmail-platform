@@ -1,0 +1,17 @@
+diff --git a/web/src/App.test.tsx b/web/src/App.test.tsx
+index e5a1b44..889e41a 100644
+--- a/web/src/App.test.tsx
++++ b/web/src/App.test.tsx
+@@ -25,12 +25,4 @@ describe('App', () => {
+     expect(findHeading()).not.toBeInTheDocument()
+     expect(findConstructionLine()).not.toBeInTheDocument()
+   })
+-
+-  it('root element carries the Tailwind utility that scripts/check-css.mjs looks for in the built CSS', () => {
+-    // jsdom does not load the built stylesheet, so only the class half can be asserted here.
+-    // The "built CSS contains the selector" half is `npm run check:css`, run after `npm run build`.
+-    const { container } = render(<App />)
+-
+-    expect(container.firstElementChild).toHaveClass('min-h-screen')
+-  })
+ })

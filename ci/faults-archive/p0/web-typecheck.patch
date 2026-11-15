@@ -1,0 +1,10 @@
+diff --git a/web/src/App.tsx b/web/src/App.tsx
+index 6430884..0ba8ba1 100644
+--- a/web/src/App.tsx
++++ b/web/src/App.tsx
+@@ -6,3 +6,5 @@ export function App() {
+     </main>
+   )
+ }
++
++export const zzFault: number = "not a number"

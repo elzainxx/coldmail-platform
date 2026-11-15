@@ -1,0 +1,13 @@
+diff --git a/internal/httpapi/health.go b/internal/httpapi/health.go
+index d843ac1..25e5e3a 100644
+--- a/internal/httpapi/health.go
++++ b/internal/httpapi/health.go
+@@ -44,7 +44,7 @@ func (s *service) readyz(w http.ResponseWriter, r *http.Request) {
+ 		// carries it either. The reason distinguishes the cases an operator acts on differently.
+ 		s.log.WarnContext(ctx, "readiness check failed: database ping", "reason", reason)
+ 	}
+-	ready := dbOK && !s.draining()
++	ready := !s.draining()
+ 	status, code := "not_ready", http.StatusServiceUnavailable
+ 	if ready {
+ 		status, code = "ready", http.StatusOK

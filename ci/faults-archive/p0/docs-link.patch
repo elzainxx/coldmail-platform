@@ -1,0 +1,10 @@
+diff --git a/README.md b/README.md
+index 74de400..062f50b 100644
+--- a/README.md
++++ b/README.md
+@@ -67,3 +67,5 @@ holding unrelated projects, so initialising it would sweep them in. The four rep
+ repository, `elzainxx/coldmail`, pins them as git submodules — it was created in its **own fresh directory**, not
+ in place, for exactly that reason. Clone the whole set with
+ `git clone --recurse-submodules https://github.com/elzainxx/coldmail.git`.
++
++See [nowhere](./zz-fault-no-such-file.md).

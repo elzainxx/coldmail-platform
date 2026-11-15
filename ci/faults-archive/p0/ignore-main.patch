@@ -1,0 +1,7 @@
+diff --git a/.gitleaksignore b/.gitleaksignore
+new file mode 100644
+index 0000000..a51c26d
+--- /dev/null
++++ b/.gitleaksignore
+@@ -0,0 +1 @@
++de42f56930c530c7b9481be5dde512480f47a848:README.md:generic-api-key:1

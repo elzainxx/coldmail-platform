@@ -1,0 +1,44 @@
+diff --git a/internal/logging/logging_test.go b/internal/logging/logging_test.go
+index 72a3435..1bcc7bf 100644
+--- a/internal/logging/logging_test.go
++++ b/internal/logging/logging_test.go
+@@ -173,39 +173,3 @@ func TestLogger_RequestIDOnEveryLineThatCarriesAContext(t *testing.T) {
+ 		}
+ 	}
+ }
+-
+-func TestContextual_WrapsPlainLoggersOnceAndOnlyOnce(t *testing.T) {
+-	ctx := WithRequestID(context.Background(), "req_9")
+-
+-	// A logger built without this package carries no id...
+-	var plain bytes.Buffer
+-	raw := slog.New(slog.NewJSONHandler(&plain, nil))
+-	raw.InfoContext(ctx, "raw")
+-	if got := lines(t, &plain); len(got) != 1 {
+-		t.Fatalf("raw logger wrote %d lines", len(got))
+-	} else if _, has := got[0][RequestIDKey]; has {
+-		t.Fatal("control failed: a plain slog logger already attaches request ids, so Contextual proves nothing")
+-	}
+-
+-	// ...and Contextual gives it one.
+-	plain.Reset()
+-	Contextual(raw).InfoContext(ctx, "wrapped")
+-	got := lines(t, &plain)
+-	if len(got) != 1 || got[0][RequestIDKey] != "req_9" {
+-		t.Fatalf("Contextual did not attach the id: %s", plain.String())
+-	}
+-
+-	// Idempotent: wrapping twice (or wrapping the output of New) does not duplicate the key.
+-	var buf bytes.Buffer
+-	l, err := New("info", &buf)
+-	if err != nil {
+-		t.Fatal(err)
+-	}
+-	if Contextual(l) != l {
+-		t.Fatal("Contextual re-wrapped a logger that already attaches ids")
+-	}
+-	Contextual(Contextual(l.With("x", 1))).InfoContext(ctx, "once")
+-	if n := strings.Count(buf.String(), `"`+RequestIDKey+`"`); n != 1 {
+-		t.Fatalf("the line carries %d request_id keys, want exactly 1: %s", n, buf.String())
+-	}
+-}

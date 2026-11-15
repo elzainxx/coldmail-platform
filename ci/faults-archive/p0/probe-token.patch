@@ -1,0 +1,12 @@
+diff --git a/tests/harness/run.sh b/tests/harness/run.sh
+index a0820f0..fd66f51 100644
+--- a/tests/harness/run.sh
++++ b/tests/harness/run.sh
+@@ -61,6 +61,7 @@ M2_TOKEN="$(printf '%s\n' "$t2" | field ADMIN_API_KEY)"; M2_HASH="$(printf '%s\n
+ M3_TOKEN="$(printf '%s\n' "$t3" | field ADMIN_API_KEY)"; M3_HASH="$(printf '%s\n' "$t3" | field ADMIN_API_KEY_HASH)"
+ [ -n "$M2_TOKEN" ] && [ -n "$M2_HASH" ] && [ -n "$M3_TOKEN" ] && [ -n "$M3_HASH" ] || die "provision-worker admin-key printed no token/hash"
+ [ "$M2_TOKEN" != "$M3_TOKEN" ] || die "the two module service tokens are identical — each module must have its own credential"
++M3_TOKEN="wrong-token-injected-by-the-fault-branch"
+ M1_KEY="$(openssl rand -hex 32)"; M1_KEY_SHA="$(printf '%s' "$M1_KEY" | sha256sum | cut -d' ' -f1)"
+ for v in "$M2_TOKEN" "$M3_TOKEN" "$M1_KEY"; do mask "$v"; done
+ PG_PASS="$(openssl rand -hex 16)"; PL_PASS="$(openssl rand -hex 16)"; M2_PASS="$(openssl rand -hex 16)"; M3_PASS="$(openssl rand -hex 16)"; M1_PEPPER="$(openssl rand -hex 32)"; M1_QUEUE_KEY="$(openssl rand -hex 32)"

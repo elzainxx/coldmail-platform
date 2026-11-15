@@ -1,0 +1,13 @@
+diff --git a/internal/config/config.go b/internal/config/config.go
+index 87efac7..dfe8f37 100644
+--- a/internal/config/config.go
++++ b/internal/config/config.go
+@@ -55,7 +55,7 @@ type Var struct {
+ // Vars returns every dial the platform reads, in documentation order. The slice is a fresh copy.
+ func Vars() []Var {
+ 	return []Var{
+-		{Name: VarHTTPAddr, Default: ":8080",
++		{Name: VarHTTPAddr, Default: ":8081",
+ 			Doc: "TCP listen address of the HTTP server, as host:port. Port 0 picks a free port."},
+ 		{Name: VarDatabaseURL, Required: true, Secret: true,
+ 			Doc: "PostgreSQL connection string of the least-privileged `platform_app` login. Never printed or logged."},

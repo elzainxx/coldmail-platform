@@ -1,0 +1,12 @@
+diff --git a/db/migrations/platform_0000_bootstrap.up.sql b/db/migrations/platform_0000_bootstrap.up.sql
+index a3a9b5d..c872625 100644
+--- a/db/migrations/platform_0000_bootstrap.up.sql
++++ b/db/migrations/platform_0000_bootstrap.up.sql
+@@ -41,6 +41,6 @@ CREATE TABLE IF NOT EXISTS platform.schema_migrations (
+ );
+ ALTER TABLE platform.schema_migrations OWNER TO platform_owner;
+ REVOKE ALL ON platform.schema_migrations FROM PUBLIC;
+-GRANT SELECT ON platform.schema_migrations TO platform_app, platform_admin;
++GRANT SELECT, UPDATE ON platform.schema_migrations TO platform_app, platform_admin;
+ 
+ INSERT INTO platform.schema_migrations (version) VALUES ('0000');

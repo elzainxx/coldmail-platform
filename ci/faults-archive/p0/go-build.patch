@@ -1,0 +1,9 @@
+diff --git a/internal/config/zz_fault.go b/internal/config/zz_fault.go
+new file mode 100644
+index 0000000..bcee973
+--- /dev/null
++++ b/internal/config/zz_fault.go
+@@ -0,0 +1,3 @@
++package config
++
++var zzFault int = "not an int"
