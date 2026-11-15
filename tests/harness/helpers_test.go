@@ -252,14 +252,24 @@ func startMigrator(t *testing.T, env map[string]string, args ...string) *running
 	cmd.Dir = t.TempDir() // so a relative default path can never resolve to the repository
 	r := &running{cmd: cmd, so: &bytes.Buffer{}, se: &bytes.Buffer{}, cancel: cancel, start: time.Now(), done: make(chan error, 1)}
 	cmd.Stdout, cmd.Stderr = r.so, r.se
-	if err := cmd.Start(); err != nil {
-		cancel()
-		t.Fatalf("cannot start %s: %v", filepath.Base(cmd.Path), err)
-	}
-	go func() { r.done <- cmd.Wait() }()
 	t.Cleanup(cancel) // a migrator that is still running when the test ends is killed
+	// The process is started from its own goroutine, so that the test body goes on at once whatever the time CreateProcess
+	// takes (a host that inspects new executables before releasing them can hold Start for the child's whole run, and
+	// the tests that watch a migrator while it runs must not be held with it). The outcome is read by wait.
+	go func() {
+		if err := cmd.Start(); err != nil {
+			r.done <- &startError{err}
+			return
+		}
+		r.done <- cmd.Wait()
+	}()
 	return r
 }
+
+type startError struct{ err error }
+
+func (e *startError) Error() string { return e.err.Error() }
+func (e *startError) Unwrap() error { return e.err }
 
 func (r *running) wait(t *testing.T) result {
 	t.Helper()
@@ -267,8 +277,11 @@ func (r *running) wait(t *testing.T) result {
 	r.cancel()
 	res := result{Stdout: r.so.String(), Stderr: r.se.String(), Elapsed: time.Since(r.start)}
 	var ee *exec.ExitError
+	var se *startError
 	switch {
 	case err == nil:
+	case errors.As(err, &se):
+		t.Fatalf("cannot start %s: %v", filepath.Base(r.cmd.Path), se.err)
 	case errors.As(err, &ee) && ee.ExitCode() >= 0:
 		res.Code = ee.ExitCode()
 	default:

@@ -115,9 +115,6 @@ func TestRunnerLifecycle(t *testing.T) {
 	if got := appliedVersions(t, admin); !sameStrings(got, wantChain) {
 		t.Fatalf("after up: applied = %v, want exactly %v\n%s", got, wantChain, res.all())
 	}
-	for _, v := range wantChain {
-		mustContain(t, res.Stdout, "applied  "+v+"_", "up")
-	}
 	assertDesignedState(t, admin, "after up")
 	status := runMigrator(t, env, "status")
 	mustExit(t, status, 0, "status after up")

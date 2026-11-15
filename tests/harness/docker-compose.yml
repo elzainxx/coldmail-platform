@@ -30,8 +30,8 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${H_PG_SUPERPASS:?}
     command: ["postgres", "-c", "fsync=off"]         # CI-only: durability is not under test, speed is
-    tmpfs:
-      - /var/lib/postgresql/data
+    # NOT a tmpfs: the outage check stops and restarts this container, and a tmpfs is discarded on stop (the restarted database would have no roles). The data lives in the
+    # container's writable layer, which survives stop/start and is removed by `down -v`.
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d platform"]
       interval: 2s
