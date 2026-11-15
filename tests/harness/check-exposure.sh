@@ -5,6 +5,10 @@
 #   2. NO service anywhere in the stack publishes a port to the host (PublishedPort > 0).
 # Subject floor: it must have examined at least as many services as were expected, and at least 1.
 #
+# BLIND SPOT, MEASURED (fault/p0-exposure, run 43729261466): a `ports:` entry on a service that sits only on an `internal` network is NOT active, so it never appears in
+# `docker compose ps` Publishers — this check said "0 publish a port" for a stack that had one configured. run.sh therefore ALSO reads each container's configured
+# HostConfig.PortBindings from `docker inspect`, and that second instrument is what went red. Neither is sufficient alone; both must pass.
+#
 # NOT CHECKED (printed on every run): reachability from ANOTHER HOST or through a firewall or cloud security group (the runner has none to test);
 # traffic on the private network itself (the modules and the platform are meant to talk there); anything the containers do on their own outbound side.
 # That the Docker network is `internal` is asserted separately by run.sh, from `docker network inspect`.
@@ -36,6 +40,6 @@ printf '%s\n' "$out" | sed -n 's/^PUBLISHED /  FAIL: /p' | while read -r l; do e
 p=$(printf '%s\n' "$out" | grep -c '^PUBLISHED ' || true); fail=$((fail+p))
 u=$(printf '%s\n' "$out" | grep -c '^UNPARSEABLE ' || true); [ "$u" -eq 0 ] || { echo "  FAIL: $u line(s) of the listing could not be parsed"; fail=$((fail+u)); }
 echo "check-exposure: $examined services examined, $p publish a port to the host, failures: $fail"
-echo "NOT CHECKED: reachability from another host, a firewall or a security group; the private network's own traffic; the containers' outbound side"
+echo "NOT CHECKED: a publish that is configured but inactive (a service on an internal network) — run.sh reads docker inspect PortBindings for that; reachability from another host, a firewall or a security group; the private network's own traffic; the containers' outbound side"
 [ "$fail" -eq 0 ] || { echo "check-exposure: RED"; exit 1; }
 echo "check-exposure: OK"
