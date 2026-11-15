@@ -131,6 +131,8 @@ DC run --rm -T harness-tests -test.list '.*' > "$WORK/h-list.log" 2>&1; lrc=$?
 [ "$lrc" = 0 ] || { cat "$WORK/h-list.log"; die "listing the declared integration tests failed ($lrc)"; }
 DC run --rm -T harness-tests -test.v -test.count=1 > "$WORK/h-run.log" 2>&1; trc=$?
 sed 's/^/  | /' "$WORK/h-run.log" | tail -60
+# a failure must name itself: the tail above is only the end of the run, so print every failing test with its context
+[ "$trc" = 0 ] || { echo "  ---- failing tests (with context) ----"; grep -n -B1 -A12 -e '--- FAIL' "$WORK/h-run.log" | sed 's/^/  | /' | head -200; }
 # a compiled test binary prints no `ok <pkg>` line (go test does); the floor gate reads one, so write it from the binary's own exit status
 if [ "$trc" = 0 ]; then t="ok  \t$GO_PKG\t0.000s"; else t="FAIL\t$GO_PKG\t0.000s"; fi
 printf "$t\n" >> "$WORK/h-run.log"; printf "ok  \t$GO_PKG\t0.000s\n" >> "$WORK/h-list.log"
