@@ -3,7 +3,7 @@
 Roadmap: [`coldmail-platform-build-plan.md`](coldmail-platform-build-plan.md) (locked decisions are not reopened here). Diagram: [`coldmail-platform-architecture.mermaid`](coldmail-platform-architecture.mermaid).
 False-green classes every gate below must avoid: [`../deferrals-and-false-greens.md`](../deferrals-and-false-greens.md) (the build plan cites it as `Docs/deferrals-and-false-greens.md`; the file lives at the repository root — see Findings F8).
 
-**Status: in progress.** Evidence rule: Go tests, the harness and every gate count only from a **GitHub runner** run. A Windows-host run is rehearsal, never evidence.
+**Status: done** (head `a6709c9`; evidence below). Evidence rule: Go tests, the harness and every gate count only from a **GitHub runner** run. A Windows-host run is rehearsal, never evidence.
 
 ## Design choices (mine — overturn any of them and I rework only that chunk)
 
@@ -32,21 +32,47 @@ False-green classes every gate below must avoid: [`../deferrals-and-false-greens
 
 ## Gates and the fault each one is proven against
 
-| Gate | Fault injected on a throwaway branch | Red run | Reverted/green run |
+**Method.** One throwaway branch `fault/p0-<name>` per gate, cut from the green head `de42f56`. Each carries the fault commit (and, where noted, a fix-up), then a **revert** commit whose tree is identical to `main` at `a6709c9`. A red only counts if the log shows the **named step** failing with the **named message** — it was read, not inferred from the colour. Two faults first went red for the wrong reason and were fixed on their own branches, with the first attempts kept in the history: `floor-delete` failed `gofmt` (run [43729261622](https://github.com/elzainxx/coldmail-platform/actions/runs/43729261622)) and `go-build` failed `gofmt` on a syntax error (run [43729262947](https://github.com/elzainxx/coldmail-platform/actions/runs/43729262947)), so neither reached the gate it was meant to test; each got a gofmt-clean fix-up commit.
+
+| Gate | Fault injected (branch `fault/p0-…`) | Red run (workflow · step) | Run on the revert commit |
 |---|---|---|---|
-| Go build / vet / gofmt | compile error | _pending_ | _pending_ |
-| Unit tests | assertion made false | _pending_ | _pending_ |
-| Test-count floor | a test deleted from a package (everything still passes) and, separately, a `t.Skip` | _pending_ | _pending_ |
-| Digest-pin gate | `FROM alpine:latest` | _pending_ | _pending_ |
-| Web build and test | type error; render test broken | _pending_ | _pending_ |
-| Migration lint | an up file without its down / a gap in the chain | _pending_ | _pending_ |
-| Grant proof | `GRANT UPDATE` on `schema_migrations` to `platform_app` | _pending_ | _pending_ |
-| Pinned-module check | `modules.lock` names a commit that does not exist in the module | _pending_ | _pending_ |
-| Harness probe | wrong service token for one module | _pending_ | _pending_ |
-| Exposure check | `ports:` added to one module | _pending_ | _pending_ |
-| Secret scan | planted token (fingerprint then ignored — see above) | _pending_ | _pending_ |
-| Ignore-file gate (`check-gitleaksignore`) | an ignore entry for a commit on `main` | _pending_ | _pending_ |
-| Docs check (`platform-check`) | a broken internal link | _pending_ | _pending_ |
+| Go compile (`go build`) | `go-build` — a type error in `internal/config` — red at the **Build** step (gofmt passes) | [go · Build](https://github.com/elzainxx/coldmail-platform/actions/runs/43731021827) | green: [go](https://github.com/elzainxx/coldmail-platform/actions/runs/43731698355) |
+| Go unit tests | `unit-test` — `PLATFORM_HTTP_ADDR`'s default changed — config, app and reference-doc tests fail | [go · Unit tests](https://github.com/elzainxx/coldmail-platform/actions/runs/43729262932) | green: [go](https://github.com/elzainxx/coldmail-platform/actions/runs/43731699998) |
+| Test-count floor — a test deleted | `floor-delete` — one test deleted from `internal/logging`; everything left passes — red only at the **floor** step (`ran=5 floor=6`) | [go · Per-package test-count floor](https://github.com/elzainxx/coldmail-platform/actions/runs/43731021993) | green: [go](https://github.com/elzainxx/coldmail-platform/actions/runs/43731698202) |
+| Test-count floor — a skipped test | `floor-skip` — a `t.Skip` in one test; `go test` stays green — red at the **floor** step (`skipped tests`) | [go · Per-package test-count floor](https://github.com/elzainxx/coldmail-platform/actions/runs/43729263433) | green: [go](https://github.com/elzainxx/coldmail-platform/actions/runs/43731698617) |
+| Digest-pin gate | `image-latest` — the runtime image is `alpine:latest` | [gates · check-image-pins](https://github.com/elzainxx/coldmail-platform/actions/runs/43729261839) | green: [gates](https://github.com/elzainxx/coldmail-platform/actions/runs/43731698288) |
+| Web type-check | `web-typecheck` — `TS2322` in `App.tsx` | [web · Type-check](https://github.com/elzainxx/coldmail-platform/actions/runs/43729261803) | green: [web](https://github.com/elzainxx/coldmail-platform/actions/runs/43731699242) |
+| Web test-count floor | `web-floor` — one vitest test deleted (`declared=2 floor=3`) | [web · Test-count floor](https://github.com/elzainxx/coldmail-platform/actions/runs/43729261820) | green: [web](https://github.com/elzainxx/coldmail-platform/actions/runs/43731699618) |
+| Migration lint | `migration-lint` — a 0001 up file with no down file and not in `wantChain` | [gates · check-migrations](https://github.com/elzainxx/coldmail-platform/actions/runs/43729262394) | green: [gates](https://github.com/elzainxx/coldmail-platform/actions/runs/43731699903) |
+| Grant proof (real Postgres) | `grant-proof` — the bootstrap grants UPDATE on `schema_migrations` to `platform_app` / `platform_admin` — `TestGrantsInvariant` and `TestLive_GrantsInvariant` red | [harness · stage [tests]](https://github.com/elzainxx/coldmail-platform/actions/runs/43729262774) | green: [harness](https://github.com/elzainxx/coldmail-platform/actions/runs/43731699642) |
+| Pinned-module check | `lock-missing` — `modules.lock` pins a well-formed commit that does not exist | [harness · Fetch the three modules](https://github.com/elzainxx/coldmail-platform/actions/runs/43729262556) | green: [harness](https://github.com/elzainxx/coldmail-platform/actions/runs/43731699054) |
+| End-to-end probe | `probe-token` — a wrong service token for module 3 — `CHECK m3.describe.ok FAIL expected status 200, got 401` | [harness · stage [probe]](https://github.com/elzainxx/coldmail-platform/actions/runs/43729261593) | green: [harness](https://github.com/elzainxx/coldmail-platform/actions/runs/43731699438) |
+| Exposure check | `exposure` — module 2 publishes a port — caught by the **second** instrument (`docker inspect` PortBindings); the compose-ps instrument said OK (F10) | [harness · stage [exposure]](https://github.com/elzainxx/coldmail-platform/actions/runs/43729261466) | green: [harness](https://github.com/elzainxx/coldmail-platform/actions/runs/43731699667) |
+| Readiness follows the database | `outage` — `/readyz` ignores the ping — `readyz stayed 200 with the database stopped` (the unit tests are red too) | [harness · stage [outage]](https://github.com/elzainxx/coldmail-platform/actions/runs/43729262069) | green: [harness](https://github.com/elzainxx/coldmail-platform/actions/runs/43731698992) |
+| Secret scan | `secret` — a fake token-shaped secret in a file (`generic-api-key`) | [gitleaks · scan](https://github.com/elzainxx/coldmail-platform/actions/runs/43729262795) | green: [gitleaks](https://github.com/elzainxx/coldmail-platform/actions/runs/43731698850) |
+| Ignore-file gate | `ignore-main` — `.gitleaksignore` silences a commit that is on `main` | [gates · check-gitleaksignore](https://github.com/elzainxx/coldmail-platform/actions/runs/43729263617) | green: [gates](https://github.com/elzainxx/coldmail-platform/actions/runs/43731699291) |
+| Docs / link check | `docs-link` — a broken internal link in `README.md` | [platform-check · Checks 1 and 2](https://github.com/elzainxx/coldmail-platform/actions/runs/43729262029) | green: [platform-check](https://github.com/elzainxx/coldmail-platform/actions/runs/43731699424) |
+
+**Read these with the following in mind.**
+
+- `gitleaks` is also red on every other fault branch's *fault* commit: the scan reads every branch (`--log-opts=--all`) and each run fetches `fault/p0-secret`'s commit. That red is not attributable to the fault on those branches; only `fault/p0-secret` counts for the secret scan. After the revert commits (which carry the one `.gitleaksignore` fingerprint, identical to `main`), every branch's `gitleaks` is green.
+- On `fault/p0-secret` itself the `gates` workflow stays **red after the revert, by design**: that branch's own history contains the planted commit, so `check-gitleaksignore` correctly says it is "reachable from HEAD". On `main` and on every other branch it is green.
+- **Exposure (F10).** Module 2's published port was *not* seen by the `docker compose ps` instrument ("0 publish a port"); the second instrument, the configured `HostConfig.PortBindings` from `docker inspect`, went red. Both must pass; `check-exposure.sh` now says so.
+- The harness also went red on `go-build` (the platform image would not build), `migration-lint` (the 0001 file broke the integration tests) and the unit-test branches' neighbours where a fault is visible to more than one gate; the table names the gate each fault was designed for.
+- Cost: 16 branches × 6 workflows × 2–3 pushes ≈ 250 runner-workflow runs.
+
+
+## Exit criteria — evidence (all on the runner)
+
+Head at close: `main` @ `a6709c9` — all six workflows green: [harness 43731666838](https://github.com/elzainxx/coldmail-platform/actions/runs/43731666838) · [go 43731666851](https://github.com/elzainxx/coldmail-platform/actions/runs/43731666851) · [web 43731666846](https://github.com/elzainxx/coldmail-platform/actions/runs/43731666846) · [gates 43731666896](https://github.com/elzainxx/coldmail-platform/actions/runs/43731666896) · [gitleaks 43731666925](https://github.com/elzainxx/coldmail-platform/actions/runs/43731666925) · [platform-check 43731666852](https://github.com/elzainxx/coldmail-platform/actions/runs/43731666852). Only documentation commits follow it.
+
+| Criterion | Evidence |
+|---|---|
+| A trivial end-to-end call passes: platform → each module's `describe` (and health), service token, CI-private network, modules not public | harness [43731666838](https://github.com/elzainxx/coldmail-platform/actions/runs/43731666838): `PROBE SUMMARY checks=42 pass=42 fail=0 not_applicable=1` from the `platform-probe` container on the private network — platform and each module's health and readiness; `describe` for M2 and M3 with the service token **and** the paired no-token / wrong-token calls that must be 401; for M1 (no `describe`) the authenticated-404 / unauthenticated-401 / wrong-key-401 triple, and a printed `NOT-APPLICABLE m1.describe`. The three modules were built from `11903d1` / `02a71fc` / `d6ac497` (the pins), each re-checked at HEAD; the network is `internal=true` and no container has a host port binding (two instruments, F10) |
+| The module has no `describe` or a different shape → flagged, no verbs added to the modules | F1 (M1 has none), F5 (M2/M3 differ by design); no module was modified |
+| Every gate proven to fail on an injected fault | the table above: 16 branches, a red run per gate read down to the failing step, a green run after each revert |
+| The harness prints what it did not check | the `NOT CHECKED` block at the end of the same harness run, plus each gate's own `NOT CHECKED:` line |
+| Status table says P0 done with the final head and the green run | `Docs/coldmail-platform-build-plan.md` |
 
 ## What the harness will state it did NOT check (printed on every run)
 
@@ -63,12 +89,19 @@ Workers, SMTP and the mail sink (not started); real Supabase (stock Postgres wit
 - **F7.** M2/M3 `docker-compose.yml` refuses to start `control` alone (`${DEV_WORKER_TOKEN…:?}` is interpolated for every service) and publishes ports; the harness therefore defines its own compose and reuses only the modules' Dockerfiles and secret tools.
 - **F8.** `deferrals-and-false-greens.md` is at the repository root, not `Docs/` as the build plan says; the build plan's attached copies had landed in the older `D:\Mnfi\coldmail\` tree. **M1 has `PROJECT_RULES.md`, no `CLAUDE.md`.**
 - **F9.** Nothing automated ties `modules.lock` to the parent's gitlinks.
+- **F10.** *Measured on the runner.* A `ports:` entry on a service that sits only on an `internal` network is **configured but inactive**: `docker compose ps` shows no publisher for it, so the first exposure instrument said "0 publish a port" for a stack that had one. The second instrument (`docker inspect`, `HostConfig.PortBindings`) caught it (`fault/p0-exposure`). Both must pass.
+- **F11.** M1's job routes answer **503 `unavailable` even to an authenticated caller** unless `TM_QUEUE_ADDR_KEY` is set (the bulk/job surface is mounted only with it). Found by the probe's authenticated-vs-unauthenticated pair on the first full run; the harness now supplies the key. P3 must decide whether a platform-facing M1 with an unwired queue should say 503 or something more specific.
+- **F12.** `Docs/` contains tracked raw Go sources (`Docs/history/audit-scratch/…`) that make `go build ./...`, `go vet ./...` and `go mod tidy` at the repository root fail. `Docs/go.mod` makes `Docs/` a module of its own (no packages) — the evidence stays byte-for-byte untouched; CI runs `gofmt -l cmd internal tests`, never `gofmt -l .`.
+- **F13.** pgx v5.13.0 redacts the password in *some* malformed-DSN errors (`sslmode=bogusmode`, `?password=…`) but still leaks it in others (`password = pw` echoes the whole DSN; a bare-token DSN leaks via `cannot parse`). `internal/dsnscrub` scrubs every error from a pgx call; a test pins which shapes leak, so a pgx bump that changes that is red.
+- **F14.** On this workstation `git add` intermittently fails with "Permission denied / failed to insert into database" and spawned programs run twice — consistent with real-time scanning of `coldmail/`; the owner action "exclude the `coldmail/` folder from Norton real-time scanning" (`OWNER-ACTIONS.md`) is what this is evidence for. Repository integrity was checked with `git fsck` (clean).
+- **F15.** Noticed, not changed: the workflows pin actions by tag (`actions/checkout@v4`), not by commit SHA, as the existing `gitleaks.yml` and `platform-check.yml` already do; the digest-pin gate covers container images only (`uses:` pins are listed in its NOT CHECKED line).
 
 ## Open decisions (yours)
 
-1. **Delete the `fault/p0-*` branches** on `elzainxx/coldmail-platform` when the table above is complete (no deletion authority was given for them), then remove the entry from `.gitleaksignore`.
-2. **Supabase project:** none is created in Phase 0 (wiring and a runner only). Creating one, and confirming M2-GL-3 / M3 §3 (which admin role runs migrations) against it, is yours.
-3. **F1/F2/F4** are recorded for P3/P1; no action requested now.
+1. **Delete the 16 `fault/p0-*` branches** on `elzainxx/coldmail-platform` (no deletion authority was given for them): `docs-link`, `exposure`, `floor-delete`, `floor-skip`, `go-build`, `grant-proof`, `ignore-main`, `image-latest`, `lock-missing`, `migration-lint`, `outage`, `probe-token`, `secret`, `unit-test`, `web-floor`, `web-typecheck`. Afterwards remove the one fingerprint from `.gitleaksignore` (and the `check-gitleaksignore` gate then has nothing to check). Each branch is cut from `de42f56` and ends with a revert commit.
+2. **Supabase project:** none is created in Phase 0 (wiring and a runner only). Creating one, and confirming M2-GL-3 / M3 §3 (which admin role runs migrations — Supabase's `postgres` is not a superuser) against it, is yours.
+3. **F1 / F2 / F4 / F11** are recorded for P3 and P1; no action requested now.
+4. **Runner minutes:** Phase 0 spent roughly 250 workflow runs on the fault branches alone. If minutes matter, say so and the next phases will batch fault proofs.
 
 ## Housekeeping log
 

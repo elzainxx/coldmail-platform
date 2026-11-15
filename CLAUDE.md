@@ -45,7 +45,7 @@ The platform is the product users and the admin touch. The three modules do the 
 | `tests/floors-go.txt`, `floors-web.txt`, `floors-harness.txt` | the per-package test-count floors |
 | `scripts/` | the gates and their selftests: `check-test-floors`, `check-image-pins`, `check-migrations` |
 | `tools/` | `fetch-modules.sh` (clone + `--lock`), `modules.lock`, `check-modules-lock.sh`, `platform-check.sh` (docs citations) |
-| `Docs/` | the build plan, the diagram, the phase specs |
+| `Docs/` | the build plan, the diagram, the phase specs, the config / migrator / probe references. **`Docs/go.mod` is deliberate**: `Docs/` holds preserved raw Go sources that must stay out of the root module, so CI runs `gofmt -l cmd internal tests`, never `gofmt -l .` |
 | repository root `*.md` | the cross-module record: contract, comparison report, deferrals and false greens, verification runs |
 
 ## How CI runs (all on `ubuntu-latest`; a Windows run is rehearsal)
