@@ -1,0 +1,57 @@
+flowchart TB
+    U["User<br/><i>one login = one account</i>"]
+    A["Admin<br/><i>named, audited</i>"]
+    R["Recipient<br/><i>unsubscribe link</i>"]
+
+    subgraph web["Frontend — React + TS + Tailwind"]
+        UA["User app<br/>upload · author · preview · jobs · results"]
+        AC["Admin console<br/>users · credits · entitlements · monitoring · module ops"]
+    end
+
+    subgraph plat["Platform backend — Go"]
+        API["API + Supabase Auth"]
+        LED["Money core<br/>per-module balances · append-only ledger<br/>reserve → settle → release"]
+        JOB["Job engine<br/>preview · schedule · chain · poll · resume"]
+        REN["Renderer<br/>merge fields · seeded spintax · plain text"]
+        PLB["Plumbing layer<br/>auth · envelope · health · describe"]
+        AD1["M1 adapter<br/>/verify + bulk"]
+        AD2["M2 adapter<br/>quote · run · report"]
+        AD3["M3 adapter<br/>run · report · account routes"]
+        UNS["Public unsubscribe endpoint"]
+    end
+
+    DB[("Shared Supabase Postgres<br/>platform · verify · send_managed · send_byo schemas<br/>public.users · public.job_items")]
+
+    subgraph mods["Modules — private network only"]
+        M1["coldmail-verify<br/><i>credits</i>"]
+        M2["coldmail-send-managed<br/><i>credits</i>"]
+        M3["coldmail-send-byo<br/><i>admin entitlement, no credits</i>"]
+    end
+
+    U --> UA
+    A --> AC
+    R --> UNS
+    UA --> API
+    AC --> API
+    API --> LED
+    API --> JOB
+    JOB --> REN
+    JOB --> LED
+    JOB --> PLB
+    PLB --> AD1 & AD2 & AD3
+    AD1 ==>|"service token"| M1
+    AD2 ==>|"service token"| M2
+    AD3 ==>|"service token"| M3
+    LED --> DB
+    JOB --> DB
+    UNS --> DB
+    M1 -.->|"reads users / job_items"| DB
+    M2 -.->|"reads users / job_items"| DB
+    M3 -.->|"reads users / job_items"| DB
+
+    classDef user fill:#e8f0fe,stroke:#4285f4,stroke-width:2px
+    classDef core fill:#f3e8fd,stroke:#9334e6,stroke-width:2px
+    classDef mod fill:#fde8e8,stroke:#d93025,stroke-width:2px
+    class U,A,R user
+    class API,LED,JOB,REN,PLB,AD1,AD2,AD3,UNS core
+    class M1,M2,M3 mod
