@@ -28,6 +28,18 @@ BEGIN
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'platform_admin') THEN
         CREATE ROLE platform_admin NOLOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB;
     END IF;
+
+    -- CREATE SCHEMA ... AUTHORIZATION and ALTER ... OWNER TO below need the migrating role to be able to SET ROLE to platform_owner AND to inherit its privileges. A superuser
+    -- always can. On Supabase the migrator is `postgres` (not a superuser): on PG 16+ the creator of a role gets only ADMIN OPTION on it - no SET, no INHERIT - so those
+    -- statements fail with "must be able to SET ROLE" (measured by the `supabase` workflow, Phase 1 chunk A4). A role holding ADMIN may grant itself both. (PG 15 and
+    -- earlier have no per-grant SET/INHERIT options: a plain GRANT does it.)
+    IF current_setting('server_version_num')::int >= 160000 THEN
+        IF NOT (pg_has_role(current_user, 'platform_owner', 'USAGE') AND pg_has_role(current_user, 'platform_owner', 'SET')) THEN
+            EXECUTE format('GRANT platform_owner TO %I WITH INHERIT TRUE, SET TRUE', current_user);
+        END IF;
+    ELSIF NOT pg_has_role(current_user, 'platform_owner', 'USAGE') THEN
+        EXECUTE format('GRANT platform_owner TO %I', current_user);
+    END IF;
 END
 $$;
 

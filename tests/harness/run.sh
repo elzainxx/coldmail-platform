@@ -116,6 +116,9 @@ bash "$PLATFORM_DIR/scripts/check-public-schema.sh" --allowlist "$PLATFORM_DIR/t
 STAGE=services; banner 5 "the three Controls and the platform, healthy on the private network"
 DC up -d --wait --wait-timeout 240 m1 m2 m3 platform || die "a service did not become healthy"
 DC ps --all --format 'table {{.Service}}\t{{.State}}\t{{.Health}}' | sed 's/^/  | /'
+# the instrument for "module 1 runs as the least-privilege login": a healthy module 1 proves nothing about WHICH role it connected as, so read it from the server
+n="$(psql_ "select count(*) from pg_stat_activity where usename = 'verify_app'")"; [ "${n:-0}" -ge 1 ] || die "module 1 holds no connection as verify_app: it is not running as the least-privilege login"
+echo "  module 1 holds $n connection(s) as verify_app (pg_stat_activity)"
 
 # ── 6. tests ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 STAGE=tests; banner 6 "integration tests, compiled on the runner and run inside the network"
