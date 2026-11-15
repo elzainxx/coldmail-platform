@@ -63,8 +63,8 @@ M3_TOKEN="$(printf '%s\n' "$t3" | field ADMIN_API_KEY)"; M3_HASH="$(printf '%s\n
 [ "$M2_TOKEN" != "$M3_TOKEN" ] || die "the two module service tokens are identical — each module must have its own credential"
 M1_KEY="$(openssl rand -hex 32)"; M1_KEY_SHA="$(printf '%s' "$M1_KEY" | sha256sum | cut -d' ' -f1)"
 for v in "$M2_TOKEN" "$M3_TOKEN" "$M1_KEY"; do mask "$v"; done
-PG_PASS="$(openssl rand -hex 16)"; PL_PASS="$(openssl rand -hex 16)"; M2_PASS="$(openssl rand -hex 16)"; M3_PASS="$(openssl rand -hex 16)"; M1_PEPPER="$(openssl rand -hex 32)"
-for v in "$PG_PASS" "$PL_PASS" "$M2_PASS" "$M3_PASS" "$M1_PEPPER"; do mask "$v"; done
+PG_PASS="$(openssl rand -hex 16)"; PL_PASS="$(openssl rand -hex 16)"; M2_PASS="$(openssl rand -hex 16)"; M3_PASS="$(openssl rand -hex 16)"; M1_PEPPER="$(openssl rand -hex 32)"; M1_QUEUE_KEY="$(openssl rand -hex 32)"
+for v in "$PG_PASS" "$PL_PASS" "$M2_PASS" "$M3_PASS" "$M1_PEPPER" "$M1_QUEUE_KEY"; do mask "$v"; done
 esc() { printf '%s' "$1" | sed 's/\$/$$/g'; }       # bcrypt hashes contain '$', which compose would interpolate
 ( umask 077; cat > "$WORK/harness.env" <<EOF
 H_PLATFORM_DIR=$PLATFORM_DIR
@@ -73,6 +73,7 @@ H_WORK=$WORK
 H_PG_SUPERPASS=$PG_PASS
 H_PLATFORM_APP_PASSWORD=$PL_PASS
 H_M1_PEPPER=$M1_PEPPER
+H_M1_QUEUE_KEY=$M1_QUEUE_KEY
 H_M1_CALLER_KEY=$M1_KEY
 H_M2_APP_PASSWORD=$M2_PASS
 H_M3_APP_PASSWORD=$M3_PASS
@@ -82,7 +83,7 @@ H_M2_TOKEN_HASH=$(esc "$M2_HASH")
 H_M3_TOKEN_HASH=$(esc "$M3_HASH")
 EOF
 )
-echo "  minted: 5 database/app passwords, 1 pepper, 1 module-1 caller key, 2 module service tokens (+ bcrypt hashes), KMS keys and mTLS material for modules 2 and 3 — none printed"
+echo "  minted: 5 database/app passwords, 1 pepper, 1 module-1 queue key, 1 module-1 caller key, 2 module service tokens (+ bcrypt hashes), KMS keys and mTLS material for modules 2 and 3 — none printed"
 
 # ── 3. build ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 STAGE=build; banner 3 "build every image from source, no cache"

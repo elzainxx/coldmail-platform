@@ -3,6 +3,8 @@
 package harness
 
 import (
+	"fmt"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -125,6 +127,7 @@ func TestRunnerLockHeldWhileFileRuns(t *testing.T) {
 	// Wait until the first migrator is demonstrably inside the slow file. The filter names the migrator's own
 	// application_name and excludes this observer's backend, whose query text also mentions pg_sleep.
 	inside := false
+	seen := map[string]bool{} // every distinct session state observed, for the failure message
 	for deadline := time.Now().Add(40 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
 		var n int
 		if err := observer.QueryRow(testCtx(t), `SELECT count(*) FROM pg_stat_activity
@@ -136,10 +139,29 @@ func TestRunnerLockHeldWhileFileRuns(t *testing.T) {
 			inside = true
 			break
 		}
+		rows, err := observer.Query(testCtx(t), `SELECT application_name, state, left(replace(query, E'\n', ' '), 60) FROM pg_stat_activity
+			WHERE datname = current_database() AND pid <> pg_backend_pid()`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for rows.Next() {
+			var app, state, query string
+			if err := rows.Scan(&app, &state, &query); err != nil {
+				t.Fatal(err)
+			}
+			seen[fmt.Sprintf("app=%q state=%q query=%q", app, state, query)] = true
+		}
+		rows.Close()
 	}
 	if !inside {
 		res := first.wait(t)
-		t.Fatalf("never saw the migrator inside the slow file (exit %d)\nstdout: %s\nstderr: %s", res.Code, res.Stdout, res.Stderr)
+		var obs []string
+		for k := range seen {
+			obs = append(obs, k)
+		}
+		sort.Strings(obs)
+		t.Fatalf("never saw the migrator inside the slow file (exit %d, ran %s)\nstdout: %s\nstderr: %s\nsessions observed:\n  %s",
+			res.Code, res.Elapsed, res.Stdout, res.Stderr, strings.Join(obs, "\n  "))
 	}
 
 	// At this instant the migrator is mid-file: the lock must be held.

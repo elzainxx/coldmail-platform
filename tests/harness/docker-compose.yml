@@ -121,6 +121,7 @@ services:
       # Module 1 needs an OWNER or SUPERUSER connection today (startup writes `policies`; cp_runtime has only SELECT) — Docs/phase-0-spec.md F3.
       TM_DATABASE_URL: postgres://postgres:${H_PG_SUPERPASS:?}@postgres:5432/platform
       TM_PEPPER: ${H_M1_PEPPER:?}
+      TM_QUEUE_ADDR_KEY: ${H_M1_QUEUE_KEY:?}      # without it the bulk and job routes answer 503 `unavailable` even to an authenticated caller (module 1: main.go, api.go)
       TM_ENV: development
       TM_LISTEN_ADDR: ":8080"
     healthcheck:
