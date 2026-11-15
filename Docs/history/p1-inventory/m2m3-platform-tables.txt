@@ -1,0 +1,360 @@
+# M2 / M3 requirements on the platform tables `public.users` and `public.job_items`
+
+Derived from CODE (Go, SQL migrations, shell harness), not from docs. Heads read:
+M2 = `coldmail-send-managed` @ 02a71fc, M3 = `coldmail-send-byo` @ d6ac497 (both under `D:\Mnfi\coldmail-parent\`).
+Paths below are relative to the module root; `M2:` / `M3:` prefix says which repo. Read-only research; nothing was modified.
+
+Roles (verified in code):
+- **control runtime role** = `send_managed_app` (M2) / `send_byo_app` (M3). One pgx pool (`database.Pool`, from `DATABASE_URL`) serves BOTH the adminapi and platformapi handlers and the dispatcher (M2: `services/control/cmd/control/main.go:118,223`; M3: `main.go:172,282`).
+- **worker role** = none. The Node worker has no DB driver (CLAUDE.md rule 6; no `public.` reference anywhere under `services/worker`).
+- **migrator/owner role** = whatever `MIGRATE_DATABASE_URL` names (superuser `postgres` in the dev compose: M2 `docker-compose.yml:35`, M3 `docker-compose.yml:39`). It runs `up` as one role for the whole chain; no `SET ROLE`, no `SET search_path` anywhere (grep clean in both repos).
+- Both modules, in dev/CI, live in ONE database called `platform` (compose `POSTGRES_DB: platform`), image `postgres:16-alpine`.
+
+Method note: the result of every grep for `public.users`, `public.job_items`, bare `users`/`job_items`, `to_regclass`, `pg_tables`, `information_schema`, `CREATE EXTENSION`, `search_path`, `SET ROLE` across `services/ tools/ db/ scripts/ tests/ deploy/ docker-compose.yml Makefile .github/` was inspected in both repos. The M2 and M3 migrations 0000, 0004-0009, 0012 and 0014 (the ones diffed; 0001-0003, 0010, 0011, 0013 not diffed) are identical after the schema rename (only comments differ; checked with `diff` after normalising names and CRLF).
+
+---
+
+## public.users - M2
+
+### 1. Statements
+
+Non-test code (all run as the control runtime role unless noted):
+
+| # | File:line | Statement | Role |
+|---|---|---|---|
+| U1 | `M2:services/control/internal/adminapi/pool_store.go:58` | `SELECT EXISTS(SELECT 1 FROM public.users WHERE id=$1)` with `$1 = SystemUserID` ("00000000-0000-0000-0000-000000000000", const at `adminapi/server.go:17`); `.Scan(&exists)` into `bool` | runtime |
+| U2 | `M2:.../adminapi/pool_store.go:65` | same statement, `$1 = userID` (dedicated-pool owner check) | runtime |
+| U3 | callers of U1: `adminapi/pool_handlers.go:70` (shared pool create), `adminapi/account_create.go:88` and `adminapi/account_update.go:139` (account in a shared pool). Failure path: `409 system_user_not_provisioned`. Caller of U2: `adminapi/pool_handlers.go:92` (404-style `owner_user_not_found`) | runtime | 
+| U4 | `M2:db/migrations/send_managed_0000_bootstrap.up.sql:49` | `GRANT SELECT ON public.users TO send_managed_app;` (reverse: `0000_bootstrap.down.sql:7` `REVOKE SELECT ...`) | migrator (must own the table, hold GRANT OPTION, or be superuser) |
+| U5 | `0004_create_pools.up.sql:28-36` | `pools_user_fk FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE RESTRICT`; `pools_owner_user_fk FOREIGN KEY (owner_user_id) REFERENCES public.users(id) ON DELETE CASCADE` | migrator (needs REFERENCES on public.users(id)) |
+| U6 | `0005_create_accounts.up.sql:50-53` | `accounts_user_fk (user_id) REFERENCES public.users(id) ON DELETE CASCADE` | migrator |
+| U7 | `0006_create_boxes.up.sql:25-28` | `boxes_user_fk (user_id) REFERENCES public.users(id) ON DELETE CASCADE` | migrator |
+| U8 | `0008_create_job_events.up.sql:50-53` | `job_events_user_fk (user_id) REFERENCES public.users(id) ON DELETE CASCADE`. NOTE the row is written by triggers `fn_job_events_on_insert` / `fn_job_events_on_state_change` (`0008:114-120`, `147-153`) with `NEW.user_id` taken from `send_managed.jobs.user_id`, so EVERY job insert checks that `jobs.user_id` exists in public.users even though `jobs` itself has no FK to users | migrator (DDL), runtime (trigger insert) |
+| U9 | `0009_create_send_logs.up.sql:35-38` | `send_logs_user_fk (user_id) REFERENCES public.users(id) ON DELETE CASCADE` | migrator |
+| U10 | `0014_create_account_events.up.sql:36-37` | `account_events_user_fk (user_id) REFERENCES public.users(id) ON DELETE CASCADE` | migrator |
+| U11 | `db/preflight/check_platform_tables.sql:13` (run by `tools/send-managed-migrate/runner.go:~90-99`) | `SELECT FROM pg_tables WHERE schemaname='public' AND tablename='users'` (existence only; must be a real table, not a view) | migrator |
+
+No `ALTER TABLE public.users`, no trigger on it, no `INSERT/UPDATE/DELETE` against it in non-test code (module role cannot: `0000:49` grants SELECT only).
+
+Test/harness only (**test-only**; these show what a real row needs):
+- `INSERT INTO public.users (email, is_active) VALUES ($1, true) RETURNING id` (id taken from DEFAULT, returned into Go `string`): `M2:tests/harness/factories.go:30`, `services/control/internal/adminapi/dbhelpers_test.go:18`, `adminapi/accounts_lifecycle_test.go:168`, `dispatch/harness_test.go:331`, `platformapi/harness_test.go:73`, `tools/send-managed-migrate/runner_integration_test.go:552,623`.
+- `INSERT INTO public.users (id, email, is_active) VALUES (<all-zero uuid | uuid>, 'system@sender.local'|'sys@sender.local', true) ON CONFLICT (id) DO NOTHING` (explicit id; ON CONFLICT target = `id`): `adminapi/dbhelpers_test.go:29`, `adminapi/health_test.go:21`, `dispatch/harness_test.go:207,237,277,601`, `platformapi/campaign_report_test.go:19`, `scripts/dev.sh:105`, `tests/harness/phase3_send.sh:36,147`, `tests/harness/load_e11.sh:37,151`.
+- `SELECT id FROM public.users ORDER BY created_at LIMIT 1` (needs `created_at`): `M2:tests/manual/launch-campaign.sh:54`.
+- Harness fixture DDL (same shape as `deploy/pg-init/00-platform-fixtures.sql:10-15`): `tests/harness/run.sh:57,86,285,421`, `tests/harness/checks/consume_contention.sh:66`.
+- Denied writes asserted: `tests/harness/phase1_crypto_roles_test.go:173-174` (`UPDATE public.users SET is_active=false` as `send_managed_app` MUST fail 42501).
+
+### 2. Columns used
+
+| column | read/written | by which role | Go type | SQL type/nullability the code REQUIRES |
+|---|---|---|---|---|
+| `id` | read (`WHERE id=$1`) and FK target | runtime (reads), migrator (FK DDL) | param bound from Go `string`; result is `bool` from EXISTS | **uuid**, primary key / unique (FK target). A text id would break every FK from the module's `UUID` columns. |
+| `email`, `is_active`, `created_at` | NEVER read or written by any non-test M2 code | - | - | none required by code. Required only by M2 test factories (`email`, `is_active` inserted; `created_at` ordered on in `launch-campaign.sh:54`). |
+
+Flag: the only way a runtime query could break on shape is if `users.id` were not `uuid`.
+
+### 3. Constraints / indexes relied on
+- A PRIMARY KEY or UNIQUE constraint on `users(id)` is mandatory (all FKs above; `ON CONFLICT (id)` in test seeders). The preflight does NOT check this (it checks existence only, `check_platform_tables.sql:3-4`).
+- All FKs: not DEFERRABLE, no `ON UPDATE` clause (= NO ACTION). Actions: `RESTRICT` (pools.user_id), `CASCADE` for every other FK (list U5-U10).
+- Effect on platform `DELETE FROM public.users`: cascades through `pools.owner_user_id, accounts, boxes, job_events, send_logs, account_events`; BLOCKED while any `send_managed.pools.user_id` row references it. A dedicated pool has `user_id = owner_user_id` (`pool_handlers.go:102-103`: `userID = *req.OwnerUserID`), so deleting a dedicated-pool owner is refused by `pools_user_fk RESTRICT` until the pool is deleted; the all-zero system user can never be deleted while a shared pool exists (shared pools have `user_id = SystemUserID`, `pool_handlers.go:79`). (RESTRICT-vs-cascade ordering is my reading of Postgres semantics, not exercised by an M2 test.)
+- Index needs on the platform side: only the PK. Module-side referencing columns are all indexed (`0011:52,60-65,75`, `0008:82`, `0009:45`, `0014:49-50`), so cascades from a users delete need nothing more.
+- **Required ROW**: id `00000000-0000-0000-0000-000000000000` must exist in `public.users`. M2 cannot create it (SELECT-only); shared-pool/shared-account creation returns 409 `system_user_not_provisioned` until it exists (`pool_handlers.go:70-77`, `account_create.go:88-95`, `account_update.go:139-146`). The same row is the `user_id` of every shared pool/account (`pools_user_fk`, `accounts_user_fk`).
+
+### 4. Privileges
+| role | needs | where |
+|---|---|---|
+| runtime `send_managed_app` | SELECT only | `0000:49`; asserted EXACTLY `SELECT` by `tools/send-managed-migrate/runner_integration_test.go:119` via `assertPlatformGrant` (`:701-713`, reads `information_schema.role_table_grants WHERE grantee='send_managed_app' AND table_schema='public'`); INSERT/UPDATE/DELETE asserted to fail 42501 (`tests/harness/phase1_crypto_roles_test.go:173-174`) |
+| migrator | REFERENCES on `public.users(id)` (to CREATE the FKs U5-U10); ownership or GRANT OPTION (or superuser) on `public.users` to run `GRANT SELECT` | `0000:49`, `0004..0014` |
+| worker | none | - |
+FK enforcement itself needs no privilege on users for the app role (RI checks run as the table owner).
+
+---
+
+## public.users - M3
+
+### 1. Statements
+
+Non-test code (runtime role `send_byo_app`):
+
+| # | File:line | Statement |
+|---|---|---|
+| U1 | `M3:services/control/internal/adminapi/account_store.go:209` | `SELECT EXISTS(SELECT 1 FROM public.users WHERE id=$1)` -> `Scan(&exists bool)`; callers: `adminapi/account_create.go:113`, `adminapi/user_config_override.go:69,130,176`, `adminapi/user_suspend.go:58` |
+| U2 | `M3:services/control/internal/platformapi/account_store.go:218` | identical statement; callers `platformapi/account_create.go:78`, `platformapi/account_bulk_add.go:104` |
+| U3 | `M3:db/migrations/send_byo_0000_bootstrap.up.sql:49` | `GRANT SELECT ON public.users TO send_byo_app;` (down `:7`) - migrator |
+| U4 | `0004_create_pools.up.sql:28-36` | `pools_user_fk ... ON DELETE RESTRICT`, `pools_owner_user_fk ... ON DELETE CASCADE` (table later DROPPED by `0028_drop_pools.up.sql:12`; `0028_drop_pools.down.sql:32-37` recreates both FKs) |
+| U5 | `0005_create_accounts.up.sql:50-53` then **`0027_accounts_user_owned.up.sql:35-38`**: `DROP CONSTRAINT accounts_user_fk; ADD CONSTRAINT accounts_user_fk FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE RESTRICT` (down `0027...down.sql:10-13` restores CASCADE) |
+| U6 | `0006_create_boxes.up.sql:25-28` | `boxes_user_fk ... ON DELETE CASCADE` |
+| U7 | `0008_create_job_events.up.sql:50-53` | `job_events_user_fk ... ON DELETE CASCADE`; same trigger-driven check as M2 (trigger bodies replaced later in `0022:100-103,137-140` and `0046:56-60`, still `NEW.user_id`) |
+| U8 | `0009_create_send_logs.up.sql:35-38` | `send_logs_user_fk ... ON DELETE CASCADE` |
+| U9 | `0014_create_account_events.up.sql:36-37` | `account_events_user_fk ... ON DELETE CASCADE` |
+| U10 | `0029_create_user_settings.up.sql:15-16` | `user_settings_user_fk FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE` (user_id is also the PK) |
+| U11 | `0030_create_user_config_overrides.up.sql:33-34` | `user_config_overrides_user_fk ... ON DELETE CASCADE` (PK = user_id) |
+| U12 | `0031_create_user_suspensions.up.sql:22-23` | `user_suspensions_user_fk ... ON DELETE CASCADE` (PK = user_id) |
+| U13 | `0032_create_campaigns.up.sql:36-37` | `campaigns_user_fk ... ON DELETE CASCADE` |
+| U14 | `0033_create_notifications.up.sql:16` | `user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE` (inline, constraint auto-named) |
+| U15 | `db/preflight/check_platform_tables.sql:13` | existence check (`pg_tables`) |
+
+Unqualified `users` is never used; M3 has no `send_byo.users` (comment `0033:15`). No INSERT/UPDATE/DELETE against `public.users` in non-test code.
+
+Test-only (**test-only**):
+- `INSERT ... (email, is_active) VALUES ($1,true) RETURNING id`: `M3:tests/harness/factories.go:31`, `adminapi/dbhelpers_test.go:18`, `adminapi/accounts_lifecycle_test.go:169`, `dispatch/harness_test.go:323`, `platformapi/harness_test.go:109`, `tools/send-byo-migrate/runner_integration_test.go:1218,1300`, `tests/harness/phase3_verify.sh:142,204`.
+- `INSERT ... (id, email, is_active) ... ON CONFLICT (id) DO NOTHING`: `adminapi/dbhelpers_test.go:29`, `adminapi/health_test.go:27`, `dispatch/harness_test.go:235,251,593`, `runner_integration_test.go:982` (explicit non-random id `aaaaaaaa-0046-...`), `scripts/dev.sh:113`, `tests/harness/phase3_send.sh:36,157`, `tests/harness/load_e11.sh:56,158`, `tests/harness/drills/postgres_outage.sh:56`, `tests/harness/run.sh:339`.
+- Reads: `SELECT id FROM public.users WHERE email LIKE 'e11-pool-%' ORDER BY email` (`load_e11.sh:162,198`); `SELECT EXISTS(...)` (`phase1_crypto_roles_test.go:557`); `SELECT id FROM public.users ORDER BY created_at LIMIT 1` (`tests/manual/launch-campaign.sh:54`).
+- `DELETE FROM public.users WHERE id=$1` as admin: `phase1_crypto_roles_test.go:544,568` (T17 expects the FK RESTRICT from accounts to refuse, then to succeed once the account row is deleted), `adminapi/user_config_override_test.go:126` (expects cascade to user_config_overrides). The platform's `users` table must therefore accept a plain hard DELETE.
+- Denied writes asserted: `phase1_crypto_roles_test.go:177-180` (UPDATE and INSERT on public.users as `send_byo_app` MUST fail 42501).
+- Fixture DDL copies: `tests/harness/run.sh:46,75,303,474`, `tests/harness/checks/consume_contention.sh:66`.
+
+### 2. Columns used
+Same as M2: only `id` (EXISTS + FK target). `email`, `is_active`, `created_at` are never read/written by non-test M3 code; M3 tests use them (`email` in INSERT and `LIKE`/`ORDER BY` at `load_e11.sh:162,198`; `is_active` in INSERT; `created_at` in `launch-campaign.sh:54`).
+
+### 3. Constraints relied on
+- PK/unique on `users(id)` (14 FKs above; `ON CONFLICT (id)` test-only).
+- FK table (all non-deferrable, no ON UPDATE): RESTRICT = `accounts.user_id` (0027). CASCADE = boxes, job_events, send_logs, account_events, user_settings, user_config_overrides, user_suspensions, campaigns, notifications. (pools gone at 0028.) 
+- Deliberate design: `accounts_user_fk RESTRICT` is a tenant-erasure guard (`0027.up.sql:9-15`, test `TestT17_AccountsUserFKRestrict`). A platform `DELETE FROM public.users` for a user with ANY `send_byo.accounts` row (soft-deleted rows included - the row still exists) fails with 23503 until the accounts are purged.
+- Updated-by sentinels are NOT FK'd: `updated_by UUID` in 0030/0031 has no FK; `adminActorID = 00000000-0000-0000-0000-00000000adf1` (`adminapi/user_config_override.go:30`) needs no users row. `SystemUserID` (`adminapi/server.go:19`) is declared but has NO non-test use in M3 (only tests/dev seeding), so M3 does NOT require the all-zero user row (M2 does).
+
+### 4. Privileges
+| role | needs | where |
+|---|---|---|
+| runtime `send_byo_app` | SELECT only | `0000:49`; asserted exactly `SELECT` by `tools/send-byo-migrate/runner_integration_test.go:143` (`assertPlatformGrant`, `:1381-1394`); write attempts asserted 42501 (`phase1_crypto_roles_test.go:177-180`) |
+| migrator | REFERENCES on `public.users(id)`; ownership/GRANT OPTION/superuser for the `GRANT SELECT` | `0000:49`, FKs above |
+
+---
+
+## public.job_items - M2
+
+### 1. Statements
+
+Non-test (runtime role `send_managed_app`; one platformapi path):
+
+| # | File:line | Statement |
+|---|---|---|
+| J1 | `M2:services/control/internal/platformapi/store.go:62-64` | `SELECT campaign_id FROM public.job_items WHERE id = $1 AND user_id = $2` inside `createJob`'s tx; `.Scan(&campaignID)` into Go **`string`** (NULL => scan error => `read_job_item_failed` 500, `store.go:69`; no rows => 404 `job_item_not_found`, `store.go:65-68`). Params `$1=jobItemID`, `$2=userID`, both Go `string`, validated by `uuidRe` (`handlers.go:134,142`). |
+| J2 | `store.go:87-94` | `INSERT INTO send_managed.jobs (job_item_id, campaign_id, user_id, recipient_email, rendered_subject, rendered_body, reply_to, state, next_attempt_at) SELECT ji.id, ji.campaign_id, ji.user_id, ji.recipient_email, ji.rendered_subject, ji.rendered_body, ji.reply_to, 'queued', NOW() FROM public.job_items ji WHERE ji.id = $1 AND ji.user_id = $2 RETURNING id`. Column-to-column assignment into `send_managed.jobs` (`0007:9-17`): `job_item_id UUID NOT NULL`, `campaign_id UUID NOT NULL`, `user_id UUID NOT NULL`, `recipient_email TEXT NOT NULL`, `rendered_subject TEXT NOT NULL`, `rendered_body TEXT NOT NULL`, `reply_to TEXT` (nullable). |
+| J3 | error mapping `store.go:96-114` | 23505 -> idempotent existing job; 23503/23514 -> `job_item_invalid` (422); `sql.ErrNoRows` -> 404; **anything else (including 23502 not_null_violation from a NULL in the source row) -> 500 `create_job_failed`** (`store.go:113`). |
+| J4 | `0007_create_jobs.up.sql:43-46` | `jobs_job_item_fk FOREIGN KEY (job_item_id) REFERENCES public.job_items(id) ON DELETE CASCADE`; `:49-50` `jobs_job_item_id_unique UNIQUE (job_item_id)` |
+| J5 | `0000_bootstrap.up.sql:50` / down `:8` | `GRANT SELECT ON public.job_items TO send_managed_app;` / `REVOKE SELECT` |
+| J6 | `check_platform_tables.sql:16` | existence check via `pg_tables` |
+
+No other non-test statement reads `job_items`; the claim/dispatch/outcome/report paths read the frozen copy in `send_managed.jobs` only (`dispatch/dispatch.go:238`, `dispatch/loop.go:34`, `platformapi/campaign_report.go:224`, ...).
+
+Test-only (**test-only**; they show the minimal real row):
+- `INSERT INTO public.job_items (campaign_id, user_id, recipient_email, rendered_subject, rendered_body, status) VALUES (..., 'pending') RETURNING id` (no `reply_to`, `id` DEFAULT, returned into Go `string`): `M2:tests/harness/factories.go:43`, `tests/harness/load_e11.sh:155`, `tests/harness/phase3_send.sh:78,149`, `tests/harness/phase8_variation.sh:38,97`, `tools/send-managed-migrate/runner_integration_test.go:572,628`, `tests/harness/phase1_crypto_roles_test.go:180`.
+- Same with `reply_to` ('reply@ourdomain.com'): `dispatch/harness_test.go:431,470`, `platformapi/harness_test.go:94`, `adminapi/health_test.go:83`, `tests/harness/drills/postgres_outage.sh:53`, `tests/manual/launch-campaign.sh:62-71`.
+- Reads: `phase1_crypto_roles_test.go:159` (`SELECT count(*) ... WHERE id=$1` as module role, must succeed), `dispatch/harness_test.go:447` (`(SELECT campaign_id FROM public.job_items WHERE id=$1)`), `launch-campaign.sh:74` (`WHERE campaign_id=... ORDER BY rendered_subject`).
+- Denied writes asserted 42501 as `send_managed_app`: `phase1_crypto_roles_test.go:167-172` (INSERT, `UPDATE ... SET status='compromised'`, DELETE).
+- Fixture copies: `deploy/pg-init/00-platform-fixtures.sql:17-27`, `tests/harness/run.sh:58,87,286,422`, `checks/consume_contention.sh:67`.
+
+### 2. Columns used
+
+| column | read/written | role | Go type | SQL type/nullability code REQUIRES |
+|---|---|---|---|---|
+| `id` | read (WHERE, SELECT) | runtime | param `string`; value flows into `jobs.job_item_id` | **uuid**, PK/unique (FK target + UNIQUE downstream). Test inserts rely on `DEFAULT gen_random_uuid()` and on it being writable (not GENERATED ALWAYS) only for M3 test `runner_integration_test.go:986`. |
+| `user_id` | read (WHERE `= $2`, and copied) | runtime | param `string`; copied into `jobs.user_id UUID NOT NULL` | **uuid NOT NULL in practice** (NULL fails `jobs.user_id NOT NULL` -> 23502 -> 500, and cannot match `= $2`). Must also exist in `public.users` or the genesis job_events insert fails with FK 23503 -> `job_item_invalid` (J3, `0008:50-53`). |
+| `campaign_id` | read | runtime | **`string`** non-pointer (`store.go:63-64`) | **uuid NOT NULL** (NULL -> scan error 500; also `jobs.campaign_id UUID NOT NULL`; INSERT..SELECT from a non-uuid column would fail assignment). |
+| `recipient_email` | read | runtime | copied only | text-like NOT NULL (`jobs.recipient_email TEXT NOT NULL`) |
+| `rendered_subject` | read | runtime | copied only | text-like NOT NULL |
+| `rendered_body` | read | runtime | copied only | text-like NOT NULL |
+| `reply_to` | read | runtime | copied only | text-like, NULLABLE (`jobs.reply_to TEXT`; test inserts omit it) |
+| `status` | NEVER read or written by non-test M2 code | - | - | none. Test inserts always write `'pending'`; one denied test UPDATE writes `'compromised'` (`phase1_crypto_roles_test.go:170`, fails on privilege before any constraint). |
+| `created_at` | never used | - | - | none |
+
+### 3. Constraints and indexes relied on
+- PK/unique on `job_items(id)` (J4 FK; no other referencing).
+- `ON DELETE CASCADE` from job_items to `send_managed.jobs`, which cascades to `job_events` (`0008:45-48`) and `send_logs` (`0009:30-33`): a platform hard-delete of a job_item destroys the module's job, events and send log for it.
+- No FK from `job_items.campaign_id` anywhere in M2 (`jobs.campaign_id` has no FK, `0007`); M2 never writes the platform table.
+- Query plans: lookups are `id = $1 AND user_id = $2` -> the PK index suffices; no other index is plainly needed.
+- Uniqueness: M2 enforces one job per item with its own `jobs_job_item_id_unique` (`0007:49-50`); nothing is asserted on the platform side.
+
+### 4. Privileges
+| role | needs | where |
+|---|---|---|
+| runtime `send_managed_app` | SELECT only. Exactly `SELECT`: `runner_integration_test.go:120` (`assertPlatformGrant(t, admin, "job_items")`, helper `:701-713`); INSERT/UPDATE/DELETE MUST fail 42501 (`phase1_crypto_roles_test.go:167-172`) | `0000:50` |
+| migrator | REFERENCES on `public.job_items(id)` (FK J4); ownership/GRANT OPTION/superuser for GRANT | `0000:50`, `0007:43-46` |
+
+---
+
+## public.job_items - M3
+
+### 1. Statements
+
+Non-test (runtime role `send_byo_app`; **two** paths, one of which WRITES the platform table):
+
+| # | File:line | Statement |
+|---|---|---|
+| J1 | `M3:services/control/internal/platformapi/store.go:84-86` | `SELECT campaign_id FROM public.job_items WHERE id = $1 AND user_id = $2` -> `Scan(&campaignID)` Go `string` (NULL => 500 `read_job_item_failed`, `:91`) |
+| J2 | `store.go:146-153` | `INSERT INTO send_byo.jobs (job_item_id, campaign_id, user_id, recipient_email, rendered_subject, rendered_body, reply_to, state, next_attempt_at) SELECT ji.id, ji.campaign_id, ji.user_id, ji.recipient_email, ji.rendered_subject, ji.rendered_body, ji.reply_to, 'queued', NOW() FROM public.job_items ji WHERE ji.id = $1 AND ji.user_id = $2 RETURNING id` (same target column types as M2, `0007`); error mapping `store.go:155-173` identical to M2 (23502 -> 500 `create_job_failed`, `:172`) |
+| J3 | `store.go:134-138` | `INSERT INTO send_byo.campaigns (id, user_id, expires_at) VALUES ($1,$2, NOW()+make_interval(secs=>$3)) ON CONFLICT (id) DO NOTHING` with `$1 = campaignID` taken FROM `job_items.campaign_id` (J1) and `$2 = userID`. `campaigns.id UUID PRIMARY KEY`, `campaigns.user_id` FK -> `public.users` (`0032:26,36-37`). So `job_items.campaign_id` must be a uuid, and `job_items.user_id` must exist in users. (ON CONFLICT target is the module's own PK, not a platform table.) |
+| **J4** | **`M3:services/control/internal/dispatch/send_test_action.go:96-99`** | **`INSERT INTO public.job_items (campaign_id, user_id, recipient_email, rendered_subject, rendered_body, status) VALUES ($1, $1, $2, $3, $4, 'pending') RETURNING id`**; `$1 = userID` (so `campaign_id = user_id = the tenant's uuid`), `$2 = recipient`, `$3 = testSendSubject` ("Test message from your account"), `$4 = testSendBody` (`<p>...</p>`); `.Scan(&jobItemID)` into Go `string`. Runs in `d.inActorTx(ctx2, "system", ...)` on the runtime pool. `reply_to` and `id` and `created_at` are NOT supplied. The same tx then does `INSERT INTO send_byo.jobs (job_item_id, campaign_id, user_id, ...) VALUES ($1, $2, $2, ...)` (`:109-115`, `$2 = userID` again as campaign_id) |
+| J5 | `0007_create_jobs.up.sql:43-46,49-50` | FK `jobs_job_item_fk ... REFERENCES public.job_items(id) ON DELETE CASCADE` + `UNIQUE(job_item_id)` |
+| J6 | `0000_bootstrap.up.sql:50` / down `:8` | `GRANT SELECT ON public.job_items TO send_byo_app;` |
+| **J7** | **`0037_test_send_job_items_grant.up.sql:27`** (down `.down.sql:3`) | **`GRANT INSERT ON public.job_items TO send_byo_app;`** (migrator; needs ownership/GRANT OPTION/superuser) |
+| J8 | `db/preflight/check_platform_tables.sql:16` | existence check |
+
+Test-only (**test-only**):
+- INSERTs (status always `'pending'`): `M3:tests/harness/factories.go:44`; `services/control/internal/adminapi/health_test.go:98,370`, `adminapi/health_throttle_test.go:23`; `dispatch/harness_test.go:423,462`; `platformapi/harness_test.go:130`; `tests/harness/load_e11.sh:306`, `phase3_send.sh:82,159`, `phase3_verify.sh:224`, `phase8_variation.sh:38,97`, `drills/postgres_outage.sh:62`, `tests/manual/launch-campaign.sh:62`; `tools/send-byo-migrate/runner_integration_test.go:986` (**explicit `id` and `ON CONFLICT (id) DO NOTHING`**; the only statement that writes job_items.id and uses ON CONFLICT on a platform table), `:1249,1305`.
+- Module-role INSERT as `send_byo_app`: `tests/harness/phase1_crypto_roles_test.go:187` (must succeed) and, on that module-inserted row, `UPDATE ... SET status='compromised'` and DELETE must still fail 42501 (`:173-176,193-194`).
+- Reads: `phase1_crypto_roles_test.go:165` (`SELECT count(*) ... WHERE id=$1` as module role), `adminapi/health_throttle_test.go:40` and `dispatch/harness_test.go:439` (`SELECT campaign_id FROM public.job_items WHERE id=$1`).
+- Fixture copies: `deploy/pg-init/00-platform-fixtures.sql:17-27`, `tests/harness/run.sh:47,76,304,475`, `checks/consume_contention.sh:67`.
+
+### 2. Columns used
+
+| column | R/W | role | Go type | SQL type/nullability the code REQUIRES |
+|---|---|---|---|---|
+| `id` | R (J1/J2 filters; J4 `RETURNING id`) and **default-generated on INSERT (J4 omits it)** | runtime | scanned into `string` | **uuid PK with a DEFAULT (gen_random_uuid())**. Without a default J4 fails with 23502. |
+| `user_id` | R; **W** (J4, `$1`) | runtime | bound `string`; copied | **uuid NOT NULL**, exists in users. J4 binds the SAME `$1` to `campaign_id` and `user_id`: Postgres infers one type for `$1`, so the two columns must have the SAME type (both uuid) or the statement fails "inconsistent types deduced for parameter $1". |
+| `campaign_id` | R; **W** (J4, = user_id) | runtime | `string` (J1) | **uuid NOT NULL; no FK to any campaigns table and no CHECK tying it to a campaign** (J4 writes a value equal to the user's id, which is not a campaign id; a platform FK would reject every test-send). |
+| `recipient_email`, `rendered_subject`, `rendered_body` | R; **W** (J4) | runtime | `string` | text-like NOT NULL |
+| `reply_to` | R only | runtime | copied | text-like, **nullable or defaulted** (J4 omits it) |
+| `status` | **W only** (J4 literal `'pending'`); never read | runtime | literal | must exist, must ACCEPT `'pending'` (no CHECK/enum that excludes it); nullable or defaulted not required since J4 always supplies it |
+| `created_at` | never used by code | - | - | any default; J4 omits it, so if the platform has it, it must be nullable or defaulted |
+
+Rule that follows from J4: **every other column the platform adds to `job_items` must be nullable or have a default**, because J4 supplies only 6 of the columns.
+
+### 3. Constraints and indexes
+- PK/unique on `job_items(id)` (FK J5; test-only `ON CONFLICT (id)`).
+- No platform FK on `campaign_id` (see above). A `job_items.user_id` -> users FK is optional for the module and harmless for J4: the tenant's user row exists because J4 only runs after `accountConsumeSpecific(ctx, userID, accountID, ...)` found an account owned by that user (`dispatch/eligibility.go:387-392`, `send_test_action.go:52`), and `accounts_user_fk` requires the user row.
+- J5 cascade: deleting a job_item deletes the module job + events + send_logs.
+- Indexes: PK covers `id = $1 AND user_id = $2`.
+- `jobs.campaign_id` has NO FK to `send_byo.campaigns` (deferred, FW-M3-20; `store.go:38-41`, `0032:15-23`), so a campaign_id that has no campaigns row (the test-send case) is accepted.
+
+### 4. Privileges
+| role | needs | where |
+|---|---|---|
+| runtime `send_byo_app` | **SELECT and INSERT, never UPDATE/DELETE**. Asserted exactly `INSERT,SELECT` by `tools/send-byo-migrate/runner_integration_test.go:147` (and `:485-486` `has_table_privilege(...,'INSERT')`, `:649-650` after down 0037) | `0000:50`, `0037:27` |
+| runtime on `public.users` | SELECT only | see users-M3 |
+| migrator | ownership/GRANT OPTION/superuser on job_items to issue both GRANTs; REFERENCES for the FK | |
+Consequence for a platform trigger on `job_items INSERT` (e.g. enqueue/notify): it fires under `send_byo_app` for J4, so the function must be SECURITY DEFINER or grant what it needs; and with RLS enabled on job_items the module's INSERT/SELECT would be denied/filtered unless a policy admits `send_byo_app`.
+
+---
+
+## Other public objects
+
+Module code creates NOTHING in `public` and depends on no public function/type/sequence/extension:
+- **No** `CREATE EXTENSION` anywhere (grep for `pgcrypto|uuid-ossp|citext|pg_trgm|btree_gist|hstore|ltree|create extension` clean in both repos).
+- `gen_random_uuid()` is used as a column DEFAULT in module tables (`M2 0004:8, 0005:11, 0007:8, 0008:18, 0009:10, 0014:23`; M3 same + `0033:14`, `0028.down:15`) and in test SQL. It resolves unqualified: it must be `pg_catalog.gen_random_uuid()` (PostgreSQL >= 13, the pinned image is `postgres:16-alpine`) OR a pgcrypto copy visible on the roles' search_path. DB must be >= 13 (or have pgcrypto in `public`).
+- Other builtins used: `hashtext`, `pg_advisory_xact_lock`, `pg_advisory_lock/_try`, `make_interval`, `set_config`/`current_setting` with custom GUC prefixes `send_managed.actor` / `send_byo.actor` (no extension, no registration needed).
+- Schema/search_path: every module statement is schema-qualified (`send_managed.` / `send_byo.`, `public.users`, `public.job_items`); no `SET search_path`, no role search_path config; `dsnscrub` just treats a `search_path` DSN param as sensitive (M2 `services/control/internal/dsnscrub/dsnscrub.go:123`, `tools/send-managed-migrate/dsnscrub.go:80`; M3 has the same files). The module roles use the cluster default `"$user", public`. Module roles therefore need **USAGE on schema `public`** (the PG default via PUBLIC); no module migration grants it and none revokes it. If the platform ever does `REVOKE USAGE ON SCHEMA public FROM PUBLIC` the modules break.
+- Sequences in `public`: none used (module IDENTITY `job_events.seq` lives in the module schema).
+- Test-only objects the modules create in `public` of scratch DBs and drop: `public.zz_mvcc_gate_log` (table) and `public.zz_mvcc_gate(uuid,int,int)` (SECURITY DEFINER function) at `services/control/internal/dispatch/consume_contention_test.go:267,280` (both repos), plus the `CREATE TABLE IF NOT EXISTS public.users/job_items` fixtures in `tests/harness/run.sh` and `checks/consume_contention.sh`. Not relevant to production.
+- Module-owned custom GUC / advisory-lock key bands (M2 9_xxx, M3 8_xxx) are not public objects.
+
+---
+
+## Tenant id
+
+- **Type: `uuid` everywhere.** Every tenant/user id column in the modules is `UUID` (`user_id UUID NOT NULL` in pools/accounts/boxes/jobs/job_events/send_logs/account_events; `owner_user_id UUID`; M3 `user_settings.user_id`, `user_config_overrides.user_id`, `user_suspensions.user_id`, `campaigns.user_id`, `notifications.user_id`). FKs from these to `public.users(id)` force `users.id` to be uuid.
+- Go side: carried as plain `string` (never `uuid.UUID`/`pgtype.UUID`; no `google/uuid` import). Scanned from uuid columns into `string` (pgx v5). Validated at the API edge by the regex `^[0-9a-fA-F]{8}-...-[0-9a-fA-F]{12}$` (canonical hyphenated form only: M2 `platformapi/handlers.go:45,134,149,223,236,241`, `adminapi/helpers.go:58-61`; M3 `platformapi/handlers.go:48,91,137,152,226`, `adminapi/helpers.go:61-64`). So a tenant id that is not a canonical hyphenated UUID is rejected 4xx before SQL.
+- Parsing/casting/compare as another type: (a) `isUUID`/`uuidToBytes` (`adminapi/uuid.go:25`, `platformapi/uuid.go:23` (M3 line numbers), `dispatch/dispatch.go` `parseUUID` at M2 `:629`, M3 `:631`) parse only the **account** id into 16 bytes for AES-GCM AAD, not the tenant id. (b) `pg_advisory_xact_lock(hashtext('send_*.campaign_start:' || $1::text))` casts the tenant id to **text** (M2 `store.go:53`, M3 `store.go:63`, M3 `platformapi/account_create.go:168` `'send_byo.account_create:' || $1::text`). (c) `qu.user_id::text`, `account_id::text` in read-outs (`M3 adminapi/health_store.go:437`). (d) `$8::uuid` casts for `updated_by` (M3 `adminapi/user_config_override.go:256,264,292`). (e) Lexicographic compare/sort of tenant ids as strings for the fairness ring (`M2 dispatch/loop.go:140,226`, `M3 dispatch/loop.go:183,273`: `sort.Slice(... userID < ...)`, `slot.userID > cursor`) - this uses the canonical lower-case text form pgx returns; do not return upper-case/other forms.
+- Special values: M2 requires the all-zero uuid as a real `users` row (system user). M3 never needs it in code. M3 uses a non-user sentinel `00000000-0000-0000-0000-00000000adf1` only as an un-FK'd `updated_by`.
+- Test-send (M3): `job_items.campaign_id := user_id` (both the tenant uuid), `send_test_action.go:96-99`.
+
+---
+
+## Disagreements
+
+### A. M2 vs M3 (what each needs from the same platform table)
+
+| # | Topic | M2 | M3 |
+|---|---|---|---|
+| D1 | privileges on `public.job_items` for the runtime role | SELECT only; INSERT must FAIL (42501) (`phase1_crypto_roles_test.go:167-168`; `runner_integration_test.go:120,701-713` exact `SELECT`) | **SELECT + INSERT** (`0037:27`); exact `INSERT,SELECT` asserted (`runner_integration_test.go:147`); INSERT must SUCCEED (`phase1_crypto_roles_test.go:187`) |
+| D2 | does the module write to the platform | never | **yes**: `send_test_action.go:96-99` inserts a job_item per test-send |
+| D3 | extra columns on job_items required by prod code | `id,user_id,campaign_id,recipient_email,rendered_subject,rendered_body,reply_to` (reads only) | those 7 plus **`status`** (write-only, literal `'pending'`) |
+| D4 | default on `job_items.id` | not needed by prod code (tests rely on it) | **required** (J4 omits id) |
+| D5 | `campaign_id` meaning | pass-through value, only compared (`campaign_id <> $2`) | pass-through AND used as `send_byo.campaigns.id` (PK, upsert `store.go:134-138`); test-send writes `campaign_id = user_id` |
+| D6 | status vocabulary of `job_items.status` | prod code never touches it; test inserts `'pending'` (all factories); denied test UPDATE `'compromised'` | prod code writes `'pending'` (J4); tests insert `'pending'`; same denied `'compromised'` UPDATE. Observed vocabulary in BOTH = `{'pending'}` (+ `'compromised'` as a failed-privilege probe). No module code ever reads or compares it. M2 `jobs.state` ('queued'...) is a different column. |
+| D7 | FK actions to `public.users` | `pools.user_id RESTRICT` (pools exist for life), accounts/boxes/job_events/send_logs/account_events/pools.owner CASCADE | `accounts.user_id RESTRICT` (`0027:35-38`), others CASCADE; pools dropped (`0028`) |
+| D8 | tables FK'd to `users` | 7 FKs (pools x2, accounts, boxes, job_events, send_logs, account_events) | 11 FKs; adds `user_settings`, `user_config_overrides`, `user_suspensions`, `campaigns`, `notifications` |
+| D9 | all-zero user row `0000...0000` | REQUIRED (system user; shared pools/accounts; 409 otherwise) | not required by code (fixtures/dev only) |
+| D10 | `users` existence reads | system user, pool owner | account create/bulk-add, user suspend, user config overrides |
+| D11 | user hard delete | blocked while the user owns a pool or is the system user; otherwise cascades | blocked while the user has ANY `send_byo.accounts` row (incl. soft-deleted); otherwise cascades; also cascades user_settings/overrides/suspensions/campaigns/notifications |
+| D12 | explicit `id` / `ON CONFLICT (id)` against `public.job_items` (test-only) | none | `runner_integration_test.go:986` |
+| D13 | ORDER BY / LIKE on users columns (test-only) | `ORDER BY created_at` (`launch-campaign.sh:54`) | `ORDER BY created_at` (same) + `email LIKE ... ORDER BY email` (`load_e11.sh:162,198`) |
+
+Same in both: all columns' types/nullability for the shared read path (J1/J2), the `uuid` PK on both tables, the `GRANT SELECT` on both tables (`0000:49-50`), the 7 identical FKs 0004-0014.
+
+### B. Code vs fixture / preflight / comments
+
+| # | Where (claim) | What the code actually does |
+|---|---|---|
+| C1 | fixture `00-platform-fixtures.sql:10-27` (both repos): every column nullable (only `id` NOT NULL via PK), no FK, no defaults except id/created_at/is_active | code needs NOT NULL (or non-NULL data) on `job_items.campaign_id, user_id, recipient_email, rendered_subject, rendered_body` (scan into non-pointer `string` at M2 `store.go:63-64` / M3 `store.go:84-86`; `jobs` NOT NULL columns `0007:9-16`). A NULL does not surface cleanly: 23502 falls through the error switch to a 500 (`M2 store.go:113`, `M3 store.go:172`). The fixture hides this. |
+| C2 | preflight comment `check_platform_tables.sql:7-10` "Assumed shapes: users(id uuid pk, email, is_active, created_at), job_items(id uuid pk, campaign_id, user_id, recipient_email, rendered_subject, rendered_body, reply_to, status, created_at)" | non-test code reads exactly `users.id` and `job_items.{id,user_id,campaign_id,recipient_email,rendered_subject,rendered_body,reply_to}`; writes `job_items.{campaign_id,user_id,recipient_email,rendered_subject,rendered_body,status}` (M3 only). `users.email/is_active/created_at`, `job_items.created_at` are not used by any non-test code; `job_items.status` is write-only (M3). |
+| C3 | M3 fixture header `00-platform-fixtures.sql:2-3`: "reads two platform-owned tables read-only"; M3 `0000_bootstrap.up.sql:47-48`: "The ONLY two operations permitted on platform-owned tables: read-only SELECT"; M3 `0012_grants_and_rls.up.sql:13`: "two read-only platform-table grants" | false since `0037:27` (INSERT on job_items) and `send_test_action.go:96-99`. M3 `store.go:17-18` and `handlers.go:183` ("SELECT-only on public.job_items, Phase 1") are stale for the module as a whole (still true for the /v1/run path). |
+| C4 | M3 `0032_create_campaigns.up.sql:26`: `id UUID PRIMARY KEY -- the campaign_id the platform already sends on /v1/run` | `/v1/run` request is `{job_item_id, user_id}` only (`handlers.go:126-129`); `campaign_id` is read from `job_items` (`store.go:84-86`), never sent by the platform. |
+| C5 | M2/M3 `0004_create_pools.up.sql:3-4` "FKs to public.users assume the platform table exists (guaranteed by the pre-flight existence check)" | existence is not enough; the FKs also need a PK/unique on `users(id)` / `job_items(id)` and the migrator needs REFERENCES (`check_platform_tables.sql:3-4` explicitly does not check shape). |
+| C6 | M3 `0037.up.sql:14-17` "the same shape a platform-initiated single send targeting this account would itself produce" | J4 writes `campaign_id = user_id` (`send_test_action.go:98-99`) and no `reply_to`; nothing in the code establishes that a platform-created item looks like that. |
+| C7 | M2 `adminapi/server.go:14-15` / M3 `server.go:14-16` "the module CANNOT seed [the system user row] - the platform must" | true for M2 (hard dependency). For M3 the code never reads the all-zero id (grep of non-test Go: only the const declaration), so the claim is only a fixture/dev-seed convention. |
+| C8 | harness fixtures (`run.sh`, `consume_contention.sh`) all `CREATE TABLE IF NOT EXISTS` the same shapes as `deploy/pg-init` | consistent with the pg-init fixture; but `IF NOT EXISTS` means module tests silently use whatever table already exists, including the platform's. |
+
+---
+
+## Unresolved / could not determine
+
+1. **The real platform shapes.** `coldmail-platform` currently contains only `db/migrations/platform_0000_bootstrap.up.sql` (roles `platform_owner/platform_app/platform_admin`, schema `platform`, no business tables); `public.users` / `public.job_items` are not defined anywhere I could read. Nothing here can be checked against them (this is OWNER-ACTIONS M2-GL-2).
+2. **Which role is the production migrator** (OWNER-ACTIONS M2-GL-3, `Docs/go-live-checklist.md` section 3): determines whether it owns the platform tables, is a member of the owner role, or needs `GRANT REFERENCES, SELECT, INSERT ... WITH GRANT OPTION`. The code requires the migrator to be able to (a) create FKs (REFERENCES on `users(id)` and `job_items(id)`), (b) `GRANT SELECT` on both tables to the module role, (c) M3 only: `GRANT INSERT` on job_items.
+3. **RLS and triggers on the platform tables** are unknowable from here. Enabling RLS on either table without a policy admitting `send_*_app` makes M2/M3 reads return 0 rows (404 `job_item_not_found`, EXISTS false) and breaks M3's INSERT; a platform INSERT trigger on job_items runs as `send_byo_app` for test-send.
+4. **Whether a `UNIQUE` on `users.email` would collide with module tests** (they reuse literal emails, e.g. `sys@sender.local`, `system@sender.local` for the all-zero id guarded only by `ON CONFLICT (id)`; not exhaustively checked per test). Only relevant if the module harnesses are ever pointed at the real platform DDL; they currently create their own fixture tables.
+5. **Whether `job_items.user_id -> users(id)` should be an FK on the platform side.** Not required by any statement; the module only needs the user to exist at job-insert time (genesis `job_events` insert FK, `0008:50-53`, otherwise 23503 -> `job_item_invalid`).
+6. **RESTRICT vs CASCADE ordering** for M2 `pools.user_id RESTRICT` + `pools.owner_user_id CASCADE` on the same user (my reading: RESTRICT wins; no test covers it).
+7. **Platform Postgres version** (>= 13 or pgcrypto in `public` for `gen_random_uuid()`); dev/CI pin is PG16.
+8. **Any column-level privilege use**: module GRANTs are table-level; the platform should not use column privileges on these tables.
+9. I did not read the Docs except to confirm the migrator-role requirement text (`install-and-deploy.md:109`, `go-live-checklist.md:113-125`); all shape facts above come from code.
+
+---
+
+## Proposed minimal DDL (superset of M2 + M3 code needs)
+
+```sql
+-- public.users ----------------------------------------------------------
+CREATE TABLE public.users (
+    id         uuid        PRIMARY KEY DEFAULT gen_random_uuid(),   -- FK target of 7 (M2) / 11 (M3) module FKs; ON CONFLICT (id) in test seeders
+    email      text,                                                -- no non-test reader; M2/M3 test seeders INSERT it, M3 load_e11.sh LIKE/ORDER BY
+    is_active  boolean     DEFAULT true,                            -- no non-test reader; test seeders INSERT it
+    created_at timestamptz DEFAULT now()                            -- no non-test reader; launch-campaign.sh ORDER BY created_at
+);
+-- the platform must seed the reserved system user (M2 requires it; M3 harmless):
+INSERT INTO public.users (id, email, is_active)
+VALUES ('00000000-0000-0000-0000-000000000000', 'system@sender.local', true)
+ON CONFLICT (id) DO NOTHING;
+
+-- public.job_items ------------------------------------------------------
+CREATE TABLE public.job_items (
+    id               uuid        PRIMARY KEY DEFAULT gen_random_uuid(),  -- M3 INSERT omits id and RETURNs it
+    campaign_id      uuid        NOT NULL,                               -- NO FK, NO CHECK (M3 test-send sets it = user_id); same type as user_id
+    user_id          uuid        NOT NULL,                               -- same type as campaign_id ($1 reuse in M3 INSERT)
+    recipient_email  text        NOT NULL,
+    rendered_subject text        NOT NULL,
+    rendered_body    text        NOT NULL,
+    reply_to         text,                                               -- nullable: M3 INSERT and most test INSERTs omit it
+    status           text        NOT NULL DEFAULT 'pending',             -- write-only 'pending' by M3 prod code; never read; no CHECK excluding 'pending'
+    created_at       timestamptz NOT NULL DEFAULT now()                  -- unused by code; present in fixture; defaulted so M3's INSERT works
+);
+-- Optional (not required by any module statement): 
+--   ALTER TABLE public.job_items ADD CONSTRAINT job_items_user_fk FOREIGN KEY (user_id) REFERENCES public.users(id);
+
+-- Privileges / hygiene the platform must NOT break (module migrations issue their own grants):
+--   * Do not grant anything on these tables to send_managed_app / send_byo_app / PUBLIC.
+--     Module bootstraps grant SELECT (both tables, both modules) and M3 0037 grants INSERT on job_items to send_byo_app;
+--     the module test suites assert those EXACT sets.
+--   * Do not ENABLE ROW LEVEL SECURITY on either table (or add a permissive policy for send_managed_app and send_byo_app).
+--   * Make the migrator role either owner of both tables / member of the owner role, or grant it
+--     REFERENCES on both and SELECT[,INSERT] WITH GRANT OPTION.
+--   * Keep USAGE on schema public for the module roles (PostgreSQL default).
+--   * Tables must be ordinary tables (preflight uses pg_tables) and be created BEFORE the module chains run;
+--     do not DROP/recreate them afterwards (grants and FKs would be lost / blocked).
+--   * Allow plain hard DELETE on users and job_items (module tests DELETE users; ON DELETE CASCADE from job_items destroys the module job).
+```
+
+### Decisions I had to make (where the code is silent or two readings exist)
+
+1. `users.id` / `job_items.id` = **uuid** (forced by the module `UUID` FK columns; text would not create the FKs).
+2. PRIMARY KEY on `id` for both tables (FK target + `ON CONFLICT (id)`); no composite or surrogate alternative considered.
+3. `DEFAULT gen_random_uuid()` on **both** ids (M3 prod INSERT omits `job_items.id`; tests omit `users.id`); not `GENERATED ALWAYS` (tests insert explicit ids: `runner_integration_test.go:986`, `ON CONFLICT (id)` seeders).
+4. `job_items.campaign_id` and `user_id` both `uuid NOT NULL` (non-pointer Go `string` scans + `jobs` NOT NULL columns); `campaign_id` has **no FK and no check** (M3 test-send writes the user's id there).
+5. `recipient_email`, `rendered_subject`, `rendered_body` `NOT NULL`; `reply_to` nullable. Chosen over keeping them nullable (as the fixture does) because a NULL becomes an opaque 500 `create_job_failed`, not a clean 4xx (C1).
+6. `status` = `text NOT NULL DEFAULT 'pending'` with no CHECK. The only value any module writes is `'pending'`; nobody reads it, so the full vocabulary is the platform's to define but must include `'pending'`. NOT NULL/default is my choice; the code only needs the column to exist and accept `'pending'`.
+7. `created_at` on job_items is kept (fixture parity) but defaulted, since M3's INSERT omits it; any other future platform column on job_items must be nullable or defaulted for the same reason.
+8. `email`, `is_active`, `created_at` kept on `users` although NO non-test code reads them, solely because the module test factories/seeders insert/order on them; if the platform drops them the module suites that point at the real table would break (module suites currently build their own fixture, so this is a compatibility choice, not a code requirement).
+9. System user row `00000000-0000-0000-0000-000000000000` seeded by the platform (hard requirement for M2 shared pools/accounts; not needed by M3).
+10. `job_items.user_id -> users(id)` FK left OUT of the minimal DDL (not required by any statement; offered as optional) - a choice, because the module's own job_events FK already enforces user existence at job-insert time.
+11. No RLS, no column privileges, no platform-issued grants to module roles (the module migrations do the GRANTs and the module test suites assert exact privilege sets: M2 `SELECT`/`SELECT`, M3 `SELECT` on users and `INSERT,SELECT` on job_items).
+12. Migrator privilege model (owner vs member vs GRANT OPTION) deliberately left open (Unresolved #2); the DDL only states what the migrator must be able to do.

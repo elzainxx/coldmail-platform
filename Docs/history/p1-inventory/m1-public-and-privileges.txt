@@ -1,0 +1,294 @@
+# M1 (coldmail-verify) — public-schema inventory, runtime privilege matrix, schema-sensitive code
+
+Source: `D:\Mnfi\coldmail-parent\coldmail-verify` at `11903d1`, working tree clean, read-only. Everything below is read from the
+code (file:line). Anything that is PostgreSQL behaviour rather than something this repo proves is tagged **[PG]**.
+Paths are relative to `coldmail-verify/control-plane/` unless prefixed `ci:` (= `.github/workflows/ci.yml`), `scripts/`, `Docs/`.
+Abbreviations: S/I/U/D = SELECT/INSERT/UPDATE/DELETE. `PG` = `internal/store/postgres.go`, `PF` = `internal/store/postgres_flywheel.go`,
+`PT` = `internal/store/partitions.go`, `M` = `cmd/control-plane/main.go`.
+
+---
+
+## 0. The findings that matter most
+
+1. **MISSING GRANT, and it is at startup: `policies` INSERT + UPDATE.** `M:129` calls `pg.EnsurePolicy` (`PG:417-440`), which runs
+   `INSERT INTO policies … ON CONFLICT DO NOTHING` (`PG:419-422`) and `UPDATE policies SET is_default=true …` (`PG:431-434`).
+   `cp_runtime` holds only `SELECT ON policies` (`0005:90`; no later migration widens it). A non-owner login holding today's
+   grants gets 42501 here, before serving. A pre-seeded row does not help: **[PG]** the INSERT privilege is checked before the
+   conflict is evaluated. Consequence (`M:129-133`): `buildAPI` returns early, so `/v1/verify` is 503, `/readyz` is not_ready
+   (`WithPinger` is attached later, `M:182`), the bulk endpoint, the drainer and the health-watcher are never wired. The partition
+   loop (started earlier, `M:122`) still runs. `EnsurePolicy` has **zero test callers** (grep) and is not in the `Store` interface, so
+   nothing catches it. It is the only table-grant gap in the whole code base (section B).
+2. **Migration `0014` hard-codes `public` and cannot be applied into `verify` unchanged.** `0014:35,79` (`SET search_path = pg_catalog, public`),
+   `:55` (`to_regclass(format('public.%I', …))`), `:57` (`CREATE TABLE public.%I PARTITION OF public.verification_raw`), `:60-62`
+   (`GRANT/COMMENT … public.%I`), `:81` (`SELECT public.ensure_verification_raw_partitions_at(…)`). On a `verify`-resident table
+   both functions fail (42P01 / 42883) every call, **and the bootstrap call at `0014:94` aborts a fresh install** (`psql
+   ON_ERROR_STOP` in `ci:60`, `t.Fatalf` in `internal/testpg/testpg.go:123`). It is the only migration with a literal `public`
+   (14 of 15 are schema-agnostic and land in the first schema of the applying session's `search_path`). A 0016 that moves a
+   0015-state database must `CREATE OR REPLACE` both function bodies (function bodies are text; moving the function does not
+   rewrite them).
+3. **Every Go statement is unqualified** (all of `PG`, `PF`, `PT:34`). With the login's default `"$user", public` and tables in
+   `verify`, every query is 42P01. Nothing in non-test Go sets or reads `search_path`/role; the pool is `pgxpool.New(ctx, dsn)`
+   (`PG:50`). pgx 5.10.0 turns an unknown DSN key into a startup runtime parameter
+   (`pgx/v5@v5.10.0/pgconn/config.go:50,434-437`), so `TM_DATABASE_URL=…?search_path=verify` works with no code change (not
+   tested here). `PG:135` lists `search_path` as non-secret for DSN redaction only.
+4. **The tests are all superuser; only 2 files ever drop to `cp_runtime`, and via `SET LOCAL ROLE`.** `TM_TEST_DATABASE_URL` is
+   `postgres://postgres:ci@…` (`ci:67,83`) and serves as both the store DSN and the seeding/cleanup DSN. Seeding as the store's own
+   pool needs owner rights (`INSERT INTO api_callers`: `internal/api/pg_tenancy_test.go:104,328`, `postgres_test.go:622`; `DELETE FROM
+   verifications/jobs/work_items`: `pg_tenancy_test.go:174-177`, `pg_e2e_test.go:109-112`). A `verify_app` DSN cannot be the shared test
+   DSN. The SECURITY DEFINER wrapper is owned by `postgres` (superuser) in CI, so the owner-side requirements in finding 5 are never exercised.
+5. **`cp_admin` owns nothing and cannot do the DDL the docs say it does.** Every object is owned by whoever ran the migration
+   (`postgres` in CI, `Docs/install-and-deploy.md:38`, `testpg.go:101-123`). `cp_admin` only holds `GRANT ALL PRIVILEGES` on tables
+   (= DML + TRUNCATE/REFERENCES/TRIGGER; **[PG]** not ALTER/DROP/partition DDL, which need ownership) and no schema grants. The
+   runbook step "as `cp_admin` run `SELECT ensure_verification_raw_partitions_at(now(), 3)`" (`Docs/operator-runbook.md:226`)
+   would need ownership of `verification_raw` + CREATE on the schema (**[PG]** the creator of a partition must own the parent). Same
+   for `verify_owner`-owned SECURITY DEFINER: it must own `verification_raw` and have CREATE on `verify`.
+   No `GRANT USAGE ON SCHEMA`, no sequence grants, no `ALTER DEFAULT PRIVILEGES` exist anywhere: today's table access rides on the
+   implicit PUBLIC USAGE of schema `public`; `verify` needs explicit USAGE grants.
+6. M1 reads neither `public.users` nor `public.job_items` (section E).
+
+---
+
+## A. Inventory of objects the 15 migrations leave in schema `public` (FINAL state)
+
+### A.0 How they are created
+No migration contains `CREATE SCHEMA`, `SET search_path`, `OWNER TO`, `SET ROLE`, or a schema-qualified name except `0014`. Owner of every
+object = the session user that applied the file: `postgres` (superuser) in CI (`ci:60`), in `testpg.Scratch` (`testpg.go:101,123`, simple-protocol
+`Exec`, one implicit transaction per file) and in the documented dev loop (`Docs/install-and-deploy.md:36-39`, `README.md:86`). There is no
+migration tracking table (`migrations/README.md:142`); every `CREATE` is `IF NOT EXISTS`, so a same-named table already present in the target
+schema is silently skipped, not an error (generic names: `cache`, `jobs`, `nodes`, `policies`, `calibration`).
+
+### A.1 Roles (cluster-global, not per-database)
+| role | created | attributes | memberships |
+|---|---|---|---|
+| `cp_runtime` | `0005:12-18` (`IF NOT EXISTS`) | `NOLOGIN`, otherwise defaults (not super/createrole/createdb) | none |
+| `cp_admin` | `0005:23-29` | `NOLOGIN`, defaults | none |
+`COMMENT ON ROLE` at `0005:20,31` (needs CREATEROLE/superuser). No password, no `LOGIN` anywhere in the repo.
+
+### A.2 Tables (21) + partitions
+| table | created / altered | PK / unique / indexes | CHECK / FK |
+|---|---|---|---|
+| `verifications` | `0001:10-85` | PK `id` (:12); `idx_verifications_email_hash`, `_domain`, `_mx_provider` (partial), `_checked_at` (`0001:99-102`) | `valid_confidence`, `valid_status`, `valid_recommendation`, `valid_reason` (**replaced** `0015:15-25`: DROP, ADD … NOT VALID, VALIDATE; now includes `non_public_mx`), `domain_normalized`, `hash_scheme_linkage` (`0001:59-84`) |
+| `verification_raw` (partitioned parent) | `0001:110-117` `PARTITION BY RANGE (created_at)` | PK `(verification_id, created_at)` | FK → `verifications(id)` ON DELETE CASCADE (`:116`) |
+| `verification_raw_2026_07/08/09` | `0001:124-131` (unqualified `PARTITION OF verification_raw`) | per-partition PK index | comments `0001:133-135` |
+| `verification_raw_YYYY_MM` (later) | by function `0014:57` (this migration month via bootstrap `0014:94`; later months by the loop `PT:34`, default 3 ahead `config.go:567`) | per-partition PK index | comment `0014:62-63` |
+| `cache` | `0002:10-52` | PK `(email_hash, config_fingerprint)`; `idx_cache_expires_at` (`:60`) | same 4 checks (`valid_reason` **replaced** `0015:27-37`) + `domain_normalized` |
+| `catchall_domains` | `0003:11-19` | PK `domain` | `domain_normalized` |
+| `disposable_domains` | `0003:28-34` | PK `domain` | `domain_normalized` |
+| `spam_trap_domains` | `0003:42-48` | PK `domain` | `domain_normalized` |
+| `nodes` | `0003:56-69` | PK `id`; UNIQUE `unique_base_url` | `valid_status` (**replaced** `0008:30-32`, adds `recovering`) |
+| `policies` | `0003:80-88` | PK `(key, version)`; `idx_policies_single_default` UNIQUE partial (`:95-96`, `COMMENT ON INDEX` `:98`) | – |
+| `send_outcomes` | `0004:10-33`; **ALTER** `0012:39-48` adds `calibration_class, ingest_error, ingested_at, is_external_verified bool NOT NULL DEFAULT false, residue_class, vendor, from_cache bool NOT NULL DEFAULT false` | PK `id`; `idx_send_outcomes_verification_id/_email_hash/_domain` (partial), `_occurred_at` (`0004:47-50`); `uq_send_outcomes_message_event` UNIQUE partial (`0012:62-64`) | FK `verification_id` → `verifications` ON DELETE SET NULL (`0004:31`); `domain_normalized`; `send_outcome_calibration_class` (`0012:53-56`) |
+| `verification_outcomes` | `0004:56-63` | PK `(verification_id, send_outcome_id)` | 2 FKs, both ON DELETE CASCADE |
+| `node_audits` | `0007:27-37` | PK `id`; `idx_node_audits_node_time` (`:45`) | `valid_audit_status` |
+| `node_warmup` | `0007:62-72` | PK `(node_id, window_start)` | `warmup_count_nonneg`, `warmup_cap_nonneg` |
+| `rate_budgets` | `0008:53-66` | PK `(node_id, provider_bucket)` | `rate_tokens_nonneg`, `rate_capacity_pos`, `rate_refill_nonneg` |
+| `work_items` | `0009:35-71` | PK `id`; UNIQUE `idempotency_key` (inline, `:40`); `idx_work_items_dequeue`, `_job_status`, `_reclaim` (partial, `:81,85,89`) | `valid_work_item_status`, `work_item_attempt_nonneg` |
+| `jobs` | `0009:99-118`; **ALTER** `0013:84` adds `owner_user_id uuid` | PK `id`; `idx_jobs_owner` (`0013:92`) | `valid_job_status`, `job_total_nonneg`, `job_settled_nonneg` |
+| `work_item_attempts` | `0009:132-144` | PK `id`; `idx_work_item_attempts_item` (`:148`) | `work_item_attempt_num_nonneg` |
+| `api_callers` | `0010:30-41`; **ALTER** `0013:77` adds `user_id uuid` | PK `key_sha256`; `idx_api_callers_caller` (`0010:51`) | `valid_caller_status` |
+| `external_calls` | `0011:23-48` | PK `id`; `idx_external_calls_vendor_time`, `_job` (partial), `_email_hash` (partial) (`:56,58,60`) | `external_call_outcome`, `external_call_cost_nonneg` |
+| `calibration` | `0012:80-112` | PK `id`; `uq_calibration_effective` UNIQUE partial **expression** index (`:119-121`); `idx_calibration_bucket_version` expression index (`:123-124`) | `calibration_confidence_range`, `_sample_nonneg`, `_mode`, `_external_pair` |
+| `recalibration_runs` | `0012:138-151` | PK `id`; `idx_recalibration_runs_status` (`:156`) | `recalibration_run_status` |
+| `outcome_ingest_cursor` | `0012:166-170` | PK `source_key` | – |
+
+Comments: `COMMENT ON TABLE` for all 21 tables + the 3 legacy partitions, 49 `COMMENT ON COLUMN` statements (`grep -hE '^COMMENT ON COLUMN' *.sql | wc -l`), `COMMENT ON INDEX` (`0003:98`),
+`COMMENT ON ROLE` x2, `COMMENT ON FUNCTION` x2 (`0014:71,84`). Last-writer comments: `verifications` `0005:41`, `catchall_domains` `0006:28`, `nodes`
+`0007:97`, `jobs` `0013:100`. Every FK is the only source of internal RI triggers (4 FKs: `0001:116`, `0004:31`, `0004:61`, `0004:62`).
+
+### A.3 Things that do NOT exist (checked with grep over all 15 files)
+Sequences / serial / identity / `GENERATED` (every PK `id` is an app-generated uuid with no DEFAULT; the only DEFAULTs are `now()`, `true/false`, `0`, and the
+literals `'ready'`, `'active'`, `'submitted'`), types / enums / domains (vocabularies are CHECKs), views, materialized views, user triggers, rules,
+RLS / policies (`0005:112` "no RLS"), extensions (`gen_random_uuid()` appears only in a test, `pg_grants_test.go:224`), `CREATE SCHEMA`,
+`ALTER DEFAULT PRIVILEGES`, column-level grants.
+
+### A.4 Functions (both created by `0014`, owner = applier, i.e. `postgres`)
+| function | lang / security | `SET` | body-level `public.` and role names |
+|---|---|---|---|
+| `ensure_verification_raw_partitions_at(p_from timestamptz, p_months_ahead integer) RETURNS integer` (`0014:32-69`) | plpgsql, **SECURITY INVOKER** (default) | `search_path = pg_catalog, public` (`:35`), `timezone = 'UTC'` (`:36`) | `public.` at `:55` (to_regclass), `:57` (CREATE … PARTITION OF public.verification_raw), `:60`, `:61`, `:62` (GRANT/GRANT/COMMENT); role names `cp_runtime` (`:60`) and `cp_admin` (`:61`) hard-coded; `pg_advisory_xact_lock(hashtext('verification_raw_partition_maintenance'))` (`:50`, database-scoped) |
+| `ensure_verification_raw_partitions(p_months_ahead integer) RETURNS integer` (`0014:75-82`) | sql, **SECURITY DEFINER** (`:78`) | `search_path = pg_catalog, public` (`:79`) | body `SELECT public.ensure_verification_raw_partitions_at(now(), p_months_ahead)` (`:81`) |
+The core runs with the definer's rights when called through the wrapper (**[PG]**: a SECURITY INVOKER function called from a DEFINER function runs as the definer). Bootstrap call at `0014:94`
+(unqualified, runs as the applier). Hard-coded range of months_ahead 0..120 (`:44`), same bound as the config dial (`config.go:825`).
+
+### A.5 FINAL grants (cp_runtime / cp_admin); there is no `GRANT … TO PUBLIC` anywhere
+| object | cp_runtime | cp_admin | source |
+|---|---|---|---|
+| `verifications` | S, I | ALL | `0005:38` (+ `REVOKE U,D` `:39`, no-op), `:44` |
+| `verification_raw` (parent) | S, I | ALL | `0005:51,60` (`REVOKE U,D` `:57`) |
+| `verification_raw_2026_07/08/09` | S, I | ALL | `0005:52-54,61-63` |
+| `verification_raw_YYYY_MM` (function-created) | S, I | ALL | `0014:60,61` |
+| `cache` | S, I, U, **D** | ALL | `0005:69,70` |
+| `catchall_domains` | S, I, U | ALL | `0005:77,81`; `0006:25` (+`REVOKE D` `:26`) |
+| `disposable_domains`, `spam_trap_domains` | S | ALL | `0005:78-79,82-83` |
+| `nodes` | S, I, U | ALL | `0005:86,87`; `0007:94` (+`REVOKE D` `:95`) |
+| `policies` | **S only** | ALL | `0005:90,91` |
+| `send_outcomes` | S, I | ALL | `0005:98,101`; `0012:186` (`REVOKE U,D`, U was never granted) |
+| `verification_outcomes` | S, I | ALL | `0005:99,102` |
+| `node_audits` | S, I | ALL | `0007:82-84` |
+| `node_warmup` | S, I, U | ALL | `0007:87-89` |
+| `rate_budgets` | S, I, U | ALL | `0008:77-79` |
+| `work_items`, `jobs` | S, I, U | ALL | `0009:156-163` |
+| `work_item_attempts` | S, I | ALL | `0009:166-168` |
+| `api_callers` | S | ALL | `0010:58-60`; re-`REVOKE I,U,D` `0013:110` (no-op) |
+| `external_calls` | S, I | ALL | `0011:65-67` |
+| `calibration`, `recalibration_runs`, `outcome_ingest_cursor` | S, I, U | ALL | `0012:191-204` |
+| FUNCTION `ensure_verification_raw_partitions_at(timestamptz,int)` | none | EXECUTE | `REVOKE ALL FROM PUBLIC` `0014:87`; `GRANT EXECUTE … TO cp_admin` `:89` |
+| FUNCTION `ensure_verification_raw_partitions(int)` | EXECUTE | EXECUTE | `REVOKE ALL FROM PUBLIC` `0014:88`; `GRANT EXECUTE … TO cp_runtime, cp_admin` `:90` |
+| schema `public` | **no grant**; relies on implicit PUBLIC USAGE | same | (nothing in any migration) |
+| sequences / types / database CONNECT / default privileges | none | none | – |
+All grants are table-level, never column-level. `GRANT ALL PRIVILEGES` on a table = S, I, U, D, TRUNCATE, REFERENCES, TRIGGER (+ MAINTAIN on PG17). Partition ACLs
+do not propagate from the parent: each partition is granted separately (`0005:52-54`, `0014:60-61`); **[PG]** INSERT/SELECT through the parent only checks the parent's ACL.
+
+---
+
+## B. Runtime privilege matrix (non-test Go that issues SQL)
+
+DB access is confined to `PG`, `PF`, `PT:34`, and `/readyz` `Ping` (`internal/api/api.go:632`). `OpenPG` is the only place a pool is made
+(`PG:50`); nothing else in non-test Go imports pgx (grep `pgx|pgxpool|\.Exec\(|\.Query\(|QueryRow\(`). There is **no** DELETE, TRUNCATE, DDL
+(except through the DEFINER function), sequence use, or `SET ROLE` anywhere in non-test Go.
+
+### B.1 Phases
+- **STARTUP, before serving** (`buildAPI` is evaluated inside the `http.Server` literal, `M:72`, before `ListenAndServe` `M:79`):
+  `OpenPG` pool + `Ping` (`M:109` → `PG:50,54`; needs no table); `EnsurePolicy` (`M:129` → `PG:419-422, 431-434`, 10 s ctx `M:107`);
+  if SMTP enabled and nodes configured: `UpsertNodeState` per node (`M:463` → `PG:522-527`).
+- **BACKGROUND, goroutines started at startup**: partition loop `M:122,510` → `PT:34` (tick 0 immediately, not blocking serving, then every
+  `TM_RAW_PARTITION_MAINTAIN_INTERVAL_SECONDS`=6 h `config.go:568`); queue drainer `M:255` (`DequeueReady` `drainer.go:201`, `ReclaimExpiredLeases`
+  `:193`, `SettleWorkItem` `:308`, `RequeueWorkItem` `:329`, `PutCachedVerdict` `:319`, plus the whole compute path per item); health-watcher
+  `M:548` / `audit/scheduler.go` (`AppendNodeAudit` `:109,191`, `GetNodeHealth` `:118`, `UpsertNodeState` `:140`; `health/watcher.go`
+  `BlockRateByVerifierIP` `:162`, `GetNodeHealth` `:175`, `SetNodeStatus` `:218`, `ResetWarmup` `:232`).
+- **PER REQUEST**: `/readyz` `Ping` every call (`api.go:632`); every authenticated call `LookupCaller` (`api.go:701`); `POST /v1/verify`:
+  `GetCachedVerdict` (`orchestrator.go:304`), `IsDisposable/IsSpamTrap` (`layers/cheap_layers.go:140,163`), SMTP path (`GetNodeHealth` `router/router.go:187`,
+  `ReserveWarmupSlot` `smtp_stage.go:251`, `ReserveRateToken/PeekRateBudget` `ratelimit/ratelimit.go:131,187`, `SetCatchAll` `smtp_stage.go:413`), `AppendVerification`
+  (`orchestrator.go:658`), `PutCachedVerdict` (`:624`); flag-gated (default OFF) `HistoricalBounceCount`/`GetEffectiveCalibration` (`flywheel_stage.go:62,106,128`);
+  bulk submit `CreateJob` + `EnqueueWorkItem` (`queue/enqueue.go:130,137`); job reads `GetJob/JobCompletion/ListJobResults` (`api.go:475,488,531,548`).
+- **NOT STARTED by `main.go` (library only, no non-test caller)**: the flywheel `Ingestor.IngestOnce` (`flywheel/ingest.go:77`) and `RecalibrateDeps.RunOnce`
+  (`flywheel/recalibrate.go:57`) and everything only they call (`AppendSendOutcome`, `GetVerdictForJoin`, cursor get/set, `BucketAggregatesSince`,
+  `ApproveCalibration`, `LeaseRecalibration`, `CommitRecalibration`, `RecentRecalRuns`). Methods with no non-test caller at all: `CatchAllState`
+  (`PG:364`), `GetDefaultPolicy` (`:404`), `GetPolicy` (`:409`), `MetricRowsSince` (`:697`), `GetWorkItem` (`:953`), `AppendCalibrationVersion` (`PF:162`),
+  `AccuracyByProvider` (`PF:232`). External-call writes/reads (`AppendExternalCall`, `ExternalSpendSince`, the `external_calls` insert in settle) are
+  reachable only if the external stage is wired, and `buildExternal` never returns a wired stage (`M:304-306`): dead in production today.
+
+### B.2 Table | needs | holds | MISSING | UNUSED
+| table | verbs the code needs (file:line) | cp_runtime holds | **MISSING (code needs, role lacks)** | UNUSED grants |
+|---|---|---|---|---|
+| `verifications` | I `PG:1156` (every verdict, drainer settle); S `PG:668` (block-rate, background), `PG:1102` (ListJobResults join), `PG:705` (no caller), `PF:29,114,242` (unwired) | S, I | none | none |
+| `verification_raw` | I `PG:1179` (via parent; `created_at` = partition key, supplied explicitly) | S, I (parent + each partition) | none | S (no non-test `FROM verification_raw`); the per-partition S,I (inserts route from the parent) |
+| `cache` | S `PG:288`; I + U `PG:324-332` (`ON CONFLICT (email_hash, config_fingerprint) DO UPDATE`; U columns: `domain, mx_provider, hash_scheme, status, reason, confidence, recommendation, flags, signals, cached_at, expires_at`) | S, I, U, D | none | **D** (no code deletes from `cache`; expiry is only the `expires_at > now()` filter at `PG:288`, there is no sweep) |
+| `catchall_domains` | I + U `PG:386-392` (U columns `is_catchall, detected_at, method, expires_at`; SMTP path only); S `PG:364` has no caller | S, I, U | none | S, except as the upsert arbiter (**[PG]** ON CONFLICT inference reads the key column) |
+| `disposable_domains`, `spam_trap_domains` | S `PG:345` (via `:356,:359`) every cheap verdict | S | none | none |
+| `nodes` | S `PG:495-501`; I+U `PG:522-527` (U cols `base_url, status, port25_open`); U `audit_status, last_audit_at` `PG:483`; U `status` `PG:739` | S, I, U | none | none |
+| **`policies`** | **I `PG:420`; U `is_default` `PG:432`** (both STARTUP, `M:129`); S `PG:434` (sub-select), `PG:404,409` (no caller) | **S only** | **I, U** | none |
+| `send_outcomes` | I `PF:61-65`; S `PF:88-90` (verdict path **only if** the gate flag is on, default off), `PF:113-119`, `PF:250` | S, I | none | n/a (every user is flag-gated or unwired) |
+| `verification_outcomes` | **no reference anywhere in non-test Go** | S, I | none | **S, I (whole grant)** |
+| `node_audits` | I `PG:473`; S `PG:499` (LATERAL) | S, I | none | none |
+| `node_warmup` | I+U `PG:549-555` (U cols `count, cap, updated_at`), `PG:749-751`; S `PG:564` | S, I, U | none | none |
+| `rate_budgets` | I `PG:605`; `SELECT … FOR UPDATE` `PG:617` (**[PG]** needs U); U `PG:633` (cols `tokens, capacity, refill_per_sec, last_refill_at, updated_at`) | S, I, U | none | none |
+| `work_items` | I `PG:765`; U `PG:803` (`status, locked_by, locked_at`), `PG:862` (`status, verification_id, settled_at, addr_ciphertext, locked_by, locked_at`), `PG:918` (`status, attempt, not_before, last_reason, locked_by, locked_at`), `PG:941`; S `PG:805` (FOR UPDATE SKIP LOCKED), `PG:882`, `PG:1064`, `PG:1097`, `PG:955` (no caller) | S, I, U | none | none |
+| `jobs` | I `PG:988`; U `settled_count` only `PG:880` (code never updates `status`/`completed_at`); S `PG:1016,1053,1101` | S, I, U | none | none |
+| `work_item_attempts` | I `PG:1271` | S, I | none | **S** (no `FROM work_item_attempts` in non-test Go) |
+| `api_callers` | S `PG:1296` (every authenticated request) | S | none | none |
+| `external_calls` | I `PG:1212`; S `PG:1239,1252`; both dead today (see B.1) | S, I | none | n/a (dead path) |
+| `calibration` | S `PF:143,186`; I `PF:192`; U `effective_to` `PF:215`, `effective_from, approved` `PF:225` | S, I, U | none | I,U only for the unwired recalibration pass; S used on the verdict path only if the calibration flag is on |
+| `recalibration_runs` | I `PF:283`; U `status, buckets_touched, buckets_at_max, brake_held, committed_at` `PF:303`; S `PF:326` | S, I, U | none | unwired (library only) |
+| `outcome_ingest_cursor` | S `PF:347`; I+U `cursor, updated_at` `PF:359-360` | S, I, U | none | unwired (library only) |
+| FUNCTION `ensure_verification_raw_partitions(int)` | call `PT:34` (background loop) | EXECUTE | none | none |
+| FUNCTION `ensure_verification_raw_partitions_at` | not called by app code (admin/tests/migration only) | none | none | – |
+| `cp_admin` (every table) | nothing in code uses it; docs mention it as a manual break-glass `SET ROLE` | – | – | all of it, from the app's point of view |
+
+Notes for the design:
+- **UPDATE column-level vs table-level:** every migration grants UPDATE table-level; the code only ever updates the columns listed above
+  (it never UPDATEs `verifications`, `verification_raw`, `send_outcomes`, `api_callers`, `external_calls`, `node_audits`, `work_item_attempts`).
+  If column-level UPDATE is ever used, **[PG]** `SELECT … FOR UPDATE` (`PG:617`, `PG:805-808`) needs UPDATE on at least one column of that table.
+- **Sequences:** no INSERT depends on a serial/identity (A.3). No sequence USAGE is needed. All ids are app-generated UUIDv7 (`idgen`).
+- **INSERT … RETURNING / ON CONFLICT DO UPDATE** (`PG:770` `RETURNING id`, `PG:556`, the 6 upserts) also need S on the returned/arbiter columns; all those tables hold S.
+- **FK checks** (`verification_raw → verifications`) **[PG]** run as the referenced table's owner, so the runtime needs no S/REFERENCES for them.
+
+### B.3 What fails for a non-owner, non-superuser login that holds only today's `cp_runtime` grants
+1. `EnsurePolicy` (startup): 42501 on `policies` INSERT (`PG:420`), see finding 1. Everything downstream of `M:133` is never wired.
+2. Every other statement in B.2 is covered table-by-table (verified above); the DEFINER wrapper runs as its owner (`postgres` today).
+3. Not a grant but a precondition today's migrations never create: `cp_runtime` is `NOLOGIN` and no membership/`LOGIN` exists, so a login role
+   needs `GRANT cp_runtime TO <login>` (or `ALTER ROLE … LOGIN`); neither is in any migration. Schema USAGE comes only from PUBLIC (A.5).
+4. In a schema other than `public`, additionally: schema USAGE, and the DEFINER function's owner must own `verification_raw` and have CREATE on the schema (finding 5).
+
+---
+
+## C. Schema-sensitive code, and what breaks
+
+Column "A" = tables in `verify`, session `search_path = verify` (objects found; only literal `public.` and hard-coded role names break).
+Column "B" = tables in `verify`, default `"$user", public` (login `verify_app` has no schema of that name, so lookups only see `public`).
+
+| # | where (file:line) | what it does | breaks in A | breaks in B |
+|---|---|---|---|---|
+| 1 | `0014:35,79` | `SET search_path = pg_catalog, public` on both functions | no direct break (core only references `public.` explicitly) but `public` is on the path of a SECURITY DEFINER function | same |
+| 2 | `0014:55` | `to_regclass(format('public.%I', part_name))` | **always NULL** → function believes every partition is missing and tries to create it | same |
+| 3 | `0014:57` | `CREATE TABLE public.%I PARTITION OF public.verification_raw` | **42P01** `relation "public.verification_raw" does not exist` → every maintenance tick fails (`PT:64-67` logs `raw-partitions: maintenance FAILED`); SMTP verdict writes fail once the last pre-existing partition month ends (23514) | same |
+| 4 | `0014:60-62` | `GRANT … ON public.%I TO cp_runtime`, `… TO cp_admin`, `COMMENT ON TABLE public.%I` | role names `cp_runtime`/`cp_admin` hard-coded: wrong roles if renamed; also unreachable behind #3 | same |
+| 5 | `0014:81` | wrapper body `SELECT public.ensure_verification_raw_partitions_at(…)` | **42883** function does not exist | same |
+| 6 | `0014:87-90, 71, 84, 94` | `REVOKE/GRANT … ON FUNCTION`, `COMMENT ON FUNCTION`, bootstrap call: unqualified | apply-time resolution through the session path: ok if path has `verify`; **`0014:94` aborts a fresh install** because of #3 | `0014:94` finds the function only if it is in `public` |
+| 7 | `0001`…`0013`, `0015` (all DDL/GRANT/COMMENT) | unqualified names | land in the first schema of the applying session's path; with default path + non-superuser applier on PG15+ → `permission denied for schema public` **[PG]** | land in `public` (the opposite of the goal) |
+| 8 | `0001:124-131` | `CREATE TABLE IF NOT EXISTS verification_raw_2026_07 PARTITION OF verification_raw` | partition created in the creation schema, parent resolved via path: fine | same as 7 |
+| 9 | `0013:46,62,79` | the strings `public.users` in two comments and one `COMMENT ON COLUMN` literal | nothing (text only) | nothing |
+| 10 | `PG:345` + `:356,:359` | `"SELECT 1 FROM "+table` with literals `disposable_domains` / `spam_trap_domains` | fine | 42P01 |
+| 11 | every statement in `PG` and `PF` (section B lines), `PT:34` `SELECT ensure_verification_raw_partitions($1)` | unqualified relation and function names | fine | **42P01 / 42883 on every query** |
+| 12 | `PG:135` | `"search_path": true` in the DSN-redaction allow-list | n/a (only classifies a DSN key as non-secret) | n/a |
+| 13 | non-test Go generally | no `to_regclass`, `::regclass`, `pg_class`, `pg_inherits`, `information_schema`, `pg_tables`, `current_schema`; nothing sets/reads `search_path`/role | n/a | n/a |
+| 14 | `internal/testpg/testpg.go:156` | `i.inhparent = 'public.verification_raw'::regclass` | **42P01** (regclass cast of a missing relation errors) → `testpg.Parts` fails → every test using it: `partitions_test.go:84,138,153,203,344` (`ageTable` + 4 tests), `main_partitions_test.go` | **42P01** |
+| 15 | `testpg.go:154-155` | `pg_inherits` join `pg_class` | schema-agnostic | schema-agnostic |
+| 16 | `testpg.go:107-123` | glob `[0-9][0-9][0-9][0-9]_*.sql`, simple-protocol `Exec`, superuser, **no search_path / role set** | files apply as written → everything lands in `public` unless 0016 or the DSN says otherwise | same |
+| 17 | `partitions_test.go:95` | `DROP TABLE public.<part>` (`ageTable`) | **fails** (3 tests: `MaintenanceKeepsNMonthsAhead`, `NoopMaintenance…`, `ConcurrentTicks…`) | fails |
+| 18 | `partitions_test.go:245-246,261-262` | `SET LOCAL ROLE cp_runtime`, asserts `who == "cp_runtime"` | fails once the role is renamed/absent | same |
+| 19 | `partitions_test.go:269,275,276,277,278,279,299,341` | unqualified `ensure_verification_raw_partitions[_at]`, `CREATE TABLE verification_raw_2099_01 PARTITION OF verification_raw`, `DROP TABLE verification_raw_2026_07`, DELETE/UPDATE on `verification_raw` expecting SQLSTATE **42501** | fine if the path has `verify` (but the 42501 expectations also depend on the new role and schema grants) | wrong SQLSTATE (**42P01/42883**, not 42501) |
+| 20 | `partitions_test.go:303-306` | `has_table_privilege('cp_runtime', 'verification_raw_YYYY_MM', …)` | role name hard-coded; table name resolved through the path (**[PG]**) | resolves to nothing |
+| 21 | `partitions_test.go:109`, `vocab_db_test.go:89` | `scratchPG(t, 13)`, `Scratch(t, 14)`: tests pinned to migration numbers ("the pre-0014 schema", "before 0015") | still valid if 0016 only adds | same |
+| 22 | `vocab_db_test.go:33,77` | `pg_get_constraintdef(oid) FROM pg_constraint WHERE conname='valid_reason' AND conrelid = $1::regclass` with `'verifications'`, `'cache'` | fine | **42P01** |
+| 23 | `pg_grants_test.go:79,90`, then `:120,127,145,149,154,166,171,188,194,211,216,224` | `SET LOCAL ROLE cp_runtime`; `current_user = "cp_runtime"`; unqualified table names; every `denied()` requires the string "permission denied" | role name + path | role name + path |
+| 24 | `postgres_test.go`, `postgres_flywheel_test.go`, `pg_tenancy_test.go:104-112,174-177,328-336,354`, `pg_e2e_test.go:109-117,173` | seeding/cleanup SQL, unqualified, run on the **same pool as the store** (`pg.Pool()`), needs owner/superuser (INSERT `api_callers`, DELETE `verifications`/`work_items`/`jobs`) | fine under a superuser DSN | fails for `verify_app` and for any DSN without `verify` on its path |
+| 25 | `ci:59-60` | `psql -h localhost -U postgres -d cptest -v ON_ERROR_STOP=1 -f $f` (default path, one psql per file, no `-1`) | needs `PGOPTIONS`/`ALTER ROLE … SET search_path` or a schema step to land in `verify` | lands in `public` |
+| 26 | `ci:67,83` | `TM_TEST_DATABASE_URL: postgres://postgres:ci@localhost:5432/cptest` (no `search_path`) | needs `?search_path=verify` or role-level setting | tests see `public` only |
+| 27 | `scripts/*.sh` | **none** uses `psql`, SQL, table names, `public.` or `search_path` (grep). Only `check-no-secret-leak.sh:58` builds a DSN, to `127.0.0.1:1`, never connects | none | none |
+| 28 | docs the operator runs as SQL | `Docs/go-live-checklist.md:40` (`'verification_raw'::regclass`), `Docs/operator-runbook.md:226` (`SELECT ensure_verification_raw_partitions_at(now(), 3)` "as `cp_admin`"), `:234-235` (`pg_class WHERE relname=…`, name-based, schema-agnostic), `Docs/install-and-deploy.md:225` (`UPDATE nodes SET port25_open=true …` "as `cp_admin`"), `Docs/adr/ADR-0017…:74`, `README.md:86`/`install-and-deploy.md:36-39`/`migrations/README.md:42-45,68-70` (psql loops) | need `verify.` or a path | need `verify.` |
+
+---
+
+## D. How the database is configured; what 0016 touches
+
+### D.1 DSN and pool
+- Runtime DSN: env **`TM_DATABASE_URL`** (`config.go:587-588`) → `Config.DatabaseURL` (`config.go:284`) → `M:101,109` → `store.OpenPG` (`PG:49-59`):
+  `pgxpool.New(ctx, dsn)` (`PG:50`) then `pool.Ping` (`PG:54`). Default pool config: no `AfterConnect`/`BeforeAcquire`/`RuntimeParams` edits, no `SET ROLE`,
+  no `SET search_path` anywhere in non-test Go. Empty DSN → `/v1/verify` 503 (`M:101-105`). `TM_SUPABASE_KEY` has no consumer (`Docs/install-and-deploy.md:148`).
+- Errors from pgx are scrubbed so the DSN never reaches a log (`PG:81-107`, `scripts/check-no-secret-leak.sh`).
+- A role- or schema-selecting DSN needs no Go change: pgx v5.10.0 passes any non-recognised DSN key as a startup runtime parameter (`pgconn/config.go:50,434-437`; `PGOPTIONS` → `options`
+  `:602`). Behind a transaction pooler startup parameters may be rejected (**[PG]/infra, not verifiable from this repo**); `ALTER ROLE verify_app SET search_path = verify` avoids that.
+- Test DSN: env **`TM_TEST_DATABASE_URL`** (superuser), read with `os.Getenv` in `testpg.go:37`, `postgres_test.go:26`, `pg_tenancy_test.go:78`, `readyz_test.go:439`, `pg_e2e_test.go:22`;
+  `testpg.Scratch` derives `cm_scratch_<hex>` databases from it via `CREATE DATABASE` (`testpg.go:73-96`). `/readyz` only pings (`api.go:632`).
+
+### D.2 How migrations are applied
+| where | how |
+|---|---|
+| CI (`ci:55-61`) | service `postgres:16-alpine@sha256:aa6cb…` (`ci:38`), `POSTGRES_DB=cptest`, `POSTGRES_PASSWORD=ci`; `for f in $(ls migrations/[0-9][0-9][0-9][0-9]_*.sql | sort); do PGPASSWORD=ci psql -h localhost -U postgres -d cptest -v ON_ERROR_STOP=1 -f "$f"; done` (as superuser, each file its own session, no `-1`) |
+| tests | `testpg.Scratch(t, through)` (`testpg.go:62-132`): fresh DB, same glob, sorted, `through<=0` = all, one `conn.Exec` per file as the superuser from `TM_TEST_DATABASE_URL` |
+| docs / dev | `Docs/install-and-deploy.md:36-39`, `README.md:86` (`docker exec … psql -U postgres`), `Docs/operator-runbook.md:255`, `migrations/README.md:42-45` (local), `:68-70` (Supabase `psql "$SUPABASE_URI"`) |
+| scripts | none. No script applies migrations or calls psql |
+A 0016 is picked up automatically by both globs (name must match `NNNN_*.sql`). Because there is no migration tracker, the same file must work on an empty DB **and** on a 0015-state DB.
+
+### D.3 Gates: what a new migration + a new test file + a new env var require
+| gate | how it decides (file:line) | migration 0016 | new `_test.go` | new env var |
+|---|---|---|---|---|
+| `scripts/check-test-enumeration.sh` | 1: `go test ./...` still in executed `run:` text (`:128`); 2: exactly one `go.mod` (`:140-149`); 3: no `//go:build` on any `_test.go` (`:154-174`); 4: RSpec not narrowed; 5: every `scripts/check-*.sh` (selftests included) named in an executed `run:` of `ci.yml` (`:219-234`); 6: job `code-review` exists; 7: every gate script name appears in `Docs/test-strategy.md` (`:310-338`) | not read | keep it in the existing module; **no build tag** (a login-role test cannot be tag-gated; it must skip at runtime) | not read |
+| `scripts/check-docs-updated.sh` | classifies changed files (`:119-134`): code = any non-`_test.go` `.go` under `control-plane/` except `internal/config/*`; docs = any `*.md`, `Docs/*`, `PROJECT_RULES.md`. Code without docs fails. CI base = PR base sha, or `HEAD~1` on push (`ci:245`) | `.sql` is **not** code: passes alone. `migrations/README.md` touch counts as a doc | a `_test.go` is exempt; but `internal/testpg/testpg.go`, `store/*.go`, `cmd/…/main.go` are **code** and need a `.md` in the same range | `internal/config/config.go` is exempt, the manifest edit is a doc anyway |
+| `scripts/check-config-reference-fresh.sh` | regenerates `Docs/config-reference.md` from `Docs/config-manifest.md` (`gen-config-reference.sh:23-52`, rows starting `\| **`, type column matched `secret`/`flag`/`dial`) and diffs (`:10-20`). It does **not** read `config.go` | not read | not read | add a 6-column `\| **NAME** \|` row to `Docs/config-manifest.md`, run `bash scripts/gen-config-reference.sh`, commit the regenerated `Docs/config-reference.md` (its counts table changes). Editing the existing `TM_DATABASE_URL` row (`config-manifest.md:95`) also requires regenerating (`config-reference.md:72`). A test-only var (like `TM_TEST_DATABASE_URL`, absent from the manifest) needs no row |
+| `scripts/check-test-execution.sh` | rule 0: workflow text must give `TM_TEST_DATABASE_URL` a value (`:141`); rule 0b: in CI it must be non-empty at run time (`:190`); re-runs every package with `go test -count=1 -v` (`:282`); **tier 1: zero skips outside `./test/gaps`** (`:313-322`); a declared test that does not run is a failure | new migration changes nothing here | a new PG test that `t.Skip`s because a second DSN is unset **fails this gate in CI**. Gate on `TM_TEST_DATABASE_URL` only, or derive the second DSN from it in code | a new test-only var must be added to **both** `ci:66-67` (go test) **and** `ci:82-83` (the gate step has its own `env:`), or the gate's re-run skips and goes red |
+| `scripts/check-base-image-pinned.sh` | every `image:` in `ci.yml` needs `@sha256:<64 hex>` (`:57-62`) | – | – | a second service container or a changed Postgres image needs a digest |
+| `scripts/check-no-secret-leak.sh` | boots the binary with canary secrets, scans the log (`:58,116`) | – | – | a new secret DSN var is not scanned unless a canary is added there |
+Prose that counts migrations and is NOT gated (will drift): `Docs/architecture.md:4,139`, `Docs/install-and-deploy.md:4,36,156`, `Docs/operator-runbook.md:255,258-259,301`,
+`Docs/go-live-checklist.md:40`, `README.md:97`, `migrations/README.md` (table + `:150-163` REVOKE counts), `Docs/future-work.md:5,29`, `Docs/open-decisions.md:6`.
+Docs the gates DO read: `Docs/test-strategy.md` (§5, rule 7), `Docs/config-manifest.md` + `Docs/config-reference.md` (freshness), any `*.md` (docs-updated), `PROJECT_RULES.md` (docs-updated).
+
+---
+
+## E. Does M1 read `public.users` or `public.job_items`? **No.**
+Commands run in `coldmail-verify/` (repo-wide, `.git` excluded):
+1. `grep -rnE "public\.(users|job_items)" .` → 3 hits, all in `control-plane/migrations/0013_job_owner.sql:46,62,79`: two SQL comments and the text inside a `COMMENT ON COLUMN … IS '…'` literal. No executable reference.
+2. `grep -rnEi "(FROM|JOIN|INTO|UPDATE|REFERENCES|TABLE)\s+(public\.)?\"?(users|job_items)\b" --include=*.sql --include=*.go --include=*.sh --include=*.yml --include=*.rb .` → **0 hits**.
+3. `grep -rn "job_items" .` → only `Docs/history/phase-5-queue-spec.md` prose (lines 20, 84, 386, 388, 487), no code/SQL/test.
+4. `grep -rnw users --include=*.go --include=*.sql --include=*.sh --include=*.yml .` → only the same `0013` comments plus unrelated English ("platform users" in `auth_test.go:27`, "curl users" in `bearer_scheme_test.go:173`, `cheap_layers.go:91`).
+`owner_user_id` / `api_callers.user_id` are FK-less uuids by design (`0013:62-68`): no read, FK or join against any platform table.
