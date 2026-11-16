@@ -59,6 +59,7 @@ func (s *Store) Settle(ctx context.Context, req SettleReq) (SettleResult, error)
 }
 
 // SettleIn is Settle inside a transaction the caller owns. The steps:
+//  0. SET LOCAL lock_timeout to the store's wait (bound), so a wait that lasts that long ends with ErrLockTimeout;
 //  1. the job must exist, belong to a metered module and have left draft; the (user, module) lock is taken; the job must hold a reserve (ErrNoReserve);
 //  2. the prices come from the job's FROZEN snapshot (platform.job_unit_prices), never from platform.unit_costs;
 //  3. an item whose item_ref the ledger already charged is AlreadySettled and nothing more is done with it;
@@ -89,11 +90,14 @@ type pendingCharge struct {
 
 func (s *Store) settle(ctx context.Context, tx pgx.Tx, req SettleReq) (SettleResult, error) {
 	res := SettleResult{ByUnit: map[string]int{}}
+	if err := s.bound(ctx, tx); err != nil {
+		return SettleResult{}, err
+	}
 	job, err := s.meteredJob(ctx, tx, req.JobID)
 	if err != nil {
 		return SettleResult{}, err
 	}
-	if err := s.lock(ctx, tx, job.user, job.module); err != nil {
+	if err := s.lockUser(ctx, tx, job.user, job.module); err != nil {
 		return SettleResult{}, err
 	}
 	job, err = s.job(ctx, tx, req.JobID) // the status, read again under the lock

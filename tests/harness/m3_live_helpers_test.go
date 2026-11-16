@@ -708,3 +708,11 @@ func (r *m3lRun) parseReport(t *testing.T, who string, body []byte) m3lReport {
 	}
 	return rep
 }
+
+// m3lSinkPassword is the password the live test gives module 3 for the SMTP sink's account. The sink (Mailpit, MP_SMTP_AUTH_ACCEPT_ANY) accepts ANY credential, so nothing is protected by it, but no
+// literal of that shape may live in the tree (a secret scanner cannot tell a placeholder from a secret, and an exception for one would be a hole): run.sh mints a fresh random value per run and hands
+// it to the test in HARNESS_SINK_PASSWORD. A missing value FAILS the test (rule 1: a test that cannot run fails, it never skips).
+func m3lSinkPassword(t *testing.T) string {
+	t.Helper()
+	return requireEnv(t, "HARNESS_SINK_PASSWORD")
+}

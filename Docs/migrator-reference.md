@@ -53,7 +53,7 @@ unlock, rollback and close that run after the work are bounded at 5 seconds.
 
 Exit status: **0** success. **1** runtime error: the database could not be reached, a migration failed or did not record itself,
 the lock timed out, the directory is unreadable or holds no migrations, a gap in the chain; and, for `create-first-admin`, a refusal
-that comes from the database's state (an admin already exists, the Supabase login does not exist or has no email). **2** usage or
+that comes from the database's state (an admin already exists, the Supabase login does not exist or has no email, the login's platform user is inactive). **2** usage or
 configuration error: no command, an unknown command, `down` without exactly one version, a missing or invalid variable, a
 connection string the driver cannot parse, `down` while `PLATFORM_MIGRATE_ALLOW_DOWN` is not true, and a missing, unknown, repeated
 or invalid flag of `create-first-admin`.
@@ -95,10 +95,12 @@ exits 2, names the flag and the rule, and touches nothing.
 3. Refuses if `platform.admins` holds any row at all (a disabled admin counts).
 4. Reads the login's email from `auth.users`. This one read runs as the migrating identity (`SET LOCAL ROLE NONE`, then back to
    `platform_owner`), because `platform_owner` has no grant on Supabase's `auth` schema. Refuses if there is no such login, or it has no email.
-5. Creates the login's `public.users` row (`id` = `auth_user_id` = the login's id, `email` = the login's email in lower case and
+5. Reads the login's existing `public.users` row, if it has one, through `platform.listable_users` (which lists an inactive user too), **before anything is written**, and
+   refuses if that user is **inactive** (`is_active` false; owner ruling OD-8). An active existing row is used as it is.
+6. Creates the login's `public.users` row if it has none (`id` = `auth_user_id` = the login's id, `email` = the login's email in lower case and
    trimmed, which the table's `users_email_normalised` check demands, `is_active` true) with `ON CONFLICT (id) DO NOTHING`, then the
    `platform.admins` row (`id`, `display_name`).
-6. Commits, and only then prints.
+7. Commits, and only then prints.
 
 **Output.** On success exactly one line on standard output, and nothing secret anywhere:
 
@@ -117,6 +119,7 @@ rewritten) and prints one `create-first-admin: note: ...` line before the succes
 | 1 | any row exists in `platform.admins` | that an admin already exists and that the command only creates the FIRST one (admin management is Phase 7) |
 | 1 | `auth.users` has no row with that id | to create the login first (Supabase dashboard > Authentication > Users) and pass its id as `--auth-user-id` |
 | 1 | the login's email is NULL or blank | that the login needs an email |
+| 1 | the login already has a `public.users` row and it is inactive (`is_active` false) | the login's id, that its platform user is inactive, that nothing was written, and to reactivate that user or use a different login (it does not say an admin exists: none does) |
 | 1 | the database cannot be reached, is not migrated, or the lock timed out | the driver's own error, with a hint to run `up` first or to raise the lock timeout |
 
 If another, different `public.users` row already has the login's email, the insert fails on `users_email_key`, exit 1, nothing written.
@@ -134,7 +137,7 @@ platform-migrate: FATAL: an admin already exists, so nothing was written: create
 
 **What it does not cover.** It does not take the migration advisory lock, so do not run it while `up` is running (the table lock is what
 serialises two `create-first-admin` runs). It does not check that the login is confirmed, active or the one the owner meant: that is
-the operator's act, and the id is the only link. An existing `public.users` row that is inactive (`is_active` false) is used as it is.
+the operator's act, and the id is the only link. It never reactivates a user: an existing `public.users` row that is inactive is refused (above), an active one is used as it is.
 
 ## Files
 

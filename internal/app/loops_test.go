@@ -73,6 +73,7 @@ func waitUntil(t *testing.T, what string, cond func() bool) {
 
 func TestRun_TheEntitlementLoopsStartWithTheServiceAndStopBeforeItReturns(t *testing.T) {
 	withSuspender(t, &fakeSuspender{}, nil)
+	withoutElection(t) // this test is about the loops' own passes against a database that is not there; with the election on no instance could lead here (leader_test.go proves that)
 	env := merge(base(closedPortDSN(t)), map[string]string{
 		config.VarLogLevel:                     "debug",
 		config.VarEntitlementExpireIntervalSec: "1",
@@ -125,6 +126,7 @@ func TestRun_TheEntitlementLoopsStartWithTheServiceAndStopBeforeItReturns(t *tes
 
 func TestRun_TheIntervalDialsSetTheRhythmOfTheLoops(t *testing.T) {
 	withSuspender(t, &fakeSuspender{}, nil)
+	withoutElection(t) // the rhythm is counted in passes, and a standby makes none
 	count := func(env map[string]string) (reconcile, expiry int) {
 		r := startApp(t, env)
 		waitUntil(t, "the first pass of each loop", func() bool {

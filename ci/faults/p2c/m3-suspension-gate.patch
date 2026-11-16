@@ -1,0 +1,15 @@
+diff --git a/services/control/internal/platformapi/account_test_send.go b/services/control/internal/platformapi/account_test_send.go
+index 938a10d..da0d5d5 100644
+--- a/services/control/internal/platformapi/account_test_send.go
++++ b/services/control/internal/platformapi/account_test_send.go
+@@ -28,10 +28,6 @@ func (s *Server) handleAccountTestSend(w http.ResponseWriter, r *http.Request) {
+ 	// The P2 close-out (owner ruling C3): a suspended user's test-send is refused BEFORE the account
+ 	// read, the worker lookup and the consume — it is a real send from the operator's worker IPs, the
+ 	// thing a suspension exists to stop. Opaque 409 (suspension_gate.go): no mention of why.
+-	if e := s.suspendedRefusal(ctx, userID); e != nil {
+-		s.fail(w, r, e)
+-		return
+-	}
+ 
+ 	// Tenant-scoped existence check — same predicate every other verb uses (excludes soft-deleted,
+ 	// enforces tenancy). We need the account's own from_address for M3-P3-OD-5's restriction.

@@ -56,9 +56,12 @@ func ExitCode(err error) int {
 // process alive and not ready, which is what an orchestrator needs to see.
 //
 // Once the HTTP server is listening, the two entitlement loops start (expiry of module 3 entitlements, and
-// reconciliation of module 3's suspend state). On shutdown they are cancelled and WAITED FOR before the
-// pool closes, so no pass is writing to a closed pool. A failed pass never ends a loop, and neither loop
-// changes what /healthz and /readyz say.
+// reconciliation of module 3's suspend state). They run only in the instance that holds the leader advisory
+// lock: a second instance still serves HTTP but idles its loops and takes over when the leader's database
+// session ends. On shutdown they are cancelled and WAITED FOR, and the leader gives its lock and its
+// connection back, before the pool closes, so no pass is writing to a closed pool and the pool is not held
+// open by a connection nobody returns. A failed pass never ends a loop, and neither loop changes what
+// /healthz and /readyz say.
 //
 // No returned error contains the database URL: parse and pool errors pass through dsnscrub, and a
 // configuration error names variables and reasons only.
@@ -81,8 +84,12 @@ func Run(ctx context.Context, getenv func(string) string, logw io.Writer) error 
 	if err != nil {
 		return err
 	}
-	defer pool.Close() // runs after the loops have stopped: see stopLoops below
+	defer pool.Close() // runs after the loops have stopped, and after the leader has returned its connection: see stopLoops below
 
+	instance, err := entitlements.ResolveInstanceID(cfg.InstanceID)
+	if err != nil {
+		return fmt.Errorf("resolve this instance's name: %w", err)
+	}
 	ent, err := entitlements.New(entitlements.Config{
 		Pool:           pool,
 		M3:             m3,
@@ -91,7 +98,8 @@ func Run(ctx context.Context, getenv func(string) string, logw io.Writer) error 
 		ReconcileEvery: cfg.M3ReconcileInterval,
 		ReverifyEvery:  cfg.M3ReverifyInterval,
 		Redact:         []string{cfg.M3AdminToken.Reveal()},
-	})
+		InstanceID:     instance,
+	}, entitlementOptions()...)
 	if err != nil {
 		return fmt.Errorf("build the entitlement loops: %w", err)
 	}
@@ -106,7 +114,7 @@ func Run(ctx context.Context, getenv func(string) string, logw io.Writer) error 
 	})
 
 	// The startup line names what an operator needs and nothing from the Config struct as a whole.
-	log.InfoContext(ctx, "platform starting", "version", Version, "addr", cfg.HTTPAddr, "env", cfg.Env)
+	log.InfoContext(ctx, "platform starting", "version", Version, "addr", cfg.HTTPAddr, "env", cfg.Env, "instance", instance)
 
 	// The loops start when the server reports it is listening and stop, and are waited for, when Run is
 	// leaving, whichever way it leaves: the deferred pool.Close above then closes an idle pool.
@@ -145,6 +153,11 @@ func runLoops(ctx context.Context, ent *entitlements.Service, ready <-chan net.A
 		<-done
 	}
 }
+
+// entitlementOptions is the list of options the entitlement service is built with. The service passes NONE: leader election is on, so the two loops run only in the instance that holds the leader
+// lock (Docs/install.md, "Running more than one instance"). It is a variable only so that a test of the loops' own rhythm, which runs against a closed port where no instance could ever become the
+// leader, can switch the election off; nothing else assigns it, and TestLeader_NoProductionPathChangesTheWiring (internal/entitlements) fails if non-test code names an option.
+var entitlementOptions = func() []entitlements.Option { return nil }
 
 // newSuspender builds the module 3 admin client from the configuration. It is a variable so that a test can
 // supply a fake; nothing else assigns it. The client's HTTP side follows the platform's house style (the probe

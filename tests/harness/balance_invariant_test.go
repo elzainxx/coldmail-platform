@@ -670,7 +670,8 @@ func TestBalance_TriggerFunctionsAreSafeDefiners(t *testing.T) {
 		for _, fn := range []string{"platform.ledger_apply_to_balance()", "platform.unit_costs_record_history()", "platform.ledger_audit_adjustment()",
 			"platform.ledger_require_active_admin()", "platform.admin_audit_require_active_admin()", "platform.m3_entitlements_require_active_admin()",
 			"platform.ledger_check_reserve()", "platform.ledger_apply_to_reserves()", "platform.ledger_check_release()", "platform.ledger_apply_to_entitlements()", "platform.m3_entitlements_raise_sync()",
-			"platform.ledger_stamp_created_at()"} { // the stamp is SECURITY INVOKER (not in the definer list above) but no role may call it by hand either
+			// the stamp (platform_0005) and the two functions of platform_0007 are SECURITY INVOKER (not in the definer list above) but no role may call them by hand either
+			"platform.ledger_stamp_created_at()", "platform.job_unit_prices_snapshot_equals_unit_costs()", "platform.jobs_terminal_is_final()"} {
 			for _, role := range []string{"platform_app", "platform_admin"} {
 				if ledgerBool(t, tx, "SELECT has_function_privilege($1::text, $2::text, 'EXECUTE')", role, fn) {
 					t.Fatalf("%s can EXECUTE %s", role, fn)

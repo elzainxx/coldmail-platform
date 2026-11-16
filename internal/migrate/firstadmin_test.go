@@ -28,11 +28,14 @@ type fakeAdminTx struct {
 	role  string
 	calls []string
 
-	admins     bool    // platform.admins already holds a row
-	login      bool    // auth.users has the login
-	loginEmail *string // its email; nil is NULL
-	userExists bool    // public.users already has the login's row...
-	userEmail  string  // ...with this email
+	admins       bool    // platform.admins already holds a row
+	login        bool    // auth.users has the login
+	loginEmail   *string // its email; nil is NULL
+	userExists   bool    // public.users already has the login's row...
+	userEmail    string  // ...with this email...
+	userInactive bool    // ...and it is inactive (is_active = false)
+
+	appearsOnInsert bool // another writer creates the user row between the read and our insert: the insert then finds it (conflict) although the read did not
 
 	failAt  string // the step that fails
 	failErr error
@@ -99,6 +102,9 @@ func (f *fakeAdminTx) InsertUser(_ context.Context, id, _ string) (bool, error) 
 	if err := f.step("insert-user", fakeOwner); err != nil {
 		return false, err
 	}
+	if f.appearsOnInsert {
+		f.userExists = true
+	}
 	if f.userExists {
 		return false, nil
 	}
@@ -106,11 +112,14 @@ func (f *fakeAdminTx) InsertUser(_ context.Context, id, _ string) (bool, error) 
 	return true, nil
 }
 
-func (f *fakeAdminTx) UserEmail(_ context.Context, _ string) (string, bool, error) {
-	if err := f.step("user-email", fakeOwner); err != nil {
-		return "", false, err
+func (f *fakeAdminTx) UserState(_ context.Context, _ string) (existingUser, bool, error) {
+	if err := f.step("user-state", fakeOwner); err != nil {
+		return existingUser{}, false, err
 	}
-	return f.userEmail, f.userExists, nil
+	if !f.userExists {
+		return existingUser{}, false, nil
+	}
+	return existingUser{Email: f.userEmail, Active: !f.userInactive}, true, nil
 }
 
 func (f *fakeAdminTx) InsertAdmin(_ context.Context, _, name string) error {
@@ -282,8 +291,8 @@ func TestCreateFirstAdmin_SuccessTakesTheStepsInOrderAndPrintsOneLine(t *testing
 		t.Fatalf("createFirstAdmin: %v\ncalls: %s", err, f.sequence())
 	}
 	// The order is the contract: the role switch, the table lock, the admin check, then the login is read as the migrating identity and
-	// the writes run as the owner again, and the commit is last.
-	want := "as-owner > lock-admins > admin-exists > as-migrator > auth-email > as-owner > insert-user > insert-admin > commit"
+	// the writes run as the owner again (the existing user row is read first, then inserted if there is none), and the commit is last.
+	want := "as-owner > lock-admins > admin-exists > as-migrator > auth-email > as-owner > user-state > insert-user > insert-admin > commit"
 	if got := f.sequence(); got != want {
 		t.Fatalf("calls:\n got  %s\n want %s", got, want)
 	}
@@ -463,13 +472,95 @@ func TestCreateFirstAdmin_AnExistingPlatformUserIsKeptAndANoteSaysIfItsEmailDiff
 	}
 }
 
+// OD-8 (Phase 2 close-out D6): a public.users row that exists for the login and is INACTIVE is refused, with the login named, nothing written and no claim that an admin
+// exists. The refusal comes after the checks that precede it and BEFORE any write, so the call sequence ends at the read of the user. The control is the same login with an ACTIVE
+// row, which is used as it is, so the refusal is the inactivity and nothing else.
+func TestCreateFirstAdmin_RefusesAnInactiveExistingUserBeforeAnyWrite(t *testing.T) {
+	for label, email := range map[string]string{"the same email": adminTestEmail, "another email": "old@example.com"} {
+		f := newFakeAdminTx(adminTestEmail)
+		f.userExists, f.userEmail, f.userInactive = true, email, true
+		var out bytes.Buffer
+		err := createFirstAdmin(context.Background(), f, validAdminInput(), &out)
+		var iu *InactiveUserError
+		if !errors.Is(err, ErrUserInactive) || !errors.As(err, &iu) || iu.AuthUserID != adminTestID {
+			t.Errorf("%s: err = %v, want an *InactiveUserError for %s that matches ErrUserInactive", label, err, adminTestID)
+			continue
+		}
+		for _, want := range []string{adminTestID, "inactive", "is_active", "nothing was written", "reactivate", "different login", FlagAuthUserID} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%s: the refusal %q does not say %q", label, err, want)
+			}
+		}
+		// it must not say an admin exists (none does), and it is not the admin refusal
+		if errors.Is(err, ErrAdminExists) || strings.Contains(err.Error(), "admin already exists") || strings.Contains(err.Error(), "FIRST") {
+			t.Errorf("%s: the refusal talks about an existing admin: %q", label, err)
+		}
+		if got, want := f.sequence(), "as-owner > lock-admins > admin-exists > as-migrator > auth-email > as-owner > user-state"; got != want {
+			t.Errorf("%s: calls:\n got  %s\n want %s (the refusal must come before the user row is inserted and before the admin is)", label, got, want)
+		}
+		if f.wroteSomething() || out.Len() != 0 {
+			t.Errorf("%s: a refused command wrote %+v or printed %q", label, f, out.String())
+		}
+	}
+
+	// The control: the same login with an ACTIVE row goes through and the row is kept (the email note is the existing behaviour).
+	c := newFakeAdminTx(adminTestEmail)
+	c.userExists, c.userEmail = true, "old@example.com"
+	var out bytes.Buffer
+	if err := createFirstAdmin(context.Background(), c, validAdminInput(), &out); err != nil || !c.committed || len(c.userWrites) != 0 || len(c.adminNames) != 1 {
+		t.Fatalf("control: err = %v, committed = %v, user writes %v, admins %v; want an active existing user used as it is", err, c.committed, c.userWrites, c.adminNames)
+	}
+	if want := "create-first-admin: created admin " + adminTestID + " (Ada Boss) for " + adminTestEmail + "\n"; !strings.HasSuffix(out.String(), want) {
+		t.Errorf("control: output %q does not end with the success line", out.String())
+	}
+
+	// The checks that come first still win: an existing admin is the refusal when the user is inactive too, and a missing login is.
+	both := newFakeAdminTx(adminTestEmail)
+	both.admins, both.userExists, both.userInactive = true, true, true
+	if err := createFirstAdmin(context.Background(), both, validAdminInput(), &bytes.Buffer{}); !errors.Is(err, ErrAdminExists) || errors.Is(err, ErrUserInactive) {
+		t.Errorf("an admin and an inactive user: err = %v, want only ErrAdminExists", err)
+	}
+	gone := newFakeAdminTx(adminTestEmail)
+	gone.login, gone.userExists, gone.userInactive = false, true, true
+	if err := createFirstAdmin(context.Background(), gone, validAdminInput(), &bytes.Buffer{}); !errors.Is(err, ErrAuthUserMissing) {
+		t.Errorf("no login and an inactive user: err = %v, want ErrAuthUserMissing", err)
+	}
+}
+
+// The same refusal when the row is not there at the first read and lands (from another writer) before our insert: the insert finds it, the command reads it again and refuses an
+// inactive one. Nothing has been written at that point, so the refusal leaves the database as it was. The control: the same race with an active row goes through.
+func TestCreateFirstAdmin_ARowThatAppearsBetweenTheReadAndTheInsertIsJudgedToo(t *testing.T) {
+	f := newFakeAdminTx(adminTestEmail)
+	f.appearsOnInsert, f.userEmail, f.userInactive = true, adminTestEmail, true
+	var out bytes.Buffer
+	err := createFirstAdmin(context.Background(), f, validAdminInput(), &out)
+	if !errors.Is(err, ErrUserInactive) {
+		t.Fatalf("err = %v, want ErrUserInactive", err)
+	}
+	if got, want := f.sequence(), "as-owner > lock-admins > admin-exists > as-migrator > auth-email > as-owner > user-state > insert-user > user-state"; got != want {
+		t.Errorf("calls:\n got  %s\n want %s", got, want)
+	}
+	if f.wroteSomething() || out.Len() != 0 {
+		t.Errorf("a refused command wrote %+v or printed %q", f, out.String())
+	}
+
+	c := newFakeAdminTx(adminTestEmail)
+	c.appearsOnInsert, c.userEmail = true, "old@example.com"
+	out.Reset()
+	if err := createFirstAdmin(context.Background(), c, validAdminInput(), &out); err != nil || !c.committed || len(c.userWrites) != 0 {
+		t.Fatalf("control: err = %v, committed = %v, user writes %v; want the active row that appeared to be used as it is", err, c.committed, c.userWrites)
+	}
+	if !strings.Contains(out.String(), "note") || !strings.Contains(out.String(), "old@example.com") {
+		t.Errorf("control: output %q lacks the note about the other stored email", out.String())
+	}
+}
+
 // A database error at ANY step stops the command: the error comes back (so the command exits 1), nothing later runs, nothing is
 // committed and above all nothing is printed, because the success line is only ever printed after the commit.
 func TestCreateFirstAdmin_ADatabaseErrorAtAnyStepStopsItWithNothingPrinted(t *testing.T) {
-	steps := []string{"as-owner", "lock-admins", "admin-exists", "as-migrator", "auth-email", "insert-user", "user-email", "insert-admin", "commit"}
+	steps := []string{"as-owner", "lock-admins", "admin-exists", "as-migrator", "auth-email", "user-state", "insert-user", "insert-admin", "commit"}
 	for _, step := range steps {
 		f := newFakeAdminTx(adminTestEmail)
-		f.userExists, f.userEmail = step == "user-email", "old@example.com" // the user-email step only runs for an existing user
 		f.failAt, f.failErr = step, errors.New("boom at "+step)
 		var out bytes.Buffer
 		err := createFirstAdmin(context.Background(), f, validAdminInput(), &out)
@@ -555,7 +646,7 @@ func TestMigratorReference_DocumentsEveryCommandAndCreateFirstAdmin(t *testing.T
 	if missing := missingCommands(md, cmds); len(missing) != 0 {
 		t.Errorf("%s has no Commands-table row for %v", referencePath, missing)
 	}
-	for _, want := range []string{FlagAuthUserID, FlagDisplayName, "SHARE ROW EXCLUSIVE", "platform_owner", "Authentication > Users", "Phase 7", "exit"} {
+	for _, want := range []string{FlagAuthUserID, FlagDisplayName, "SHARE ROW EXCLUSIVE", "platform_owner", "Authentication > Users", "Phase 7", "exit", "is_active", "reactivate"} {
 		if !strings.Contains(md, want) {
 			t.Errorf("%s does not mention %q: the create-first-admin section is incomplete", referencePath, want)
 		}

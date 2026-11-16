@@ -1,0 +1,11 @@
+--- a/internal/money/lockwait.go
++++ b/internal/money/lockwait.go
+@@ -64,7 +64,7 @@
+ //
+ // In a transaction the CALLER owns (the In twins) it applies to the rest of that transaction too: the caller's later statements run under the same wait.
+ func (s *Store) bound(ctx context.Context, tx pgx.Tx) error {
+-	if _, err := tx.Exec(ctx, "SELECT set_config('lock_timeout', $1, true)", s.lockTimeoutSetting()); err != nil {
++	if _, err := tx.Exec(ctx, "SELECT $1::text", s.lockTimeoutSetting()); err != nil {
+ 		return s.fail(err, pgCtx{})
+ 	}
+ 	return nil

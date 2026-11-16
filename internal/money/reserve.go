@@ -45,6 +45,8 @@ func (s *Store) Reserve(ctx context.Context, req ReserveReq) (ReserveResult, err
 // ReserveIn is Reserve inside a transaction the caller owns (the job engine confirms a job in its own transaction). It does NOT change the job's status.
 //
 // The steps, in this order, all in the caller's transaction:
+//  0. SET LOCAL lock_timeout to the store's wait (bound): every wait below ends with ErrLockTimeout once it has lasted that long, and the setting stays on the caller's
+//     transaction until it ends;
 //  1. read the job (it must exist and belong to a metered module);
 //  2. take the (user, module) advisory lock;
 //  3. SELECT ... FROM platform.jobs WHERE id = $1 FOR UPDATE: the job row is ours until the transaction ends;
@@ -68,11 +70,14 @@ func (s *Store) ReserveIn(ctx context.Context, tx pgx.Tx, req ReserveReq) (Reser
 }
 
 func (s *Store) reserve(ctx context.Context, tx pgx.Tx, req ReserveReq) (ReserveResult, error) {
+	if err := s.bound(ctx, tx); err != nil {
+		return ReserveResult{}, err
+	}
 	job, err := s.meteredJob(ctx, tx, req.JobID)
 	if err != nil {
 		return ReserveResult{}, err
 	}
-	if err := s.lock(ctx, tx, job.user, job.module); err != nil {
+	if err := s.lockUser(ctx, tx, job.user, job.module); err != nil {
 		return ReserveResult{}, err
 	}
 

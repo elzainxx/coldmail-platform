@@ -1,0 +1,13 @@
+diff --git a/services/control/internal/platformapi/campaign_report.go b/services/control/internal/platformapi/campaign_report.go
+index fc893b8..27668f9 100644
+--- a/services/control/internal/platformapi/campaign_report.go
++++ b/services/control/internal/platformapi/campaign_report.go
+@@ -353,7 +353,7 @@ func (s *Server) campaignItems(ctx context.Context, campaignID, userID string, c
+ 
+ 	var nextCursor *string
+ 	if len(items) > pageSize {
+-		anchor := keys[pageSize-1] // the last row KEPT, not the lookahead row at keys[pageSize]
++		anchor := keys[pageSize] // FAULT: the LOOKAHEAD row
+ 		items = items[:pageSize]
+ 		c := encodeReportCursor(anchor.CreatedAt, anchor.ID)
+ 		nextCursor = &c

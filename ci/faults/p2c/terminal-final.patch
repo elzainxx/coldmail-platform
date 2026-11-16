@@ -1,0 +1,10 @@
+--- a/db/migrations/platform_0007_snapshot_and_terminal_states.up.sql
++++ b/db/migrations/platform_0007_snapshot_and_terminal_states.up.sql
+@@ -61,7 +61,5 @@
+ $fn$;
+ COMMENT ON FUNCTION platform.jobs_terminal_is_final() IS 'SECURITY INVOKER: raises 23001 (constraint jobs_terminal_is_final) when an UPDATE changes the status of a job that is succeeded, failed or cancelled. An UPDATE that leaves the status as it is passes.';
+ REVOKE ALL ON FUNCTION platform.jobs_terminal_is_final() FROM PUBLIC;
+-CREATE TRIGGER jobs_terminal_is_final BEFORE UPDATE ON platform.jobs FOR EACH ROW EXECUTE FUNCTION platform.jobs_terminal_is_final();
+-COMMENT ON TRIGGER jobs_terminal_is_final ON platform.jobs IS 'D4 (open decision 11): a succeeded, failed or cancelled job never changes status again. It fires after jobs_guard (alphabetical), which keeps owning the immutable columns and frozen_settings. The only barrier: disabling this trigger lets a terminal job move (proved by a test).';
+ 
+ INSERT INTO platform.schema_migrations (version) VALUES ('0007');

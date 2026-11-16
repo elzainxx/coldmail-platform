@@ -473,10 +473,16 @@ func TestMoneyStore_ReserveRefusals(t *testing.T) {
 
 	_, err := e.store.Reserve(ctx, money.ReserveReq{JobID: mnyNobody, Units: 1})
 	mnyIs(t, "a job that does not exist", err, money.ErrJobNotFound)
+	// A terminal job is final in the database since platform_0007: the four statuses a job passes through are tried on `job` itself (it moves on, and the control below moves it back to draft), and each
+	// of the three terminal statuses on a job of its own that is made terminal once and never moved again.
 	for _, status := range []string{"scheduled", "running", "paused", "cancelling", "succeeded", "failed", "cancelled"} {
-		e.setStatus(job, status)
+		subject := job
+		if status == "succeeded" || status == "failed" || status == "cancelled" {
+			subject = e.newJob(mnyUserA, "m1")
+		}
+		e.setStatus(subject, status)
 		before = e.state()
-		_, err := e.store.Reserve(ctx, money.ReserveReq{JobID: job, Units: 1})
+		_, err := e.store.Reserve(ctx, money.ReserveReq{JobID: subject, Units: 1})
 		mnyIs(t, "a reserve for a "+status+" job", err, money.ErrJobState)
 		if !strings.Contains(err.Error(), status) {
 			t.Fatalf("the error for a %s job does not name the status: %v", status, err)

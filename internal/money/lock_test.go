@@ -90,3 +90,31 @@ func TestLockKey_OrderOfThePairMatters(t *testing.T) {
 		t.Fatal("lockKey(ab, c) == lockKey(a, bc): the separator does not separate")
 	}
 }
+
+// A per-user key is never one of the platform's own constant keys (the migrator's and the loop leader's): bandKey steps over them. The hash is fed directly, because no user id is known whose
+// hash lands there (one chance in 10^9 each), so the property is proved on the function that makes it true.
+func TestBandKey_NeverEqualsAReservedConstantKey(t *testing.T) {
+	for _, reserved := range []int64{7_100_000_001, 7_200_000_002} {
+		h := uint64(reserved - 7_000_000_000) // h mod 10^9 lands exactly on the reserved key
+		if got := bandKey(h); got == reserved {
+			t.Errorf("bandKey(%d) = %d is the reserved constant key", h, got)
+		} else if got != reserved+1 {
+			t.Errorf("bandKey(%d) = %d, want the next number %d", h, got, reserved+1)
+		}
+		if got := bandKey(h + 1_000_000_000*7); got == reserved { // the same residue with a different quotient
+			t.Errorf("bandKey(%d) = %d is the reserved constant key", h+7_000_000_000, got)
+		}
+		// control: its neighbours are not touched, so the step is not a blanket shift
+		if got := bandKey(h - 1); got != reserved-1 {
+			t.Errorf("bandKey(%d) = %d, want %d (a neighbour is unchanged)", h-1, got, reserved-1)
+		}
+		if got := bandKey(h + 1); got != reserved+1 {
+			t.Errorf("bandKey(%d) = %d, want %d (a neighbour is unchanged)", h+1, got, reserved+1)
+		}
+	}
+	for _, h := range []uint64{0, 1, 999_999_999, 1_000_000_000, 14695981039346656037} {
+		if got, want := bandKey(h), 7_000_000_000+int64(h%1_000_000_000); got != want {
+			t.Errorf("bandKey(%d) = %d, want %d (an ordinary hash is unchanged)", h, got, want)
+		}
+	}
+}

@@ -117,7 +117,10 @@ type entryRow struct {
 
 // writeEntry is the whole of a grant or an adjustment, inside the caller's transaction.
 func (s *Store) writeEntry(ctx context.Context, tx pgx.Tx, r entryReq) (Entry, error) {
-	if err := s.lock(ctx, tx, r.userID, r.module); err != nil {
+	if err := s.bound(ctx, tx); err != nil {
+		return Entry{}, err
+	}
+	if err := s.lockUser(ctx, tx, r.userID, r.module); err != nil {
 		return Entry{}, err
 	}
 	var c pgCtx

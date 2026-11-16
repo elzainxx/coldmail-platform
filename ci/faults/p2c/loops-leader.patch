@@ -1,0 +1,12 @@
+--- a/internal/entitlements/leader.go
++++ b/internal/entitlements/leader.go
+@@ -307,6 +307,9 @@
+ // A failure never panics and never ends a loop: a leader whose session fails drops the leadership (once, at warn) and answers false; the next tick tries again as a standby would. A
+ // ctx that is cancelled answers false and logs nothing, since a shutdown is not a failure.
+ func (l *Leader) Ensure(ctx context.Context) bool {
++	if l != nil { // FAULT: the leader election is removed, so every instance runs the loops
++		return true
++	}
+ 	l.op.Lock()
+ 	defer l.op.Unlock()
+ 	if ctx.Err() != nil {

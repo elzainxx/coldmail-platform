@@ -1,0 +1,8 @@
+# Close-out E1: a settle and an adjustment on one (user, module) are serialised by the store's advisory lock whichever goes first. The fault turns the lock statement into a no-op SELECT: with the test holding the balance row, the second call no longer waits at the advisory lock behind the first, so the proof of the interleave fails. (A settle moves reserved credits and an adjustment available ones, so with no lock the books stay right: the red here is the missing serialisation, not corruption; the corruption an adjustment could do is shown by the control TestCloseoutMoney_ControlAnAdjustmentThatTakesReservedCreditsIsCaught.)
+GATE=interleave-settle-adjust
+TARGET=platform
+SETUP=
+STEP=go test TestCloseoutMoney_SettleVsAdjust_InterleavedAtTheBalanceWrite (database integration test, real Postgres)
+CMD=H_PG_ADMIN_DSN="$FAULT_ADMIN_DSN" bash tests/harness/run-db-tests.sh '^TestCloseoutMoney_SettleVsAdjust_InterleavedAtTheBalanceWrite$'
+MESSAGE=--- FAIL: TestCloseoutMoney_SettleVsAdjust_InterleavedAtTheBalanceWrite
+MESSAGE=NOT SERIALISED

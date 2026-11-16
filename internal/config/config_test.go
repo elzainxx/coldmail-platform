@@ -107,6 +107,10 @@ func TestLoad_DefaultsAreTheDocumentedOnes(t *testing.T) {
 		"PLATFORM_M3_RECONCILE_INTERVAL_SEC":       "5",
 		"PLATFORM_M3_REVERIFY_INTERVAL_SEC":        "300",
 		"PLATFORM_M3_REQUEST_TIMEOUT_SEC":          "10",
+
+		"PLATFORM_MONEY_LOCK_TIMEOUT_MS": "10000",
+
+		"PLATFORM_INSTANCE_ID": "(hostname)",
 	}
 	got := map[string]string{}
 	for _, v := range Vars() {
@@ -130,6 +134,9 @@ func TestLoad_DefaultsAreTheDocumentedOnes(t *testing.T) {
 	if cfg.M3URL != goodM3URL || cfg.M3AdminToken.Reveal() != goodM3Operator || cfg.EntitlementExpireInterval != 30*time.Second ||
 		cfg.M3ReconcileInterval != 5*time.Second || cfg.M3ReverifyInterval != 300*time.Second || cfg.M3RequestTimeout != 10*time.Second {
 		t.Fatalf("the module 3 defaults did not reach the Config: %v", cfg)
+	}
+	if cfg.MoneyLockTimeout != 10*time.Second {
+		t.Fatalf("the money lock timeout default did not reach the Config: %v", cfg)
 	}
 
 	// Paired control: a blank value means "unset", so an environment that spells every default out loud
@@ -253,6 +260,10 @@ var alternatives = map[string]string{
 	VarM3ReconcileIntervalSec:       "9",
 	VarM3ReverifyIntervalSec:        "600",
 	VarM3RequestTimeoutSec:          "25",
+
+	VarMoneyLockTimeoutMS: "2500",
+
+	VarInstanceID: "platform-2",
 }
 
 func TestLoad_EveryVarChangesTheConfig(t *testing.T) {
@@ -351,6 +362,13 @@ func TestLoad_InvalidValuesNameTheVariableAndNeverEchoTheValue(t *testing.T) {
 		{VarM3RequestTimeoutSec, "0", "between 1 and 120"},
 		{VarM3RequestTimeoutSec, "121", "between 1 and 120"},
 		{VarM3RequestTimeoutSec, "-3", "between 1 and 120"},
+		{VarMoneyLockTimeoutMS, "forever-XYZ123", "integer"},
+		{VarMoneyLockTimeoutMS, "2.5", "integer"},
+		{VarMoneyLockTimeoutMS, "0", "between 100 and 600000"}, // 0 would be "wait for ever" to PostgreSQL
+		{VarMoneyLockTimeoutMS, "-1", "between 100 and 600000"},
+		{VarMoneyLockTimeoutMS, "99", "between 100 and 600000"},
+		{VarMoneyLockTimeoutMS, "600001", "between 100 and 600000"},
+		{VarMoneyLockTimeoutMS, "99999999999999999999", "integer"},
 		{VarM3AdminToken, "two words-XYZ123", "printable ASCII"},
 		{VarM3AdminToken, "café-key-XYZ123", "printable ASCII"},
 		{VarM3AdminToken, "inner\ttab-XYZ123", "printable ASCII"},
@@ -394,9 +412,16 @@ func TestLoad_AcceptsTheEdgesOfEveryRange(t *testing.T) {
 		VarM3ReconcileIntervalSec:       "1",
 		VarM3ReverifyIntervalSec:        "10",
 		VarM3RequestTimeoutSec:          "120",
+		VarMoneyLockTimeoutMS:           "100",
 	}))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if cfg.MoneyLockTimeout != 100*time.Millisecond {
+		t.Fatalf("the lower edge of the money lock timeout loaded wrongly: %v", cfg)
+	}
+	if top, err := Load(envOf(with(base(), VarMoneyLockTimeoutMS, "600000"))); err != nil || top.MoneyLockTimeout != 10*time.Minute {
+		t.Fatalf("the upper edge of the money lock timeout was refused or loaded wrongly: %v (%v)", top, err)
 	}
 	if cfg.HTTPAddr != "127.0.0.1:0" || cfg.LogLevel != "warn" || cfg.ShutdownTimeout != time.Hour ||
 		cfg.ReadyzTimeout != time.Millisecond || cfg.ReadHeaderTimeout != time.Second {
@@ -529,11 +554,12 @@ func TestLoad_ErrorsNeverContainTheSecret(t *testing.T) {
 		VarM3ReconcileIntervalSec:       "nope",
 		VarM3ReverifyIntervalSec:        "nope",
 		VarM3RequestTimeoutSec:          "nope",
+		VarMoneyLockTimeoutMS:           "nope",
 	}
 	_, err := Load(envOf(bad))
 	var ce *Error
-	if !errors.As(err, &ce) || len(ce.Problems) != 10 {
-		t.Fatalf("control failed: expected ten problems, got %v", err)
+	if !errors.As(err, &ce) || len(ce.Problems) != 11 {
+		t.Fatalf("control failed: expected eleven problems, got %v", err)
 	}
 	for _, c := range []string{canary, m3Canary} {
 		if strings.Contains(err.Error(), c) || strings.Contains(fmt.Sprintf("%+v %#v %q", ce, ce, err), c) {

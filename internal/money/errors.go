@@ -3,6 +3,7 @@ package money
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -45,7 +46,40 @@ var (
 	// ErrConflict: a write lost to an earlier or concurrent one that holds the same database key (a second reserve for the job, a second charge for the
 	// item, a second release). The store's lock makes this unreachable through the store; it is the database's second wall, reported by name.
 	ErrConflict = errors.New("an earlier or concurrent write holds the same key")
+	// ErrLockTimeout: the operation waited for the (user, module) lock, or for a row another transaction held, for the store's configured wait
+	// (PLATFORM_MONEY_LOCK_TIMEOUT_MS, WithLockTimeout) and gave up. A stuck holder can no longer hold every other operation on that balance for ever. Test it with
+	// errors.Is; errors.As into a *LockTimeoutError says whose credits and how long it waited. A pool method has written nothing when it returns this (the transaction
+	// was rolled back); a caller of an In twin rolls its own transaction back like for any error. Retrying is safe: every money write is idempotent per business key.
+	ErrLockTimeout = errors.New("timed out waiting for another operation on the same credits")
 )
+
+// LockTimeoutError is the detail of an ErrLockTimeout: whose money the operation was waiting for and how long it waited. User and Module are empty when the wait that
+// ran out was for a lock other than the (user, module) lock (a row another transaction held); Wait is the store's configured wait either way. It matches ErrLockTimeout.
+// Its text names no SQL, no lock key and no connection detail.
+type LockTimeoutError struct {
+	User   string
+	Module string
+	Wait   time.Duration
+}
+
+func (e *LockTimeoutError) Error() string {
+	if e.User == "" {
+		return fmt.Sprintf("gave up after %s waiting for another operation that holds the same credits: try again", e.Wait)
+	}
+	return fmt.Sprintf("gave up after %s waiting for another operation on the credits of user %s on module %s: try again", e.Wait, e.User, e.Module)
+}
+
+// Is makes errors.Is(err, ErrLockTimeout) true for every LockTimeoutError.
+func (e *LockTimeoutError) Is(target error) bool { return target == ErrLockTimeout }
+
+// sqlstateLockNotAvailable is PostgreSQL's lock_not_available: what a statement fails with when lock_timeout runs out (and what NOWAIT raises).
+const sqlstateLockNotAvailable = "55P03"
+
+// isLockTimeout reports whether err is, or wraps, the database's lock_not_available.
+func isLockTimeout(err error) bool {
+	var pe *pgconn.PgError
+	return errors.As(err, &pe) && pe.Code == sqlstateLockNotAvailable
+}
 
 // ErrInsufficientCredits: the user's available credits do not cover what was asked. Shortfall = Needed - Available. It is a struct (not a sentinel):
 // test it with errors.As into a money.ErrInsufficientCredits VALUE. Raced is true only when the store's own read said the credits were there and the
@@ -113,7 +147,7 @@ func mapPgError(err error, c pgCtx) error {
 		return invalid("user_id", "the system user holds no credits (constraint ledger_not_the_system_user)")
 	case "ledger_one_charge_per_item", "ledger_one_reserve_per_job", "ledger_one_release_per_reserve", "ledger_idempotency_key", "release_is_the_remainder", "job_unit_prices_pk":
 		return fmt.Errorf("%w (constraint %s)", ErrConflict, pe.ConstraintName)
-	case "reserve_at_the_dearest_price", "reserve_needs_the_complete_snapshot":
+	case "reserve_at_the_dearest_price", "reserve_needs_the_complete_snapshot", "snapshot_equals_unit_costs":
 		return fmt.Errorf("%w (constraint %s)", ErrSnapshot, pe.ConstraintName)
 	}
 	return nil

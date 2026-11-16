@@ -1,0 +1,11 @@
+--- a/internal/money/money.go
++++ b/internal/money/money.go
+@@ -114,7 +114,7 @@
+ 
+ // lock takes the (user, module) advisory lock for the rest of the transaction. It waits for any other holder, for at most the store's lock timeout (bound).
+ func (s *Store) lock(ctx context.Context, tx pgx.Tx, user, module string) error {
+-	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", lockKey(user, module)); err != nil {
++	if _, err := tx.Exec(ctx, "SELECT $1::bigint", lockKey(user, module)); err != nil {
+ 		return s.fail(err, pgCtx{})
+ 	}
+ 	return nil

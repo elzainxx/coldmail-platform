@@ -93,6 +93,8 @@ var chainRelations = map[string][]string{
 	"0004": {"listable_users"},
 	"0005": {"reserves"},
 	"0006": {"m3_sync"},
+	// platform_0007 adds no relation: two trigger functions and their two triggers (the snapshot price check on job_unit_prices, the terminal-state rule on jobs)
+	"0007": {},
 }
 
 // relationsThrough is the sorted union of what the listed versions add.
@@ -133,6 +135,10 @@ func downStepBefore(t *testing.T, c *pgx.Conn, v string) {
 	t.Helper()
 	when := "before down " + v
 	switch v {
+	case "0007":
+		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007"), when)
+		snapshotTerminalObjects(t, c, true, when)
+		entitlementFlowObjects(t, c, true, when) // the migration below is whole
 	case "0006":
 		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006"), when)
 		entitlementFlowObjects(t, c, true, when)
@@ -170,6 +176,13 @@ func downStepAfter(t *testing.T, c *pgx.Conn, v string) {
 	t.Helper()
 	when := "after down " + v
 	switch v {
+	case "0007":
+		// the two functions and the two triggers are gone (jobs_guard, which 0007 never replaced, is still the guard of 0002), the forged price is accepted again and a succeeded job moves back; everything of
+		// 0006 and below is still there
+		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006"), when)
+		snapshotTerminalObjects(t, c, false, when)
+		entitlementFlowObjects(t, c, true, when)
+		moneyCoreObjects(t, c, true, when)
 	case "0006":
 		// the delivery table, its writer, the entitlement writer, the date column are gone; the privileges of the application role on the entitlements are back; everything of 0005 and below is still there
 		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005"), when)
@@ -485,7 +498,7 @@ func TestRunnerLifecycle(t *testing.T) {
 
 	// The executable expectation of the migration chain. scripts/check-migrations.sh reads this literal and fails when the
 	// newest migration is not named in it, so a migration cannot be added without extending this test.
-	wantChain := []string{"0000", "0001", "0002", "0003", "0004", "0005", "0006"}
+	wantChain := []string{"0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007"}
 
 	dir := repoMigrationsDir(t)
 	if onDisk := chainOnDisk(t, dir); !sameStrings(onDisk, wantChain) {

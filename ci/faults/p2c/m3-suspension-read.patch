@@ -1,0 +1,14 @@
+diff --git a/services/control/internal/adminapi/user_suspend.go b/services/control/internal/adminapi/user_suspend.go
+index bfb7523..e960834 100644
+--- a/services/control/internal/adminapi/user_suspend.go
++++ b/services/control/internal/adminapi/user_suspend.go
+@@ -51,8 +51,7 @@ const suspendUpsertSQL = `INSERT INTO send_byo.user_suspensions (user_id, suspen
+ // in the same UPDATE that clears the flag, and its `suspended = TRUE` guard makes a not-suspended
+ // call a zero-row no-op that leaves the counter alone.
+ const unsuspendSQL = `UPDATE send_byo.user_suspensions
+-    SET suspended = FALSE, reason = NULL, reinstated_at = NOW(), updated_at = NOW(),
+-        version = version + 1
++    SET suspended = FALSE, reason = NULL, reinstated_at = NOW(), updated_at = NOW()
+   WHERE user_id = $1 AND suspended = TRUE`
+ 
+ // reinstateCampaignsSQL is §7's self-referential reinstate UPDATE, verbatim — named so T14

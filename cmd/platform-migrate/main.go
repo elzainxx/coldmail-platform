@@ -3,8 +3,8 @@
 // this file parses the command line, loads the configuration from the environment and maps the outcome to an exit status:
 //
 //	0  success
-//	1  runtime error (the database, a migration file, a lock timeout; create-first-admin refused because an admin exists
-//	   or the Supabase login does not)
+//	1  runtime error (the database, a migration file, a lock timeout; create-first-admin refused because an admin exists,
+//	   the Supabase login does not, or the login's platform user is inactive)
 //	2  usage or configuration error (an unknown command, a missing or invalid variable or flag, down while forbidden)
 //
 // No message it prints carries the connection string or the app password.

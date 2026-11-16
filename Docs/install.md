@@ -32,7 +32,7 @@ An admin is a Supabase login with a row in `platform.admins`. Create the login f
 platform-migrate create-first-admin --auth-user-id <the login's id> --display-name "<name>"
 ```
 
-It creates the `public.users` row and the `platform.admins` row in one transaction, as the privileged migrating identity, and **refuses when any admin already exists** (admin management is built in Phase 7; until then more admins are added out of band by the owner). It refuses an unknown login, a blank name and the all-zero system user.
+It creates the `public.users` row and the `platform.admins` row in one transaction, as the privileged migrating identity, and **refuses when any admin already exists** (admin management is built in Phase 7; until then more admins are added out of band by the owner). It refuses an unknown login, a blank name and the all-zero system user, and it refuses a login whose platform user already exists and is **inactive** (reactivate that user first, or use a different login; the command never reactivates anyone).
 
 ## Step 5 — remove the platform's schemas from the exposed API (owner action, Supabase dashboard)
 
@@ -50,6 +50,28 @@ In Supabase → Settings → API → *Exposed schemas*, **remove `public` (and n
 - **A scheduled job holds the one-active-job slot** for its module and user.
 - **A disabled admin can no longer act**: the database refuses one in the ledger, the audit log, M3 entitlements and unit costs.
 
+## Running more than one instance
+
+The platform may run as several instances against one database (a rolling restart, a second node for availability). **Every instance serves HTTP; the two background loops run in exactly one of them.** The loops are the **expiry** of module 3 entitlements and the **reconcile** with module 3's suspend route. The instance that runs them is the **leader**; the others are **standbys**: they idle both loops (no pass, no call to module 3, no write), ask again at every tick, and take over when the leader is gone.
+
+- **How the leader is chosen.** The leader is the instance that holds one PostgreSQL *session-level advisory lock*, key `7200000002` (in the platform's `7_xxx_xxx_xxx` band; the migrator holds `7100000001` while it runs). It is taken with `pg_try_advisory_lock`, which never waits, on **one dedicated connection** that the leader keeps for as long as it leads, so **one connection of the pool is checked out for that** (the pool's default is at least four). PostgreSQL frees a session lock the moment its session ends: a leader that crashes, is killed, loses its connection or is stopped hands the lock on without any lease, heartbeat or clock. A planned stop (SIGTERM) unlocks explicitly and returns the connection before the pool closes, so a standby takes over at its next tick instead of when the server notices a closed socket.
+- **How long a takeover takes.** One tick of the standby's loops: the shorter of `PLATFORM_ENTITLEMENT_EXPIRE_INTERVAL_SEC` (default 30) and `PLATFORM_M3_RECONCILE_INTERVAL_SEC` (default 5), so about 5 s by default. The new leader's first pass of each loop is at that loop's own next tick.
+- **Name each instance.** Set `PLATFORM_INSTANCE_ID` to a different value on every instance (1 to 63 printable ASCII characters; the default is the host name, which is already distinct per container). The leader's lock session carries it as its `application_name`, and the election's log lines carry it as `instance`.
+- **How to see the leader.** In SQL, as a role that can read `pg_stat_activity` (an admin of the database; exactly one row means one leader):
+
+```
+select a.application_name as leader, a.pid, a.backend_start
+from pg_locks l join pg_stat_activity a on a.pid = l.pid
+where l.locktype = 'advisory' and l.granted and l.objsubid = 1
+  and ((l.classid::bigint << 32) | l.objid::bigint) = 7200000002;
+```
+
+  No row means no instance can reach the database (or all are starting). In the logs: `loops: this instance is now the leader`, `loops: another instance holds the leader lock; ...` (the standby, once per stretch) and `loops: this instance lost the leader lock; ...` (a leader whose session failed: logged once, at warn; it tries again at the next tick, like a standby).
+- **The connection string must keep one backend for the whole session.** Use the direct connection or a **session-mode** pooler for `PLATFORM_DATABASE_URL`, not a transaction-mode pooler (the same reason the migrator needs the direct connection: [`config-reference.md`](config-reference.md)). Behind a transaction pooler the lock would be taken on a backend the connection does not keep; the leader checks every tick that its own backend holds the lock and gives the leadership up when it does not, but the lock could stay held on the pooler's server connection and no instance could lead until that connection closes.
+- **What the lock does not promise.** A pass that is already running when its instance loses the lock runs to its end (bounded by its own timeout) while the next leader may have started; the ledger's unique keys (an expiry is one `m3_expire` row per user) and the reconciler's compare-and-set on the wanted version, not the lock, are what keep that safe. A leader that is cut off from the database but not killed keeps its server-side session, and so the lock, until the server decides the peer is gone (TCP keepalive): nothing runs twice, a takeover is late.
+- **No collision of keys.** The money store and the entitlement writers take a transaction-level lock per (user, module) hashed into the same band; the hash steps over the platform's own constant keys (this lock and the migrator's), so a user's key never equals the leader's and the leader's session lock can never make a user's writes wait (a unit test in `internal/money` and one in `internal/entitlements` pin it).
+- **What CI proves.** `TestLeader_*` (database tests, two real instances over one database: exactly one runs passes, the server shows exactly one granted lock held by the leader's `application_name`, a terminated leader session is replaced within ten seconds, twenty startup races never give two leaders, a stopped leader returns its connection) and the harness stage 9c in `tests/harness/run.sh` (two platform containers, the leader killed, the killed one restarted as a standby); the fault proof `loops-leader` shows the first of these red when the election is removed.
+
 ## Not checked
 
-CI does not run GoTrue (no login is ever performed), the pooler (Supavisor), PostgREST or a hosted project's own grants and extensions, so step 1 and step 5 are verified by the owner, not by a runner; the `supabase` workflow measures migrations only, statement by statement, and the `harness` workflow measures the running stack on the same image.
+CI does not run GoTrue (no login is ever performed), the pooler (Supavisor), PostgREST or a hosted project's own grants and extensions, so step 1 and step 5 are verified by the owner, not by a runner; the `supabase` workflow measures migrations only, statement by statement, and the `harness` workflow measures the running stack on the same image. The leader election is exercised by two platform instances and by killing one, not under a network partition and not behind a transaction-mode pooler.

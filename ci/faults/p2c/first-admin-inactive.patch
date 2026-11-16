@@ -1,0 +1,11 @@
+--- a/internal/migrate/firstadmin.go
++++ b/internal/migrate/firstadmin.go
+@@ -238,7 +238,7 @@
+ 	if err != nil {
+ 		return err
+ 	}
+-	if seen && !prior.Active {
++	if false && seen && !prior.Active {
+ 		return &InactiveUserError{AuthUserID: in.AuthUserID}
+ 	}
+ 

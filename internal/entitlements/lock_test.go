@@ -56,3 +56,34 @@ func TestLockKey_ExportedKeyIsTheCanonicalM3Key(t *testing.T) {
 		t.Error("two users share a key in this sample: the key does not depend on the user")
 	}
 }
+
+// A per-user key is never one of the platform's own constant keys (the migrator's and the loop leader's): bandKey steps over them, so the leader's session lock can never make a user's writers wait.
+// The hash is fed directly, because no user id is known whose hash lands there (one chance in 10^9 each), so the property is proved on the function that makes it true.
+func TestBandKey_NeverEqualsAReservedConstantKey(t *testing.T) {
+	if len(reservedKeys) != 2 || reservedKeys[0] != 7_100_000_001 || reservedKeys[1] != LeaderLockKey {
+		t.Fatalf("reservedKeys = %v, want the migrator's 7100000001 and LeaderLockKey %d (internal/money carries the same two numbers)", reservedKeys, LeaderLockKey)
+	}
+	for _, reserved := range reservedKeys {
+		h := uint64(reserved - lockBand) // h mod 10^9 lands exactly on the reserved key
+		if got := bandKey(h); got == reserved {
+			t.Errorf("bandKey(%d) = %d is the reserved constant key", h, got)
+		} else if got != reserved+1 {
+			t.Errorf("bandKey(%d) = %d, want the next number %d", h, got, reserved+1)
+		}
+		if got := bandKey(h + 7*lockBandWidth); got == reserved {
+			t.Errorf("bandKey(%d) = %d is the reserved constant key", h+7*lockBandWidth, got)
+		}
+		// control: its neighbours are not touched, so the step is not a blanket shift
+		if got := bandKey(h - 1); got != reserved-1 {
+			t.Errorf("bandKey(%d) = %d, want %d (a neighbour is unchanged)", h-1, got, reserved-1)
+		}
+		if got := bandKey(h + 1); got != reserved+1 {
+			t.Errorf("bandKey(%d) = %d, want %d (a neighbour is unchanged)", h+1, got, reserved+1)
+		}
+	}
+	for _, h := range []uint64{0, 1, 999_999_999, 1_000_000_000, 14695981039346656037} {
+		if got, want := bandKey(h), lockBand+int64(h%lockBandWidth); got != want {
+			t.Errorf("bandKey(%d) = %d, want %d (an ordinary hash is unchanged)", h, got, want)
+		}
+	}
+}

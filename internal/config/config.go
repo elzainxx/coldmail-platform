@@ -45,6 +45,12 @@ const (
 	VarM3ReconcileIntervalSec       = "PLATFORM_M3_RECONCILE_INTERVAL_SEC"
 	VarM3ReverifyIntervalSec        = "PLATFORM_M3_REVERIFY_INTERVAL_SEC"
 	VarM3RequestTimeoutSec          = "PLATFORM_M3_REQUEST_TIMEOUT_SEC"
+
+	// The money store (internal/money): how long one operation waits for another on the same credits (Phase 2 close-out D8).
+	VarMoneyLockTimeoutMS = "PLATFORM_MONEY_LOCK_TIMEOUT_MS"
+
+	// Which instance this is, when more than one platform instance runs (Phase 2 close-out D9): the name of the session that holds the leader lock of the loops.
+	VarInstanceID = "PLATFORM_INSTANCE_ID"
 )
 
 // Upper bounds on the integer dials. They are sanity guards, not tuning: they keep a typo (an extra digit,
@@ -58,6 +64,19 @@ const (
 	minReverifySec     = 10    // a re-check more often than this would be the reconcile loop's own job
 	maxReverifySec     = 86400 // one day
 	maxM3RequestSec    = 120
+
+	// The wait of a money operation for the lock of a balance. Below the floor a healthy operation that merely queued behind another would fail; above the ceiling a stuck holder
+	// is no better than no timeout (ten minutes). 0 is not an option at all: to PostgreSQL it means "wait for ever".
+	minMoneyLockMS = 100
+	maxMoneyLockMS = 600000
+
+	// The name of an instance is the application_name of a database session. PostgreSQL cuts that setting at 63 bytes and replaces every byte that is not printable ASCII, so a longer or
+	// wider name would be shown differently from what the operator wrote; it is refused instead.
+	maxInstanceIDBytes = 63
+
+	// instanceIDDefault is the documented default of VarInstanceID. It stands for "the host name": Load reads nothing but getenv, so the host name is resolved by the service (internal/entitlements
+	// ResolveInstanceID) and Config.InstanceID stays empty for it.
+	instanceIDDefault = "(hostname)"
 )
 
 // Var describes one environment variable. Vars() is the single source of truth for every dial.
@@ -98,6 +117,10 @@ func Vars() []Var {
 			Doc: fmt.Sprintf("Seconds after which a user already in the wanted state is checked against module 3 again (the same suspend or resume is sent once more; a changed answer means module 3 had drifted). Integer, %d to %d.", minReverifySec, maxReverifySec)},
 		{Name: VarM3RequestTimeoutSec, Default: "10",
 			Doc: fmt.Sprintf("Seconds one request to module 3's admin route may take before it counts as failed and is retried later. Integer, 1 to %d.", maxM3RequestSec)},
+		{Name: VarMoneyLockTimeoutMS, Default: "10000",
+			Doc: fmt.Sprintf("Milliseconds a money operation (grant, adjustment, reserve, settle, release) waits for another operation on the same user's credits of the same module before it gives up with a lock-timeout error and writes nothing. Integer, %d to %d.", minMoneyLockMS, maxMoneyLockMS)},
+		{Name: VarInstanceID, Default: instanceIDDefault,
+			Doc: fmt.Sprintf("Name of this platform instance, 1 to %d printable ASCII characters. With more than one instance running, only the one holding the leader lock runs the expiry and reconcile loops; the name is the application_name of the database session that holds it (pg_stat_activity) and appears in the loop log lines. Each instance needs its own. The default (hostname) means this machine's host name.", maxInstanceIDBytes)},
 	}
 }
 
@@ -118,6 +141,10 @@ type Config struct {
 	M3ReconcileInterval       time.Duration
 	M3ReverifyInterval        time.Duration
 	M3RequestTimeout          time.Duration
+
+	MoneyLockTimeout time.Duration // how long a money operation waits for the lock of a balance (internal/money WithLockTimeout)
+
+	InstanceID string // this instance's name; "" means the default, the host name, which the service resolves (internal/entitlements ResolveInstanceID)
 }
 
 // Problem is one invalid or missing variable. Reason is a fixed sentence: it never contains a value, so
@@ -230,6 +257,18 @@ func Load(getenv func(string) string) (Config, error) {
 			if n, ok := intIn(v.Name, raw, 1, maxM3RequestSec); ok {
 				c.M3RequestTimeout = time.Duration(n) * time.Second
 			}
+		case VarMoneyLockTimeoutMS:
+			if n, ok := intIn(v.Name, raw, minMoneyLockMS, maxMoneyLockMS); ok {
+				c.MoneyLockTimeout = time.Duration(n) * time.Millisecond
+			}
+		case VarInstanceID:
+			if raw != v.Default { // the default stands for the host name, which Load does not read (see instanceIDDefault)
+				if !validInstanceID(raw) {
+					fail(v.Name, fmt.Sprintf("must be 1 to %d printable ASCII characters (it is the application_name of a database session)", maxInstanceIDBytes))
+					continue
+				}
+				c.InstanceID = raw
+			}
 		default:
 			// A Var that Load has no case for would be read and then dropped: a dial with no consumer.
 			fail(v.Name, "is declared in Vars() but Load does not consume it (programming error)")
@@ -265,6 +304,20 @@ func validM3URL(s string) bool {
 	return u.Hostname() != ""
 }
 
+// validInstanceID accepts 1 to maxInstanceIDBytes bytes, each printable ASCII (0x20 to 0x7e): what PostgreSQL keeps of an application_name as it was written. The same rule is written out in
+// internal/entitlements (ValidInstanceID) for callers that do not come through Load; a test in each pins the same cases.
+func validInstanceID(s string) bool {
+	if len(s) < 1 || len(s) > maxInstanceIDBytes {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < 0x20 || s[i] > 0x7e {
+			return false
+		}
+	}
+	return true
+}
+
 // validBearerToken accepts printable ASCII without spaces: the characters an HTTP bearer credential can carry
 // (module 3's client refuses anything else, so a stray newline or a pasted non-ASCII character fails at
 // start-up with the variable named, not at the first request).
@@ -294,6 +347,8 @@ func (c Config) attrs() []slog.Attr {
 		slog.Duration("m3_reconcile_interval", c.M3ReconcileInterval),
 		slog.Duration("m3_reverify_interval", c.M3ReverifyInterval),
 		slog.Duration("m3_request_timeout", c.M3RequestTimeout),
+		slog.Duration("money_lock_timeout", c.MoneyLockTimeout),
+		slog.String("instance_id", c.InstanceID),
 	}
 }
 

@@ -13,6 +13,9 @@
 // SELECT ... FOR UPDATE the balance (they hold SELECT only, by design), which is why the serialiser is an advisory lock. An operation takes exactly ONE lock
 // (never two), so the store cannot deadlock with itself. The database's CHECKs and triggers stay as the second wall, and the tests prove each wall alone.
 //
+// WAITING IS BOUNDED. Every money transaction starts with SET LOCAL lock_timeout (lockwait.go), so a holder that never lets go costs a waiter at most the store's
+// lock timeout (PLATFORM_MONEY_LOCK_TIMEOUT_MS, WithLockTimeout, default DefaultLockTimeout) and the waiter gets ErrLockTimeout instead of waiting for ever.
+//
 // ISOLATION: the In functions assume the caller's transaction is READ COMMITTED (the pool methods begin one that is): "take the lock, then read" only reads the state
 // the lock holder left behind if every statement takes a fresh snapshot, which REPEATABLE READ and SERIALIZABLE do not.
 //
@@ -46,23 +49,44 @@ const (
 func lockKey(user, module string) int64 {
 	h := fnv.New64a()
 	_, _ = h.Write([]byte(user + "|" + module))
-	return lockBand + int64(h.Sum64()%lockSpan)
+	return bandKey(h.Sum64())
+}
+
+// reservedKeys are the platform's own constant keys in the band: the migrator's (internal/migrate) and the loop leader's (internal/entitlements), written out here and not imported (the packages
+// agree by construction, and a test in each pins the same numbers). No (user, module) key is ever equal to one of them, so a session lock held for a process's life can never make a user's writers wait.
+var reservedKeys = [...]int64{7_100_000_001, 7_200_000_002}
+
+// bandKey reduces a hash into the band and steps over the reserved constant keys (one step is enough: they are not adjacent). A hash that lands on a reserved key shares the key of the next number
+// with whoever else hashes there: two users sharing one lock only serialise, which is what the lock is for.
+func bandKey(h uint64) int64 {
+	k := lockBand + int64(h%lockSpan)
+	for _, r := range reservedKeys {
+		if k == r {
+			return k + 1
+		}
+	}
+	return k
 }
 
 // LockKey is lockKey, exported so a test (or an operator) can take the very lock the store takes and hold every operation on that balance behind it.
 func LockKey(user, module string) int64 { return lockKey(user, module) }
 
-// Store is the money store. It holds a pool and nothing else, so it is safe for concurrent use.
+// Store is the money store. It holds a pool and two settings and nothing else, so it is safe for concurrent use.
 type Store struct {
-	pool *pgxpool.Pool
-	dsn  string // kept only to scrub error text (dsnscrub); never logged, never returned
+	pool        *pgxpool.Pool
+	dsn         string        // kept only to scrub error text (dsnscrub); never logged, never returned
+	lockTimeout time.Duration // how long an operation waits for a lock; 0 (the zero value) means DefaultLockTimeout, never "no timeout" (see lockwait.go)
 }
 
-// New builds the store over the platform's pool (a login as platform_app).
-func New(pool *pgxpool.Pool) *Store {
+// New builds the store over the platform's pool (a login as platform_app). The options are WithLockTimeout (how long an operation waits for the lock of a balance); a store built
+// with none waits DefaultLockTimeout.
+func New(pool *pgxpool.Pool, opts ...Option) *Store {
 	s := &Store{pool: pool}
 	if pool != nil {
 		s.dsn = pool.Config().ConnString()
+	}
+	for _, o := range opts {
+		o(s)
 	}
 	return s
 }
@@ -94,13 +118,17 @@ func (s *Store) fail(err error, c pgCtx) error {
 	if err == nil {
 		return nil
 	}
+	if isLockTimeout(err) {
+		// lock_not_available has no constraint name to map by: the SQLSTATE is the contract. lockUser adds whose credits it was when it was the (user, module) lock.
+		return &LockTimeoutError{Wait: s.LockTimeout()}
+	}
 	if mapped := mapPgError(err, c); mapped != nil {
 		return mapped
 	}
 	return dsnscrub.Scrub(err, s.dsn)
 }
 
-// lock takes the (user, module) advisory lock for the rest of the transaction. It waits for any other holder.
+// lock takes the (user, module) advisory lock for the rest of the transaction. It waits for any other holder, for at most the store's lock timeout (bound).
 func (s *Store) lock(ctx context.Context, tx pgx.Tx, user, module string) error {
 	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", lockKey(user, module)); err != nil {
 		return s.fail(err, pgCtx{})

@@ -63,3 +63,10 @@ jobs:
           set -euo pipefail
           echo "commits visible to the scan: $(git rev-list --all --count)"
           "$RUNNER_TEMP/gl/gitleaks" detect --source . --log-opts="--all" --redact --no-banner
+
+      # The exceptions in .gitleaks.toml name COMMITS (a history scan cannot tell a placeholder from a secret). The tree itself must hold nothing of the kind: scan the checked-out files with no
+      # history, where a commit exception cannot apply. A literal that came back into the tree (the Phase 2 sink password was one) is a finding here, whatever the history says.
+      - name: Scan the head's files (no history): no excepted literal may remain in the tree
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/gl/gitleaks" detect --source . --no-git --redact --no-banner

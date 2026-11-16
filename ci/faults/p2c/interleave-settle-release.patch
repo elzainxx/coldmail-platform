@@ -1,0 +1,22 @@
+--- a/internal/money/money.go
++++ b/internal/money/money.go
+@@ -114,7 +114,7 @@
+ 
+ // lock takes the (user, module) advisory lock for the rest of the transaction. It waits for any other holder, for at most the store's lock timeout (bound).
+ func (s *Store) lock(ctx context.Context, tx pgx.Tx, user, module string) error {
+-	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", lockKey(user, module)); err != nil {
++	if _, err := tx.Exec(ctx, "SELECT $1::bigint", lockKey(user, module)); err != nil {
+ 		return s.fail(err, pgCtx{})
+ 	}
+ 	return nil
+--- a/db/migrations/platform_0005_money_core.up.sql
++++ b/db/migrations/platform_0005_money_core.up.sql
+@@ -92,7 +92,7 @@
+     CONSTRAINT reserves_reserved_positive CHECK (reserved >= 1),
+     CONSTRAINT reserves_charged_not_negative CHECK (charged >= 0),
+     CONSTRAINT reserves_released_not_negative CHECK (released >= 0),
+-    CONSTRAINT reserves_not_overspent CHECK (charged + released <= reserved)
++    CONSTRAINT reserves_not_overspent CHECK (charged + released <= reserved OR true)
+ );
+ COMMENT ON TABLE platform.reserves IS 'Per reserve: what was held (reserved), charged against it and released from it. NO ROLE WRITES THIS TABLE: the ledger trigger is its only writer, so charged + released <= reserved is a database fact (a job can never spend another job''s reservation).';
+ 

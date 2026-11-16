@@ -238,6 +238,81 @@ services:
       - ${H_MODULES_ROOT:?}/coldmail-send-byo/secrets/dev/certs/sink.key:/certs/sink.key:ro
     networks: [private]
 
+  # ── several lanes and a hostile sink (Phase 2 close-out, E2): two more workers and a CONTROLLABLE sink ────────────────────────────────────────────────────────────────
+  # m3-worker-2 and m3-worker-3 are m3-worker again (same build, same environment) with a worker id and token of their own: module 3 pushes one job per worker at a time, so a user with
+  # three lanes needs three workers. run.sh stage 5b seeds each one's send_byo.boxes row before it starts. Keep these two in step with m3-worker above.
+  m3-worker-2:
+    build: { context: "${H_MODULES_ROOT:?}/coldmail-send-byo", dockerfile: services/worker/Dockerfile }
+    environment:
+      CONTROL_HOST: m3
+      CONTROL_WORKERLINK_PORT: "8443"
+      CONTROL_STREAM_PORT: "8444"
+      CONTROL_SERVER_NAME: control
+      WORKER_ID: ${H_M3_WORKER2_ID:?}
+      WORKER_TOKEN: ${H_M3_WORKER2_TOKEN:?}
+      WORKER_HEARTBEAT_INTERVAL_SEC: "10"
+      WORKER_SMTP_TIMEOUT_MS: "30000"
+      MTLS_CLIENT_CERT: /secrets/mtls/worker.crt
+      MTLS_CLIENT_KEY: /secrets/mtls/worker.key
+      MTLS_CA_CERT: /secrets/mtls/ca.crt
+    volumes:
+      - ${H_MODULES_ROOT:?}/coldmail-send-byo/secrets/dev/certs/worker.crt:/secrets/mtls/worker.crt:ro
+      - ${H_MODULES_ROOT:?}/coldmail-send-byo/secrets/dev/certs/worker.key:/secrets/mtls/worker.key:ro
+      - ${H_MODULES_ROOT:?}/coldmail-send-byo/secrets/dev/certs/ca.crt:/secrets/mtls/ca.crt:ro
+    depends_on: { m3: { condition: service_healthy } }
+    networks: [private]
+    restart: "no"
+
+  m3-worker-3:
+    build: { context: "${H_MODULES_ROOT:?}/coldmail-send-byo", dockerfile: services/worker/Dockerfile }
+    environment:
+      CONTROL_HOST: m3
+      CONTROL_WORKERLINK_PORT: "8443"
+      CONTROL_STREAM_PORT: "8444"
+      CONTROL_SERVER_NAME: control
+      WORKER_ID: ${H_M3_WORKER3_ID:?}
+      WORKER_TOKEN: ${H_M3_WORKER3_TOKEN:?}
+      WORKER_HEARTBEAT_INTERVAL_SEC: "10"
+      WORKER_SMTP_TIMEOUT_MS: "30000"
+      MTLS_CLIENT_CERT: /secrets/mtls/worker.crt
+      MTLS_CLIENT_KEY: /secrets/mtls/worker.key
+      MTLS_CA_CERT: /secrets/mtls/ca.crt
+    volumes:
+      - ${H_MODULES_ROOT:?}/coldmail-send-byo/secrets/dev/certs/worker.crt:/secrets/mtls/worker.crt:ro
+      - ${H_MODULES_ROOT:?}/coldmail-send-byo/secrets/dev/certs/worker.key:/secrets/mtls/worker.key:ro
+      - ${H_MODULES_ROOT:?}/coldmail-send-byo/secrets/dev/certs/ca.crt:/secrets/mtls/ca.crt:ro
+    depends_on: { m3: { condition: service_healthy } }
+    networks: [private]
+    restart: "no"
+
+  # The controllable SMTP sink (tests/harness/sink, stdlib Go): rejects or defers named recipients at RCPT, holds the final reply of every message for a set time, answers on :1025 (SMTP,
+  # STARTTLS with module 3's dev sink certificate, any credential accepted) and :8025 (its control API, no authentication: it exists only on this private network). Nothing is published.
+  # It is NOT named `smtp-sink`, so the worker validates its certificate unless the account's host is a PRIVATE ADDRESS (smtp.js:136-145): the live test points the account at this container's
+  # private IP. The container runs as the user that owns sink.key (run.sh passes H_HOST_UID / H_HOST_GID): the key is mode 600 and owned by whoever generated it (module 3's own-secrets.sh
+  # leaves it to the host user, because Mailpit reads it as root), so a fixed uid of the image could not read it.
+  smtp-ctl:
+    build: { context: "${H_PLATFORM_DIR:?}/tests/harness/sink", dockerfile: Dockerfile }
+    user: "${H_HOST_UID:?}:${H_HOST_GID:?}"
+    environment:
+      SINK_SMTP_ADDR: ":1025"
+      SINK_HTTP_ADDR: ":8025"
+      SINK_CERT: /certs/sink.crt
+      SINK_KEY: /certs/sink.key
+      SINK_HOSTNAME: smtp-ctl
+      SINK_REPLY_DELAY_MS: "8"      # a pause before every reply: module 3's worker can lose a reply that arrives before it has registered to read it (tests/harness/sink/smtp.go, Config.ReplyDelay)
+    volumes:
+      - ${H_MODULES_ROOT:?}/coldmail-send-byo/secrets/dev/certs/sink.crt:/certs/sink.crt:ro
+      - ${H_MODULES_ROOT:?}/coldmail-send-byo/secrets/dev/certs/sink.key:/certs/sink.key:ro
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8025/readyz || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    networks: [private]
+
   # ── the platform ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   platform:
     build: *platform-build
@@ -251,6 +326,30 @@ services:
       PLATFORM_M3_ADMIN_TOKEN: ${H_M3_ADMIN_KEY:?}
       PLATFORM_ENTITLEMENT_EXPIRE_INTERVAL_SEC: "2"      # CI only: short loops so the proofs finish in seconds (production defaults are 30 and 5)
       PLATFORM_M3_RECONCILE_INTERVAL_SEC: "2"
+      PLATFORM_INSTANCE_ID: platform-1                   # this instance's name: the application_name of the session that holds the leader lock (run.sh stage 9c reads it from pg_stat_activity)
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/readyz || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    depends_on: { postgres: { condition: service_healthy } }
+    networks: [private]
+
+  # A SECOND platform instance on the same database (Phase 2 close-out D9, one loop runner): the same build and the same environment as `platform` above, with a name of its own. Only the instance that
+  # holds the leader advisory lock runs the expiry and reconcile loops; this one serves HTTP either way and takes over when the leader dies (run.sh stage 9c kills the leader and watches). Like `platform`
+  # it publishes no port. Keep it in step with `platform`: a change to one environment is a change to the other, except the instance name.
+  platform-2:
+    build: *platform-build
+    environment:
+      PLATFORM_DATABASE_URL: postgres://platform_app:${H_PLATFORM_APP_PASSWORD:?}@postgres:5432/postgres
+      PLATFORM_HTTP_ADDR: ":8080"
+      PLATFORM_ENV: development
+      PLATFORM_LOG_LEVEL: debug
+      PLATFORM_M3_URL: http://m3:8080
+      PLATFORM_M3_ADMIN_TOKEN: ${H_M3_ADMIN_KEY:?}
+      PLATFORM_ENTITLEMENT_EXPIRE_INTERVAL_SEC: "2"
+      PLATFORM_M3_RECONCILE_INTERVAL_SEC: "2"
+      PLATFORM_INSTANCE_ID: platform-2
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/readyz || exit 1"]
       interval: 3s
@@ -294,6 +393,9 @@ services:
       HARNESS_M3_TOKEN: ${H_M3_TOKEN:?}
       HARNESS_M3_ADMIN_KEY: ${H_M3_ADMIN_KEY:?}
       HARNESS_SINK_URL: http://smtp-sink:8025
+      HARNESS_SINK_PASSWORD: ${H_SINK_PASSWORD:?}
+      HARNESS_CTL_URL: http://smtp-ctl:8025      # the controllable sink's control API (the hostile-sink test); its SMTP port is 1025 on the same host
+      HARNESS_M3_WORKER_IDS: ${H_M3_WORKER_ID:?},${H_M3_WORKER2_ID:?},${H_M3_WORKER3_ID:?}      # the three module-3 workers (ids only): the several-lanes proof asserts each of them took part
     volumes:
       - ${H_WORK:?}/out:/h:ro
       - ${H_PLATFORM_DIR:?}:/repo:ro

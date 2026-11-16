@@ -34,6 +34,7 @@ func TestMapPgError_ByConstraintNameNotByText(t *testing.T) {
 		{"23505", "job_unit_prices_pk", func(e error) bool { return errors.Is(e, ErrConflict) }, "ErrConflict"},
 		{"23514", "reserve_at_the_dearest_price", func(e error) bool { return errors.Is(e, ErrSnapshot) }, "ErrSnapshot"},
 		{"23514", "reserve_needs_the_complete_snapshot", func(e error) bool { return errors.Is(e, ErrSnapshot) }, "ErrSnapshot"},
+		{"23514", "snapshot_equals_unit_costs", func(e error) bool { return errors.Is(e, ErrSnapshot) }, "ErrSnapshot"},
 	} {
 		got := mapPgError(pgErr(c.code, c.constraint), pgCtx{})
 		if got == nil || !c.check(got) {

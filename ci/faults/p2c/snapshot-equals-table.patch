@@ -1,0 +1,11 @@
+--- a/db/migrations/platform_0007_snapshot_and_terminal_states.up.sql
++++ b/db/migrations/platform_0007_snapshot_and_terminal_states.up.sql
+@@ -43,8 +43,6 @@
+ $fn$;
+ COMMENT ON FUNCTION platform.job_unit_prices_snapshot_equals_unit_costs() IS 'SECURITY INVOKER: raises 23514 (constraint snapshot_equals_unit_costs) when a price snapshot row carries a cost other than the one platform.unit_costs holds for the unit at the instant of the insert. A unit the table does not hold is left to the foreign key.';
+ REVOKE ALL ON FUNCTION platform.job_unit_prices_snapshot_equals_unit_costs() FROM PUBLIC;
+-CREATE TRIGGER job_unit_prices_snapshot_equals_unit_costs BEFORE INSERT ON platform.job_unit_prices FOR EACH ROW EXECUTE FUNCTION platform.job_unit_prices_snapshot_equals_unit_costs();
+-COMMENT ON TRIGGER job_unit_prices_snapshot_equals_unit_costs ON platform.job_unit_prices IS 'D3 (open decision 10): the database, not only the store, refuses a snapshot price that differs from platform.unit_costs. The only barrier: disabling this trigger lets a forged price in (proved by a test).';
+ 
+ -- ── 2. a terminal job stays terminal ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ CREATE FUNCTION platform.jobs_terminal_is_final() RETURNS trigger

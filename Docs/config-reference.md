@@ -23,6 +23,8 @@ start-up with exit status 2, and the message names the variable and the reason, 
 | `PLATFORM_M3_RECONCILE_INTERVAL_SEC` | `5` | no | no | Seconds between passes of the reconcile loop, which delivers each wanted suspend or resume to module 3 and records what module 3 answered. Integer, 1 to 3600. |
 | `PLATFORM_M3_REVERIFY_INTERVAL_SEC` | `300` | no | no | Seconds after which a user already in the wanted state is checked against module 3 again (the same suspend or resume is sent once more; a changed answer means module 3 had drifted). Integer, 10 to 86400. |
 | `PLATFORM_M3_REQUEST_TIMEOUT_SEC` | `10` | no | no | Seconds one request to module 3's admin route may take before it counts as failed and is retried later. Integer, 1 to 120. |
+| `PLATFORM_MONEY_LOCK_TIMEOUT_MS` | `10000` | no | no | Milliseconds a money operation (grant, adjustment, reserve, settle, release) waits for another operation on the same user's credits of the same module before it gives up with a lock-timeout error and writes nothing. Integer, 100 to 600000. |
+| `PLATFORM_INSTANCE_ID` | `(hostname)` | no | no | Name of this platform instance, 1 to 63 printable ASCII characters. With more than one instance running, only the one holding the leader lock runs the expiry and reconcile loops; the name is the application_name of the database session that holds it (pg_stat_activity) and appears in the loop log lines. Each instance needs its own. The default (hostname) means this machine's host name. |
 
 Column notes. Default `(none)` means the variable has no default. Secret means the value is never written
 to a log, an error message or the startup line; the service prints the variable name only.
@@ -59,6 +61,26 @@ credentials apart (`ADMIN_API_KEY_HASHES` against `PLATFORM_TOKEN_HASHES`), and 
 only to the admin route. A wrong key makes module 3 answer 401: the reconcile loop reports a configuration
 fault and slows down, and every user's state stays "not converged" until the key is fixed. Nothing in this
 file or in a log carries the token.
+
+## How long a money operation waits
+
+Every operation on the money of one user and module (grant, adjustment, reserve, settle, release) takes one database advisory lock first, so two of them on the same
+credits run one after the other. Before the close-out of Phase 2 the second one waited for the first for as long as it took, so a transaction that got stuck holding
+the lock held every other operation on that balance for ever. **`PLATFORM_MONEY_LOCK_TIMEOUT_MS`** bounds that wait: every money transaction begins with
+`SET LOCAL lock_timeout` set to this many milliseconds, and an operation that waits longer fails with the store's `ErrLockTimeout` (which names the user, the module
+and the wait, and no SQL) and writes nothing. The default is 10 seconds; the accepted range is 100 ms to 10 minutes, and 0 is refused at start-up (PostgreSQL reads a
+timeout of 0 as "wait for ever"). An operation that gives up is safe to retry: every money write is idempotent per business key. The value is validated at start-up like
+every other variable (an invalid one stops the process with exit status 2) and reaches the store as `money.WithLockTimeout(cfg.MoneyLockTimeout)`; the service builds no
+money store before the first phase that serves money requests, and a store built without the option, like the zero value of the store, waits 10 seconds and never without a bound.
+
+## Which instance runs the loops
+
+With more than one platform instance on one database, **`PLATFORM_INSTANCE_ID`** names each of them (1 to 63 printable ASCII characters; unset, or `(hostname)`, means the machine's host name, which
+is already distinct per container). Only the instance that holds the leader advisory lock runs the two entitlement loops; the others serve HTTP and idle the loops until the leader's database session
+ends. The leader's lock session carries the name as its `application_name`, so `pg_stat_activity` shows which instance leads, and the election's log lines carry it as `instance`. The name is validated at
+start-up like every other variable (a longer or non-ASCII one stops the process with exit status 2, naming the variable and not echoing the value), and an instance started without a name takes the
+host name. How the election works, how to see the leader and what it does not promise: [`install.md`](install.md), "Running more than one instance". The lock needs a connection string that keeps one
+backend for the whole session (direct or session-mode, never a transaction-mode pooler), the same condition as the migrator's.
 
 ## What the service does with the database at start-up
 

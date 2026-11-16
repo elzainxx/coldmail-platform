@@ -826,8 +826,19 @@ func TestConstraints_Jobs(t *testing.T) {
 			}
 			ledgerExpectOK(t, sp, "control: the first job ends (cancelled) and frees the slot", "UPDATE platform.jobs SET status = 'cancelled' WHERE id = $1", first["id"])
 			ledgerExpectOK(t, sp, "control: now the second job can be confirmed", confirm, second["id"])
-			ledgerExpectRefused(t, sp, "the first job moved back to running while the second holds the slot (which transitions are legal is P4's rule; the index backs it)", "23505", ledgerWhy{Constraint: slot},
+			// since platform_0007 an ended (cancelled) job never moves again, so the move back to running is refused by jobs_terminal_is_final before the slot index is reached; the slot index is then proven
+			// on the same move with the trigger switched off (a savepoint that is rolled back), and on a job that CAN legally move there (a draft one), so each rule is asserted alone
+			ledgerExpectRefused(t, sp, "the first job (cancelled) moved back to running while the second holds the slot: the terminal rule answers first", "23001", ledgerWhy{Constraint: "jobs_terminal_is_final"},
 				"UPDATE platform.jobs SET status = 'running' WHERE id = $1", first["id"])
+			ledgerTrial(t, sp, func(sp2 pgx.Tx) {
+				ledgerMust(t, sp2, "ALTER TABLE platform.jobs DISABLE TRIGGER jobs_terminal_is_final")
+				ledgerExpectRefused(t, sp2, "the first job moved back to running while the second holds the slot, the terminal trigger off (the index backs the rule)", "23505", ledgerWhy{Constraint: slot},
+					"UPDATE platform.jobs SET status = 'running' WHERE id = $1", first["id"])
+			})
+			third := job(ledgerAdminB, "m1")
+			ledgerOKInsert(t, sp, "control: a third draft job of the same user and module (a draft holds no slot)", tbl, third)
+			ledgerExpectRefused(t, sp, "a draft job moved straight to running while the second job holds the slot", "23505", ledgerWhy{Constraint: slot},
+				"UPDATE platform.jobs SET status = 'running' WHERE id = $1", third["id"])
 		})
 	})
 
@@ -890,7 +901,13 @@ func TestConstraints_JobUnitPrices(t *testing.T) {
 	}
 	ledgerOKInsert(t, tx, "control: a price row of the job's own module", tbl, row("m1", "m1_own", 1))
 	ledgerRefusedInsert(t, tx, "a second price for the same unit of the same job", "23505", ledgerWhy{Constraint: "job_unit_prices_pk"}, tbl, row("m1", "m1_own", 1))
-	ledgerRefusedInsert(t, tx, "a price of 0", "23514", ledgerWhy{Constraint: "job_unit_prices_cost_at_least_one"}, tbl, row("m1", "m1_cache", 0))
+	// since platform_0007 a BEFORE INSERT trigger refuses any price that differs from platform.unit_costs before the CHECK is reached, so the CHECK is proven alone with that trigger switched off (a
+	// savepoint that is rolled back), and the trigger's own refusal of the same row is asserted beside it (TestCloseout_SnapshotPriceEqualsUnitCosts is the trigger's own test)
+	ledgerTrial(t, tx, func(sp pgx.Tx) {
+		ledgerMust(t, sp, "ALTER TABLE platform.job_unit_prices DISABLE TRIGGER job_unit_prices_snapshot_equals_unit_costs")
+		ledgerRefusedInsert(t, sp, "a price of 0 (the snapshot trigger switched off, so the CHECK is the rule proven)", "23514", ledgerWhy{Constraint: "job_unit_prices_cost_at_least_one"}, tbl, row("m1", "m1_cache", 0))
+	})
+	ledgerRefusedInsert(t, tx, "a price of 0 (the snapshot trigger answers first: the table says 1)", "23514", ledgerWhy{Constraint: "snapshot_equals_unit_costs"}, tbl, row("m1", "m1_cache", 0))
 	ledgerRefusedInsert(t, tx, "a price row that says module m2 for an m1 job", "23503", ledgerWhy{Constraint: "job_unit_prices_job_fk"}, tbl, row("m2", "m2_accepted", 1))
 	ledgerRefusedInsert(t, tx, "a unit of another module under the job's own module", "23503", ledgerWhy{Constraint: "job_unit_prices_unit_fk"}, tbl, row("m1", "m2_accepted", 1))
 	ledgerRefusedInsert(t, tx, "a unit that does not exist", "23503", ledgerWhy{Constraint: "job_unit_prices_unit_fk"}, tbl, row("m1", "m1_bogus", 1))

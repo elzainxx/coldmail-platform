@@ -47,6 +47,9 @@ func (s *Store) ReleaseIn(ctx context.Context, tx pgx.Tx, jobID string) (Release
 }
 
 func (s *Store) release(ctx context.Context, tx pgx.Tx, jobID string) (ReleaseResult, error) {
+	if err := s.bound(ctx, tx); err != nil {
+		return ReleaseResult{}, err
+	}
 	job, err := s.meteredJob(ctx, tx, jobID)
 	if err != nil {
 		return ReleaseResult{}, err
@@ -56,7 +59,7 @@ func (s *Store) release(ctx context.Context, tx pgx.Tx, jobID string) (ReleaseRe
 	default:
 		return ReleaseResult{}, fmt.Errorf("%w: job %s is %s", ErrJobNotEnded, jobID, job.status)
 	}
-	if err := s.lock(ctx, tx, job.user, job.module); err != nil {
+	if err := s.lockUser(ctx, tx, job.user, job.module); err != nil {
 		return ReleaseResult{}, err
 	}
 	rsv, err := s.reserveOf(ctx, tx, jobID)

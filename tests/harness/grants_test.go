@@ -512,10 +512,11 @@ func checkNoDestructivePrivileges(ctx context.Context, q querier, tables []strin
 var functionExecuteAllowed = map[string][]string{ // empty since platform_0004 made the four callers of require_active_admin SECURITY DEFINER: no role holds EXECUTE on any function of the schema
 }
 
-// functionGrantsFloor is the fewest functions schema platform holds since platform_0006: reject_mutation, jobs_guard, unit_costs_guard, unit_costs_record_history, ledger_apply_to_balance (the
+// functionGrantsFloor is the fewest functions schema platform holds since platform_0007: reject_mutation, jobs_guard, unit_costs_guard, unit_costs_record_history, ledger_apply_to_balance (the
 // five of platform_0002), require_active_admin, ledger_audit_adjustment and the three trigger functions that call require_active_admin (platform_0004), ledger_check_reserve,
-// ledger_apply_to_reserves, ledger_check_release and ledger_stamp_created_at (platform_0005), ledger_apply_to_entitlements and m3_entitlements_raise_sync (platform_0006). A checker that sees fewer matched too little.
-const functionGrantsFloor = 16
+// ledger_apply_to_reserves, ledger_check_release and ledger_stamp_created_at (platform_0005), ledger_apply_to_entitlements and m3_entitlements_raise_sync (platform_0006),
+// job_unit_prices_snapshot_equals_unit_costs and jobs_terminal_is_final (platform_0007). A checker that sees fewer matched too little.
+const functionGrantsFloor = 18
 
 // checkFunctionGrants judges the EXECUTE privilege of every function of schema platform (the part of the privilege picture checkGrants does not cover): the owner is platform_owner, nobody
 // but the owner (and the roles functionExecuteAllowed names for that function) holds EXECUTE, nobody holds it WITH GRANT OPTION, every allowance names a function that exists, and the
@@ -1150,6 +1151,12 @@ func TestGrantsInvariant_FunctionsAntiVacuity(t *testing.T) {
 		{"EXECUTE on the delivery-row writer granted to platform_app",
 			[]string{"GRANT EXECUTE ON FUNCTION platform.m3_entitlements_raise_sync() TO platform_app"},
 			[][]string{{"platform.m3_entitlements_raise_sync()", "platform_app", "over-grant", "EXECUTE"}}},
+		{"EXECUTE on the snapshot price check granted to PUBLIC (the default of a new function, which platform_0007 revokes)",
+			[]string{"GRANT EXECUTE ON FUNCTION platform.job_unit_prices_snapshot_equals_unit_costs() TO PUBLIC"},
+			[][]string{{"platform.job_unit_prices_snapshot_equals_unit_costs()", "over-grant", "PUBLIC", "EXECUTE"}}},
+		{"EXECUTE on the terminal-state rule granted to platform_app",
+			[]string{"GRANT EXECUTE ON FUNCTION platform.jobs_terminal_is_final() TO platform_app"},
+			[][]string{{"platform.jobs_terminal_is_final()", "platform_app", "over-grant", "EXECUTE"}}},
 		{"a function owned by the wrong role",
 			[]string{"ALTER FUNCTION platform.jobs_guard() OWNER TO platform_admin"},
 			[][]string{{"platform.jobs_guard()", "owned by platform_admin", "platform_owner"}}},

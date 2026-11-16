@@ -1,0 +1,8 @@
+# Close-out D3 (open decision 10): a price snapshot row must carry the cost platform.unit_costs holds at the instant of the insert. The fault removes the trigger (its CREATE TRIGGER and its COMMENT ON TRIGGER) from platform_0007; a forged price is then ACCEPTED or refused for another reason, and the test must say so.
+GATE=snapshot-equals-table
+TARGET=platform
+SETUP=
+STEP=go test TestCloseout_SnapshotPriceEqualsUnitCosts (database integration test, real Postgres)
+CMD=H_PG_ADMIN_DSN="$FAULT_ADMIN_DSN" bash tests/harness/run-db-tests.sh '^TestCloseout_SnapshotPriceEqualsUnitCosts$'
+MESSAGE=--- FAIL: TestCloseout_SnapshotPriceEqualsUnitCosts
+MESSAGE=snapshot_equals_unit_costs

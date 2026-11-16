@@ -50,6 +50,10 @@ type Config struct {
 	Redact []string
 	// Now stamps the health snapshot; it defaults to time.Now and decides nothing about entitlements.
 	Now func() time.Time
+
+	// InstanceID names this platform instance: it is the application_name of the database session that holds the leader lock, so that pg_stat_activity shows who leads, and it appears in the
+	// election's log lines. Empty means the host name (ResolveInstanceID). A name that is not 1 to 63 printable ASCII bytes is refused by New.
+	InstanceID string
 }
 
 // Health is a snapshot of what the loops have done, for a later readiness probe (this phase does not wire it to
@@ -72,6 +76,13 @@ type Health struct {
 	// confirmed deliveries recorded by it.
 	Expired   int64
 	Delivered int64
+
+	// Leader is true while this instance holds the leader lock and so runs the loops; LeaderSince is when it took it (zero otherwise). Standby is true while leader election is on, this instance
+	// has asked at least once and is NOT the leader: its loops idle (it still serves HTTP) and it takes over when the leader's session ends. A standby shows zero times and counters above,
+	// by design: it runs no pass. A Service built without leader election (tests only) has all three false.
+	Leader      bool
+	LeaderSince time.Time
+	Standby     bool
 }
 
 // expirer and reconciler are what the loops call; the real ones are *Store and *Reconciler, a unit test
@@ -84,12 +95,41 @@ type reconciler interface {
 	RunOnce(ctx context.Context) (Report, error)
 }
 
-// Service runs the expiry loop and the reconcile loop.
+// ExpiryWorker and ReconcileWorker are the two workers the loops call, named so that a test OUTSIDE this package can count the passes of each instance (WithWorkers). The real ones are *Store and
+// *Reconciler.
+type (
+	ExpiryWorker    = expirer
+	ReconcileWorker = reconciler
+)
+
+// Option changes how New builds a Service. Every option exists for a test; the platform service (internal/app) passes none, and TestLeader_NoProductionPathChangesTheWiring fails if any non-test
+// file outside this package names one.
+type Option func(*options)
+
+type options struct {
+	noElection bool
+	expire     expirer
+	reconcile  reconciler
+}
+
+// WithoutLeaderElection builds the Service with NO leader election: its loops run at every tick, whatever any other instance does. It is the CONTROL of the leader tests (two Services built this
+// way both run passes, which is what shows the test can see a double runner) and the way to test the loops' own rhythm against a database that cannot be reached. TESTS ONLY.
+func WithoutLeaderElection() Option { return func(o *options) { o.noElection = true } }
+
+// WithWorkers replaces the real expiry store and the real reconciler (nil keeps the real one), for a test that counts the passes of each instance. TESTS ONLY.
+func WithWorkers(ex ExpiryWorker, rec ReconcileWorker) Option {
+	return func(o *options) {
+		o.expire, o.reconcile = ex, rec
+	}
+}
+
+// Service runs the expiry loop and the reconcile loop, in the instance that holds the leader lock (leader.go).
 type Service struct {
 	log       *slog.Logger
 	expire    expirer
 	reconcile reconciler
 	now       func() time.Time
+	leader    *Leader // nil only when the Service was built without leader election (tests)
 
 	expireEvery, reconcileEvery     time.Duration
 	expireTimeout, reconcileTimeout time.Duration
@@ -100,21 +140,49 @@ type Service struct {
 	lastFail map[string]string // loop name -> the failure class last reported, "" while the loop is healthy
 }
 
-// New builds a Service. It validates before anything runs: a missing pool or client, or an interval that is not
-// positive, is an error here and not a loop that spins or never ticks.
-func New(cfg Config) (*Service, error) {
+// New builds a Service. It validates before anything runs: a missing pool or client, an interval that is not
+// positive, or an instance name that cannot be one is an error here and not a loop that spins or never ticks.
+// Unless an option says otherwise (tests only), the loops run only in the instance that holds the leader lock.
+func New(cfg Config, opts ...Option) (*Service, error) {
 	switch {
 	case cfg.Pool == nil:
 		return nil, errors.New("entitlements: Config.Pool is required")
 	case cfg.M3 == nil:
 		return nil, errors.New("entitlements: Config.M3 is required")
 	}
-	rec := &Reconciler{Pool: cfg.Pool, M3: cfg.M3, ReverifyEvery: cfg.ReverifyEvery, Log: cfg.Log, Redact: cfg.Redact, Now: cfg.Now}
-	return newService(cfg, NewStore(cfg.Pool), rec)
+	var o options
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&o)
+		}
+	}
+	var (
+		ex  expirer    = NewStore(cfg.Pool)
+		rec reconciler = &Reconciler{Pool: cfg.Pool, M3: cfg.M3, ReverifyEvery: cfg.ReverifyEvery, Log: cfg.Log, Redact: cfg.Redact, Now: cfg.Now}
+	)
+	if o.expire != nil {
+		ex = o.expire
+	}
+	if o.reconcile != nil {
+		rec = o.reconcile
+	}
+	var leader *Leader
+	if !o.noElection {
+		var err error
+		if leader, err = NewLeader(cfg.Pool, cfg.InstanceID, cfg.Log, cfg.Now); err != nil {
+			return nil, err
+		}
+	}
+	return newServiceLeader(cfg, ex, rec, leader)
 }
 
-// newService is New with the two workers supplied (the seam of the unit tests).
+// newService is New with the two workers supplied and NO leader election (the seam of the unit tests that are about the loops themselves).
 func newService(cfg Config, ex expirer, rec reconciler) (*Service, error) {
+	return newServiceLeader(cfg, ex, rec, nil)
+}
+
+// newServiceLeader is newService with the election supplied: nil means none (the loops always run).
+func newServiceLeader(cfg Config, ex expirer, rec reconciler, leader *Leader) (*Service, error) {
 	for name, d := range map[string]time.Duration{"ExpireEvery": cfg.ExpireEvery, "ReconcileEvery": cfg.ReconcileEvery} {
 		if d <= 0 {
 			return nil, fmt.Errorf("entitlements: Config.%s must be positive, got %s", name, d)
@@ -124,6 +192,7 @@ func newService(cfg Config, ex expirer, rec reconciler) (*Service, error) {
 		log:              cfg.Log,
 		expire:           ex,
 		reconcile:        rec,
+		leader:           leader,
 		now:              cfg.Now,
 		expireEvery:      cfg.ExpireEvery,
 		reconcileEvery:   cfg.ReconcileEvery,
@@ -152,8 +221,8 @@ func newService(cfg Config, ex expirer, rec reconciler) (*Service, error) {
 }
 
 // Run builds a Service from cfg and runs it until ctx is cancelled (see Service.Run).
-func Run(ctx context.Context, cfg Config) error {
-	s, err := New(cfg)
+func Run(ctx context.Context, cfg Config, opts ...Option) error {
+	s, err := New(cfg, opts...)
 	if err != nil {
 		return err
 	}
@@ -163,13 +232,21 @@ func Run(ctx context.Context, cfg Config) error {
 // Health returns a copy of the current snapshot.
 func (s *Service) Health() Health {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.health
+	h := s.health
+	s.mu.Unlock()
+	if s.leader != nil { // the election has its own lock, which is never held across a database call
+		st := s.leader.Status()
+		h.Leader, h.LeaderSince = st.Leading, st.Since
+		h.Standby = st.Decided && !st.Leading
+	}
+	return h
 }
 
 // Run starts the two loops and returns, nil, only after both have stopped, which happens when ctx is cancelled.
 // A pass that fails, times out or panics is logged and the loop carries on at its next interval: nothing a pass
-// does ends a loop.
+// does ends a loop. With leader election on, every tick first asks whether this instance leads and a standby
+// does nothing else that tick; when the loops have stopped, a leader gives the lock and its connection back,
+// so a caller that closes the pool after Run returns never waits for a connection this Service still holds.
 func (s *Service) Run(ctx context.Context) error {
 	var wg sync.WaitGroup
 	for _, l := range []struct {
@@ -188,14 +265,25 @@ func (s *Service) Run(ctx context.Context) error {
 		}()
 	}
 	wg.Wait()
+	s.releaseLeadership()
 	s.log.Info("entitlement loops stopped")
 	return nil
+}
+
+// releaseLeadership gives the leader lock and its connection back. Both loops have stopped, so nothing is inside Ensure. It uses a context of its own: the one Run was given is cancelled by now.
+func (s *Service) releaseLeadership() {
+	if s.leader == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), leaderReleaseTimeout)
+	defer cancel()
+	_ = s.leader.Release(ctx) // Release logs its own failure; there is nothing more to do with it at shutdown
 }
 
 // loop runs pass now and then after each wait it returns, until ctx is cancelled.
 func (s *Service) loop(ctx context.Context, name string, pass func(context.Context) time.Duration) {
 	for ctx.Err() == nil {
-		wait := s.safely(ctx, name, pass)
+		wait := s.tick(ctx, name, pass)
 		t := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
@@ -204,6 +292,26 @@ func (s *Service) loop(ctx context.Context, name string, pass func(context.Conte
 		case <-t.C:
 		}
 	}
+}
+
+// tick is one turn of a loop. With leader election on it begins by asking whether this instance leads: a standby does NOTHING else this tick (no expiry, no reconcile, no call to module 3) and
+// waits its interval; a leader runs the pass.
+func (s *Service) tick(ctx context.Context, name string, pass func(context.Context) time.Duration) time.Duration {
+	if s.leader != nil && !s.leads(ctx, name) {
+		return s.intervalOf(name)
+	}
+	return s.safely(ctx, name, pass)
+}
+
+// leads asks the election and turns a panic in it into "not the leader" and a log line, so that a failure of the election can no more end a loop than a failure of a pass can.
+func (s *Service) leads(ctx context.Context, name string) (leading bool) {
+	defer func() {
+		if p := recover(); p != nil {
+			leading = false
+			s.log.ErrorContext(ctx, "loops: the leader check panicked; this tick is skipped and the loop carries on", "loop", name, "panic", scrubText(fmt.Sprint(p)))
+		}
+	}()
+	return s.leader.Ensure(ctx)
 }
 
 // safely runs one pass and turns a panic into a log line and the loop's ordinary wait.

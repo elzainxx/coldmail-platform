@@ -11,8 +11,9 @@
 #   7  probe     platform-probe calls every module over the private network with the service token (health, readyz, describe) — the Phase 0 end-to-end call
 #   8  exposure  no service publishes a port; the network is internal (two independent instruments)
 #   9  outage    the platform's /readyz follows the database: 200, then 503 with Postgres stopped, then 200 again
-#   5b worker    module 3's worker (own token and box row) and the SMTP sink: module 3 really sends
+#   5b worker    module 3's three workers (each with its own token and box row), the SMTP sink (Mailpit) and the controllable sink (smtp-ctl: it rejects, defers and delays on command): module 3 really sends, on several lanes, to a sink that can be hostile
 #   9b m3-outage module 3 stopped while an entitlement expires: the platform retries, claims no convergence it did not see, converges when module 3 is back
+#   9c leader    TWO platform instances on one database: exactly one holds the leader lock and runs the loops (the other runs none); dated entitlements expire exactly once; the leader is killed, the other takes over; the killed one comes back as the standby
 #   4b first admin   the documented platform-migrate create-first-admin, as postgres, on the real auth schema; a second run refused
 #  10  ledger    the balance invariant: the live ledger trigger is intact (a rolled-back exercise through the ledger leaves no drift and no overdrawn reserve)
 # and finally prints what it did NOT check. Nothing here is mocked: every module is the real, unmodified pinned source running as a real service.
@@ -74,10 +75,24 @@ t3w="$(mint)"; t3a="$(mint)"
 M3_WORKER_TOKEN="$(printf '%s\n' "$t3w" | field ADMIN_API_KEY)"; M3_WORKER_HASH="$(printf '%s\n' "$t3w" | field ADMIN_API_KEY_HASH)"
 M3_ADMIN_KEY="$(printf '%s\n' "$t3a" | field ADMIN_API_KEY)"; M3_ADMIN_HASH="$(printf '%s\n' "$t3a" | field ADMIN_API_KEY_HASH)"
 M3_WORKER_ID="$(cat /proc/sys/kernel/random/uuid)"
+SINK_PASS="$(openssl rand -hex 12)"      # the placeholder SMTP-sink password of the live module-3 test: random per run, never a literal in the tree (the sink accepts any credential)
 [ -n "$M3_WORKER_TOKEN" ] && [ -n "$M3_WORKER_HASH" ] && [ -n "$M3_ADMIN_KEY" ] && [ -n "$M3_ADMIN_HASH" ] && [ -n "$M3_WORKER_ID" ] || die "could not mint module 3's worker token and admin key"
 [ "$M3_ADMIN_KEY" != "$M3_TOKEN" ] && [ "$M3_ADMIN_KEY" != "$M3_WORKER_TOKEN" ] || die "module 3's admin key must differ from its service token and its worker token"
+# two more module-3 workers (Phase 2 close-out, E2: a user with three lanes needs three workers, because module 3 pushes one job per worker at a time): each has an id, a token and (stage 5b) a box row of its own,
+# minted exactly like the first worker's; the tokens are masked at once and never printed. The sink runs as the user that owns module 3's dev sink key (compose `user:`), so the harness user's ids go in the env file.
+t3w2="$(mint)"; t3w3="$(mint)"
+M3_WORKER2_TOKEN="$(printf '%s\n' "$t3w2" | field ADMIN_API_KEY)"; M3_WORKER2_HASH="$(printf '%s\n' "$t3w2" | field ADMIN_API_KEY_HASH)"
+M3_WORKER3_TOKEN="$(printf '%s\n' "$t3w3" | field ADMIN_API_KEY)"; M3_WORKER3_HASH="$(printf '%s\n' "$t3w3" | field ADMIN_API_KEY_HASH)"
+M3_WORKER2_ID="$(cat /proc/sys/kernel/random/uuid)"; M3_WORKER3_ID="$(cat /proc/sys/kernel/random/uuid)"
+HOST_UID="$(id -u)"; HOST_GID="$(id -g)"
+[ -n "$M3_WORKER2_TOKEN" ] && [ -n "$M3_WORKER2_HASH" ] && [ -n "$M3_WORKER3_TOKEN" ] && [ -n "$M3_WORKER3_HASH" ] && [ -n "$M3_WORKER2_ID" ] && [ -n "$M3_WORKER3_ID" ] || die "could not mint the credentials of module 3's second and third workers"
+for v in "$M3_WORKER2_TOKEN" "$M3_WORKER3_TOKEN"; do mask "$v"; done
+[ -n "$HOST_UID" ] && [ -n "$HOST_GID" ] || die "could not read the harness user's uid and gid (the controllable sink runs as the user that owns module 3's dev sink key)"
+[ "$M3_WORKER2_TOKEN" != "$M3_WORKER_TOKEN" ] && [ "$M3_WORKER3_TOKEN" != "$M3_WORKER_TOKEN" ] && [ "$M3_WORKER2_TOKEN" != "$M3_WORKER3_TOKEN" ] || die "module 3's three workers must have three different tokens"
+[ "$M3_WORKER2_ID" != "$M3_WORKER_ID" ] && [ "$M3_WORKER3_ID" != "$M3_WORKER_ID" ] && [ "$M3_WORKER2_ID" != "$M3_WORKER3_ID" ] || die "module 3's three workers must have three different ids"
+[ "$M3_ADMIN_KEY" != "$M3_WORKER2_TOKEN" ] && [ "$M3_ADMIN_KEY" != "$M3_WORKER3_TOKEN" ] && [ "$M3_TOKEN" != "$M3_WORKER2_TOKEN" ] && [ "$M3_TOKEN" != "$M3_WORKER3_TOKEN" ] || die "a module 3 worker token must differ from its admin key and its service token"
 M1_KEY="$(openssl rand -hex 32)"; M1_KEY_SHA="$(printf '%s' "$M1_KEY" | sha256sum | cut -d' ' -f1)"
-for v in "$M2_TOKEN" "$M3_TOKEN" "$M1_KEY" "$M3_WORKER_TOKEN" "$M3_ADMIN_KEY"; do mask "$v"; done
+for v in "$M2_TOKEN" "$M3_TOKEN" "$M1_KEY" "$M3_WORKER_TOKEN" "$M3_ADMIN_KEY" "$SINK_PASS"; do mask "$v"; done
 PG_PASS="$(openssl rand -hex 16)"; PL_PASS="$(openssl rand -hex 16)"; M2_PASS="$(openssl rand -hex 16)"; M3_PASS="$(openssl rand -hex 16)"; M1_PEPPER="$(openssl rand -hex 32)"; M1_QUEUE_KEY="$(openssl rand -hex 32)"; M1_APP_PASS="$(openssl rand -hex 16)"
 for v in "$PG_PASS" "$PL_PASS" "$M2_PASS" "$M3_PASS" "$M1_PEPPER" "$M1_QUEUE_KEY" "$M1_APP_PASS"; do mask "$v"; done
 esc() { printf '%s' "$1" | sed 's/\$/$$/g'; }       # bcrypt hashes contain '$', which compose would interpolate
@@ -99,11 +114,18 @@ H_M2_TOKEN_HASH=$(esc "$M2_HASH")
 H_M3_TOKEN_HASH=$(esc "$M3_HASH")
 H_M3_WORKER_ID=$M3_WORKER_ID
 H_M3_WORKER_TOKEN=$M3_WORKER_TOKEN
+H_M3_WORKER2_ID=$M3_WORKER2_ID
+H_M3_WORKER2_TOKEN=$M3_WORKER2_TOKEN
+H_M3_WORKER3_ID=$M3_WORKER3_ID
+H_M3_WORKER3_TOKEN=$M3_WORKER3_TOKEN
+H_HOST_UID=$HOST_UID
+H_HOST_GID=$HOST_GID
 H_M3_ADMIN_KEY=$M3_ADMIN_KEY
+H_SINK_PASSWORD=$SINK_PASS
 H_M3_ADMIN_KEY_HASH=$(esc "$M3_ADMIN_HASH")
 EOF
 )
-echo "  minted: 5 database/app passwords, 1 pepper, 1 module-1 queue key, 1 module-1 caller key, 2 module service tokens (+ bcrypt hashes), KMS keys and mTLS material for modules 2 and 3 — none printed"
+echo "  minted: 5 database/app passwords, 1 pepper, 1 module-1 queue key, 1 module-1 caller key, 2 module service tokens (+ bcrypt hashes), module 3's admin key and its three workers' tokens (+ hashes, ids), KMS keys and mTLS material for modules 2 and 3 — none printed"
 
 # ── 3. build ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 STAGE=build; banner 3 "build every image from source, no cache"
@@ -162,8 +184,8 @@ grep -qi "admin already exists\|already exists" "$WORK/first-admin-2.log" || die
 echo "  first admin created as postgres on the real auth schema; a second run refused; platform.admins holds exactly one row"
 
 # ── 5. services ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-STAGE=services; banner 5 "the three Controls and the platform, healthy on the private network"
-DC up -d --wait --wait-timeout 240 m1 m2 m3 platform || die "a service did not become healthy"
+STAGE=services; banner 5 "the three Controls and the platform (two instances of it), healthy on the private network"
+DC up -d --wait --wait-timeout 240 m1 m2 m3 platform platform-2 || die "a service did not become healthy"
 DC ps --all --format 'table {{.Service}}\t{{.State}}\t{{.Health}}' | sed 's/^/  | /'
 # the instrument for "module 1 runs as the least-privilege login": a healthy module 1 proves nothing about WHICH role it connected as, so read it from the server
 n="$(psql_ "select count(*) from pg_stat_activity where usename = 'verify_app'")"; [ "${n:-0}" -ge 1 ] || die "module 1 holds no connection as verify_app: it is not running as the least-privilege login"
@@ -172,20 +194,34 @@ echo "  module 1 holds $n connection(s) as verify_app (pg_stat_activity)"
 # ── 5b. module 3's worker and an SMTP sink ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 # Phase 2 (chunks B8, B9): module 3 must REALLY send for the entitlement proofs to mean anything. Its worker registers with a token whose bcrypt hash is seeded into send_byo.boxes BEFORE the worker starts
 # (a worker that is rejected exits), the From-gate is switched off (module 3's own harness does the same: no DNS needed to send), and the sink is Mailpit, which accepts any credential and keeps what it received.
-STAGE=m3-worker; banner "5b" "module 3's worker (own token, own box row) and the SMTP sink"
+STAGE=m3-worker; banner "5b" "module 3's three workers (own token, own box row each), the SMTP sink and the controllable sink"
 psql_su() { DC exec -T postgres psql -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -tAc "$1"; }
 psql_su "UPDATE send_byo.config SET value = '{\"v\":\"off\"}' WHERE key = 'from_gate_mode'" >/dev/null || die "could not switch module 3's From-gate off"
 t0="$(psql_su "select clock_timestamp()")"; [ -n "$t0" ] || die "could not read the database clock"
 psql_su "INSERT INTO send_byo.boxes (id, user_id, token_hash, status) VALUES ('$M3_WORKER_ID', '00000000-0000-0000-0000-000000000000', '$M3_WORKER_HASH', 'active')" >/dev/null || die "could not seed module 3's worker box row"
-DC up -d m3-worker smtp-sink || die "module 3's worker or the SMTP sink did not start"
+# the second and third workers (E2: several lanes): their box rows are seeded exactly like the first's, before they start
+psql_su "INSERT INTO send_byo.boxes (id, user_id, token_hash, status) VALUES ('$M3_WORKER2_ID', '00000000-0000-0000-0000-000000000000', '$M3_WORKER2_HASH', 'active')" >/dev/null || die "could not seed module 3's second worker box row"
+psql_su "INSERT INTO send_byo.boxes (id, user_id, token_hash, status) VALUES ('$M3_WORKER3_ID', '00000000-0000-0000-0000-000000000000', '$M3_WORKER3_HASH', 'active')" >/dev/null || die "could not seed module 3's third worker box row"
+DC up -d m3-worker m3-worker-2 m3-worker-3 smtp-sink smtp-ctl || die "module 3's workers, the SMTP sink or the controllable sink did not start"
 i=0; while [ $i -lt 60 ]; do
   [ "$(psql_su "select count(*) from send_byo.boxes where id = '$M3_WORKER_ID' and status = 'active' and last_heartbeat_at > '$t0'")" = 1 ] && break
   i=$((i+1)); sleep 2
 done
 [ "$i" -lt 60 ] || die "module 3's worker never heartbeated after $t0 (it registers over mTLS with its token; its logs are below)"
+for wid in "$M3_WORKER2_ID" "$M3_WORKER3_ID"; do
+  i=0; while [ $i -lt 60 ]; do
+    [ "$(psql_su "select count(*) from send_byo.boxes where id = '$wid' and status = 'active' and last_heartbeat_at > '$t0'")" = 1 ] && break
+    i=$((i+1)); sleep 2
+  done
+  [ "$i" -lt 60 ] || die "module 3's worker $wid never heartbeated after $t0 (it registers over mTLS with its token; its logs are below)"
+done
+[ "$(psql_su "select count(*) from send_byo.boxes where id in ('$M3_WORKER_ID', '$M3_WORKER2_ID', '$M3_WORKER3_ID') and status = 'active' and last_heartbeat_at > '$t0'")" = 3 ] || die "not all three of module 3's workers are registered and heartbeating"
 i=0; while [ $i -lt 30 ]; do DC exec -T platform wget -q -O /dev/null http://smtp-sink:8025/api/v1/info 2>/dev/null && break; i=$((i+1)); sleep 2; done
 [ "$i" -lt 30 ] || die "the SMTP sink's API did not answer"
-echo "  module 3's worker is registered and heartbeating; the SMTP sink answers; From-gate off"
+# the controllable sink: ready means its SMTP listener accepts connections (it exits at start when it cannot read module 3's dev sink certificate and key: its log is below)
+i=0; while [ $i -lt 30 ]; do DC exec -T platform wget -q -O /dev/null http://smtp-ctl:8025/readyz 2>/dev/null && break; i=$((i+1)); sleep 2; done
+[ "$i" -lt 30 ] || die "the controllable SMTP sink (smtp-ctl) did not answer /readyz"
+echo "  module 3's three workers are registered and heartbeating; the SMTP sink and the controllable sink answer; From-gate off"
 
 # ── 6. tests ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 STAGE=tests; banner 6 "integration tests, compiled on the runner and run inside the network"
@@ -195,7 +231,7 @@ DC run --rm -T harness-tests -test.list '.*' > "$WORK/h-list.log" 2>&1; lrc=$?
 DC run --rm -T harness-tests -test.v -test.count=1 -test.timeout=40m > "$WORK/h-run.log" 2>&1; trc=$?
 sed 's/^/  | /' "$WORK/h-run.log" | tail -60
 # the live module-3 proof logs its numbers (sink counts, bounds, timestamps): print them whole, they are the evidence the tail above can cut off
-echo "  ---- the live module-3 proof: the test's own log lines ----"; grep -E " m3_live(_helpers)?_test.go:[0-9]+: " "$WORK/h-run.log" | sed 's/^/  | /' | head -120
+echo "  ---- the live module-3 proof: the test's own log lines ----"; grep -E " m3_(live|hostile)(_helpers)?_test.go:[0-9]+: " "$WORK/h-run.log" | sed 's/^/  | /' | head -160
 # a failure must name itself: the tail above is only the end of the run, so print every failing test with its context
 [ "$trc" = 0 ] || { echo "  ---- failing tests (with context) ----"; grep -n -B1 -A12 -e '--- FAIL' "$WORK/h-run.log" | sed 's/^/  | /' | head -200; }
 # a compiled test binary prints no `ok <pkg>` line (go test does); the floor gate reads one, so write it from the binary's own exit status
@@ -214,7 +250,7 @@ sline="$(grep '^PROBE SUMMARY' "$WORK/probe.log" | tail -1)"; [ -n "$sline" ] ||
 # ── 8. exposure ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 STAGE=exposure; banner 8 "no service publishes a port; the network is internal"
 DC ps --all --format json > "$WORK/ps.json" || die "docker compose ps failed"
-bash "$HERE/check-exposure.sh" "$WORK/ps.json" postgres m1 m2 m3 platform || die "a service is reachable from outside the network"
+bash "$HERE/check-exposure.sh" "$WORK/ps.json" postgres m1 m2 m3 platform platform-2 smtp-ctl m3-worker-2 m3-worker-3 || die "a service is reachable from outside the network"
 [ "$(docker network inspect "$PROJECT_NET" -f '{{.Internal}}')" = true ] || die "$PROJECT_NET is not an internal network"
 ids="$(DC ps -q)"; [ -n "$ids" ] || die "no running containers to inspect"
 cnt=0; for id in $ids; do
@@ -261,6 +297,116 @@ code="$(DC exec -T platform wget -S -q -O /dev/null --header "Authorization: Bea
 [ "$code" = 422 ] || die "module 3 itself does not hold the user as suspended: a repeated suspend answered '$code', want 422 (already suspended)"
 echo "  module 3 itself confirms it: a repeated suspend answers 422 (already suspended)"
 
+# ── 9c. one loop runner ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+# Phase 2 close-out D9 (finding F36): TWO platform instances on one database (the service `platform` is the instance `platform-1`, the service `platform-2` the instance `platform-2`), both serving HTTP. The expiry and reconcile loops
+# run only in the one that holds the leader advisory lock (session level, key 7200000002, taken on one dedicated connection whose application_name is the instance's name, so pg_stat_activity names the leader). Four things are read:
+#   (a) exactly one granted lock on the key, held by a session named after one of the two instances; while it leads, the OTHER instance runs no pass at all (the debug line every pass writes is counted in each instance's log);
+#   (b) five dated entitlements are expired exactly once each (one m3_expire ledger row per user, none skipped) and all five converge at the REAL module 3 (observed suspended); the instance that did it is the leader;
+#   (c) the leader is KILLED (SIGKILL): the other instance takes the lock within 60 s, and three more dated entitlements are expired and delivered by the survivor;
+#   (d) the killed instance is started again: it serves HTTP, holds no lock and runs no pass (it is the standby), and the lock holder does not change.
+# The ledger alone cannot show "exactly one acts": an expiry is idempotent per user by a unique key, so one m3_expire row per user would also hold with two runners. That is why the evidence is the lock itself and each instance's own log
+# (a debug line per pass, an info line per expiry), counted before and after, never the ledger only.
+STAGE=leader; banner "9c" "two platform instances: exactly one runs the loops; the leader is killed and the other takes over; the killed one comes back as the standby"
+LEADER_KEY=7200000002
+LOCKWHERE="l.locktype = 'advisory' and l.granted and l.objsubid = 1 and l.database = (select d.oid from pg_database d where d.datname = current_database()) and ((l.classid::bigint << 32) | l.objid::bigint) = $LEADER_KEY"
+nlocks() { psql_su "select count(*) from pg_locks l where $LOCKWHERE"; }
+holders() { psql_su "select coalesce(string_agg(a.application_name, ',' order by a.application_name), '') from pg_locks l join pg_stat_activity a on a.pid = l.pid where $LOCKWHERE"; }
+svc_of() { case "$1" in platform-1) echo platform;; platform-2) echo platform-2;; esac; }
+other_of() { case "$1" in platform-1) echo platform-2;; platform-2) echo platform-1;; esac; }
+http_code() { DC exec -T "$1" wget -q -S -O /dev/null "http://127.0.0.1:8080/$2" 2>&1 | awk '/HTTP\//{print $2; exit}'; }
+svclog() { DC logs --no-color "$1" > "$WORK/leader-$1.log" 2>&1 || die "could not read the logs of the service $1"; }
+nlog() { grep -cF -- "$2" "$WORK/leader-$1.log" || true; }
+# snap <service>: reads the service's log once and sets PE and PR (the passes of its expiry and its reconcile loop written so far), PL (how often it logged that it became the leader) and PS (how often it logged that it is a standby)
+snap() { svclog "$1"; PE="$(nlog "$1" '"msg":"entitlement expiry pass"')"; PR="$(nlog "$1" '"msg":"entitlement reconcile pass"')"; PL="$(nlog "$1" 'loops: this instance is now the leader')"; PS="$(nlog "$1" 'loops: another instance holds the leader lock')"; }
+# lwait <what> <seconds> <sql that returns t>
+lwait() { local i=0; while [ $i -lt "$2" ]; do [ "$(psql_su "$3")" = t ] && return 0; i=$((i+1)); sleep 1; done; die "timed out after ${2}s waiting for: $1 (the leader lock is held by '$(holders)')"; }
+# mkusers <tag> <n>: creates n users (a login and a platform user each); sets NEWU (their ids) and NEWIN (them as a quoted SQL list)
+mkusers() {
+  NEWU=(); NEWIN=""; local au="" pu="" u k
+  for k in $(seq 1 "$2"); do
+    u="$(cat /proc/sys/kernel/random/uuid)"; NEWU+=("$u"); NEWIN="$NEWIN${NEWIN:+,}'$u'"
+    au="$au${au:+,}('$u', 'leader-$1-$k@example.test')"; pu="$pu${pu:+,}('$u', '$u', 'leader-$1-$k@example.test')"
+  done
+  psql_su "INSERT INTO auth.users (id, email) VALUES $au" >/dev/null || die "could not create the logins of the $1 users"
+  psql_su "INSERT INTO public.users (id, auth_user_id, email) VALUES $pu" >/dev/null || die "could not create the platform users of the $1 users"
+}
+# dated <tag> <seconds>: enables module 3 for every user of NEWU through the ledger (the acting admin is the first admin of stage 4b), each until <seconds> from now on the DATABASE's clock
+dated() {
+  local vals="" u
+  for u in "${NEWU[@]}"; do vals="$vals${vals:+,}('$u', 'm3', 'm3_enable', '$FA_ID', 'harness leader proof', 'leader-$1-$u', now() + interval '$2 seconds')"; done
+  psql_su "INSERT INTO platform.ledger (user_id, module_id, kind, acting_admin_id, reason, idempotency_key, until_at) VALUES $vals" >/dev/null || die "could not enable module 3 for the $1 users through the ledger"
+}
+# batch <tag> <n> <the service that must act> <the service that must idle>: n dated entitlements that all expire 8 s from now; read what each instance did
+batch() {
+  local tag="$1" n="$2" act="$3" idle="$4" u a b exp ae0 ar0 ie0 ir0 ae1 ar1 ie1 ir1
+  snap "$act"; ae0="$PE"; ar0="$PR"; snap "$idle"; ie0="$PE"; ir0="$PR"
+  mkusers "$tag" "$n"; dated "$tag" 8
+  lwait "all $n $tag users to be expired by an m3_expire ledger row" 90 "select count(distinct user_id) = $n from platform.ledger where kind = 'm3_expire' and user_id in ($NEWIN)"
+  sleep 6   # three more ticks of each loop: a second runner, or an expiry done twice, would show itself in this time
+  exp="$(psql_su "select count(*) || '/' || count(distinct user_id) from platform.ledger where kind = 'm3_expire' and user_id in ($NEWIN)")"
+  [ "$exp" = "$n/$n" ] || die "the $n $tag users have $exp m3_expire rows / distinct users, want exactly one row each ($n/$n): an expiry was done twice or skipped"
+  lwait "all $n $tag users to be delivered to the REAL module 3 (converged_version = want_version, observed suspended)" 120 "select count(*) = $n from platform.m3_sync where user_id in ($NEWIN) and want_suspended and converged_version = want_version and observed = 'suspended'"
+  snap "$act"; ae1="$PE"; ar1="$PR"; snap "$idle"; ie1="$PE"; ir1="$PR"
+  [ $((ae1-ae0)) -ge 4 ] && [ $((ar1-ar0)) -ge 4 ] || die "$act ran only +$((ae1-ae0)) expiry and +$((ar1-ar0)) reconcile passes while the $tag users expired and converged (2 s loops): it is not the runner"
+  [ "$ie1" = "$ie0" ] && [ "$ir1" = "$ir0" ] || die "$idle ran passes while $act acted (expiry $ie0 -> $ie1, reconcile $ir0 -> $ir1): two runners"
+  for u in "${NEWU[@]}"; do
+    a="$(grep -F '"msg":"entitlement expired"' "$WORK/leader-$act.log" | grep -cF "$u" || true)"
+    b="$(grep -F '"msg":"entitlement expired"' "$WORK/leader-$idle.log" | grep -cF "$u" || true)"
+    [ "$a" = 1 ] || die "user $u of the $tag batch was logged as expired $a times by $act, want exactly once"
+    [ "$b" = 0 ] || die "user $u of the $tag batch was logged as expired $b times by $idle, which must not act"
+  done
+  echo "     the $n $tag entitlements: $exp m3_expire rows/users, all converged at module 3 (observed suspended); each logged as expired exactly once by $act and never by $idle; passes while it ran: $act +$((ae1-ae0)) expiry +$((ar1-ar0)) reconcile, $idle +0 +0"
+}
+
+# (a) the lock, and who holds it
+i=0; LEAD=""
+while [ $i -lt 60 ]; do
+  h="$(holders)"
+  if [ "$(nlocks)" = 1 ] && { [ "$h" = platform-1 ] || [ "$h" = platform-2 ]; }; then LEAD="$h"; break; fi
+  i=$((i+1)); sleep 1
+done
+[ -n "$LEAD" ] || die "after 60 s there is not exactly one granted lock on the leader key held by a session named platform-1 or platform-2: locks=$(nlocks) holders='$(holders)' (pg_stat_activity application_name)"
+LSVC="$(svc_of "$LEAD")"; OTHER="$(other_of "$LEAD")"; OSVC="$(svc_of "$OTHER")"
+echo "  a. exactly one granted lock on key $LEADER_KEY, held by a session named '$LEAD' (service $LSVC); the other instance is '$OTHER' (service $OSVC)"
+for s in "$LSVC" "$OSVC"; do [ "$(http_code "$s" readyz)" = 200 ] || die "$s does not answer /readyz with 200: an instance that does not lead still serves HTTP"; done
+echo "     both instances answer /readyz 200 (the standby serves HTTP like the leader)"
+snap "$LSVC"; le0="$PE"; lr0="$PR"; snap "$OSVC"; oe0="$PE"; or0="$PR"
+sleep 10
+snap "$LSVC"; le1="$PE"; lr1="$PR"; snap "$OSVC"; oe1="$PE"; or1="$PR"
+[ $((le1-le0)) -ge 3 ] && [ $((lr1-lr0)) -ge 3 ] || die "the leader $LEAD ran only +$((le1-le0)) expiry and +$((lr1-lr0)) reconcile passes in 10 s (2 s loops): it is not running the loops"
+[ "$oe1" = "$oe0" ] && [ "$or1" = "$or0" ] || die "the other instance $OTHER ran passes while $LEAD held the lock: expiry $oe0 -> $oe1, reconcile $or0 -> $or1 (two runners)"
+[ "$(nlocks)" = 1 ] && [ "$(holders)" = "$LEAD" ] || die "the leader lock moved while nothing was wrong: now '$(holders)'"
+echo "     in 10 s the leader $LEAD ran +$((le1-le0)) expiry and +$((lr1-lr0)) reconcile passes; the other instance $OTHER ran +0 and +0 (it idles); the lock did not move"
+
+# (b) five dated entitlements, expired and delivered once each by the one that leads
+echo "  b. five entitlements dated 8 s ahead, expired by the leader $LEAD"
+batch first 5 "$LSVC" "$OSVC"
+
+# (c) the leader is killed
+snap "$OSVC"; ol0="$PL"
+DC kill "$LSVC" >/dev/null 2>&1 || die "could not kill the leader's service $LSVC"
+i=0; while [ $i -lt 60 ]; do [ "$(nlocks)" = 1 ] && [ "$(holders)" = "$OTHER" ] && break; i=$((i+1)); sleep 1; done
+[ $i -lt 60 ] || die "$OTHER did not take the leader lock within 60 s of the kill of $LEAD: locks=$(nlocks) holders='$(holders)'"
+snap "$OSVC"; [ "$PL" -gt "$ol0" ] || die "$OTHER holds the lock but never logged that it became the leader"
+echo "  c. $LEAD ($LSVC) was killed (SIGKILL); $OTHER holds the lock about ${i} s later (exactly one granted lock) and logged that it became the leader; three more entitlements, expired by the survivor"
+batch second 3 "$OSVC" "$LSVC"
+
+# (d) the killed instance comes back as the standby
+snap "$LSVC"; kpe="$PE"; kpr="$PR"; kl0="$PL"; ks0="$PS"; snap "$OSVC"; se0="$PE"; sr0="$PR"
+DC start "$LSVC" >/dev/null 2>&1 || die "could not start the killed instance $LSVC again"
+i=0; while [ $i -lt 90 ]; do [ "$(http_code "$LSVC" readyz)" = 200 ] && break; i=$((i+1)); sleep 1; done
+[ $i -lt 90 ] || die "the restarted instance $LSVC did not answer /readyz with 200 within 90 s"
+j=0; while [ $j -lt 12 ]; do   # six ticks of its loops at 2 s, in which it would have taken the lock if it could
+  [ "$(nlocks)" = 1 ] && [ "$(holders)" = "$OTHER" ] || die "after $LEAD came back the leader lock is held by '$(holders)' ($(nlocks) lock(s)); it must stay with $OTHER"
+  j=$((j+1)); sleep 1
+done
+snap "$LSVC"; ke="$PE"; kr="$PR"
+[ "$ke" = "$kpe" ] && [ "$kr" = "$kpr" ] || die "the restarted instance $LEAD ran passes (expiry $kpe -> $ke, reconcile $kpr -> $kr) although $OTHER holds the lock"
+[ "$PL" = "$kl0" ] || die "the restarted instance $LEAD logged that it became the leader although $OTHER holds the lock"
+[ "$PS" -gt "$ks0" ] || die "the restarted instance $LEAD never logged that another instance holds the lock (it did not run its election)"
+snap "$OSVC"; [ $((PE-se0)) -ge 3 ] && [ $((PR-sr0)) -ge 3 ] || die "the leader $OTHER stopped running passes after $LEAD came back (expiry +$((PE-se0)), reconcile +$((PR-sr0)))"
+echo "  d. $LEAD ($LSVC) is back: /readyz 200, no pass run, no lock held; for 12 s the lock stayed with $OTHER (exactly one granted lock); $OTHER went on running the loops (+$((PE-se0)) expiry, +$((PR-sr0)) reconcile)"
+
 # ── 10. ledger ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 STAGE=ledger; banner 10 "the balance invariant holds on the live database (rolled-back exercise through the ledger)"
 bash "$PLATFORM_DIR/scripts/check-balance-invariant.sh" --psql-cmd "docker compose --project-directory $HERE -f $HERE/docker-compose.yml --env-file $WORK/harness.env --profile probe --profile tests exec -T postgres psql -U supabase_admin -d postgres" --exercise || die "the balance invariant gate is red on the live database"
@@ -270,7 +416,10 @@ STAGE=done
 echo
 echo "================ NOT CHECKED (what this run did not and could not vouch for)"
 cat <<'EOF'
-  - CoreDNS is not started and module 3's From-gate is OFF (module 3's own harness does the same). Module 3 REALLY sends here (its worker and an SMTP sink: Mailpit, which accepts any credential); module 2 has no worker and module 1 no SMTP node, so those two never send or probe.
+  - CoreDNS is not started and module 3's From-gate is OFF (module 3's own harness does the same): nothing that depends on DNS or on the From alignment is exercised. Module 3 REALLY sends here: three workers, so three lanes of one user, to Mailpit (which
+    accepts everything) and to a controllable sink (tests/harness/sink) that rejects (550) or defers (451) named recipients at RCPT TO and holds the final reply, so that sends are in flight on demand. Still not exercised: a sink that drops a connection, answers
+    slowly before DATA, throttles or greylists the way a real provider does (the two RCPT answers, a held final reply and a refused AUTH are all it simulates), more than three lanes or workers, and a provider's own limits. Module 2 has no worker and module 1 no
+    SMTP node, so those two never send or probe.
   - real Supabase beyond the database image: this is the digest-pinned supabase/postgres (real auth schema, the non-superuser migrating role `postgres`, the required provisioning step). Not here: GoTrue (so
     no login is ever performed), the pooler (Supavisor), PostgREST and the exposed-schema setting (an owner action: Docs/install.md step 5), a hosted project's role grants and extensions.
   - the scratch databases of the integration tests (cloned from nothing: a fresh database, the auth.users FIXTURE, the platform migrated by the superuser) differ from the live database in exactly
@@ -278,6 +427,9 @@ cat <<'EOF'
   - module BEHAVIOUR on the platform's tables beyond the statements the modules issue against public.users / public.job_items (db/module-statements.txt, executed as each module's role in a rolled-back transaction): no job was run end to end (Phase 3).
   - module behaviour beyond health, readiness and describe (Phase 3); module 1 has NO describe at all (Docs/phase-0-spec.md F1) and runs here as the least-privilege login verify_app (since Phase 1, A2).
   - reachability from another host, a firewall or a cloud security group; TLS termination; the mTLS worker links of modules 1 and 2 (module 3's is exercised by its worker).
+  - the loops are exercised by TWO platform instances on one database, and by killing the leader (SIGKILL: the server sees the closed socket at once and frees the session lock), but NOT under a network partition: a leader that is cut off from the
+    database and not killed keeps its server-side session, and so the lock, until the server decides the peer is gone (TCP keepalive), so nothing runs twice but a takeover is late. Not exercised either: more than two instances, a database failover under load,
+    and a pass already running when its instance loses the lock (it runs to its end, bounded by its timeout, while the next leader may have started: the ledger's unique keys and the reconciler's compare-and-set keep that safe, the lock does not).
   - that every module commit other than the three pins in tools/modules.lock still works with the platform.
 EOF
 echo

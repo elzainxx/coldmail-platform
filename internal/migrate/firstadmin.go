@@ -10,7 +10,8 @@ package migrate
 // WHAT IT DOES, in one transaction as the migrating identity. SET LOCAL ROLE platform_owner first (CLAUDE.md rule 16), then
 // LOCK TABLE platform.admins IN SHARE ROW EXCLUSIVE MODE (that mode conflicts with itself, so two invocations at once take turns and
 // the second one finds the first one's row), then: refuse if any admin exists; refuse if the Supabase login does not exist or has no
-// email; create the login's public.users row if it has none; create the platform.admins row; commit; print one line.
+// email; refuse if the login's public.users row exists and is INACTIVE (owner ruling OD-8: an admin must be an active user, and the command
+// never reactivates anyone); create the login's public.users row if it has none; create the platform.admins row; commit; print one line.
 //
 // THE ONE ROLE DETAIL. auth.users belongs to Supabase Auth: platform_owner has no grant on schema auth, so the login is read as the
 // migrating identity (SET LOCAL ROLE NONE for that one statement) and every write runs as platform_owner. Reading it as the owner
@@ -64,7 +65,27 @@ var (
 	ErrAuthUserMissing = errors.New("that Supabase login does not exist (auth.users has no row with that id), so nothing was written: create the login first (Supabase dashboard > Authentication > Users) and pass its id as " + FlagAuthUserID)
 	// ErrAuthEmailMissing: public.users.email is NOT NULL, non-blank and normalised, and it is taken from the login.
 	ErrAuthEmailMissing = errors.New("the Supabase login has no email address, so nothing was written: give the login an email (Supabase dashboard > Authentication > Users) and run the command again")
+	// ErrUserInactive: the login already has a public.users row and it is inactive (is_active = false). The command is for a person who can use the platform, and it never rewrites
+	// a user row, so it will not make an inactive user the first admin (Docs/phase-2-spec.md, owner decision 8). The returned error is an *InactiveUserError naming the login.
+	ErrUserInactive = errors.New("the platform user of that login is inactive")
 )
+
+// InactiveUserError is the refusal for an existing, inactive platform user. It names the login and what to do next, says that nothing was written, and says nothing about admins:
+// no admin exists (that refusal comes first and is ErrAdminExists). It matches ErrUserInactive.
+type InactiveUserError struct{ AuthUserID string }
+
+func (e *InactiveUserError) Error() string {
+	return "the platform user for the login " + e.AuthUserID + " exists but is inactive (public.users.is_active is false), so nothing was written: reactivate that user, or run the command for a different login (" + FlagAuthUserID + ")"
+}
+
+// Is makes errors.Is(err, ErrUserInactive) true for every InactiveUserError.
+func (e *InactiveUserError) Is(target error) bool { return target == ErrUserInactive }
+
+// existingUser is what the platform already holds for the login: the stored email and whether the user is active.
+type existingUser struct {
+	Email  string
+	Active bool
+}
 
 // FirstAdminInput is the command line of create-first-admin.
 type FirstAdminInput struct {
@@ -168,8 +189,9 @@ type firstAdminTx interface {
 	// InsertUser creates the login's public.users row (id = auth_user_id) unless it exists; created says which happened. It never
 	// rewrites an existing row.
 	InsertUser(ctx context.Context, authUserID, email string) (created bool, err error)
-	// UserEmail reads the email of an existing platform user through the sanctioned view; found is false when it has no row there.
-	UserEmail(ctx context.Context, userID string) (email string, found bool, err error)
+	// UserState reads the existing platform user (its email and whether it is active) through the sanctioned view platform.listable_users, which lists an inactive user too;
+	// found is false when the user has no row there. Every row of public.users except the system user is listed (users_auth_link: id = auth_user_id), so "not found" means "no row".
+	UserState(ctx context.Context, userID string) (user existingUser, found bool, err error)
 	// InsertAdmin creates the platform.admins row.
 	InsertAdmin(ctx context.Context, id, displayName string) error
 	// Commit ends the transaction. Nothing is visible, and nothing is printed, before it succeeds.
@@ -177,7 +199,8 @@ type firstAdminTx interface {
 }
 
 // createFirstAdmin is the whole command after its input is validated and its transaction is open. The order is the contract:
-// the role switch, the table lock, the admin check, the login check, the writes, the commit; the success line comes last, after the commit.
+// the role switch, the table lock, the admin check, the login check, the check of an existing user row (an inactive one is refused), the writes, the commit; the success line
+// comes last, after the commit.
 func createFirstAdmin(ctx context.Context, tx firstAdminTx, in FirstAdminInput, out io.Writer) error {
 	if err := tx.AsOwner(ctx); err != nil {
 		return err
@@ -211,19 +234,32 @@ func createFirstAdmin(ctx context.Context, tx firstAdminTx, in FirstAdminInput, 
 		return ErrAuthEmailMissing
 	}
 
+	// An existing user row is judged BEFORE anything is written: an inactive user is refused (OD-8), an active one is used as it is.
+	prior, seen, err := tx.UserState(ctx, in.AuthUserID)
+	if err != nil {
+		return err
+	}
+	if seen && !prior.Active {
+		return &InactiveUserError{AuthUserID: in.AuthUserID}
+	}
+
 	created, err := tx.InsertUser(ctx, in.AuthUserID, email)
 	if err != nil {
 		return err
 	}
-	note := ""
-	if !created {
-		existing, ok, err := tx.UserEmail(ctx, in.AuthUserID)
-		if err != nil {
+	if !created && !seen {
+		// The row did not exist when it was read and does now: another writer created it in between (the table lock covers platform.admins, not public.users). Judge what it
+		// left in the same way. The transaction has written nothing yet, so a refusal here still leaves the database as it was.
+		if prior, seen, err = tx.UserState(ctx, in.AuthUserID); err != nil {
 			return err
 		}
-		if ok && existing != email {
-			note = fmt.Sprintf("create-first-admin: note: the platform user %s already existed with the email %s, not the login's %s; it was left as it is\n", in.AuthUserID, existing, email)
+		if seen && !prior.Active {
+			return &InactiveUserError{AuthUserID: in.AuthUserID}
 		}
+	}
+	note := ""
+	if !created && seen && prior.Email != email {
+		note = fmt.Sprintf("create-first-admin: note: the platform user %s already existed with the email %s, not the login's %s; it was left as it is\n", in.AuthUserID, prior.Email, email)
 	}
 	if err := tx.InsertAdmin(ctx, in.AuthUserID, in.Name()); err != nil {
 		return err
@@ -332,16 +368,16 @@ func (p pgFirstAdminTx) InsertUser(ctx context.Context, authUserID, email string
 	return tag.RowsAffected() == 1, nil
 }
 
-func (p pgFirstAdminTx) UserEmail(ctx context.Context, userID string) (string, bool, error) {
-	var email string
-	err := p.tx.QueryRow(ctx, "SELECT email FROM platform.listable_users WHERE id = $1::uuid", userID).Scan(&email)
+func (p pgFirstAdminTx) UserState(ctx context.Context, userID string) (existingUser, bool, error) {
+	var u existingUser
+	err := p.tx.QueryRow(ctx, "SELECT email, is_active FROM platform.listable_users WHERE id = $1::uuid", userID).Scan(&u.Email, &u.Active)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
-		return "", false, nil
+		return existingUser{}, false, nil
 	case err != nil:
-		return "", false, fmt.Errorf("%s: read the existing platform user: %w", CmdCreateFirstAdmin, err)
+		return existingUser{}, false, fmt.Errorf("%s: read the existing platform user: %w", CmdCreateFirstAdmin, err)
 	}
-	return email, true, nil
+	return u, true, nil
 }
 
 func (p pgFirstAdminTx) InsertAdmin(ctx context.Context, id, displayName string) error {

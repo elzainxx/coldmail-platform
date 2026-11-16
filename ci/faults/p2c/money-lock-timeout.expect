@@ -1,0 +1,8 @@
+# Close-out D8 (finding F35): every money transaction begins with SET LOCAL lock_timeout, so a stuck holder of the (user, module) advisory lock costs a waiter at most PLATFORM_MONEY_LOCK_TIMEOUT_MS and a typed ErrLockTimeout. The fault replaces the set_config statement in internal/money with a harmless SELECT: the wait is then unbounded and the test must say so (it gives up after ten times its wait instead of hanging).
+GATE=money-lock-timeout
+TARGET=platform
+SETUP=
+STEP=go test TestCloseoutMoney_LockWaitTimesOutWithATypedError (database integration test, real Postgres)
+CMD=H_PG_ADMIN_DSN="$FAULT_ADMIN_DSN" bash tests/harness/run-db-tests.sh '^TestCloseoutMoney_LockWaitTimesOutWithATypedError$'
+MESSAGE=--- FAIL: TestCloseoutMoney_LockWaitTimesOutWithATypedError
+MESSAGE=UNBOUNDED LOCK WAIT

@@ -539,7 +539,8 @@ func phase2TriggerText(n int) string {
 // unit_costs_guard calling the admin check; and the view listable_users (a view, its columns, both of its exclusions). It also pins what platform_0005 and platform_0006 add, by the same
 // method: the CHECKs of the one-unit charge, the item reference, the per-reserve cap, the end date and the delivery table; the three unique partial indexes of the ledger (one charge per job
 // item, one reserve per job, one release per reserve); the six triggers (timing, events, WHEN, enabled; the first to run is the created_at stamp) and their functions (SECURITY DEFINER except the stamp), whose BODIES must still name the constraints
-// they raise (a no-op body would keep every other fact).
+// they raise (a no-op body would keep every other fact). platform_0007's two triggers are pinned the same way: the snapshot price check (BEFORE INSERT on job_unit_prices) and the terminal-state rule
+// (BEFORE UPDATE on jobs), both SECURITY INVOKER with a pinned search_path, their bodies naming the constraints they raise and (for the rule) all three terminal statuses.
 //
 // What it does NOT cover, and says so: whether the triggers BEHAVE (the constraint and ledger tests do that, with a control for each), who may EXECUTE the functions (checkFunctionGrants), the
 // view's privileges (checkGrants) and the exact text of an expression (it reads the quoted words and the key tokens, which PostgreSQL deparses the same way on every version it runs on).
@@ -679,6 +680,10 @@ func phase2CatalogCheck(ctx context.Context, q querier) ([]string, error) {
 		// platform_0006: the ledger writes the entitlement (AFTER, only for the three entitlement kinds) and the entitlement raises its delivery row (AFTER INSERT OR UPDATE)
 		{"platform.ledger", "ledger_apply_to_entitlements", 1 + 4, true},
 		{"platform.m3_entitlements", "m3_entitlements_raise_sync", 1 + 4 + 16, false},
+		// platform_0007: BEFORE the row is written a snapshot price must equal the table's (every INSERT, no WHEN), and BEFORE a job row is updated a terminal status must not change (every UPDATE, no WHEN: the
+		// comparison is in the body, so a column list or a WHEN could not leave a status change through)
+		{"platform.job_unit_prices", "job_unit_prices_snapshot_equals_unit_costs", 1 + 2 + 4, false},
+		{"platform.jobs", "jobs_terminal_is_final", 1 + 2 + 16, false},
 	} {
 		rows, err := phase2Rows(ctx, q, `SELECT t.tgtype::int::text, t.tgenabled::text, (t.tgqual IS NOT NULL)::text, p.proname::text FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid
 			WHERE NOT t.tgisinternal AND t.tgrelid = to_regclass($1::text) AND t.tgname::text = $2`, tr.rel, tr.name)
@@ -722,6 +727,9 @@ func phase2CatalogCheck(ctx context.Context, q querier) ([]string, error) {
 		{"ledger_stamp_created_at", "", "trigger", false}, // SECURITY INVOKER: it reads and writes nothing but the row it is given
 		{"ledger_apply_to_entitlements", "", "trigger", true},
 		{"m3_entitlements_raise_sync", "", "trigger", true},
+		// platform_0007: SECURITY INVOKER both (the price check reads platform.unit_costs, which platform_app may read; the terminal-state rule reads only the row it is given), with a pinned search_path
+		{"job_unit_prices_snapshot_equals_unit_costs", "", "trigger", false},
+		{"jobs_terminal_is_final", "", "trigger", false},
 	} {
 		rows, err := phase2Rows(ctx, q, `SELECT p.prosecdef::text, (EXISTS (SELECT 1 FROM unnest(COALESCE(p.proconfig, ARRAY[]::text[])) cfg WHERE cfg = 'search_path=pg_catalog, pg_temp'))::text,
 				pg_get_userbyid(p.proowner), p.prorettype::regtype::text
@@ -769,6 +777,8 @@ func phase2CatalogCheck(ctx context.Context, q querier) ([]string, error) {
 		{"ledger_apply_to_entitlements", []string{"m3_expire_is_due", "platform.m3_entitlements", "m3_enable", "m3_disable", "m3_expire"}},
 		{"m3_entitlements_raise_sync", []string{"platform.m3_sync", "want_version", "ON CONFLICT"}},
 		{"ledger_stamp_created_at", []string{"NEW.created_at", "now()"}},
+		{"job_unit_prices_snapshot_equals_unit_costs", []string{"snapshot_equals_unit_costs", "platform.unit_costs", "IS DISTINCT FROM"}},
+		{"jobs_terminal_is_final", []string{"jobs_terminal_is_final", "'succeeded'", "'failed'", "'cancelled'", "IS DISTINCT FROM"}},
 	} {
 		rows, err := phase2Rows(ctx, q, `SELECT p.prosrc FROM pg_proc p WHERE p.pronamespace = 'platform'::regnamespace AND p.proname::text = $1`, b.fn)
 		if err != nil {
@@ -1083,6 +1093,45 @@ func TestSchemaLocks_Phase2Rulings(t *testing.T) {
 		{"the observed vocabulary dropped",
 			[]string{"ALTER TABLE platform.m3_sync DROP CONSTRAINT m3_sync_observed_vocabulary"},
 			[][]string{{"m3_sync_observed_vocabulary", "missing"}}},
+
+		// ---- platform_0007: snapshot prices and terminal job states ----
+		{"the snapshot price trigger dropped (a forged price would be accepted again)",
+			[]string{"DROP TRIGGER job_unit_prices_snapshot_equals_unit_costs ON platform.job_unit_prices"},
+			[][]string{{"job_unit_prices_snapshot_equals_unit_costs", "missing"}}},
+		{"the snapshot price trigger disabled",
+			[]string{"ALTER TABLE platform.job_unit_prices DISABLE TRIGGER job_unit_prices_snapshot_equals_unit_costs"},
+			[][]string{{"job_unit_prices_snapshot_equals_unit_costs", "not enabled"}}},
+		{"the snapshot price trigger that fires AFTER the row is written (the CHECK and the keys would answer first)",
+			[]string{"DROP TRIGGER job_unit_prices_snapshot_equals_unit_costs ON platform.job_unit_prices",
+				"CREATE TRIGGER job_unit_prices_snapshot_equals_unit_costs AFTER INSERT ON platform.job_unit_prices FOR EACH ROW EXECUTE FUNCTION platform.job_unit_prices_snapshot_equals_unit_costs()"},
+			[][]string{{"job_unit_prices_snapshot_equals_unit_costs", "fires as AFTER INSERT", "want BEFORE INSERT"}}},
+		{"the snapshot price trigger turned into a no-op (the trigger, the owner and the search_path are all still there)",
+			[]string{"CREATE OR REPLACE FUNCTION platform.job_unit_prices_snapshot_equals_unit_costs() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$ BEGIN RETURN NEW; END $$"},
+			[][]string{{"job_unit_prices_snapshot_equals_unit_costs()", "its body does not mention", "snapshot_equals_unit_costs"}}},
+		{"the snapshot price check without a pinned search_path",
+			[]string{"ALTER FUNCTION platform.job_unit_prices_snapshot_equals_unit_costs() RESET search_path"},
+			[][]string{{"job_unit_prices_snapshot_equals_unit_costs()", "does not pin search_path"}}},
+		{"the terminal-state trigger dropped (a succeeded job could go back to draft)",
+			[]string{"DROP TRIGGER jobs_terminal_is_final ON platform.jobs"},
+			[][]string{{"platform.jobs trigger jobs_terminal_is_final", "missing"}}},
+		{"the terminal-state trigger disabled",
+			[]string{"ALTER TABLE platform.jobs DISABLE TRIGGER jobs_terminal_is_final"},
+			[][]string{{"jobs_terminal_is_final", "not enabled"}}},
+		{"the terminal-state trigger that fires AFTER the row is written",
+			[]string{"DROP TRIGGER jobs_terminal_is_final ON platform.jobs",
+				"CREATE TRIGGER jobs_terminal_is_final AFTER UPDATE ON platform.jobs FOR EACH ROW EXECUTE FUNCTION platform.jobs_terminal_is_final()"},
+			[][]string{{"jobs_terminal_is_final", "fires as AFTER UPDATE", "want BEFORE UPDATE"}}},
+		{"the terminal-state trigger that only fires for one status (a WHEN clause)",
+			[]string{"DROP TRIGGER jobs_terminal_is_final ON platform.jobs",
+				"CREATE TRIGGER jobs_terminal_is_final BEFORE UPDATE ON platform.jobs FOR EACH ROW WHEN (OLD.status = 'succeeded') EXECUTE FUNCTION platform.jobs_terminal_is_final()"},
+			[][]string{{"jobs_terminal_is_final", "WHEN clause present = true"}}},
+		{"the terminal-state rule turned into a no-op",
+			[]string{"CREATE OR REPLACE FUNCTION platform.jobs_terminal_is_final() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$ BEGIN RETURN NEW; END $$"},
+			[][]string{{"jobs_terminal_is_final()", "its body does not mention", "jobs_terminal_is_final"}}},
+		{"the terminal-state rule that holds only a succeeded job (failed and cancelled could move)",
+			[]string{"CREATE OR REPLACE FUNCTION platform.jobs_terminal_is_final() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$ BEGIN " +
+				"IF OLD.status = 'succeeded' AND NEW.status IS DISTINCT FROM OLD.status THEN RAISE EXCEPTION 'x' USING ERRCODE = '23001', CONSTRAINT = 'jobs_terminal_is_final'; END IF; RETURN NEW; END $$"},
+			[][]string{{"jobs_terminal_is_final()", "its body does not mention", "'failed'"}, {"jobs_terminal_is_final()", "its body does not mention", "'cancelled'"}}},
 	}
 	for _, c := range cases {
 		c := c

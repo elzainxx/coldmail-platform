@@ -198,7 +198,7 @@ func (r *m3lRun) pacingAndAccounts(t *testing.T) {
 	for _, tn := range []*m3lTenant{r.u1, r.u2} {
 		from := fmt.Sprintf("sender-%s-%s@example.test", tn.Name, r.runID)
 		status, body := r.env.do(t, r.env.m3URL, http.MethodPost, "/v1/send-byo/accounts", r.env.token, map[string]any{
-			"user_id": tn.UserID, "smtp_host": "smtp-sink", "smtp_port": 1025, "smtp_username": from, "smtp_secret": "m3-live-harness",
+			"user_id": tn.UserID, "smtp_host": "smtp-sink", "smtp_port": 1025, "smtp_username": from, "smtp_secret": m3lSinkPassword(t),
 			"from_address": from, "from_name": "Harness",
 		})
 		r.env.expect(t, "POST the SMTP account of "+tn.Name, status, body, http.StatusCreated, "")
