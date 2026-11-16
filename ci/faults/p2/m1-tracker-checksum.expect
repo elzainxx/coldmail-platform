@@ -1,0 +1,9 @@
+# Ruling 10: module 1's migrations run exactly once and in order; a migration edited after it was applied is REFUSED. The fault disables the checksum comparison in the runner (the file is
+# edited, the database is not): the runner accepts the changed file and the test must say so. Real Postgres, the real runner code.
+GATE=m1-tracker-checksum
+TARGET=module:coldmail-verify
+SETUP=
+STEP=go test TestMigrate_ChangedFileIsRefused (a changed migration is refused, the database unchanged)
+CMD=cd control-plane && TM_TEST_DATABASE_URL="$FAULT_ADMIN_DSN" go test -count=1 -v -run '^TestMigrate_ChangedFileIsRefused$' ./internal/migrate/
+MESSAGE=--- FAIL: TestMigrate_ChangedFileIsRefused
+MESSAGE=a changed migration was accepted

@@ -1,0 +1,11 @@
+--- a/db/migrations/platform_0004_phase1_rulings.up.sql
++++ b/db/migrations/platform_0004_phase1_rulings.up.sql
+@@ -133,7 +133,7 @@
+ ALTER TABLE platform.ledger ADD CONSTRAINT ledger_kind_vocabulary CHECK (kind IN ('grant', 'reserve', 'charge', 'release', 'adjustment', 'm3_enable', 'm3_disable', 'm3_expire'));
+ -- an adjustment: an admin removes AVAILABLE credits, with a reason, tied to no job. Never reserved credits; never below zero (platform.balances' CHECK refuses the overdraw).
+ ALTER TABLE platform.ledger ADD CONSTRAINT ledger_shape_adjustment CHECK (kind <> 'adjustment' OR (
+-    available_delta < 0 AND reserved_delta = 0 AND job_id IS NULL AND reserve_id IS NULL AND unit IS NULL AND units IS NULL AND unit_cost IS NULL
++    available_delta < 0 AND job_id IS NULL AND reserve_id IS NULL AND unit IS NULL AND units IS NULL AND unit_cost IS NULL
+     AND acting_admin_id IS NOT NULL AND reason IS NOT NULL AND btrim(reason) <> ''));
+ 
+ COMMENT ON TABLE platform.ledger IS 'THE money record. Append-only: UPDATE, DELETE and TRUNCATE are refused for every role (privileges) and for the owner too (triggers). Each row carries signed integer deltas; balances is their sum, maintained by trigger. Kinds: grant, reserve, charge, release, adjustment (monetary, M1/M2 only) and m3_enable, m3_disable, m3_expire (no credits, M3 only).';

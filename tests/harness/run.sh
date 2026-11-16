@@ -108,19 +108,26 @@ sa="$(DC exec -T postgres psql -X -At -U supabase_admin -d postgres -c "select r
 [ "$sa" = t ] || die "supabase_admin is not a superuser ($sa): the integration tests need one"
 echo "  instruments: migrator postgres is (rolsuper, rolcreaterole) = (f, t); auth.users is the image's own table; supabase_admin is a superuser"
 echo "  -- preprovision (db/install/preprovision.sql, the required install step)"; DC run --rm -T preprovision || die "the required provisioning step (db/install/preprovision.sql) failed"
-for s in migrate-platform migrate-m1 migrate-m2 migrate-m3; do
+psql_() { DC exec -T postgres psql -U postgres -d postgres -v ON_ERROR_STOP=1 -tAc "$1"; }
+for s in migrate-platform migrate-m1 migrate-m1-password migrate-m2 migrate-m3; do
   echo "  -- $s"; DC run --rm -T "$s" > "$WORK/$s.log" 2>&1; rc=$?; sed 's/^/     | /' "$WORK/$s.log" | tail -25
   [ "$rc" = 0 ] || die "$s exited $rc"
 done
 m1_want="$(ls "$M1"/control-plane/migrations/[0-9][0-9][0-9][0-9]_*.sql 2>/dev/null | wc -l | tr -d ' ')"
-m1_got="$(sed -n 's/.*migrate-m1: applied \([0-9]*\) files.*/\1/p' "$WORK/migrate-m1.log" | tail -1)"
-[ "${m1_want:-0}" -ge 1 ] || die "module 1's migration directory has no numbered files — the loop would have applied nothing"
-[ "$m1_got" = "$m1_want" ] || die "module 1: the checkout has $m1_want migration files but the loop applied '${m1_got:-none}'"
-psql_() { DC exec -T postgres psql -U postgres -d postgres -v ON_ERROR_STOP=1 -tAc "$1"; }
+[ "${m1_want:-0}" -ge 1 ] || die "module 1's migration directory has no numbered files — the runner would have applied nothing"
+# module 1's own runner (cmd/migrate): the first run applied every file; a SECOND run of the full chain must be a no-op (the owner's ruling), and say so
+m1_line="$(grep -E '^migrate: applied [0-9]+, adopted [0-9]+, already applied [0-9]+, total [0-9]+' "$WORK/migrate-m1.log" | tail -1)"
+[ -n "$m1_line" ] || die "module 1's runner printed no 'migrate: applied N, adopted M, already applied K, total T' summary line"
+m1_got="$(printf '%s\n' "$m1_line" | sed -n 's/^migrate: applied \([0-9]*\), adopted.*/\1/p')"
+[ "$m1_got" = "$m1_want" ] || die "module 1: the checkout has $m1_want migration files but the runner applied '${m1_got:-none}' ($m1_line)"
+echo "  -- migrate-m1 again (the full chain twice must be a no-op)"; DC run --rm -T migrate-m1 > "$WORK/migrate-m1-2.log" 2>&1 || { cat "$WORK/migrate-m1-2.log"; die "the second run of module 1's runner failed"; }
+grep -qE "^migrate: applied 0, adopted 0, already applied $m1_want, total $m1_want" "$WORK/migrate-m1-2.log" || die "the second run of module 1's runner was not a no-op: $(grep '^migrate:' "$WORK/migrate-m1-2.log" | tail -1)"
+[ "$(psql_ "select count(*) from verify.schema_migrations")" = "$m1_want" ] || die "verify.schema_migrations does not hold exactly $m1_want rows after the two runs"
+[ "$(psql_ "select count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public' and c.relname in ('verifications', 'cache', 'jobs')")" = 0 ] || die "module 1's tables are back in public after the second run: the runner replayed 0001-0015"
 n="$(psql_ "select count(*) from pg_namespace where nspname in ('platform','send_managed','send_byo','verify')")"; [ "$n" = 4 ] || die "expected the platform, send_managed, send_byo and verify schemas, found $n of them"
 [ "$(psql_ "select to_regclass('verify.api_callers') is not null")" = t ] || die "module 1's verify.api_callers does not exist after its migrations"
 psql_ "INSERT INTO verify.api_callers (caller_id, key_sha256, not_before, user_id) VALUES ('harness-caller', decode('$M1_KEY_SHA','hex'), now() - interval '1 hour', '00000000-0000-0000-0000-0000000000a1')" >/dev/null || die "could not seed module 1's per-caller key"
-echo "  schemas: platform, send_managed, send_byo, verify present; module 1 applied $m1_got of $m1_want files; one module-1 caller key seeded"
+echo "  schemas: platform, send_managed, send_byo, verify present; module 1 applied $m1_got of $m1_want files and a second run was a no-op; one module-1 caller key seeded"
 # schema public may hold only the platform's own tables (tests/public-allowlist.txt): module 1 must have left it, and no module may have put anything there
 DC exec -T postgres psql -X -At -F '|' -v ON_ERROR_STOP=1 -U postgres -d postgres < "$PLATFORM_DIR/scripts/public-schema-listing.sql" > "$WORK/public-listing.txt" || die "the public-schema listing query failed"
 bash "$PLATFORM_DIR/scripts/check-public-schema.sh" --allowlist "$PLATFORM_DIR/tests/public-allowlist.txt" --listing "$WORK/public-listing.txt" || die "schema public holds something that is not allowlisted"

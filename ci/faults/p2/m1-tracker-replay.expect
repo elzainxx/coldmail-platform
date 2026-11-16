@@ -1,0 +1,9 @@
+# Ruling 10 (the guard 0016 left): running the full chain on a database that already ran 0016 must NEVER replay 0001..0015 (they are unqualified and would recreate empty tables in public).
+# The fault removes the adoption route for a database the old psql loop took to 0016: the plan then replays, and the plan test must name the executed migrations. No database needed.
+GATE=m1-tracker-replay
+TARGET=module:coldmail-verify
+SETUP=
+STEP=go test TestBuildPlan_NeverReplaysAfter0016 (the plan never executes 0001..0016 once 0016 has run)
+CMD=cd control-plane && go test -count=1 -v -run '^TestBuildPlan_NeverReplaysAfter0016$' ./internal/migrate/
+MESSAGE=--- FAIL: TestBuildPlan_NeverReplaysAfter0016
+MESSAGE=the plan EXECUTES migration(s)

@@ -1,0 +1,10 @@
+--- a/db/migrations/platform_0004_phase1_rulings.up.sql
++++ b/db/migrations/platform_0004_phase1_rulings.up.sql
+@@ -23,7 +23,6 @@
+ 
+ -- ── 2. the system user holds nothing ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ -- All four columns are NOT NULL, so each CHECK is NULL-safe. The system user is module 2's owner of shared pools: it has no login and must never own credits, money events, an entitlement or a list.
+-ALTER TABLE platform.balances        ADD CONSTRAINT balances_not_the_system_user        CHECK (user_id <> '00000000-0000-0000-0000-000000000000'::uuid);
+ ALTER TABLE platform.ledger          ADD CONSTRAINT ledger_not_the_system_user          CHECK (user_id <> '00000000-0000-0000-0000-000000000000'::uuid);
+ ALTER TABLE platform.m3_entitlements ADD CONSTRAINT m3_entitlements_not_the_system_user CHECK (user_id <> '00000000-0000-0000-0000-000000000000'::uuid);
+ ALTER TABLE platform.suppressions    ADD CONSTRAINT suppressions_not_the_system_user    CHECK (user_id <> '00000000-0000-0000-0000-000000000000'::uuid);

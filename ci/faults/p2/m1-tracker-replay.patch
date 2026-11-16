@@ -1,0 +1,13 @@
+diff --git a/control-plane/internal/migrate/migrate.go b/control-plane/internal/migrate/migrate.go
+index d0229f9..a1e0141 100644
+--- a/control-plane/internal/migrate/migrate.go
++++ b/control-plane/internal/migrate/migrate.go
+@@ -303,7 +303,7 @@ func buildPlan(files []File, st dbState) (plan, error) {
+ 		p.Ops = append(p.Ops, op{File: files[ti], Run: false, Rows: rowsFor(files[:ti+1], "adopted")})
+ 		rest(ti + 1)
+ 
+-	case st.VerifyExists: // (c) the old loop ran 0016 and stopped
++	case false && st.VerifyExists: // (c) the old loop ran 0016 and stopped
+ 		if clash {
+ 			return plan{}, refuse("%s", clashMsg)
+ 		}

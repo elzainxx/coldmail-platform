@@ -1074,15 +1074,12 @@ func TestGrantsInvariant_FunctionsAntiVacuity(t *testing.T) {
 		{"a function owned by the wrong role",
 			[]string{"ALTER FUNCTION platform.jobs_guard() OWNER TO platform_admin"},
 			[][]string{{"platform.jobs_guard()", "owned by platform_admin", "platform_owner"}}},
-		{"the one allowed grant made grantable",
+		{"the admin check granted WITH GRANT OPTION (nobody holds EXECUTE on it: its callers are SECURITY DEFINER)",
 			[]string{"GRANT EXECUTE ON FUNCTION platform.require_active_admin(uuid, text) TO platform_app WITH GRANT OPTION"},
 			[][]string{{"platform.require_active_admin(uuid, text)", "platform_app", "WITH GRANT OPTION"}}},
-		{"the one allowed grant given to a role it is not allowed for",
+		{"the admin check granted to an unrelated role (an over-grant: no role may hold it)",
 			[]string{"CREATE ROLE zz_fn_exec NOLOGIN", "GRANT EXECUTE ON FUNCTION platform.require_active_admin(uuid, text) TO zz_fn_exec"},
 			[][]string{{"platform.require_active_admin(uuid, text)", "zz_fn_exec", "over-grant"}}},
-		{"the one allowed function dropped (a stale allowance)",
-			[]string{"DROP FUNCTION platform.require_active_admin(uuid, text)"},
-			[][]string{{"require_active_admin(uuid, text)", "declared EXECUTE allowance", "does not exist"}}},
 		{"an empty schema (the instrument matches nothing)",
 			[]string{"DROP SCHEMA platform CASCADE", "CREATE SCHEMA platform AUTHORIZATION platform_owner"},
 			[][]string{{"found 0 function(s)", "the floor is"}}},
@@ -1101,6 +1098,18 @@ func TestGrantsInvariant_FunctionsAntiVacuity(t *testing.T) {
 			}
 		})
 	}
+
+	// The declaration of allowed EXECUTE grants is EMPTY in production since platform_0004 (no role holds EXECUTE on any function), so the machinery that judges an allowance is proven here
+	// with an injected one: a declared allowance for a function that does not exist is a stale declaration and must be reported (the declaration is restored afterwards).
+	t.Run("a declared allowance for a function that does not exist (a stale declaration)", func(t *testing.T) {
+		saved := functionExecuteAllowed
+		functionExecuteAllowed = map[string][]string{"zz_gone()": {"platform_app"}}
+		t.Cleanup(func() { functionExecuteAllowed = saved })
+		got := functionGrantsAfter(t, admin, nil)
+		if !hasViolation(got, "zz_gone()", "declared EXECUTE allowance", "does not exist") {
+			t.Fatalf("a stale EXECUTE allowance was not reported; the checker said:\n  %s", strings.Join(got, "\n  "))
+		}
+	})
 
 	v, err = checkFunctionGrants(testCtx(t), admin)
 	requireNoViolations(t, v, err, "the database after the rolled-back breakages")

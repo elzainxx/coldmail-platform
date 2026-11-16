@@ -1,0 +1,10 @@
+--- a/db/migrations/platform_0004_phase1_rulings.up.sql
++++ b/db/migrations/platform_0004_phase1_rulings.up.sql
+@@ -72,7 +72,6 @@
+     RETURN NEW;
+ END
+ $fn$;
+-CREATE TRIGGER ledger_require_active_admin BEFORE INSERT ON platform.ledger FOR EACH ROW EXECUTE FUNCTION platform.ledger_require_active_admin();
+ REVOKE ALL ON FUNCTION platform.ledger_require_active_admin() FROM PUBLIC;
+ 
+ CREATE FUNCTION platform.admin_audit_require_active_admin() RETURNS trigger

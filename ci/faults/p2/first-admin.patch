@@ -1,0 +1,13 @@
+diff --git a/internal/migrate/firstadmin.go b/internal/migrate/firstadmin.go
+index cbc1112..cd61b49 100644
+--- a/internal/migrate/firstadmin.go
++++ b/internal/migrate/firstadmin.go
+@@ -190,7 +190,7 @@ func createFirstAdmin(ctx context.Context, tx firstAdminTx, in FirstAdminInput,
+ 	if err != nil {
+ 		return err
+ 	}
+-	if exists {
++	if false && exists {
+ 		return ErrAdminExists
+ 	}
+ 

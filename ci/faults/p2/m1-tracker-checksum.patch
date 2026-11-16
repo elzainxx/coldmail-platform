@@ -1,0 +1,13 @@
+diff --git a/control-plane/internal/migrate/migrate.go b/control-plane/internal/migrate/migrate.go
+index d0229f9..2ebd17c 100644
+--- a/control-plane/internal/migrate/migrate.go
++++ b/control-plane/internal/migrate/migrate.go
+@@ -267,7 +267,7 @@ func buildPlan(files []File, st dbState) (plan, error) {
+ 				ahead = append(ahead, fmt.Sprintf("migration %s is recorded in verify.schema_migrations but there is no file for it: the database is ahead of this checkout", r.Version))
+ 				continue
+ 			}
+-			if r.Checksum != files[i].Checksum {
++			if false && r.Checksum != files[i].Checksum {
+ 				changed = append(changed, fmt.Sprintf("migration %s changed after it was applied: recorded %s, on disk %s", r.Version, short(r.Checksum), files[i].Short()))
+ 			}
+ 			recorded[r.Version] = r

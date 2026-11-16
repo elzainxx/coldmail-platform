@@ -1,0 +1,11 @@
+--- a/db/migrations/platform_0004_phase1_rulings.up.sql
++++ b/db/migrations/platform_0004_phase1_rulings.up.sql
+@@ -32,7 +32,7 @@
+ CREATE VIEW platform.listable_users AS
+ SELECT u.id, u.auth_user_id, u.email, u.is_active, u.created_at
+ FROM public.users u
+-WHERE u.id <> '00000000-0000-0000-0000-000000000000'::uuid AND u.auth_user_id IS NOT NULL;
++WHERE u.auth_user_id IS NOT NULL;
+ COMMENT ON VIEW platform.listable_users IS 'Every user the platform may show or count: public.users without the all-zero system user (module 2''s shared-pool owner, no login). The only sanctioned way to list users; scripts/check-user-lists.sh fails on platform code that selects public.users elsewhere.';
+ 
+ -- ── 3. the database refuses a disabled admin ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

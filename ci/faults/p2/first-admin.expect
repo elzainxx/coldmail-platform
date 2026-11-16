@@ -1,0 +1,8 @@
+# Ruling OD-5: `platform-migrate create-first-admin` creates the FIRST admin and refuses once any admin exists. The fault disables the existing-admin refusal in the command; the real binary then
+# does not refuse the second run and the harness test must say so. Real Postgres, the real binary (run-db-tests builds it).
+GATE=first-admin
+TARGET=platform
+SETUP=
+STEP=go test TestFirstAdmin_RefusesASecondRunWithTheSameArguments (the command refuses when an admin exists, writes nothing)
+CMD=H_PG_ADMIN_DSN="$FAULT_ADMIN_DSN" bash tests/harness/run-db-tests.sh '^TestFirstAdmin_RefusesASecondRunWithTheSameArguments$'
+MESSAGE=--- FAIL: TestFirstAdmin_RefusesASecondRunWithTheSameArguments

@@ -70,24 +70,28 @@ services:
     networks: [private]
     restart: "no"
 
-  # Module 1 has no migration tool: its own CI applies the numbered files with a psql loop in lexical order, stopping at the first error. So does this.
+  # Module 1's own migration runner (cmd/migrate, built from the pinned source into the image the platform supplies for it: tests/harness/m1/Dockerfile): every file once, in order, recorded in
+  # verify.schema_migrations. run.sh runs this service TWICE: the second run must be a no-op (the ruling "running the full chain twice must be a no-op"). As `postgres`, like an install.
   migrate-m1:
+    build: { context: "${H_MODULES_ROOT:?}/coldmail-verify", dockerfile: "${H_PLATFORM_DIR:?}/tests/harness/m1/Dockerfile" }
+    entrypoint: ["/usr/local/bin/migrate"]
+    command: ["up"]
+    environment:
+      TM_MIGRATE_DATABASE_URL: postgres://postgres:${H_PG_SUPERPASS:?}@postgres:5432/postgres
+      TM_MIGRATIONS_DIR: /migrations
+    depends_on: { postgres: { condition: service_healthy } }
+    networks: [private]
+    restart: "no"
+
+  # verify_app is created by migration 0016 as a LOGIN role without a password; the password is set out of band, never in SQL (psql interpolates :'pw' from stdin)
+  migrate-m1-password:
     image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
     environment: { PGPASSWORD: "${H_PG_SUPERPASS:?}", M1_APP_PASSWORD: "${H_M1_APP_PASSWORD:?}" }
-    volumes:
-      - ${H_MODULES_ROOT:?}/coldmail-verify/control-plane/migrations:/m:ro
     entrypoint: ["sh", "-ec"]
     command:
       - |
-        n=0
-        for f in $$(ls /m/[0-9][0-9][0-9][0-9]_*.sql | sort); do
-          psql -v ON_ERROR_STOP=1 -h postgres -U postgres -d postgres -q -f "$$f" >/dev/null
-          n=$$((n+1))
-        done
-        echo "migrate-m1: applied $$n files"
-        # verify_app is created by migration 0016 as a LOGIN role without a password; the password is set out of band, never in SQL (psql interpolates :'pw' from stdin)
         printf "ALTER ROLE verify_app PASSWORD :'pw';\n" | psql -v ON_ERROR_STOP=1 -h postgres -U postgres -d postgres -q -v "pw=$$M1_APP_PASSWORD" >/dev/null
-        echo "migrate-m1: verify_app password set"
+        echo "migrate-m1-password: verify_app password set"
     depends_on: { postgres: { condition: service_healthy } }
     networks: [private]
     restart: "no"

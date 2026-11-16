@@ -1,0 +1,8 @@
+# Ruling 12: platform.listable_users is the only sanctioned user list and excludes the system user. The fault removes the exclusion; the view then lists the system user.
+GATE=listable-users
+TARGET=platform
+SETUP=
+STEP=go test TestConstraints_ListableUsers (database integration test, real Postgres)
+CMD=H_PG_ADMIN_DSN="$FAULT_ADMIN_DSN" bash tests/harness/run-db-tests.sh '^TestConstraints_ListableUsers$'
+MESSAGE=--- FAIL: TestConstraints_ListableUsers
+MESSAGE=platform.listable_users lists 

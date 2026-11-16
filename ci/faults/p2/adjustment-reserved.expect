@@ -1,0 +1,8 @@
+# Ruling OD-4: an adjustment removes only AVAILABLE credits, never reserved. The fault drops the reserved_delta = 0 clause from the shape CHECK; an adjustment that moves reserved credits is then ALLOWED.
+GATE=adjustment-reserved
+TARGET=platform
+SETUP=
+STEP=go test TestLedger_AdjustmentShapes (database integration test, real Postgres)
+CMD=H_PG_ADMIN_DSN="$FAULT_ADMIN_DSN" bash tests/harness/run-db-tests.sh '^TestLedger_AdjustmentShapes$'
+MESSAGE=--- FAIL: TestLedger_AdjustmentShapes
+MESSAGE=was ALLOWED (wanted SQLSTATE 23514

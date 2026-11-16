@@ -1,0 +1,11 @@
+--- a/db/migrations/platform_0004_phase1_rulings.up.sql
++++ b/db/migrations/platform_0004_phase1_rulings.up.sql
+@@ -18,7 +18,7 @@
+ 
+ -- ── 1. a scheduled job holds the slot ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ DROP INDEX platform.jobs_one_executing_per_user_module;
+-CREATE UNIQUE INDEX jobs_one_active_per_user_module ON platform.jobs (user_id, module_id) WHERE status IN ('scheduled', 'running', 'paused', 'cancelling');
++CREATE UNIQUE INDEX jobs_one_active_per_user_module ON platform.jobs (user_id, module_id) WHERE status IN ('running', 'paused', 'cancelling');
+ COMMENT ON INDEX platform.jobs_one_active_per_user_module IS 'One active job per module per user: a job that is scheduled (credits reserved, not started), running, paused or cancelling holds the slot. Another module is a different slot; a draft or a finished job holds none.';
+ 
+ -- ── 2. the system user holds nothing ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
