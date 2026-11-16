@@ -32,3 +32,11 @@ paths = ['''(^|/)Docs/history/audit-scratch/.*\.log$''']
 description = "placeholder SMTP-sink password in the harness's live module-3 test (commit 355299a6): not a secret"
 targetRules = ["generic-api-key"]
 commits = ["355299a6c605a2ca0601bf58afb0e0468d7fccb0"]
+
+# The THIRD exception (Phase 2): ONE rule, ONE commit, the same false positive quoted in prose.
+# Commit 7b05c78367ed7c7799628c07d8ed5342eb5a3bdf is the spec commit that QUOTED the placeholder above (Docs/phase-2-spec.md, open decision 15) in a key-and-value form that matches generic-api-key again.
+# The quoting was removed in the next commit; the commit itself is in history and cannot be removed without a force-push. It is the only finding of that commit (read in full on 2026-11-16).
+[[allowlists]]
+description = "the placeholder SMTP-sink password quoted in the Phase 2 spec text (commit 7b05c78): not a secret"
+targetRules = ["generic-api-key"]
+commits = ["7b05c78367ed7c7799628c07d8ed5342eb5a3bdf"]
