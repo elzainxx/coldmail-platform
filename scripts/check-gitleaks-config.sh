@@ -20,6 +20,7 @@ while [ $# -gt 0 ]; do
 done
 F="$ROOT/.gitleaks.toml"
 fail=0; bad() { echo "  FAIL: $*"; fail=$((fail+1)); }
+nogit=0
 [ -f "$F" ] || { echo "check-gitleaks-config: RED — $F does not exist: the secret scanner's configuration is a required file"; exit 1; }
 text="$(tr -d '\r' < "$F")"
 code="$(printf '%s\n' "$text" | sed 's/^[[:space:]]*#.*$//')"          # comments are not configuration
@@ -47,7 +48,11 @@ for i in $(cut -f1 /tmp/gl-blocks.$$ | sort -un); do
     [ "$ns" = 1 ] || bad "allowlist block $i: commits must name exactly ONE commit (found $ns)"
     for s in $shas; do
       printf '%s' "$s" | grep -qE '^[0-9a-f]{40}$' || { bad "allowlist block $i: '$s' is not a 40-hex commit sha"; continue; }
-      git -C "$ROOT" cat-file -e "$s^{commit}" 2>/dev/null || bad "allowlist block $i: commit $s is not in this repository's history (a stale exception)"
+      if [ -e "$ROOT/.git" ]; then
+        git -C "$ROOT" cat-file -e "$s^{commit}" 2>/dev/null || bad "allowlist block $i: commit $s is not in this repository's history (a stale exception)"
+      else
+        nogit=1
+      fi
     done
     printf '%s\n' "$blk" | grep -qE '^[[:space:]]*description[[:space:]]*=[[:space:]]*"[^"]{10,}"' || bad "allowlist block $i: a commit exception needs a description of at least 10 characters"
   elif [ "$haspaths" = 1 ] && [ "$hascommits" = 0 ]; then
@@ -61,6 +66,7 @@ done
 rm -f /tmp/gl-blocks.$$
 [ "$blocks" = "$n" ] || bad "parsed $blocks allowlist block(s) but the file declares $n"
 echo "check-gitleaks-config: $blocks allowlist block(s): $paths_blocks path, $commit_blocks commit; useDefault checked"
+[ "$nogit" = 0 ] || echo "check-gitleaks-config: NOTE: no .git here (a scratch copy made by git archive): the existence of the excepted commit(s) was NOT checked; the gates workflow checks it on the real checkout"
 echo "NOT CHECKED: that an excepted line is not a secret (the comment above each block records who read it and when); gitleaks' own matching (the gitleaks workflow proves the scanner on every run)"
 if [ "$fail" -gt 0 ]; then echo "check-gitleaks-config: RED — $fail problem(s)"; exit 1; fi
 echo "check-gitleaks-config: OK"

@@ -54,6 +54,7 @@ repo "$D"; { printf '%s\n[[allowlists]]\ndescription = "no rule named: applies t
 repo "$D"; { printf '%s\n[[allowlists]]\ndescription = "a path exception for the whole tests tree"\ntargetRules = ["generic-api-key"]\npaths = ["tests/.*"]\n' "$HEAD_TOML"; } > "$D/.gitleaks.toml"; expect "a path exception outside audit-scratch" "$D" 1 "a path exception may only cover Docs/history/audit-scratch"
 repo "$D"; { printf '%s' "$HEAD_TOML"; commit_block "$SHA"; commit_block "$SHA"; commit_block "$SHA"; commit_block "$SHA"; } > "$D/.gitleaks.toml"; expect "four exceptions (a decision, not a drift)" "$D" 1 "4 [[allowlists]] blocks (at most 3 are accepted"
 repo "$D"; { printf '%s\n[[allowlists]]\ndescription = "both a path and a commit at once"\ntargetRules = ["generic-api-key"]\npaths = ["Docs/history/audit-scratch/x"]\ncommits = ["%s"]\n' "$HEAD_TOML" "$SHA"; } > "$D/.gitleaks.toml"; expect "a block that is both a path and a commit exception" "$D" 1 "must be a path exception OR a commit exception"
+repo "$D"; { printf "%s" "$HEAD_TOML"; commit_block "$SHA"; } > "$D/.gitleaks.toml"; rm -rf "$D/.git"; expect "no .git (a git archive copy): green, and it says the commit was not checked" "$D" 0 "existence of the excepted commit(s) was NOT checked"
 out="$(bash "$GATE" --bogus 2>&1)"; rc=$?; t
 if [ "$rc" = 2 ] && printf '%s' "$out" | grep -qF "unknown argument"; then echo "  ok   an unknown argument is a usage error (exit 2)"; else echo "  FAIL unknown argument: exit $rc"; bad=$((bad+1)); fi
 
@@ -70,6 +71,6 @@ GATE="$REAL_GATE"
 if [ "$bad" -gt "$before" ]; then bad="$before"; echo "  ok   control: a gate that always passes makes a reject case misbehave, so the cases above can fail"; else echo "  FAIL control: the selftest did not notice a gate that always passes"; bad=$((bad+1)); fi
 
 echo "selftest: $n cases"
-[ "$n" -ge 22 ] || { echo "check-gitleaks-config-selftest: RED — only $n cases ran (minimum 22)"; exit 1; }
+[ "$n" -ge 25 ] || { echo "check-gitleaks-config-selftest: RED — only $n cases ran (minimum 25)"; exit 1; }
 [ "$bad" -eq 0 ] || { echo "check-gitleaks-config-selftest: RED — $bad case(s) misbehaved"; exit 1; }
 echo "check-gitleaks-config-selftest: OK"
