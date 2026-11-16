@@ -3,6 +3,7 @@
 package harness
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -88,6 +89,8 @@ var chainRelations = map[string][]string{
 	"0000": {"schema_migrations"},
 	"0002": {"admins", "balance_drift", "balances", "job_unit_prices", "jobs", "ledger", "m3_entitlements", "modules", "reserve_overdrawn", "unit_cost_history", "unit_costs"},
 	"0003": {"admin_audit", "suppressions"},
+	// platform_0004 adds one view (listable_users). It also drops and re-creates balance_drift (listed under 0002, where it first appears), so its relations are unchanged.
+	"0004": {"listable_users"},
 }
 
 // relationsThrough is the sorted union of what the listed versions add.
@@ -128,6 +131,9 @@ func downStepBefore(t *testing.T, c *pgx.Conn, v string) {
 	t.Helper()
 	when := "before down " + v
 	switch v {
+	case "0004":
+		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004"), when)
+		phase2Objects(t, c, true, when)
 	case "0003":
 		requireRelations(t, c, relationsThrough("0000", "0002", "0003"), when)
 	case "0002":
@@ -155,6 +161,11 @@ func downStepAfter(t *testing.T, c *pgx.Conn, v string) {
 	t.Helper()
 	when := "after down " + v
 	switch v {
+	case "0004":
+		// the view is gone and everything of 0002 and 0003 is still there (balance_drift was dropped and re-created by 0004's up and its down: it must be back)
+		requireRelations(t, c, relationsThrough("0000", "0002", "0003"), when)
+		phase2Objects(t, c, false, when)
+		requirePublicTables(t, c, true, when)
 	case "0003":
 		requireRelations(t, c, relationsThrough("0000", "0002"), when)
 		for _, r := range []string{"platform.suppressions", "platform.admin_audit"} {
@@ -184,6 +195,85 @@ func downStepAfter(t *testing.T, c *pgx.Conn, v string) {
 	default:
 		t.Fatalf("the lifecycle test has no after-the-down assertion for migration %s: add one to downStepAfter (and a control to downStepBefore)", v)
 	}
+}
+
+// phase2Objects is the CONTROL (present) and the ASSERTION (absent) of platform_0004's down: before it, everything the migration adds is there, what it replaced is gone and an adjustment is
+// accepted; after it, everything it added is gone, what it replaced is back as it was (the old slot index with its old predicate, the old unit_costs_guard, the old vocabulary, the drift
+// view readable by both roles) and an adjustment is refused by the vocabulary CHECK. The counts are of a fixed list each, so a missing object cannot hide behind another's presence.
+func phase2Objects(t *testing.T, c *pgx.Conn, present bool, when string) {
+	t.Helper()
+	want := int64(0)
+	if present {
+		want = 1
+	}
+	expect := func(what string, perItem int64, sql string, args ...any) {
+		t.Helper()
+		if got := ledgerInt64(t, c, sql, args...); got != want*perItem {
+			t.Fatalf("%s: %s: found %d, want %d", when, what, got, want*perItem)
+		}
+	}
+	expectOpposite := func(what string, sql string, args ...any) {
+		t.Helper()
+		if got := ledgerInt64(t, c, sql, args...); got != 1-want {
+			t.Fatalf("%s: %s: found %d, want %d", when, what, got, 1-want)
+		}
+	}
+	funcs := []string{"require_active_admin", "ledger_require_active_admin", "admin_audit_require_active_admin", "m3_entitlements_require_active_admin", "ledger_audit_adjustment"}
+	triggers := []string{"ledger_require_active_admin", "ledger_audit_adjustment", "admin_audit_require_active_admin", "m3_entitlements_require_active_admin"}
+	checks := []string{"balances_not_the_system_user", "ledger_not_the_system_user", "m3_entitlements_not_the_system_user", "suppressions_not_the_system_user", "ledger_shape_adjustment"}
+
+	expect("the view platform.listable_users", 1, "SELECT count(*) FROM pg_class WHERE relnamespace = 'platform'::regnamespace AND relkind = 'v' AND relname::text = 'listable_users'")
+	expect("the slot index jobs_one_active_per_user_module", 1, "SELECT count(*) FROM pg_class WHERE relnamespace = 'platform'::regnamespace AND relkind = 'i' AND relname::text = 'jobs_one_active_per_user_module'")
+	expectOpposite("the OLD slot index jobs_one_executing_per_user_module", "SELECT count(*) FROM pg_class WHERE relnamespace = 'platform'::regnamespace AND relkind = 'i' AND relname::text = 'jobs_one_executing_per_user_module'")
+	if !present {
+		if got := ledgerInt64(t, c, "SELECT count(*) FROM pg_indexes WHERE schemaname = 'platform' AND indexname = 'jobs_one_executing_per_user_module' AND indexdef LIKE '%running%' AND indexdef LIKE '%cancelling%' AND indexdef NOT LIKE '%scheduled%'"); got != 1 {
+			t.Fatalf("%s: the old slot index is not back with its old predicate (running, paused, cancelling; no scheduled): %d match", when, got)
+		}
+	}
+	expect("the functions of 0004 (the admin check, its three trigger functions, the audit-row writer)", int64(len(funcs)),
+		"SELECT count(*) FROM pg_proc WHERE pronamespace = 'platform'::regnamespace AND proname::text = ANY($1::text[])", funcs)
+	expect("the triggers of 0004 (ledger x2, admin_audit, m3_entitlements)", int64(len(triggers)),
+		"SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal AND tgname::text = ANY($1::text[])", triggers)
+	expect("the CHECKs of 0004 (four system-user checks and ledger_shape_adjustment)", int64(len(checks)),
+		"SELECT count(*) FROM pg_constraint WHERE conname::text = ANY($1::text[])", checks)
+	expect("the vocabulary CHECK naming the adjustment kind", 1,
+		"SELECT count(*) FROM pg_constraint WHERE conrelid = 'platform.ledger'::regclass AND conname::text = 'ledger_kind_vocabulary' AND pg_get_constraintdef(oid) LIKE '%adjustment%'")
+	expect("unit_costs_guard calling the admin check", 1,
+		"SELECT count(*) FROM pg_proc WHERE pronamespace = 'platform'::regnamespace AND proname::text = 'unit_costs_guard' AND prosrc LIKE '%require_active_admin%'")
+
+	// what 0004 drops and re-creates is there either way, with the grants of the roles
+	if got := ledgerInt64(t, c, "SELECT count(*) FROM pg_class WHERE relnamespace = 'platform'::regnamespace AND relkind = 'v' AND relname::text = 'balance_drift'"); got != 1 {
+		t.Fatalf("%s: platform.balance_drift: found %d, want 1", when, got)
+	}
+	for _, role := range []string{"platform_app", "platform_admin"} {
+		if !ledgerBool(t, c, "SELECT has_table_privilege($1::text, 'platform.balance_drift', 'SELECT')", role) {
+			t.Fatalf("%s: %s cannot SELECT platform.balance_drift: the view was re-created without its grants", when, role)
+		}
+	}
+	if got := ledgerInt64(t, c, "SELECT count(*) FROM pg_constraint WHERE conrelid = 'platform.ledger'::regclass AND conname::text IN ('ledger_kind_vocabulary', 'ledger_module_metering_fk')"); got != 2 {
+		t.Fatalf("%s: found %d of the ledger's vocabulary CHECK and module-metering key, want both", when, got)
+	}
+	lifecycleAdjustment(t, c, present, when)
+}
+
+// lifecycleAdjustment is the behavioural half of phase2Objects: in a transaction that is ALWAYS rolled back (a transaction left open on this connection would hold the locks the next
+// down needs), one funded user and one adjustment. With platform_0004 the adjustment is accepted; without it the kind is not in the vocabulary and the row is refused for that reason.
+func lifecycleAdjustment(t *testing.T, c *pgx.Conn, accepted bool, when string) {
+	t.Helper()
+	tx, err := c.Begin(testCtx(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	ledgerSeed(t, tx)
+	ledgerFund(t, tx, ledgerUserA, "m1", 5)
+	adj := ledgerAdjustmentCols(ledgerUserA, "m1", 1)
+	if accepted {
+		ledgerOKRow(t, tx, when+": an adjustment (the kind exists)", adj)
+		ledgerRequireBalance(t, tx, when+": after the adjustment", ledgerUserA, "m1", 4, 0)
+		return
+	}
+	ledgerRefusedCheck(t, tx, when+": an adjustment (the kind is not in the vocabulary of the older chain)", "ledger_kind_vocabulary", adj)
 }
 
 func appliedAt(t *testing.T, c *pgx.Conn) map[string]string {
@@ -216,7 +306,7 @@ func TestRunnerLifecycle(t *testing.T) {
 
 	// The executable expectation of the migration chain. scripts/check-migrations.sh reads this literal and fails when the
 	// newest migration is not named in it, so a migration cannot be added without extending this test.
-	wantChain := []string{"0000", "0001", "0002", "0003"}
+	wantChain := []string{"0000", "0001", "0002", "0003", "0004"}
 
 	dir := repoMigrationsDir(t)
 	if onDisk := chainOnDisk(t, dir); !sameStrings(onDisk, wantChain) {

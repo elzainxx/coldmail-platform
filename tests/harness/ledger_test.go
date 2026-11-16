@@ -477,6 +477,7 @@ func TestLedger_GeneratedColumnsAndIdentity(t *testing.T) {
 	reserve := ledgerPut(t, tx, ledgerReserveCols(a, "m1", ledgerJobA1, "m1_own", 5, 1))
 	charge := ledgerPut(t, tx, ledgerChargeCols(a, "m1", ledgerJobA1, reserve, "m1_own", 2, 1))
 	release := ledgerPut(t, tx, ledgerReleaseCols(a, "m1", ledgerJobA1, reserve, 3))
+	adjust := ledgerPut(t, tx, ledgerAdjustmentCols(a, "m1", 1)) // platform_0004: 100 - 5 + 3 = 98 available, so one credit can be taken back
 	enable := ledgerPut(t, tx, ledgerM3Cols("m3_enable", a))
 	disable := ledgerPut(t, tx, ledgerM3Cols("m3_disable", a))
 	expire := ledgerPut(t, tx, ledgerM3Cols("m3_expire", a))
@@ -492,6 +493,7 @@ func TestLedger_GeneratedColumnsAndIdentity(t *testing.T) {
 			{"reserve", reserve, "true|", "a reserve is money and points at no reserve"},
 			{"charge", charge, "true|reserve", "a charge must point at a reserve row"},
 			{"release", release, "true|reserve", "a release must point at a reserve row"},
+			{"adjustment", adjust, "true|", "an adjustment is money: it moves a balance, so the balance trigger and balance_drift must see it; it points at no reserve"},
 			{"m3_enable", enable, "false|", "an entitlement event is not money"},
 			{"m3_disable", disable, "false|", "an entitlement event is not money"},
 			{"m3_expire", expire, "false|", "an entitlement event is not money"},
@@ -512,13 +514,296 @@ func TestLedger_GeneratedColumnsAndIdentity(t *testing.T) {
 	})
 
 	t.Run("ids are assigned by the database, strictly increasing in insertion order", func(t *testing.T) {
-		ids := []int64{grant, reserve, charge, release, enable, disable, expire}
+		ids := []int64{grant, reserve, charge, release, adjust, enable, disable, expire}
 		for i := 1; i < len(ids); i++ {
 			if ids[i] <= ids[i-1] {
 				t.Fatalf("ledger ids %v are not strictly increasing", ids)
 			}
 		}
 	})
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Adjustment (platform_0004, the owner's ruling OD-4): a clawback. An admin removes AVAILABLE credits, with a reason, tied to no
+// job; it never touches reserved credits and never takes a balance below zero; it is money (the balance trigger applies it and
+// balance_drift covers it); and an admin_audit row is written by trigger so no writer can skip it. Four tests: the row shape,
+// the arithmetic, the audit row, and the same through the two roles the service really runs as.
+// ---------------------------------------------------------------------------------------------------------------------
+
+// TestLedger_AdjustmentShapes is TestLedger_KindShapes for the kind platform_0004 adds. The legal adjustment is the control and
+// every refused row differs from it in exactly one thing, so ledger_shape_adjustment is the only rule that can be firing. It
+// also covers what is NOT the shape's business: the module-metering key (an adjustment is money, so it exists only on metered
+// modules), the closed kind vocabulary, the admin and user keys and the idempotency key. It fails if the CHECK is missing,
+// weakened (a NULL slips through: the NULL trap) or renamed, or if an adjustment is accepted on M3.
+func TestLedger_AdjustmentShapes(t *testing.T) {
+	_, admin := migratedScratch(t)
+	tx := ledgerBegin(t, admin)
+	ledgerSeedFunded(t, tx)
+	a := ledgerUserA
+	adj := func() ledgerCols { return ledgerAdjustmentCols(a, "m1", 10) }
+
+	first := adj()
+	id := ledgerOKRow(t, tx, "control: the legal adjustment (10 credits off 1000 available)", first)
+	ledgerRequireBalance(t, tx, "after the legal adjustment", a, "m1", 990, 0)
+	if got := ledgerRows(t, tx, "SELECT kind, available_delta, reserved_delta, COALESCE(job_id::text, ''), acting_admin_id::text, reason FROM platform.ledger WHERE id = $1", id); len(got) != 1 || got[0] != "adjustment|-10|0||"+ledgerAdminA+"|test clawback" {
+		t.Fatalf("the adjustment row reads %v, want adjustment|-10|0||%s|test clawback", got, ledgerAdminA)
+	}
+	rowsBefore := ledgerInt64(t, tx, "SELECT count(*) FROM platform.ledger")
+
+	t.Run("refused by ledger_shape_adjustment, one difference at a time", func(t *testing.T) {
+		for _, c := range []struct {
+			name string
+			cols ledgerCols
+		}{
+			{"a positive delta (that would be a grant)", adj().with("available_delta", int64(10))},
+			{"a zero delta", adj().with("available_delta", int64(0))},
+			{"moves reserved credits", adj().with("reserved_delta", int64(1))},
+			{"moves reserved credits instead of available ones", adj().with("available_delta", int64(0), "reserved_delta", int64(-10))},
+			{"names a job", adj().with("job_id", ledgerJobA1)},
+			{"names a reserve", adj().with("reserve_id", int64(1))},
+			{"carries a unit", adj().with("unit", "m1_own")},
+			{"carries units", adj().with("units", int64(1))},
+			{"carries a unit cost", adj().with("unit_cost", int64(1))},
+			{"no acting admin (NULL)", adj().with("acting_admin_id", nil)},
+			{"no reason (NULL)", adj().with("reason", nil)},
+			{"an empty reason", adj().with("reason", "")},
+			{"a blank reason", adj().with("reason", "   ")},
+		} {
+			c := c
+			t.Run(c.name, func(t *testing.T) { ledgerRefusedCheck(t, tx, c.name, "ledger_shape_adjustment", c.cols) })
+		}
+		if got := ledgerInt64(t, tx, "SELECT count(*) FROM platform.ledger"); got != rowsBefore {
+			t.Fatalf("the refused adjustments left %d ledger rows behind", got-rowsBefore)
+		}
+		ledgerRequireBalance(t, tx, "after the refused adjustments (nothing may have moved)", a, "m1", 990, 0)
+	})
+
+	t.Run("what the shape does not decide: the keys, the vocabulary, the metering", func(t *testing.T) {
+		ledgerRefusedFK(t, tx, "the acting admin must be an admin, not just a user", "ledger_acting_admin_id_fkey", adj().with("acting_admin_id", ledgerUserB))
+		ledgerRefusedFK(t, tx, "the user must exist", "ledger_user_id_fkey", adj().with("user_id", ledgerNoSuchID))
+		ledgerRefusedFK(t, tx, "an adjustment on M3, which has no balance (an adjustment is money)", "ledger_module_metering_fk", adj().with("module_id", "m3"))
+		ledgerRefusedFK(t, tx, "an adjustment on a module that does not exist", "ledger_module_metering_fk", adj().with("module_id", "m9"))
+		ledgerRefusedCheck(t, tx, "the kind vocabulary is closed: `adjustments` is not a kind", "ledger_kind_vocabulary", adj().with("kind", "adjustments"))
+		ledgerRefusedRow(t, tx, "a retried adjustment (the same user, module and key)", "23505", ledgerWhy{Constraint: "ledger_idempotency_key"}, first)
+		ledgerRequireBalance(t, tx, "after the refused retry (the first adjustment counted once)", a, "m1", 990, 0)
+		ledgerOKRow(t, tx, "control: the same key for another user is a different row", first.with("user_id", ledgerUserB))
+		ledgerRequireBalance(t, tx, "user B's own adjustment", ledgerUserB, "m1", 990, 0)
+		ledgerRequireViewsEmpty(t, tx, "after the adjustment shape cases")
+	})
+}
+
+// TestLedger_AdjustmentMoney proves the arithmetic of a clawback, with the numbers of the ruling: available 10 and reserved 5 (15
+// granted, 5 reserved). An adjustment of 10 passes and reserved stays 5; an adjustment of 11 is refused by the balance CHECK even
+// though 15 credits exist, and the refusal leaves no ledger row and no audit row; one credit more is refused again; a user who
+// never held credits cannot be put into debt; another module's balance is untouched. It fails if an adjustment can touch reserved
+// credits, take available below zero, or leave a trace when it is refused.
+func TestLedger_AdjustmentMoney(t *testing.T) {
+	_, admin := migratedScratch(t)
+	tx := ledgerBegin(t, admin)
+	ledgerSeed(t, tx)
+	a, b := ledgerUserA, ledgerUserB
+	count := func(t *testing.T, table string) int64 {
+		t.Helper()
+		return ledgerInt64(t, tx, "SELECT count(*) FROM "+table)
+	}
+
+	ledgerFund(t, tx, a, "m1", 15)
+	ledgerPut(t, tx, ledgerReserveCols(a, "m1", ledgerJobA1, "m1_own", 5, 1))
+	ledgerRequireBalance(t, tx, "the starting point: 15 granted, 5 of them reserved", a, "m1", 10, 5)
+	ledgerRequireViewsEmpty(t, tx, "at the starting point")
+
+	t.Run("adjusting 11 is refused although 15 credits exist: 5 are reserved and an adjustment never draws on them", func(t *testing.T) {
+		nLedger, nAudit := count(t, "platform.ledger"), count(t, "platform.admin_audit")
+		ledgerRefusedRow(t, tx, "adjusting 11 off 10 available", "23514", ledgerWhy{Constraint: "balances_available_not_negative", Table: "balances"}, ledgerAdjustmentCols(a, "m1", 11))
+		if got := count(t, "platform.ledger"); got != nLedger {
+			t.Fatalf("the refused adjustment left %d ledger row(s) behind", got-nLedger)
+		}
+		if got := count(t, "platform.admin_audit"); got != nAudit {
+			t.Fatalf("the refused adjustment left %d admin_audit row(s) behind", got-nAudit)
+		}
+		ledgerRequireBalance(t, tx, "after the refused adjustment", a, "m1", 10, 5)
+	})
+
+	t.Run("modules are separate: an m2 adjustment leaves the m1 balance alone", func(t *testing.T) {
+		ledgerFund(t, tx, a, "m2", 20)
+		ledgerOKRow(t, tx, "control: an m2 adjustment of 7", ledgerAdjustmentCols(a, "m2", 7))
+		ledgerRequireBalance(t, tx, "m2 after its adjustment", a, "m2", 13, 0)
+		ledgerRequireBalance(t, tx, "m1 after the m2 adjustment", a, "m1", 10, 5)
+	})
+
+	t.Run("control: adjusting exactly the 10 available passes, and reserved stays 5", func(t *testing.T) {
+		nAudit := count(t, "platform.admin_audit")
+		ledgerOKRow(t, tx, "adjusting exactly the available credits", ledgerAdjustmentCols(a, "m1", 10))
+		ledgerRequireBalance(t, tx, "after the adjustment of 10", a, "m1", 0, 5)
+		if got := count(t, "platform.admin_audit"); got != nAudit+1 {
+			t.Fatalf("the adjustment wrote %d admin_audit row(s), want exactly 1", got-nAudit)
+		}
+	})
+
+	t.Run("one credit more is refused: nothing is available and the 5 reserved credits are not a reserve to draw on", func(t *testing.T) {
+		nLedger := count(t, "platform.ledger")
+		ledgerRefusedRow(t, tx, "adjusting 1 off 0 available", "23514", ledgerWhy{Constraint: "balances_available_not_negative", Table: "balances"}, ledgerAdjustmentCols(a, "m1", 1))
+		if got := count(t, "platform.ledger"); got != nLedger {
+			t.Fatalf("the refused adjustment left %d ledger row(s) behind", got-nLedger)
+		}
+		ledgerRequireBalance(t, tx, "after the refused adjustment", a, "m1", 0, 5)
+	})
+
+	t.Run("an adjustment cannot put a user into debt: a user who never held credits", func(t *testing.T) {
+		ledgerRefusedRow(t, tx, "adjusting 1 off a user with no balance row at all", "23514", ledgerWhy{Constraint: "balances_available_not_negative", Table: "balances"}, ledgerAdjustmentCols(b, "m1", 1))
+		if bal := ledgerBalance(t, tx, b, "m1"); bal.Exists {
+			t.Fatalf("the refused adjustment left a balance row behind for user B: %+v", bal)
+		}
+	})
+	ledgerRequireViewsEmpty(t, tx, "after the adjustments (the balance equals the sum of the ledger, adjustments included)")
+}
+
+// TestLedger_AdjustmentAudit proves the second record of a clawback: exactly one admin_audit row per adjustment, with the fields
+// the ruling names, written by a trigger so no writer can skip it - and none for anything else. The paired controls: the same
+// instrument sees nothing before the first adjustment, the row disappears when the trigger is disabled (so it is the trigger's
+// doing), and a refused adjustment leaves no row. It fails if the trigger is missing, writes a wrong field, writes twice, or
+// also fires for another kind.
+func TestLedger_AdjustmentAudit(t *testing.T) {
+	_, admin := migratedScratch(t)
+	tx := ledgerBegin(t, admin)
+	ledgerSeedFunded(t, tx)
+	a, b := ledgerUserA, ledgerUserB
+	const auditCols = "admin_id::text, entry_type, action, target_type, target_id, COALESCE(target_user_id::text, ''), reason"
+	adjustmentAudits := func(t *testing.T, db ledgerDB) []string {
+		t.Helper()
+		return ledgerRows(t, db, "SELECT "+auditCols+" FROM platform.admin_audit WHERE action = 'ledger.adjustment' ORDER BY id")
+	}
+	totalAudits := func(t *testing.T, db ledgerDB) int64 {
+		t.Helper()
+		return ledgerInt64(t, db, "SELECT count(*) FROM platform.admin_audit")
+	}
+
+	t.Run("no audit row for a grant, a reserve, a charge, a release or an entitlement event", func(t *testing.T) {
+		if n := totalAudits(t, tx); n != 0 {
+			t.Fatalf("%d admin_audit rows after three grants, want none: only an adjustment writes one", n)
+		}
+		reserve := ledgerPut(t, tx, ledgerReserveCols(a, "m1", ledgerJobA1, "m1_vendor", 10, 2))
+		ledgerPut(t, tx, ledgerChargeCols(a, "m1", ledgerJobA1, reserve, "m1_own", 3, 1))
+		ledgerPut(t, tx, ledgerReleaseCols(a, "m1", ledgerJobA1, reserve, 13))
+		for _, k := range []string{"m3_enable", "m3_disable", "m3_expire"} {
+			ledgerPut(t, tx, ledgerM3Cols(k, a))
+		}
+		if n := totalAudits(t, tx); n != 0 {
+			t.Fatalf("%d admin_audit rows after a reserve, a charge, a release and three entitlement events, want none", n)
+		}
+	})
+
+	var firstID int64
+	t.Run("one adjustment writes exactly one audit row, with every field of the ruling", func(t *testing.T) {
+		const key, reason = "adj-audit-1", "chargeback dispute 4711"
+		firstID = ledgerOKRow(t, tx, "the adjustment", ledgerAdjustmentCols(a, "m1", 7).with("idempotency_key", key, "reason", reason))
+		got := adjustmentAudits(t, tx)
+		want := fmt.Sprintf("%s|action|ledger.adjustment|ledger|%d|%s|%s", ledgerAdminA, firstID, a, reason)
+		if len(got) != 1 || got[0] != want {
+			t.Fatalf("the admin_audit rows for the adjustment are %v, want exactly [%s]", got, want)
+		}
+		details := fmt.Sprintf(`{"module_id": "m1", "credits_removed": 7, "idempotency_key": %q}`, key)
+		if !ledgerBool(t, tx, "SELECT details = $1::text::jsonb FROM platform.admin_audit WHERE action = 'ledger.adjustment' AND target_id = $2", details, fmt.Sprint(firstID)) {
+			t.Fatalf("details of the audit row is %s, want %s (module_id, credits_removed as a POSITIVE number, idempotency_key)", ledgerString(t, tx, "SELECT details::text FROM platform.admin_audit WHERE action = 'ledger.adjustment' AND target_id = $1", fmt.Sprint(firstID)), details)
+		}
+		if got := ledgerString(t, tx, "SELECT jsonb_typeof(details -> 'credits_removed') FROM platform.admin_audit WHERE target_id = $1", fmt.Sprint(firstID)); got != "number" {
+			t.Fatalf("credits_removed is a JSON %s, want a number", got)
+		}
+		if n := totalAudits(t, tx); n != 1 {
+			t.Fatalf("%d admin_audit rows in all, want exactly the one", n)
+		}
+	})
+
+	t.Run("a retried adjustment is refused and writes no second row", func(t *testing.T) {
+		ledgerRefusedRow(t, tx, "the same adjustment again", "23505", ledgerWhy{Constraint: "ledger_idempotency_key"},
+			ledgerAdjustmentCols(a, "m1", 7).with("idempotency_key", "adj-audit-1"))
+		if n := len(adjustmentAudits(t, tx)); n != 1 {
+			t.Fatalf("%d audit rows after the refused retry, want still 1", n)
+		}
+	})
+
+	t.Run("a refused adjustment (overdraw, shape) writes no row", func(t *testing.T) {
+		nLedger := ledgerInt64(t, tx, "SELECT count(*) FROM platform.ledger")
+		ledgerRefusedRow(t, tx, "an adjustment of 5000, far more than the 986 available", "23514", ledgerWhy{Constraint: "balances_available_not_negative", Table: "balances"}, ledgerAdjustmentCols(a, "m1", 5000))
+		ledgerRefusedCheck(t, tx, "an adjustment without a reason", "ledger_shape_adjustment", ledgerAdjustmentCols(a, "m1", 1).with("reason", nil))
+		if n := len(adjustmentAudits(t, tx)); n != 1 {
+			t.Fatalf("%d audit rows after two refused adjustments, want still 1", n)
+		}
+		if got := ledgerInt64(t, tx, "SELECT count(*) FROM platform.ledger"); got != nLedger {
+			t.Fatalf("the refused adjustments left %d ledger rows behind", got-nLedger)
+		}
+	})
+
+	t.Run("a second adjustment by another admin for another user has its own row", func(t *testing.T) {
+		secondID := ledgerOKRow(t, tx, "admin B's adjustment for user B", ledgerAdjustmentCols(b, "m1", 3).with("acting_admin_id", ledgerAdminB, "reason", "second clawback"))
+		got := adjustmentAudits(t, tx)
+		want := []string{
+			fmt.Sprintf("%s|action|ledger.adjustment|ledger|%d|%s|chargeback dispute 4711", ledgerAdminA, firstID, a),
+			fmt.Sprintf("%s|action|ledger.adjustment|ledger|%d|%s|second clawback", ledgerAdminB, secondID, b),
+		}
+		if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+			t.Fatalf("the admin_audit rows are %v, want %v", got, want)
+		}
+	})
+
+	t.Run("control: the row is the trigger's doing - with the trigger disabled the adjustment is written and the audit row is not", func(t *testing.T) {
+		ledgerTrial(t, tx, func(sp pgx.Tx) {
+			before := totalAudits(t, sp)
+			ledgerMust(t, sp, "ALTER TABLE platform.ledger DISABLE TRIGGER ledger_audit_adjustment")
+			ledgerOKRow(t, sp, "an adjustment with the audit trigger off", ledgerAdjustmentCols(a, "m1", 1))
+			if got := totalAudits(t, sp); got != before {
+				t.Fatalf("%d audit rows were written with the trigger disabled: something other than the trigger writes them, so the assertions above prove nothing about it", got-before)
+			}
+		})
+	})
+
+	t.Run("a disabled admin cannot adjust, and the refusal leaves nothing behind", func(t *testing.T) {
+		ledgerMust(t, tx, "UPDATE platform.admins SET disabled_at = now() WHERE id = $1", ledgerAdminB)
+		nLedger, nAudit := ledgerInt64(t, tx, "SELECT count(*) FROM platform.ledger"), totalAudits(t, tx)
+		ledgerRefusedRow(t, tx, "admin B (disabled) adjusts", "23514", ledgerWhy{Constraint: "admin_is_active", Message: "platform.ledger.acting_admin_id names admin " + ledgerAdminB},
+			ledgerAdjustmentCols(a, "m1", 1).with("acting_admin_id", ledgerAdminB))
+		if got := ledgerInt64(t, tx, "SELECT count(*) FROM platform.ledger"); got != nLedger {
+			t.Fatalf("the refused adjustment left %d ledger rows behind", got-nLedger)
+		}
+		if got := totalAudits(t, tx); got != nAudit {
+			t.Fatalf("the refused adjustment left %d audit rows behind", got-nAudit)
+		}
+		ledgerOKRow(t, tx, "control: the same adjustment by the still-active admin A", ledgerAdjustmentCols(a, "m1", 1))
+		if got := totalAudits(t, tx); got != nAudit+1 {
+			t.Fatalf("the control adjustment wrote %d audit rows, want 1", got-nAudit)
+		}
+	})
+	ledgerRequireViewsEmpty(t, tx, "after the adjustments")
+}
+
+// TestLedger_AdjustmentThroughTheRoles runs a clawback as the two roles the service really runs as. The ledger trigger that checks
+// the admin and the trigger that writes the audit row run for the CALLER, so a role that cannot use the objects those triggers
+// call fails here and not in production: a legal adjustment must pass for platform_app and platform_admin, write its audit row,
+// and an overdraw or a blank reason must be refused with the database's reason (never with a permission error). It fails if either
+// role cannot adjust, if the audit row is missing, or if a refusal comes from the wrong rule.
+func TestLedger_AdjustmentThroughTheRoles(t *testing.T) {
+	_, admin := migratedScratch(t)
+	for _, role := range []string{"platform_app", "platform_admin"} {
+		role := role
+		t.Run(role, func(t *testing.T) {
+			tx := ledgerBegin(t, admin)
+			ledgerSeedFunded(t, tx)
+			a := ledgerUserA
+			ledgerSwitchRole(t, tx, role)
+			nAudit := ledgerInt64(t, tx, "SELECT count(*) FROM platform.admin_audit WHERE action = 'ledger.adjustment'")
+			id := ledgerOKRow(t, tx, "control: "+role+" writes an adjustment of 25", ledgerAdjustmentCols(a, "m1", 25))
+			ledgerRequireBalance(t, tx, "after "+role+"'s adjustment", a, "m1", 975, 0)
+			if got := ledgerInt64(t, tx, "SELECT count(*) FROM platform.admin_audit WHERE action = 'ledger.adjustment' AND target_id = $1 AND target_user_id = $2", fmt.Sprint(id), a); got != 1 {
+				t.Fatalf("%d audit rows for %s's adjustment, want exactly 1", got, role)
+			}
+			if got := ledgerInt64(t, tx, "SELECT count(*) FROM platform.admin_audit WHERE action = 'ledger.adjustment'"); got != nAudit+1 {
+				t.Fatalf("%s's adjustment wrote %d audit rows, want 1", role, got-nAudit)
+			}
+			ledgerRefusedRow(t, tx, role+" adjusting more than is available", "23514", ledgerWhy{Constraint: "balances_available_not_negative", Table: "balances"}, ledgerAdjustmentCols(a, "m1", 976))
+			ledgerRefusedCheck(t, tx, role+" adjusting without a reason", "ledger_shape_adjustment", ledgerAdjustmentCols(a, "m1", 1).with("reason", "  "))
+			ledgerRequireViewsEmpty(t, tx, "after "+role+"'s adjustments")
+		})
+	}
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

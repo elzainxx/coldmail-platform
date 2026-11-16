@@ -53,7 +53,15 @@ const (
 	CmdStatus           = "status"
 	CmdSetAppPassword   = "set-app-password"
 	CmdUpAndSetPassword = "up-and-set-password"
+	// CmdCreateFirstAdmin is the one command with flags (firstadmin.go); it reads the same environment as the rest and adds no variable.
+	CmdCreateFirstAdmin = "create-first-admin"
 )
+
+// Commands lists every command the runner has, in the order the reference document lists them (help is not one of them). A test
+// requires the document and the usage text to name each of these, so a command added here cannot ship undocumented.
+func Commands() []string {
+	return []string{CmdUp, CmdDown, CmdStatus, CmdSetAppPassword, CmdUpAndSetPassword, CmdCreateFirstAdmin}
+}
 
 // The values of the Required column.
 const (

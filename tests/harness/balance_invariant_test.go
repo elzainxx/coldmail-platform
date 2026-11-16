@@ -67,9 +67,11 @@ type balDelta struct {
 
 // TestBalance_RandomisedSequenceKeepsInvariant drives 200 pseudo-random ledger writes (a FIXED seed, so a failure repeats):
 // three users, both metered modules, grants, reserves at a random unit's frozen price, charges at random units of the job's
-// snapshot, and releases, each chosen within what its balance and its reserve still allow. Afterwards both views are empty and
+// snapshot, adjustments (platform_0004: an admin takes AVAILABLE credits back, never more than the balance holds) and releases,
+// each chosen within what its balance and its reserve still allow. Afterwards both views are empty and
 // every stored balance equals a recomputation done HERE, in Go, from the deltas of the rows this test inserted (not from the
-// database's own sums); a second recomputation in SQL agrees with the first. The test is not vacuous: it asserts how many
+// database's own sums); a second recomputation in SQL agrees with the first; and the adjustments each left exactly one audit
+// row. The test is not vacuous: it asserts how many
 // rows of each kind it really wrote. It fails if the trigger mis-applies any delta, if a CHECK is wrong, or if either view
 // disagrees with the arithmetic.
 func TestBalance_RandomisedSequenceKeepsInvariant(t *testing.T) {
@@ -103,12 +105,14 @@ func TestBalance_RandomisedSequenceKeepsInvariant(t *testing.T) {
 		k := balKey{u, m}
 		kind := "release"
 		switch x := rng.Intn(100); {
-		case x < 25:
+		case x < 23:
 			kind = "grant"
-		case x < 55:
+		case x < 51:
 			kind = "reserve"
-		case x < 85:
+		case x < 79:
 			kind = "charge"
+		case x < 87:
+			kind = "adjustment"
 		}
 		var open []*balReserve
 		if kind == "charge" || kind == "release" {
@@ -168,6 +172,16 @@ func TestBalance_RandomisedSequenceKeepsInvariant(t *testing.T) {
 			reserved[ok] -= amount
 			o.remaining -= amount
 			written = append(written, balDelta{ok, amount, -amount})
+		case "adjustment":
+			// NOT between "charge" and "release": the charge case falls through into the release case
+			if available[k] < 1 {
+				kind = "grant" // nothing to take back: fund it instead
+				break
+			}
+			amount := 1 + rng.Int63n(min(available[k], 15))
+			ledgerPut(t, admin, ledgerAdjustmentCols(u, m, amount))
+			available[k] -= amount
+			written = append(written, balDelta{k, -amount, 0})
 		}
 		if kind == "grant" {
 			amount := 1 + rng.Int63n(60)
@@ -180,19 +194,23 @@ func TestBalance_RandomisedSequenceKeepsInvariant(t *testing.T) {
 			ledgerRequireViewsEmpty(t, admin, fmt.Sprintf("after operation %d", i+1))
 		}
 	}
-	t.Logf("%d operations (seed %d): %d grants, %d reserves, %d charges, %d releases", operations, seed, counts["grant"], counts["reserve"], counts["charge"], counts["release"])
+	t.Logf("%d operations (seed %d): %d grants, %d reserves, %d charges, %d adjustments, %d releases", operations, seed, counts["grant"], counts["reserve"], counts["charge"], counts["adjustment"], counts["release"])
 
 	// The sequence really exercised every kind, otherwise a pass says little.
-	for kind, floor := range map[string]int{"grant": 10, "reserve": 10, "charge": 10, "release": 5} {
+	for kind, floor := range map[string]int{"grant": 10, "reserve": 10, "charge": 10, "release": 5, "adjustment": 3} {
 		if counts[kind] < floor {
 			t.Fatalf("only %d %s rows were written (floor %d): the random sequence did not exercise the kind", counts[kind], kind, floor)
 		}
 	}
-	if total := counts["grant"] + counts["reserve"] + counts["charge"] + counts["release"]; total != operations || len(written) != operations {
+	if total := counts["grant"] + counts["reserve"] + counts["charge"] + counts["release"] + counts["adjustment"]; total != operations || len(written) != operations {
 		t.Fatalf("%d operations counted and %d rows recorded, want %d of each", total, len(written), operations)
 	}
 	if got := ledgerInt64(t, admin, "SELECT count(*) FROM platform.ledger"); got != operations {
 		t.Fatalf("the ledger holds %d rows, want exactly the %d written", got, operations)
+	}
+	// Every adjustment left its audit row (written by trigger), and nothing else did.
+	if got := ledgerInt64(t, admin, "SELECT count(*) FROM platform.admin_audit"); got != int64(counts["adjustment"]) {
+		t.Fatalf("platform.admin_audit holds %d rows after %d adjustments (and no other audited act): the audit trigger wrote the wrong number", got, counts["adjustment"])
 	}
 
 	// The recomputation, from the rows this test inserted.
@@ -322,6 +340,58 @@ func TestBalance_DriftViewSeesDisabledTrigger(t *testing.T) {
 		ledgerMust(t, tx, triggerOff)
 		ledgerPut(t, tx, ledgerM3Cols("m3_enable", a))
 		ledgerRequireViewsEmpty(t, tx, "after an m3 event with the trigger off")
+	})
+}
+
+// TestBalance_DriftViewSeesAdjustments is the paired control of the invariant for the kind platform_0004 adds. `monetary` is a
+// generated column that platform_0004 had to drop and add again to put `adjustment` into its expression: if it did not, the
+// balance trigger would skip adjustments (the balance would never fall) and balance_drift would not sum them (the alarm would never
+// ring). So: after a grant and an adjustment the balance and the ledger agree and the view is empty; with the trigger disabled the
+// same adjustment is in the ledger and not in the balance and the view lists exactly that; and the generated column says true.
+// It fails if an adjustment is not monetary, if the view is empty when the trigger is off (a dead alarm), or non-empty when it is on.
+func TestBalance_DriftViewSeesAdjustments(t *testing.T) {
+	_, admin := migratedScratch(t)
+	a := ledgerUserA
+	fresh := func(t *testing.T) pgx.Tx {
+		t.Helper()
+		tx := ledgerBegin(t, admin)
+		ledgerSeed(t, tx)
+		return tx
+	}
+
+	t.Run("a grant and an adjustment: the balance fell and the ledger sums to the same, no drift", func(t *testing.T) {
+		tx := fresh(t)
+		ledgerFund(t, tx, a, "m1", 100)
+		id := ledgerPut(t, tx, ledgerAdjustmentCols(a, "m1", 30))
+		ledgerRequireBalance(t, tx, "after the adjustment of 30", a, "m1", 70, 0)
+		ledgerRequireViewsEmpty(t, tx, "with the trigger on")
+		if got := ledgerInt64(t, tx, "SELECT sum(available_delta)::bigint FROM platform.ledger WHERE monetary AND user_id = $1 AND module_id = 'm1'", a); got != 70 {
+			t.Fatalf("SUM(available_delta) over the monetary rows is %d, want 70: the adjustment must be among them", got)
+		}
+		if !ledgerBool(t, tx, "SELECT monetary FROM platform.ledger WHERE id = $1", id) {
+			t.Fatal("the adjustment row is not monetary: the balance trigger and balance_drift would both ignore it")
+		}
+	})
+
+	t.Run("trigger disabled: the adjustment is in the ledger (100 - 30 = 70) and not in the balance (100)", func(t *testing.T) {
+		tx := fresh(t)
+		ledgerFund(t, tx, a, "m1", 100)
+		ledgerMust(t, tx, "ALTER TABLE platform.ledger DISABLE TRIGGER ledger_apply_to_balance")
+		ledgerPut(t, tx, ledgerAdjustmentCols(a, "m1", 30))
+		if got, want := ledgerDrift(t, tx), []string{a + "|m1|100|70|0|0"}; strings.Join(got, ";") != strings.Join(want, ";") {
+			t.Fatalf("balance_drift with the trigger off = %v, want %v (stored 100 vs ledger 70)", got, want)
+		}
+		ledgerRequireBalance(t, tx, "the balance did not move", a, "m1", 100, 0)
+	})
+
+	t.Run("a balance edited behind an adjustment's back is drift too", func(t *testing.T) {
+		tx := fresh(t)
+		ledgerFund(t, tx, a, "m1", 100)
+		ledgerPut(t, tx, ledgerAdjustmentCols(a, "m1", 30))
+		ledgerMust(t, tx, "UPDATE platform.balances SET available = available + 30 WHERE user_id = $1 AND module_id = 'm1'", a)
+		if got, want := ledgerDrift(t, tx), []string{a + "|m1|100|70|0|0"}; strings.Join(got, ";") != strings.Join(want, ";") {
+			t.Fatalf("balance_drift after undoing the adjustment by hand = %v, want %v", got, want)
+		}
 	})
 }
 
@@ -478,9 +548,10 @@ func TestBalance_NoRoleWritesBalancesExceptTheOwner(t *testing.T) {
 	})
 }
 
-// TestBalance_TriggerFunctionsAreSafeDefiners checks the property the invariant leans on: the two SECURITY DEFINER functions (the
-// balance writer and the price-history writer) run as platform_owner with a PINNED search_path, so a caller cannot hijack them
-// by shadowing a table or operator, and no role can call them. The control is the same catalog query run against a
+// TestBalance_TriggerFunctionsAreSafeDefiners checks the property the invariant leans on: the SECURITY DEFINER functions (the
+// balance writer and the price-history writer of Phase 1; the audit-row writer and the admin check of platform_0004) run as
+// platform_owner with a PINNED search_path, so a caller cannot hijack them
+// by shadowing a table or operator, and no role can call the trigger functions by hand. The control is the same catalog query run against a
 // SECURITY DEFINER function WITHOUT a pinned path, which it must report. It fails if a definer function loses its search_path
 // or gains an EXECUTE grant.
 func TestBalance_TriggerFunctionsAreSafeDefiners(t *testing.T) {
@@ -490,9 +561,24 @@ func TestBalance_TriggerFunctionsAreSafeDefiners(t *testing.T) {
 		AND NOT EXISTS (SELECT 1 FROM unnest(COALESCE(p.proconfig, ARRAY[]::text[])) c WHERE c = 'search_path=pg_catalog, pg_temp') ORDER BY 1`
 
 	definers := ledgerRows(t, tx, `SELECT p.proname || '|' || pg_get_userbyid(p.proowner) FROM pg_proc p WHERE p.pronamespace = 'platform'::regnamespace AND p.prosecdef ORDER BY 1`)
-	want := []string{"ledger_apply_to_balance|platform_owner", "unit_costs_record_history|platform_owner"}
-	if strings.Join(definers, ";") != strings.Join(want, ";") {
-		t.Fatalf("SECURITY DEFINER functions in schema platform = %v, want exactly %v (a new one needs a review of its search_path and its callers)", definers, want)
+	// What must be a definer, owned by platform_owner: the two writers of Phase 1 and, from platform_0004, the audit-row writer and the admin check (it reads platform.admins FOR SHARE,
+	// which the application roles cannot do).
+	want := []string{"admin_audit_require_active_admin|platform_owner", "ledger_apply_to_balance|platform_owner", "ledger_audit_adjustment|platform_owner", "ledger_require_active_admin|platform_owner", "m3_entitlements_require_active_admin|platform_owner", "require_active_admin|platform_owner", "unit_costs_guard|platform_owner", "unit_costs_record_history|platform_owner"}
+	// The four functions that call platform.require_active_admin are definers too (platform_0004): they are trigger functions that run for the CALLER, and no role holds EXECUTE on
+	// require_active_admin, so without SECURITY DEFINER every application write would fail 42501 (TestConstraints_DisabledAdminThroughTheRoles proves the behaviour). Anything else is a
+	// definer nobody reviewed.
+	allowed := map[string]bool{}
+	have := map[string]bool{}
+	for _, d := range definers {
+		have[d] = true
+		if !allowed[d] && !containsString(want, d) {
+			t.Fatalf("SECURITY DEFINER functions in schema platform = %v: %s is neither required nor allowed (a new one needs a review of its search_path and its callers)", definers, d)
+		}
+	}
+	for _, d := range want {
+		if !have[d] {
+			t.Fatalf("SECURITY DEFINER functions in schema platform = %v, want at least %v (missing %s)", definers, want, d)
+		}
 	}
 	if bad := ledgerRows(t, tx, unpinned); len(bad) != 0 {
 		t.Fatalf("SECURITY DEFINER functions without search_path = pg_catalog, pg_temp: %v", bad)
@@ -508,15 +594,19 @@ func TestBalance_TriggerFunctionsAreSafeDefiners(t *testing.T) {
 	})
 
 	t.Run("no role can execute them", func(t *testing.T) {
-		for _, fn := range []string{"platform.ledger_apply_to_balance()", "platform.unit_costs_record_history()"} {
+		// The trigger functions only. platform.require_active_admin(uuid, text) is deliberately not listed: the trigger functions that call it run for the caller, and whether the roles
+		// hold EXECUTE on it (or those functions are definers) is platform_0004's choice; the behavioural proofs (TestConstraints_DisabledAdminThroughTheRoles) and the EXECUTE
+		// judgement (TestGrantsInvariant_Functions) cover it either way.
+		for _, fn := range []string{"platform.ledger_apply_to_balance()", "platform.unit_costs_record_history()", "platform.ledger_audit_adjustment()",
+			"platform.ledger_require_active_admin()", "platform.admin_audit_require_active_admin()", "platform.m3_entitlements_require_active_admin()"} {
 			for _, role := range []string{"platform_app", "platform_admin"} {
 				if ledgerBool(t, tx, "SELECT has_function_privilege($1::text, $2::text, 'EXECUTE')", role, fn) {
 					t.Fatalf("%s can EXECUTE %s", role, fn)
 				}
 			}
-		}
-		if !ledgerBool(t, tx, "SELECT has_function_privilege('platform_owner', 'platform.ledger_apply_to_balance()', 'EXECUTE')") {
-			t.Fatal("control: platform_owner cannot execute its own function, so the denials above would prove nothing about grants")
+			if !ledgerBool(t, tx, "SELECT has_function_privilege('platform_owner', $1::text, 'EXECUTE')", fn) {
+				t.Fatalf("control: platform_owner cannot execute its own function %s, so the denials above would prove nothing about grants", fn)
+			}
 		}
 	})
 }

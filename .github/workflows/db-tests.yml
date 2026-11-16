@@ -18,16 +18,17 @@ jobs:
     timeout-minutes: 30
     services:
       postgres:
-        image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
+        image: supabase/postgres:17.12.0.000@sha256:8630950b489ecc70563300180287a98c192a4a48f5ae00b4febdaeea1abe85de
         env:
           POSTGRES_PASSWORD: ci
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U postgres"
+          --health-cmd "pg_isready -U postgres -h localhost"
           --health-interval 5s
           --health-timeout 5s
-          --health-retries 20
+          --health-retries 60
+          --health-start-period 30s
     steps:
       - uses: actions/checkout@v4
 

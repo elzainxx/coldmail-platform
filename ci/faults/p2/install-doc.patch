@@ -1,0 +1,11 @@
+--- a/Docs/install.md
++++ b/Docs/install.md
+@@ -29,7 +29,7 @@
+ An admin is a Supabase login with a row in `platform.admins`. Create the login first (Supabase dashboard → Authentication → Users), then:
+ 
+ ```
+-platform-migrate create-first-admin --auth-user-id <the login's id> --display-name "<name>"
++platform-migrate first-admin --auth-user-id <the login's id> --display-name "<name>"
+ ```
+ 
+ It creates the `public.users` row and the `platform.admins` row in one transaction, as the privileged migrating identity, and **refuses when any admin already exists** (admin management is built in Phase 7; until then more admins are added out of band by the owner). It refuses an unknown login, a blank name and the all-zero system user.

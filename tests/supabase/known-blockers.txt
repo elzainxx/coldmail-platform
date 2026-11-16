@@ -1,5 +1,5 @@
 # known-blockers.txt — the migration statements that FAIL when the platform's and the three modules' migrations are run by the NON-superuser `postgres` of the pinned
-# supabase/postgres image (the shape of a real Supabase project) AFTER tests/supabase/preprovision.sql was applied (the FIXED pass: --label FIXED --preprovision, database
+# supabase/postgres image (the shape of a real Supabase project) AFTER db/install/preprovision.sql was applied (the FIXED pass: --label FIXED --preprovision, database
 # `fixed`). Read by tests/supabase/run.sh, compared by tests/supabase/classify.sh --compare. What fails WITHOUT the provisioning is baseline-blockers.txt (the BASELINE pass).
 #
 # FORMAT. One blocker per line:   FILE|SQLSTATE|MESSAGE-SUBSTRING

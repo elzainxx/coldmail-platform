@@ -246,6 +246,12 @@ func ledgerReleaseCols(user, module, job string, reserveID, amount int64) ledger
 		"job_id": job, "reserve_id": reserveID, "idempotency_key": ledgerNextKey("release")}
 }
 
+// ledgerAdjustmentCols is an adjustment (platform_0004, a clawback): an admin removes `amount` (> 0) AVAILABLE credits, with a reason, tied to no job, a reserve or a unit.
+func ledgerAdjustmentCols(user, module string, amount int64) ledgerCols {
+	return ledgerCols{"user_id": user, "module_id": module, "kind": "adjustment", "available_delta": -amount, "reserved_delta": int64(0),
+		"acting_admin_id": ledgerAdminA, "reason": "test clawback", "idempotency_key": ledgerNextKey("adjustment")}
+}
+
 // ledgerM3Cols is an M3 entitlement event on module m3; enable and disable name an admin, expire does not.
 func ledgerM3Cols(kind, user string) ledgerCols {
 	c := ledgerCols{"user_id": user, "module_id": "m3", "kind": kind, "available_delta": int64(0), "reserved_delta": int64(0),

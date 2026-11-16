@@ -1,0 +1,9 @@
+# Docs/install.md must keep naming every step of the install procedure, and CI must keep running the documented step. The fault rewrites the first-admin command out of the document (the document
+# stops mentioning it, and its command name no longer matches the migrator): the gate must name the missing item. The control is the real document, which must be green.
+GATE=install-doc
+TARGET=platform
+SETUP=
+STEP=check-install-doc on the real repository
+CMD=bash scripts/check-install-doc.sh
+MESSAGE=does not mention 'create-first-admin'
+MESSAGE=check-install-doc: RED

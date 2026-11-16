@@ -2,9 +2,9 @@
 # Docker network that is `internal: true` and publishes NO port to the host. Run by tests/harness/run.sh on a GitHub runner; every H_* variable comes from the env-file
 # run.sh writes (secrets are minted per run and never committed).
 #
-# What is real here: Postgres 16 (the modules' own digest), each module's own migration tool and Control image built from its unmodified pinned source, the platform's
-# own migrator and service. What is NOT here, on purpose: the workers, the SMTP sink, CoreDNS (nothing in Phase 0 sends mail), and Supabase itself — the list is printed
-# by run.sh on every run.
+# What is real here: the digest-pinned supabase/postgres image (the database a real install runs on: its own auth schema, roles and non-superuser migrating role) with the required
+# provisioning step applied; each module's own migration tool and Control image built from its unmodified pinned source; the platform's own migrator and service. What is NOT here, on
+# purpose: Supabase's GoTrue, pooler and PostgREST, CoreDNS, and (until Phase 2 chunk B8) the workers and the SMTP sink — the list is printed by run.sh on every run.
 #
 # No service sets `image:` for something it builds (the digest-pin gate reads every `image:` as a registry reference). The platform image is built once per service that
 # runs it; that costs a minute of CI time and keeps the compose file free of unpinned names.
@@ -23,31 +23,35 @@ x-platform-build: &platform-build
   dockerfile: Dockerfile
 
 services:
+  # THE DATABASE IS THE IMAGE A REAL INSTALL RUNS ON (Phase 2, ruling OD-7): the digest-pinned supabase/postgres, with its own `auth` schema, its roles (anon, authenticated, service_role,
+  # supabase_admin ...) and its non-superuser migrating role `postgres`. Every migrator below connects as `postgres`, exactly as an install does, after the required provisioning step
+  # (db/install/preprovision.sql, service `preprovision`). The integration tests need a SUPERUSER connection for scratch databases and for proving that a refusal bites: that is the image's
+  # own superuser `supabase_admin` (same password; measured by tests/supabase/run.sh), never `postgres`. The database is `postgres`, as on a Supabase project.
+  # No `command:` override: the image's entrypoint passes its own config_file, and replacing the command would drop it. (The Phase 1 harness ran `-c fsync=off` on the official image; this one keeps durability on.)
+  # NOT a tmpfs: the outage check stops and restarts this container, and a tmpfs is discarded on stop (the restarted database would have no roles). The data lives in the container's writable layer,
+  # which survives stop/start and is removed by `down -v`.
   postgres:
-    image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
+    image: supabase/postgres:17.12.0.000@sha256:8630950b489ecc70563300180287a98c192a4a48f5ae00b4febdaeea1abe85de
     environment:
-      POSTGRES_DB: platform
-      POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${H_PG_SUPERPASS:?}
-    command: ["postgres", "-c", "fsync=off"]         # CI-only: durability is not under test, speed is
-    # NOT a tmpfs: the outage check stops and restarts this container, and a tmpfs is discarded on stop (the restarted database would have no roles). The data lives in the
-    # container's writable layer, which survives stop/start and is removed by `down -v`.
+    # the image runs its init scripts (roles, the auth schema, extensions) on first start and only then listens on TCP: allow it a generous window
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d platform"]
-      interval: 2s
+      test: ["CMD-SHELL", "pg_isready -U postgres -h localhost -d postgres"]
+      interval: 3s
       timeout: 3s
-      retries: 30
+      retries: 90
+      start_period: 20s
     networks: [private]
 
   # ── one-shot jobs (run with `docker compose run --rm <name>`) ─────────────────────────────────────────────────────────────────────────────────────────────────────
-  # FIXTURE ONLY: a minimal stand-in for Supabase Auth's auth.users (tests/harness/fixtures/auth-users.sql), which platform_0001 needs (public.users.auth_user_id references it).
-  # Since Phase 1 chunk B2 the platform creates public.users and public.job_items ITSELF (platform_0001) before module 2 and 3 migrate: no module fixture is used any more.
-  fixtures:
+  # The REQUIRED provisioning step of an install (Docs/install.md step 2), run as the migrating role `postgres` BEFORE any chain: it lets that role create objects as the module-owner roles of
+  # modules 2 and 3 (their own bootstraps cannot do it as shipped; tests/supabase measures the failure without this step). Uses a postgres client image only for psql.
+  preprovision:
     image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
     environment: { PGPASSWORD: "${H_PG_SUPERPASS:?}" }
     volumes:
-      - ${H_PLATFORM_DIR:?}/tests/harness/fixtures/auth-users.sql:/fixture.sql:ro
-    command: ["psql", "-v", "ON_ERROR_STOP=1", "-h", "postgres", "-U", "postgres", "-d", "platform", "-f", "/fixture.sql"]
+      - ${H_PLATFORM_DIR:?}/db/install/preprovision.sql:/preprovision.sql:ro
+    command: ["psql", "-v", "ON_ERROR_STOP=1", "-h", "postgres", "-U", "postgres", "-d", "postgres", "-f", "/preprovision.sql"]
     depends_on: { postgres: { condition: service_healthy } }
     networks: [private]
     restart: "no"
@@ -57,7 +61,7 @@ services:
     entrypoint: ["/usr/local/bin/platform-migrate"]
     command: ["up-and-set-password"]
     environment:
-      PLATFORM_MIGRATE_DATABASE_URL: postgres://postgres:${H_PG_SUPERPASS:?}@postgres:5432/platform
+      PLATFORM_MIGRATE_DATABASE_URL: postgres://postgres:${H_PG_SUPERPASS:?}@postgres:5432/postgres
       PLATFORM_MIGRATIONS_DIR: /db/migrations
       PLATFORM_APP_PASSWORD: ${H_PLATFORM_APP_PASSWORD:?}
     volumes:
@@ -77,12 +81,12 @@ services:
       - |
         n=0
         for f in $$(ls /m/[0-9][0-9][0-9][0-9]_*.sql | sort); do
-          psql -v ON_ERROR_STOP=1 -h postgres -U postgres -d platform -q -f "$$f" >/dev/null
+          psql -v ON_ERROR_STOP=1 -h postgres -U postgres -d postgres -q -f "$$f" >/dev/null
           n=$$((n+1))
         done
         echo "migrate-m1: applied $$n files"
         # verify_app is created by migration 0016 as a LOGIN role without a password; the password is set out of band, never in SQL (psql interpolates :'pw' from stdin)
-        printf "ALTER ROLE verify_app PASSWORD :'pw';\n" | psql -v ON_ERROR_STOP=1 -h postgres -U postgres -d platform -q -v "pw=$$M1_APP_PASSWORD" >/dev/null
+        printf "ALTER ROLE verify_app PASSWORD :'pw';\n" | psql -v ON_ERROR_STOP=1 -h postgres -U postgres -d postgres -q -v "pw=$$M1_APP_PASSWORD" >/dev/null
         echo "migrate-m1: verify_app password set"
     depends_on: { postgres: { condition: service_healthy } }
     networks: [private]
@@ -91,7 +95,7 @@ services:
   migrate-m2:
     build: { context: "${H_MODULES_ROOT:?}/coldmail-send-managed", dockerfile: tools/send-managed-migrate/Dockerfile }
     environment:
-      MIGRATE_DATABASE_URL: postgres://postgres:${H_PG_SUPERPASS:?}@postgres:5432/platform
+      MIGRATE_DATABASE_URL: postgres://postgres:${H_PG_SUPERPASS:?}@postgres:5432/postgres
       MIGRATIONS_DIR: /db/migrations
       PREFLIGHT_SQL: /db/preflight/check_platform_tables.sql
       SEND_MANAGED_MODULE_PASSWORD: ${H_M2_APP_PASSWORD:?}
@@ -105,7 +109,7 @@ services:
   migrate-m3:
     build: { context: "${H_MODULES_ROOT:?}/coldmail-send-byo", dockerfile: tools/send-byo-migrate/Dockerfile }
     environment:
-      MIGRATE_DATABASE_URL: postgres://postgres:${H_PG_SUPERPASS:?}@postgres:5432/platform
+      MIGRATE_DATABASE_URL: postgres://postgres:${H_PG_SUPERPASS:?}@postgres:5432/postgres
       MIGRATIONS_DIR: /db/migrations
       PREFLIGHT_SQL: /db/preflight/check_platform_tables.sql
       SEND_BYO_MODULE_PASSWORD: ${H_M3_APP_PASSWORD:?}
@@ -122,7 +126,7 @@ services:
     build: { context: "${H_MODULES_ROOT:?}/coldmail-verify", dockerfile: "${H_PLATFORM_DIR:?}/tests/harness/m1/Dockerfile" }
     environment:
       # Module 1 connects as verify_app, a plain LOGIN role that owns nothing (its migration 0016 gives it exactly the grants the code needs; Docs/phase-1-spec.md A2). It used to need a superuser (Phase 0 F3).
-      TM_DATABASE_URL: postgres://verify_app:${H_M1_APP_PASSWORD:?}@postgres:5432/platform
+      TM_DATABASE_URL: postgres://verify_app:${H_M1_APP_PASSWORD:?}@postgres:5432/postgres
       TM_PEPPER: ${H_M1_PEPPER:?}
       TM_QUEUE_ADDR_KEY: ${H_M1_QUEUE_KEY:?}      # without it the bulk and job routes answer 503 `unavailable` even to an authenticated caller (module 1: main.go, api.go)
       TM_ENV: development
@@ -138,7 +142,7 @@ services:
   m2:
     build: { context: "${H_MODULES_ROOT:?}/coldmail-send-managed", dockerfile: services/control/Dockerfile }
     environment:
-      DATABASE_URL: postgres://send_managed_app:${H_M2_APP_PASSWORD:?}@postgres:5432/platform
+      DATABASE_URL: postgres://send_managed_app:${H_M2_APP_PASSWORD:?}@postgres:5432/postgres
       CONTROL_SINGLETON_ACQUIRE_TIMEOUT_SEC: "60"
       CONTROL_HEALTH_ADDR: ":8080"
       CONTROL_WORKERLINK_ADDR: ":8443"
@@ -166,7 +170,7 @@ services:
   m3:
     build: { context: "${H_MODULES_ROOT:?}/coldmail-send-byo", dockerfile: services/control/Dockerfile }
     environment:
-      DATABASE_URL: postgres://send_byo_app:${H_M3_APP_PASSWORD:?}@postgres:5432/platform
+      DATABASE_URL: postgres://send_byo_app:${H_M3_APP_PASSWORD:?}@postgres:5432/postgres
       CONTROL_SINGLETON_ACQUIRE_TIMEOUT_SEC: "60"
       CONTROL_HEALTH_ADDR: ":8080"
       CONTROL_WORKERLINK_ADDR: ":8443"
@@ -195,7 +199,7 @@ services:
   platform:
     build: *platform-build
     environment:
-      PLATFORM_DATABASE_URL: postgres://platform_app:${H_PLATFORM_APP_PASSWORD:?}@postgres:5432/platform
+      PLATFORM_DATABASE_URL: postgres://platform_app:${H_PLATFORM_APP_PASSWORD:?}@postgres:5432/postgres
       PLATFORM_HTTP_ADDR: ":8080"
       PLATFORM_ENV: development
       PLATFORM_LOG_LEVEL: debug
@@ -232,8 +236,8 @@ services:
     entrypoint: ["/h/harness.test"]
     working_dir: /repo
     environment:
-      HARNESS_ADMIN_DATABASE_URL: postgres://postgres:${H_PG_SUPERPASS:?}@postgres:5432/platform
-      HARNESS_ADMIN_DATABASE_HOST_URL: postgres://postgres:${H_PG_SUPERPASS:?}@postgres:5432/postgres
+      HARNESS_ADMIN_DATABASE_URL: postgres://supabase_admin:${H_PG_SUPERPASS:?}@postgres:5432/postgres
+      HARNESS_ADMIN_DATABASE_HOST_URL: postgres://supabase_admin:${H_PG_SUPERPASS:?}@postgres:5432/postgres
       HARNESS_PLATFORM_APP_PASSWORD: ${H_PLATFORM_APP_PASSWORD:?}
       HARNESS_MIGRATE_BIN: /h/platform-migrate
       HARNESS_REPO_ROOT: /repo

@@ -625,7 +625,7 @@ begin "run.sh: a chain that matches no migration file is RED (the instrument mat
 fake_reset; rm -f "$TREE"/coldmail-send-byo/db/migrations/*.up.sql; runsh --known "$EMPTYK"; eq rc "$RRC" 1; has reason "$ROUT" 'chain m3 matched 0 migration files: the instrument matched nothing'; finish
 
 echo "classify-selftest: the workflow is the two-leg, two-container design it claims to be; preprovision.sql is the fix it claims to be"
-WF="$HERE/../../.github/workflows/supabase.yml"; PV="$HERE/preprovision.sql"
+WF="$HERE/../../.github/workflows/supabase.yml"; PV="$HERE/../../db/install/preprovision.sql"
 NONCOMMENT="$(grep -v '^ *#' "$WF" 2> /dev/null || true)"   # the workflow without its comment lines: the claims below are about what it DOES, not about what its header says
 step_block() { awk -v start="$1" 'index($0, "- name: " start) { on = 1; print; next } on && /^      - / { exit } on { print }' "$WF"; }   # one step, from its `- name:` line to the next step
 PASS_BLOCK="$(step_block 'Pass ')"
@@ -639,9 +639,9 @@ legs() {         # one line per matrix leg:  label|known|preprovision   (quotes 
     on && /^ +preprovision:/ { p = line; sub(/^ +preprovision: */, "", p); gsub(q, "", p); next }
     END { if (l != "") print l "|" k "|" p }' "$WF"
 }
-begin "supabase.yml: ONE job that is a matrix of EXACTLY two legs, fail-fast off; BASELINE = baseline-blockers.txt and NO provisioning, FIXED = known-blockers.txt and tests/supabase/preprovision.sql"
+begin "supabase.yml: ONE job that is a matrix of EXACTLY two legs, fail-fast off; BASELINE = baseline-blockers.txt and NO provisioning, FIXED = known-blockers.txt and db/install/preprovision.sql"
 eq workflow-exists "$([ -f "$WF" ] && echo yes || echo no)" yes
-eq legs "$(legs | tr '\n' ' ')" 'BASELINE|baseline-blockers.txt| FIXED|known-blockers.txt|tests/supabase/preprovision.sql '
+eq legs "$(legs | tr '\n' ' ')" 'BASELINE|baseline-blockers.txt| FIXED|known-blockers.txt|db/install/preprovision.sql '
 eq leg-count "$(grep -c '^ *- label:' "$WF" || true)" 2; has fail-fast "$NONCOMMENT" 'fail-fast: false'; has matrix "$NONCOMMENT" 'matrix:'
 eq one-job "$(awk '/^jobs:/ { on = 1; next } on && /^  [A-Za-z0-9_-]+:/ { n++ } END { print n + 0 }' "$WF")" 1; finish
 

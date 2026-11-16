@@ -5,12 +5,13 @@
 #   1  pins      each module checkout is EXACTLY the commit tools/modules.lock pins, shallow-free, with a clean tree
 #   2  secrets   per-run secrets, minted with each module's OWN tools (gen-certs / gen-secrets / own-secrets / provision-worker); never printed, never committed
 #   3  build     every image built from source with --pull --no-cache (no layer from a previous run can earn a green)
-#   4  database  ONE real Postgres; the auth.users fixture, then the platform's (which creates public.users and public.job_items), module 1's, module 2's and module 3's own migrations, in that order
+#   4  database  ONE real Postgres (the digest-pinned supabase/postgres: real auth schema, non-superuser migrator `postgres`); the required provisioning step (db/install/preprovision.sql), then the platform's migrations (which create public.users and public.job_items), module 1's, module 2's and module 3's own, in that order, all as `postgres`
 #   5  services  the three module Controls and the platform, started and waited healthy on a network that is `internal` and publishes nothing
 #   6  tests     the integration tests (tests/harness, build tag `harness`) compiled on the runner, run INSIDE the network, then the per-package floor gate
 #   7  probe     platform-probe calls every module over the private network with the service token (health, readyz, describe) — the Phase 0 end-to-end call
 #   8  exposure  no service publishes a port; the network is internal (two independent instruments)
 #   9  outage    the platform's /readyz follows the database: 200, then 503 with Postgres stopped, then 200 again
+#   4b first admin   the documented platform-migrate create-first-admin, as postgres, on the real auth schema; a second run refused
 #  10  ledger    the balance invariant: the live ledger trigger is intact (a rolled-back exercise through the ledger leaves no drift and no overdrawn reserve)
 # and finally prints what it did NOT check. Nothing here is mocked: every module is the real, unmodified pinned source running as a real service.
 set -u
@@ -96,9 +97,17 @@ DC build --pull --no-cache || die "an image failed to build"
 echo "  built from the pinned sources; base images are the digests pinned in each Dockerfile"
 
 # ── 4. database ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-STAGE=database; banner 4 "one real Postgres, four migration chains"
-DC up -d --wait --wait-timeout 120 postgres || die "postgres did not become healthy"
-DC run --rm -T fixtures || die "the auth.users fixture could not be created"
+STAGE=database; banner 4 "one real Postgres (supabase/postgres), the required provisioning step, four migration chains — all as the non-superuser postgres"
+DC up -d --wait --wait-timeout 300 postgres || die "postgres did not become healthy"
+# the instruments, BEFORE anything runs on this database: it is the image a real install runs on, the migrating role is not a superuser (so every privilege failure is visible), the auth schema
+# is the image's REAL one (not a fixture), and the integration tests' superuser identity works over TCP with the same password (it is how the tests prove a refusal bites)
+shape="$(DC exec -T postgres psql -X -At -F '|' -U postgres -d postgres -c "select rolsuper, rolcreaterole from pg_roles where rolname = current_user")" || die "could not read the migrating role"
+[ "$shape" = "f|t" ] || die "the migrating role postgres has (rolsuper, rolcreaterole) = ($shape), expected (f|t): this is not the Supabase shape, and a superuser would hide every privilege failure"
+[ "$(DC exec -T postgres psql -X -At -U postgres -d postgres -c "select count(*) from information_schema.columns where table_schema='auth' and table_name='users' and column_name='encrypted_password'")" = 1 ] || die "auth.users is not Supabase's own table (no encrypted_password column): the harness must run on the real auth schema, not a fixture"
+sa="$(DC exec -T postgres psql -X -At -U supabase_admin -d postgres -c "select rolsuper from pg_roles where rolname = current_user")" || die "the image's superuser supabase_admin cannot connect"
+[ "$sa" = t ] || die "supabase_admin is not a superuser ($sa): the integration tests need one"
+echo "  instruments: migrator postgres is (rolsuper, rolcreaterole) = (f, t); auth.users is the image's own table; supabase_admin is a superuser"
+echo "  -- preprovision (db/install/preprovision.sql, the required install step)"; DC run --rm -T preprovision || die "the required provisioning step (db/install/preprovision.sql) failed"
 for s in migrate-platform migrate-m1 migrate-m2 migrate-m3; do
   echo "  -- $s"; DC run --rm -T "$s" > "$WORK/$s.log" 2>&1; rc=$?; sed 's/^/     | /' "$WORK/$s.log" | tail -25
   [ "$rc" = 0 ] || die "$s exited $rc"
@@ -107,14 +116,29 @@ m1_want="$(ls "$M1"/control-plane/migrations/[0-9][0-9][0-9][0-9]_*.sql 2>/dev/n
 m1_got="$(sed -n 's/.*migrate-m1: applied \([0-9]*\) files.*/\1/p' "$WORK/migrate-m1.log" | tail -1)"
 [ "${m1_want:-0}" -ge 1 ] || die "module 1's migration directory has no numbered files — the loop would have applied nothing"
 [ "$m1_got" = "$m1_want" ] || die "module 1: the checkout has $m1_want migration files but the loop applied '${m1_got:-none}'"
-psql_() { DC exec -T postgres psql -U postgres -d platform -v ON_ERROR_STOP=1 -tAc "$1"; }
+psql_() { DC exec -T postgres psql -U postgres -d postgres -v ON_ERROR_STOP=1 -tAc "$1"; }
 n="$(psql_ "select count(*) from pg_namespace where nspname in ('platform','send_managed','send_byo','verify')")"; [ "$n" = 4 ] || die "expected the platform, send_managed, send_byo and verify schemas, found $n of them"
 [ "$(psql_ "select to_regclass('verify.api_callers') is not null")" = t ] || die "module 1's verify.api_callers does not exist after its migrations"
 psql_ "INSERT INTO verify.api_callers (caller_id, key_sha256, not_before, user_id) VALUES ('harness-caller', decode('$M1_KEY_SHA','hex'), now() - interval '1 hour', '00000000-0000-0000-0000-0000000000a1')" >/dev/null || die "could not seed module 1's per-caller key"
 echo "  schemas: platform, send_managed, send_byo, verify present; module 1 applied $m1_got of $m1_want files; one module-1 caller key seeded"
 # schema public may hold only the platform's own tables (tests/public-allowlist.txt): module 1 must have left it, and no module may have put anything there
-DC exec -T postgres psql -X -At -F '|' -v ON_ERROR_STOP=1 -U postgres -d platform < "$PLATFORM_DIR/scripts/public-schema-listing.sql" > "$WORK/public-listing.txt" || die "the public-schema listing query failed"
+DC exec -T postgres psql -X -At -F '|' -v ON_ERROR_STOP=1 -U postgres -d postgres < "$PLATFORM_DIR/scripts/public-schema-listing.sql" > "$WORK/public-listing.txt" || die "the public-schema listing query failed"
 bash "$PLATFORM_DIR/scripts/check-public-schema.sh" --allowlist "$PLATFORM_DIR/tests/public-allowlist.txt" --listing "$WORK/public-listing.txt" || die "schema public holds something that is not allowlisted"
+
+# ── 4b. first admin ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+# The documented install step (Docs/install.md step 4), run for real: as the non-superuser `postgres`, against the image's REAL auth.users, with a login that exists only in auth.users.
+STAGE=first-admin; banner "4b" "platform-migrate create-first-admin, as documented, on the live database"
+FA_ID="$(cat /proc/sys/kernel/random/uuid)"
+DC exec -T postgres psql -X -v ON_ERROR_STOP=1 -U supabase_admin -d postgres -c "INSERT INTO auth.users (id, email) VALUES ('$FA_ID', 'Harness.Admin@example.test')" >/dev/null || die "could not create the Supabase login the first admin needs (a row in the image's auth.users)"
+DC run --rm -T migrate-platform create-first-admin --auth-user-id "$FA_ID" --display-name "Harness Admin" > "$WORK/first-admin.log" 2>&1; rc=$?; sed 's/^/     | /' "$WORK/first-admin.log" | tail -5
+[ "$rc" = 0 ] || die "create-first-admin exited $rc on the live database"
+grep -q "created admin $FA_ID (Harness Admin)" "$WORK/first-admin.log" || die "create-first-admin did not print its success line"
+[ "$(psql_ "select count(*) from platform.admins where id = '$FA_ID' and display_name = 'Harness Admin'")" = 1 ] || die "the admin row was not created"
+[ "$(psql_ "select email from public.users where id = '$FA_ID' and auth_user_id = '$FA_ID'")" = "harness.admin@example.test" ] || die "the public.users row is missing or its email was not normalised"
+if DC run --rm -T migrate-platform create-first-admin --auth-user-id "$FA_ID" --display-name "Harness Admin" > "$WORK/first-admin-2.log" 2>&1; then die "a SECOND create-first-admin succeeded: the command must refuse when an admin exists"; fi
+grep -qi "admin already exists\|already exists" "$WORK/first-admin-2.log" || die "the second create-first-admin failed, but not for the reason it must name (an admin already exists): $(tail -2 "$WORK/first-admin-2.log")"
+[ "$(psql_ "select count(*) from platform.admins")" = 1 ] || die "the refused second run changed platform.admins"
+echo "  first admin created as postgres on the real auth schema; a second run refused; platform.admins holds exactly one row"
 
 # ── 5. services ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 STAGE=services; banner 5 "the three Controls and the platform, healthy on the private network"
@@ -161,7 +185,7 @@ echo "  second instrument: $cnt containers inspected, none has a host port bindi
 # ── 9. outage ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 STAGE=outage; banner 9 "the platform's /readyz follows the database"
 rz() { DC exec -T platform wget -q -S -O /dev/null http://127.0.0.1:8080/readyz 2>&1 | awk '/HTTP\//{print $2; exit}'; }
-wait_for() { want="$1"; i=0; while [ $i -lt 40 ]; do [ "$(rz)" = "$want" ] && return 0; i=$((i+1)); sleep 1; done; return 1; }
+wait_for() { want="$1"; i=0; while [ $i -lt 120 ]; do [ "$(rz)" = "$want" ] && return 0; i=$((i+1)); sleep 1; done; return 1; }
 wait_for 200 || die "readyz was not 200 with a healthy database"
 DC stop postgres >/dev/null 2>&1 || die "could not stop postgres"
 wait_for 503 || die "readyz stayed $(rz) with the database stopped — readiness does not follow the database"
@@ -171,17 +195,18 @@ echo "  readyz: 200 -> 503 (postgres stopped) -> 200 (postgres back)"
 
 # ── 10. ledger ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 STAGE=ledger; banner 10 "the balance invariant holds on the live database (rolled-back exercise through the ledger)"
-bash "$PLATFORM_DIR/scripts/check-balance-invariant.sh" --psql-cmd "docker compose --project-directory $HERE -f $HERE/docker-compose.yml --env-file $WORK/harness.env --profile probe --profile tests exec -T postgres psql -U postgres -d platform" --exercise || die "the balance invariant gate is red on the live database"
+bash "$PLATFORM_DIR/scripts/check-balance-invariant.sh" --psql-cmd "docker compose --project-directory $HERE -f $HERE/docker-compose.yml --env-file $WORK/harness.env --profile probe --profile tests exec -T postgres psql -U supabase_admin -d postgres" --exercise || die "the balance invariant gate is red on the live database"
 
 # ── result ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 STAGE=done
 echo
 echo "================ NOT CHECKED (what this run did not and could not vouch for)"
 cat <<'EOF'
-  - workers, the SMTP sink and CoreDNS: not started. No module sent, verified or billed anything; only health, readiness and describe were called.
-  - real Supabase: this is stock Postgres 16 with a superuser `postgres`. Supabase's `postgres` role is not a superuser, so the module migrations (CREATE ROLE, OWNER TO)
-    are untested against the real project; neither are its pooler, its `auth` schema or its roles.
-  - Supabase Auth: auth.users is a minimal FIXTURE (id, email); the real table, GoTrue and the exposed schemas are not here (the supabase workflow has the real auth schema, migrations only).
+  - workers, the SMTP sink and CoreDNS: not started (until Phase 2 chunk B8). No module sent, verified or billed anything; only health, readiness and describe were called.
+  - real Supabase beyond the database image: this is the digest-pinned supabase/postgres (real auth schema, the non-superuser migrating role `postgres`, the required provisioning step). Not here: GoTrue (so
+    no login is ever performed), the pooler (Supavisor), PostgREST and the exposed-schema setting (an owner action: Docs/install.md step 5), a hosted project's role grants and extensions.
+  - the scratch databases of the integration tests (cloned from nothing: a fresh database, the auth.users FIXTURE, the platform migrated by the superuser) differ from the live database in exactly
+    those two ways; what runs as the non-superuser `postgres` on the real auth schema is the live database and the `supabase` workflow.
   - module BEHAVIOUR on the platform's tables beyond the statements the modules issue against public.users / public.job_items (db/module-statements.txt, executed as each module's role in a rolled-back transaction): no job was run end to end (Phase 3).
   - module behaviour beyond health, readiness and describe (Phase 3); module 1 has NO describe at all (Docs/phase-0-spec.md F1) and runs here as the least-privilege login verify_app (since Phase 1, A2).
   - reachability from another host, a firewall or a cloud security group; TLS termination; the modules' mTLS worker ports (they are up, unexercised).

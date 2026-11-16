@@ -55,6 +55,9 @@ var declaredClasses = map[string]privClass{
 	"balances":          classOf(privSelect, privSelect),
 	"balance_drift":     classOf(privSelect, privSelect),
 	"reserve_overdrawn": classOf(privSelect, privSelect),
+	// platform_0004: the only sanctioned way to list users (public.users without the system user and without rows that have no auth link). It is an auto-updatable view over public.users, so
+	// anything beyond SELECT granted on it would be a way to write public.users: both roles hold SELECT and nothing else.
+	"listable_users": classOf(privSelect, privSelect),
 	// the unit costs: read-only at table level; platform_app may change exactly the three columns an admin price change needs (the trigger demands a named admin and a reason)
 	"unit_costs": {
 		Owner:        "platform_owner",
@@ -112,7 +115,8 @@ const judgedRelkinds = "('r', 'p', 'v', 'm', 'f')"
 //     can see a module role whose module never ran in it), and the question "can anyone DELETE or TRUNCATE?" asked, by EFFECTIVE privilege (has_table_privilege, so a grant
 //     inherited through role membership counts), of PUBLIC, platform_app, platform_admin, the two module roles and the Supabase API roles (anon, authenticated, service_role).
 //
-// What it does NOT cover, and says so: sequences (identity or serial), functions and procedures, types, default privileges (ALTER DEFAULT PRIVILEGES), row-level security;
+// What it does NOT cover, and says so: sequences (identity or serial), functions and procedures (EXECUTE on the functions of schema platform is judged by checkFunctionGrants, below),
+// types, default privileges (ALTER DEFAULT PRIVILEGES), row-level security;
 // an inherited DELETE/TRUNCATE of a role that is not in the list above (a direct grant to ANY role is caught by the ACL comparison; only the inheritance question is limited
 // to the listed subjects); schema public itself (its USAGE/CREATE are not judged) and every other relation in it (the allowlist gate does that); every other schema.
 func checkGrants(ctx context.Context, q querier) ([]string, error) {
@@ -489,6 +493,108 @@ func checkNoDestructivePrivileges(ctx context.Context, q querier, tables []strin
 	return v, nil
 }
 
+// functionExecuteAllowed names, per function of schema platform (name and argument types, as functionKey writes them), the roles other than the owner that MAY hold EXECUTE on it directly. It is EMPTY: no role holds EXECUTE on any function (platform_0004 made the callers of require_active_admin SECURITY DEFINER instead of granting it).
+// Every other (function, role) pair - PUBLIC above all - must hold nothing: PostgreSQL grants EXECUTE on a new function to PUBLIC by default, so every function of the schema is revoked from
+// PUBLIC by the migration that creates it, and a migration that forgets is what this declaration exists to catch. The trigger functions are in no list: a trigger function's EXECUTE is
+// not checked when the trigger fires, so granting it would only let a role call it by hand. platform.require_active_admin(uuid, text) (platform_0004) is the one function other
+// functions call; the trigger functions that call it run for the CALLER, so either the roles hold EXECUTE on it or those functions are SECURITY DEFINER. Which of the two is the
+// migration's choice and is proven by behaviour (TestConstraints_DisabledAdminThroughTheRoles); the grant is therefore ALLOWED here and never required.
+var functionExecuteAllowed = map[string][]string{ // empty since platform_0004 made the four callers of require_active_admin SECURITY DEFINER: no role holds EXECUTE on any function of the schema
+}
+
+// functionGrantsFloor is the fewest functions schema platform holds since platform_0004: reject_mutation, jobs_guard, unit_costs_guard, unit_costs_record_history, ledger_apply_to_balance (the
+// five of platform_0002), require_active_admin, ledger_audit_adjustment and the three trigger functions that call require_active_admin (platform_0004). A checker that sees fewer matched too little.
+const functionGrantsFloor = 10
+
+// checkFunctionGrants judges the EXECUTE privilege of every function of schema platform (the part of the privilege picture checkGrants does not cover): the owner is platform_owner, nobody
+// but the owner (and the roles functionExecuteAllowed names for that function) holds EXECUTE, nobody holds it WITH GRANT OPTION, every allowance names a function that exists, and the
+// checker looked at no fewer than functionGrantsFloor functions. It returns every difference as a sentence and never calls t.Error.
+//
+// What it does NOT cover: whether a SECURITY DEFINER function pins its search_path (TestBalance_TriggerFunctionsAreSafeDefiners), who may call a function THROUGH a trigger (that is
+// behaviour: TestConstraints_DisabledAdminThroughTheRoles and the role proofs), and functions in any other schema.
+func checkFunctionGrants(ctx context.Context, q querier) ([]string, error) {
+	var exists bool
+	if err := q.QueryRow(ctx, "SELECT to_regnamespace($1) IS NOT NULL", grantSchema).Scan(&exists); err != nil {
+		return nil, err
+	}
+	if !exists {
+		return []string{"schema " + grantSchema + " does not exist"}, nil
+	}
+	const key = `p.proname::text || '(' || oidvectortypes(p.proargtypes) || ')'`
+	var v []string
+
+	owners := map[string]string{}
+	rows, err := q.Query(ctx, `SELECT `+key+`, pg_get_userbyid(p.proowner) FROM pg_proc p WHERE p.pronamespace = $1::regnamespace ORDER BY 1`, grantSchema)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var fn, owner string
+		if err := rows.Scan(&fn, &owner); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		owners[fn] = owner
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(owners) < functionGrantsFloor {
+		v = append(v, fmt.Sprintf("found %d function(s) in schema %s; the floor is %d: the instrument matched too little", len(owners), grantSchema, functionGrantsFloor))
+	}
+	names := make([]string, 0, len(owners))
+	for fn := range owners {
+		names = append(names, fn)
+	}
+	sort.Strings(names)
+	for _, fn := range names {
+		if owners[fn] != "platform_owner" {
+			v = append(v, fmt.Sprintf("%s.%s: owned by %s, declared owner is platform_owner", grantSchema, fn, owners[fn]))
+		}
+	}
+
+	rows, err = q.Query(ctx, `SELECT `+key+`, pg_get_userbyid(p.proowner),
+	        CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END, a.privilege_type, a.is_grantable
+	    FROM pg_proc p CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) a
+	    WHERE p.pronamespace = $1::regnamespace ORDER BY 1, 3, 4`, grantSchema)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var fn, owner, grantee, priv string
+		var grantable bool
+		if err := rows.Scan(&fn, &owner, &grantee, &priv, &grantable); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if grantee == owner {
+			continue // the owner's own privileges are implicit
+		}
+		if !containsString(functionExecuteAllowed[fn], grantee) || priv != "EXECUTE" {
+			declared := "nothing"
+			if allowed := functionExecuteAllowed[fn]; len(allowed) > 0 {
+				declared = strings.Join(allowed, ", ")
+			}
+			v = append(v, fmt.Sprintf("%s.%s: over-grant: %s has %s (declared: %s)", grantSchema, fn, grantee, priv, declared))
+		}
+		if grantable {
+			v = append(v, fmt.Sprintf("%s.%s: %s has %s WITH GRANT OPTION", grantSchema, fn, grantee, priv))
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	for _, fn := range sortedMapKeys(functionExecuteAllowed) {
+		if _, ok := owners[fn]; !ok {
+			v = append(v, fmt.Sprintf("%s.%s has a declared EXECUTE allowance but the function does not exist (the declaration is stale)", grantSchema, fn))
+		}
+	}
+	return v, nil
+}
+
 func sortedClassNames(m map[string]privClass) []string {
 	return sortedMapKeys(m)
 }
@@ -810,6 +916,29 @@ func TestGrantsInvariant_AntiVacuity(t *testing.T) {
 			[]string{"DROP VIEW platform.balance_drift"},
 			[][]string{{"platform.balance_drift", "declared privilege class", "does not exist"}}},
 
+		// ---- platform_0004: the user view. It is auto-updatable (one table, no join), so a write privilege on it would be a write path into public.users ----
+		{"a grant on the user view to PUBLIC",
+			[]string{"GRANT SELECT ON platform.listable_users TO PUBLIC"},
+			[][]string{{"platform.listable_users", "PUBLIC", "SELECT", "over-grant"}}},
+		{"a missing grant on the user view",
+			[]string{"REVOKE SELECT ON platform.listable_users FROM platform_app"},
+			[][]string{{"platform.listable_users", "missing grant", "platform_app", "SELECT"}}},
+		{"INSERT on the user view granted to platform_app",
+			[]string{"GRANT INSERT ON platform.listable_users TO platform_app"},
+			[][]string{{"platform.listable_users", "platform_app", "INSERT", "over-grant"}}},
+		{"UPDATE on the user view granted to platform_admin",
+			[]string{"GRANT UPDATE ON platform.listable_users TO platform_admin"},
+			[][]string{{"platform.listable_users", "platform_admin", "UPDATE", "over-grant"}}},
+		{"a column grant on the user view",
+			[]string{"GRANT UPDATE (is_active) ON platform.listable_users TO platform_app"},
+			[][]string{{"platform.listable_users", "column privilege", "platform_app", "UPDATE", "is_active"}}},
+		{"the user view owned by the wrong role",
+			[]string{"ALTER VIEW platform.listable_users OWNER TO platform_admin"},
+			[][]string{{"platform.listable_users", "owned by platform_admin", "platform_owner"}}},
+		{"the user view dropped (a stale declaration)",
+			[]string{"DROP VIEW platform.listable_users"},
+			[][]string{{"platform.listable_users", "declared privilege class", "does not exist"}}},
+
 		// ---- Phase 1: the platform's two tables in schema public ----
 		{"DELETE on public.users granted to platform_app",
 			[]string{"GRANT DELETE ON public.users TO platform_app"},
@@ -879,6 +1008,101 @@ func TestGrantsInvariant_AntiVacuity(t *testing.T) {
 
 	// Every breakage was rolled back: the database is clean again.
 	v, err = checkGrants(ctx, admin)
+	requireNoViolations(t, v, err, "the database after the rolled-back breakages")
+}
+
+// functionGrantsAfter runs setup (as the superuser, in a transaction that is rolled back) and returns what checkFunctionGrants says about the result.
+func functionGrantsAfter(t *testing.T, admin *pgx.Conn, setup []string) []string {
+	t.Helper()
+	ctx := testCtx(t)
+	tx, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	for _, stmt := range setup {
+		if _, err := tx.Exec(ctx, stmt); err != nil {
+			t.Fatalf("setup %q: %v", stmt, err)
+		}
+	}
+	got, err := checkFunctionGrants(ctx, tx)
+	if err != nil {
+		t.Fatalf("the checker could not run: %v", err)
+	}
+	return got
+}
+
+// TestGrantsInvariant_Functions: on a freshly migrated database every function of schema platform is owned by platform_owner and nobody else holds EXECUTE on it (PUBLIC above all: PostgreSQL
+// grants it on a new function by default, and platform_0002 and platform_0004 each revoke it function by function), except the allowance functionExecuteAllowed declares. The control that
+// the checker looked at something: it names the number of functions it judged and refuses fewer than functionGrantsFloor.
+func TestGrantsInvariant_Functions(t *testing.T) {
+	_, admin := migratedScratch(t)
+	v, err := checkFunctionGrants(testCtx(t), admin)
+	requireNoViolations(t, v, err, "a freshly migrated scratch database")
+	if n := ledgerInt64(t, admin, "SELECT count(*) FROM pg_proc WHERE pronamespace = 'platform'::regnamespace"); n < functionGrantsFloor {
+		t.Fatalf("schema platform holds %d functions, want at least %d: the judgement above matched too little", n, functionGrantsFloor)
+	}
+}
+
+// TestGrantsInvariant_FunctionsAntiVacuity proves checkFunctionGrants can fail: against each breakage below it reports that breakage by function, role and privilege. The first case is the
+// mistake the check exists for (a function created without REVOKE ... FROM PUBLIC); the control is the clean database before and after. Every breakage is made inside a rolled-back transaction.
+func TestGrantsInvariant_FunctionsAntiVacuity(t *testing.T) {
+	_, admin := migratedScratch(t)
+	v, err := checkFunctionGrants(testCtx(t), admin)
+	requireNoViolations(t, v, err, "the control: a freshly migrated scratch database")
+
+	cases := []struct {
+		name  string
+		setup []string
+		want  [][]string // each entry: substrings that must all appear in one violation
+	}{
+		{"a new function with PostgreSQL's default privileges (EXECUTE to PUBLIC)",
+			[]string{"CREATE FUNCTION platform.zz_new() RETURNS int LANGUAGE sql AS $$ SELECT 1 $$", "ALTER FUNCTION platform.zz_new() OWNER TO platform_owner"},
+			[][]string{{"platform.zz_new()", "over-grant", "PUBLIC", "EXECUTE"}}},
+		{"a new function left owned by the migrating role",
+			[]string{"CREATE FUNCTION platform.zz_owned() RETURNS int LANGUAGE sql AS $$ SELECT 1 $$", "REVOKE ALL ON FUNCTION platform.zz_owned() FROM PUBLIC"},
+			[][]string{{"platform.zz_owned()", "owned by", "platform_owner"}}},
+		{"EXECUTE on a trigger function granted to PUBLIC",
+			[]string{"GRANT EXECUTE ON FUNCTION platform.reject_mutation() TO PUBLIC"},
+			[][]string{{"platform.reject_mutation()", "over-grant", "PUBLIC", "EXECUTE"}}},
+		{"EXECUTE on the balance writer granted to platform_app",
+			[]string{"GRANT EXECUTE ON FUNCTION platform.ledger_apply_to_balance() TO platform_app"},
+			[][]string{{"platform.ledger_apply_to_balance()", "platform_app", "over-grant", "EXECUTE"}}},
+		{"EXECUTE on the audit-row writer granted to platform_admin",
+			[]string{"GRANT EXECUTE ON FUNCTION platform.ledger_audit_adjustment() TO platform_admin"},
+			[][]string{{"platform.ledger_audit_adjustment()", "platform_admin", "over-grant", "EXECUTE"}}},
+		{"a function owned by the wrong role",
+			[]string{"ALTER FUNCTION platform.jobs_guard() OWNER TO platform_admin"},
+			[][]string{{"platform.jobs_guard()", "owned by platform_admin", "platform_owner"}}},
+		{"the one allowed grant made grantable",
+			[]string{"GRANT EXECUTE ON FUNCTION platform.require_active_admin(uuid, text) TO platform_app WITH GRANT OPTION"},
+			[][]string{{"platform.require_active_admin(uuid, text)", "platform_app", "WITH GRANT OPTION"}}},
+		{"the one allowed grant given to a role it is not allowed for",
+			[]string{"CREATE ROLE zz_fn_exec NOLOGIN", "GRANT EXECUTE ON FUNCTION platform.require_active_admin(uuid, text) TO zz_fn_exec"},
+			[][]string{{"platform.require_active_admin(uuid, text)", "zz_fn_exec", "over-grant"}}},
+		{"the one allowed function dropped (a stale allowance)",
+			[]string{"DROP FUNCTION platform.require_active_admin(uuid, text)"},
+			[][]string{{"require_active_admin(uuid, text)", "declared EXECUTE allowance", "does not exist"}}},
+		{"an empty schema (the instrument matches nothing)",
+			[]string{"DROP SCHEMA platform CASCADE", "CREATE SCHEMA platform AUTHORIZATION platform_owner"},
+			[][]string{{"found 0 function(s)", "the floor is"}}},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			got := functionGrantsAfter(t, admin, c.setup)
+			if len(got) == 0 {
+				t.Fatal("the checker reported nothing for a broken database: it cannot fail")
+			}
+			for _, want := range c.want {
+				if !hasViolation(got, want...) {
+					t.Fatalf("no violation mentions %v; the checker said:\n  %s", want, strings.Join(got, "\n  "))
+				}
+			}
+		})
+	}
+
+	v, err = checkFunctionGrants(testCtx(t), admin)
 	requireNoViolations(t, v, err, "the database after the rolled-back breakages")
 }
 

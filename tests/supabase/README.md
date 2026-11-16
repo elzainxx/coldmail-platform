@@ -7,7 +7,7 @@
 | [`run.sh`](run.sh) | one pass: instrument check, optional provisioning, the platform chain, the module pre-flights, the three module chains, the table of failures, the comparison with a known list, and the list of what it did not check |
 | [`classify.sh`](classify.sh) | the text half: psql's failure output to records, the BLOCKER / CASCADE classification, the comparison. No database needed |
 | [`classify-selftest.sh`](classify-selftest.sh) | the paired control: recorded-shape psql output, every way the comparison can go red, and `run.sh` itself driven with a fake psql (options, provisioning failure path, the two-leg, two-container structure of the workflow); each reject case asserts its reason |
-| [`preprovision.sql`](preprovision.sql) | the proposed no-module-change fix (see below) |
+| [`../../db/install/preprovision.sql`](../../db/install/preprovision.sql) | the REQUIRED install step (ruling OD-7); moved from here to db/install in Phase 2 |
 | [`baseline-blockers.txt`](baseline-blockers.txt) | the blockers expected WITHOUT the fix (pass BASELINE) |
 | [`known-blockers.txt`](known-blockers.txt) | the blockers expected WITH the fix (pass FIXED); the goal is an empty list |
 

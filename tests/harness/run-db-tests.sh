@@ -8,27 +8,30 @@
 # It is NOT a substitute for the full harness: tests that need the modules (TestLive_StackCoexists, TestModulesLive_*) are skipped HERE (H_SKIP) and run there. Per-package test-count floors are
 # enforced only by the full harness (it runs every test); this script only refuses a run in which NO test ran (a -run regexp that matches nothing is a false green).
 #
-# Environment: H_PG_ADMIN_DSN (a superuser DSN on database `postgres`; default postgres://postgres:ci@localhost:5432/postgres), H_SKIP (a go test -skip regexp; default skips the module-dependent tests).
+# Environment: H_PG_ADMIN_DSN (the SUPERUSER DSN on database `postgres`: on the Supabase image that is `supabase_admin`; default postgres://supabase_admin:ci@localhost:5432/postgres) and H_PG_MIGRATOR_DSN (the NON-superuser migrating role `postgres` that an install uses; default postgres://postgres:ci@localhost:5432/postgres), H_SKIP (a go test -skip regexp; default skips the module-dependent tests).
 # Needs psql, go, openssl. It creates a database `platform_live_<random>` (the "live" database the tests expect, migrated by the real binary, with a platform_app password) and drops it at the end.
 set -u -o pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; ROOT="$(cd "$HERE/../.." && pwd)"
-RUN="${1:-.}"; ADMIN="${H_PG_ADMIN_DSN:-postgres://postgres:ci@localhost:5432/postgres}"; SKIP="${H_SKIP-TestLive_StackCoexists|TestModulesLive}"
+RUN="${1:-.}"; ADMIN="${H_PG_ADMIN_DSN:-postgres://supabase_admin:ci@localhost:5432/postgres}"; MIG="${H_PG_MIGRATOR_DSN:-postgres://postgres:ci@localhost:5432/postgres}"; SKIP="${H_SKIP-TestLive_StackCoexists|TestModulesLive}"
 WORK="$(mktemp -d)"; DB="platform_live_$(openssl rand -hex 4)"
 case "$ADMIN" in postgres://*/postgres|postgresql://*/postgres) ;; *) echo "run-db-tests: H_PG_ADMIN_DSN must be a postgres:// URL ending in /postgres (got a different shape)"; exit 2;; esac
-LIVE="${ADMIN%/postgres}/$DB"; HOSTURL="$ADMIN"
+case "$MIG" in postgres://*/postgres|postgresql://*/postgres) ;; *) echo "run-db-tests: H_PG_MIGRATOR_DSN must be a postgres:// URL ending in /postgres (got a different shape)"; exit 2;; esac
+LIVE="${ADMIN%/postgres}/$DB"; LIVEMIG="${MIG%/postgres}/$DB"; HOSTURL="$ADMIN"
 APP_PW="$(openssl rand -hex 16)"
 cleanup() { rc=$?; psql "$ADMIN" -X -q -c "DROP DATABASE IF EXISTS $DB WITH (FORCE)" >/dev/null 2>&1; rm -rf "$WORK"; exit $rc; }
 trap cleanup EXIT
 step() { echo; echo "##[step] $*"; }
 
 step "create the live-like database $DB and apply the auth.users fixture"
-psql "$ADMIN" -X -q -v ON_ERROR_STOP=1 -c "CREATE DATABASE $DB" || { echo "run-db-tests: RED — could not create the database"; exit 1; }
-psql "$LIVE" -X -q -v ON_ERROR_STOP=1 -f "$ROOT/tests/harness/fixtures/auth-users.sql" || { echo "run-db-tests: RED — the auth.users fixture failed"; exit 1; }
+psql "$MIG" -X -q -v ON_ERROR_STOP=1 -c "CREATE DATABASE $DB" || { echo "run-db-tests: RED — the migrating role could not create the database"; exit 1; }
+# the required install step (db/install/preprovision.sql) as the migrating role, exactly as Docs/install.md says, before any chain
+psql "$MIG" -X -q -v ON_ERROR_STOP=1 -f "$ROOT/db/install/preprovision.sql" || { echo "run-db-tests: RED — the required provisioning step failed"; exit 1; }
+psql "$LIVEMIG" -X -q -v ON_ERROR_STOP=1 -f "$ROOT/tests/harness/fixtures/auth-users.sql" || { echo "run-db-tests: RED — the auth.users fixture failed"; exit 1; }
 
 step "build platform-migrate and migrate the live database (up-and-set-password)"
 EXT=""; case "$(go env GOOS)" in windows) EXT=".exe";; esac
 ( cd "$ROOT" && CGO_ENABLED=0 GOTOOLCHAIN=local go build -o "$WORK/platform-migrate$EXT" ./cmd/platform-migrate ) || { echo "run-db-tests: RED — go build ./cmd/platform-migrate failed"; exit 1; }
-PLATFORM_MIGRATE_DATABASE_URL="$LIVE" PLATFORM_MIGRATIONS_DIR="$ROOT/db/migrations" PLATFORM_APP_PASSWORD="$APP_PW" "$WORK/platform-migrate$EXT" up-and-set-password || { echo "run-db-tests: RED — platform-migrate up-and-set-password failed"; exit 1; }
+PLATFORM_MIGRATE_DATABASE_URL="$LIVEMIG" PLATFORM_MIGRATIONS_DIR="$ROOT/db/migrations" PLATFORM_APP_PASSWORD="$APP_PW" "$WORK/platform-migrate$EXT" up-and-set-password || { echo "run-db-tests: RED — platform-migrate up-and-set-password failed"; exit 1; }
 
 step "go test -tags harness -run '$RUN' (skip: ${SKIP:-nothing})"
 export HARNESS_ADMIN_DATABASE_URL="$LIVE" HARNESS_ADMIN_DATABASE_HOST_URL="$HOSTURL" HARNESS_PLATFORM_APP_PASSWORD="$APP_PW" HARNESS_MIGRATE_BIN="$WORK/platform-migrate$EXT" HARNESS_REPO_ROOT="$ROOT"

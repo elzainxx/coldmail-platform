@@ -1,0 +1,55 @@
+# Installing the platform on Supabase
+
+This is the install procedure, in the order it must be run. Every command below is the command CI runs against the digest-pinned `supabase/postgres` image (the `harness` workflow runs steps 2–4 as a real install does; `scripts/check-install-doc.sh` fails when this document names a file, command or setting that no longer exists). What CI does **not** run is stated at the end ("Not checked").
+
+The platform and the three modules share one Supabase Postgres database, each in its own schema: `platform` (the platform), `verify` (module 1), `send_managed` (module 2), `send_byo` (module 3), plus the platform's two tables in `public` (`users`, `job_items`) that modules 2 and 3 read.
+
+## Step 1 — the Supabase project
+
+Create the project and note the **database** connection string of the migrating role `postgres` (not a superuser on Supabase: that is why the steps below exist). Keep Supabase Auth's email + password sign-in on and **public sign-up off** (locked decision: users are created by an admin). The `auth.users` table must exist: `platform_0001` refuses to run without it.
+
+## Step 2 — required role provisioning (`db/install/preprovision.sql`)
+
+Run once, as `postgres`, **before any module migrates**:
+
+```
+psql "$MIGRATE_DATABASE_URL" -v ON_ERROR_STOP=1 -f db/install/preprovision.sql
+```
+
+Why: on PostgreSQL 16 and later the creator of a role holds only `ADMIN OPTION` on it, with neither `SET` nor `INHERIT`, so `postgres` cannot create objects as the owner roles of modules 2 and 3 and their own migrations stop with `42501` (measured on every run by the `supabase` workflow's BASELINE leg: exactly eight statements fail without this step, and none with it). The file creates `send_managed_owner` and `send_byo_owner` if missing and grants both to `postgres` `WITH INHERIT TRUE, SET TRUE`. It is idempotent and changes no module.
+
+## Step 3 — migrations, in this order, all as `postgres`
+
+1. **Platform**: `platform-migrate up-and-set-password` (`PLATFORM_MIGRATE_DATABASE_URL`, `PLATFORM_MIGRATIONS_DIR=db/migrations`, `PLATFORM_APP_PASSWORD`); see [`migrator-reference.md`](migrator-reference.md). It creates `public.users` and `public.job_items` before any module needs them.
+2. **Module 1**: its migrations, then the runtime password out of band (`ALTER ROLE verify_app PASSWORD …`), per the module's own install notes.
+3. **Module 2** and **module 3**: each module's own migrator (`up-and-set-password`), with its own `MIGRATE_DATABASE_URL`. Their pre-flight (`check_platform_tables.sql`) passes only after step 3.1.
+
+## Step 4 — the first admin
+
+An admin is a Supabase login with a row in `platform.admins`. Create the login first (Supabase dashboard → Authentication → Users), then:
+
+```
+platform-migrate create-first-admin --auth-user-id <the login's id> --display-name "<name>"
+```
+
+It creates the `public.users` row and the `platform.admins` row in one transaction, as the privileged migrating identity, and **refuses when any admin already exists** (admin management is built in Phase 7; until then more admins are added out of band by the owner). It refuses an unknown login, a blank name and the all-zero system user.
+
+## Step 5 — remove the platform's schemas from the exposed API (owner action, Supabase dashboard)
+
+In Supabase → Settings → API → *Exposed schemas*, **remove `public` (and never add `platform`, `verify`, `send_managed` or `send_byo`)**. The platform's tables are reached only by the Go service over the database connection, never through PostgREST. `platform_0001` already revokes `anon`, `authenticated` and `service_role` on `public.users` and `public.job_items`; **no row-level security is enabled** (ruling: the exposed-schema setting and the revokes are the control, and a second mechanism would be a second place to be wrong). The same line is in the parent repository's `OWNER-ACTIONS.md`.
+
+## Settings an admin owns
+
+- **Unit costs** (`platform.unit_costs`): five units, integer credits ≥ 1. The seed is `m1_own` 1, `m1_cache` 1, `m1_vendor` **2**, `m2_accepted` 1, `m2_bounced` 1. The vendor-fallback price (`m1_vendor`) is an **admin setting** and must stay above 1; the seed of 2 is a placeholder the owner replaces before launch. Changing a price needs a named admin and a reason and is recorded in `platform.unit_cost_history`; a job freezes its prices at confirm, so a change never affects a job already confirmed.
+- **Module 3** is not metered: an admin enables it per user, optionally until a date.
+
+## Behaviours that are rulings, not accidents
+
+- **Module 1's readiness is all-or-nothing on `TM_QUEUE_ADDR_KEY`.** Without the key `/readyz` reports not-ready and names the key. The platform always submits bulk jobs, so a deployment of module 1 without the queue can never serve the platform; a verify-only mode is deliberately not offered.
+- **Single-label domains are accepted** in the suppression list (`a@b`), because the rule is the same for verification and suppression (module 1's frozen `norm/v1` form, which does not require a dotted domain); the database still refuses an empty label (`a@b..c`) and every other malformed form.
+- **A scheduled job holds the one-active-job slot** for its module and user.
+- **A disabled admin can no longer act**: the database refuses one in the ledger, the audit log, M3 entitlements and unit costs.
+
+## Not checked
+
+CI does not run GoTrue (no login is ever performed), the pooler (Supavisor), PostgREST or a hosted project's own grants and extensions, so step 1 and step 5 are verified by the owner, not by a runner; the `supabase` workflow measures migrations only, statement by statement, and the `harness` workflow measures the running stack on the same image.

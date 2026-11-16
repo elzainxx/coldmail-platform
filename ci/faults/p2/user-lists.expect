@@ -1,0 +1,9 @@
+# Platform code must list users only through platform.listable_users (the all-zero system user is excluded there). The fault adds a non-test Go file under internal/ that selects
+# from public.users directly; the gate must name the file and the line. The control side is the real repository, which must be green.
+GATE=user-lists
+TARGET=platform
+SETUP=
+STEP=check-user-lists on the real repository
+CMD=bash scripts/check-user-lists.sh
+MESSAGE=internal/app/zz_userlist.go:4: SELECT from public.users
+MESSAGE=check-user-lists: RED

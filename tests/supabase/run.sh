@@ -6,7 +6,7 @@
 #   run.sh --dsn DSN --platform-dir DIR --modules-root DIR [--known FILE] [--preprovision FILE] [--label NAME]
 #     DSN             the NON-superuser `postgres` role of the Supabase image, e.g. postgres://postgres:ci@localhost:5432/postgres (the database in it is the one migrated)
 #     --known         the committed list of expected blockers for THIS pass; default: known-blockers.txt beside this script
-#     --preprovision  a SQL file applied as `postgres` right after stage a and BEFORE every chain, with ON_ERROR_STOP=1 (tests/supabase/preprovision.sql is the proposed no-module-change
+#     --preprovision  a SQL file applied as `postgres` right after stage a and BEFORE every chain, with ON_ERROR_STOP=1 (db/install/preprovision.sql is the proposed no-module-change
 #                     fix). If it fails the pass is RED and the chains are not run: a report about a provisioning that did not happen would be a report about nothing.
 #                     Without it the pass shows what the migrations do with NO provisioning at all (the baseline).
 #     --label         a name for the pass (letters, digits, . _ -), printed in every banner and in the result line; the workflow runs two passes, BASELINE and FIXED

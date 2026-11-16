@@ -1,0 +1,9 @@
+diff --git a/internal/app/zz_userlist.go b/internal/app/zz_userlist.go
+new file mode 100644
+--- /dev/null
++++ b/internal/app/zz_userlist.go
+@@ -0,0 +1,4 @@
++package app
++
++// FAULT: platform code that lists users straight from the table instead of through the sanctioned view.
++const zzUserList = `SELECT id, email FROM public.users`

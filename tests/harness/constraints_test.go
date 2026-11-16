@@ -10,7 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// The constraint tests: for every table of platform_0001..0003 the rules the database itself enforces. The shape of each test
+// The constraint tests: for every table of platform_0001..0004 the rules the database itself enforces. The shape of each test
 // is the same: the legal row is the control, every refused row differs from it in one thing, and the refusal is accepted only
 // for the SQLSTATE AND the constraint, column or message it is meant to fire (ledgerExpectRefused), so a row refused by some
 // other rule fails the test. Each runs on a scratch database the real migrator migrated, inside a rolled-back transaction.
@@ -135,8 +135,9 @@ func TestConstraints_AppSessionTimezoneIsUTC(t *testing.T) {
 // admins, modules
 // ---------------------------------------------------------------------------------------------------------------------
 
-// TestConstraints_Admins covers platform.admins: an admin is a user, never the system user, with a name; the app only reads.
-// It fails if the system user can become an admin (it could then be named in the ledger), or the app can create admins.
+// TestConstraints_Admins covers platform.admins: an admin is a user, never the system user, with a name; the app only reads; and (platform_0004, OD-10) a DISABLED admin can no longer
+// be named in the ledger, the audit log, M3 entitlements or the unit costs - the last subtest, which replaced the Phase 1 one that pinned the opposite.
+// It fails if the system user can become an admin (it could then be named in the ledger), or the app can create admins, or a disabled admin can still act.
 func TestConstraints_Admins(t *testing.T) {
 	_, admin := migratedScratch(t)
 	tx := ledgerBegin(t, admin)
@@ -167,10 +168,369 @@ func TestConstraints_Admins(t *testing.T) {
 		ledgerResetRole(t, tx)
 	})
 
-	t.Run("documented gap: disabled_at ends nothing by itself", func(t *testing.T) {
-		ledgerMust(t, tx, "UPDATE platform.admins SET disabled_at = now() WHERE id = $1", ledgerAdminB)
-		ledgerOKRow(t, tx, "a grant naming a DISABLED admin", ledgerGrantCols(ledgerUserA, "m1", 1).with("acting_admin_id", ledgerAdminB))
-		t.Log("NOT ENFORCED BY THE DATABASE: the foreign keys to platform.admins check that the admin exists, not that disabled_at IS NULL. Refusing a disabled admin is the application's job; this subtest pins the current behaviour so a change is a conscious one.")
+	// Phase 1 pinned the opposite here ("documented gap: disabled_at ends nothing by itself": a grant naming a disabled admin was accepted). The owner's ruling OD-10 reverses it and
+	// platform_0004 makes the DATABASE refuse: every statement below names an admin, in the ledger, the audit log, M3 entitlements or the unit costs. Each is built for any admin id
+	// (disabledAdminStmts), so the same statement is the paired control with an active admin.
+	t.Run("a disabled admin is refused by the database wherever an admin is named (OD-10); an unknown one by the foreign key; NULL still passes", func(t *testing.T) {
+		dis, act := ledgerAdminB, ledgerAdminA
+		stmts := disabledAdminStmts()
+		if len(stmts) < 8 {
+			t.Fatalf("the proof covers %d statements, want at least 8 (ledger x3, audit log, entitlement insert and update, unit cost x2): the instrument matched too little", len(stmts))
+		}
+		// the fixtures the statements need: credits for the adjustment to draw on, the entitlement row the UPDATE hits (changed_by NULL), and history that names B while B is active
+		ledgerFund(t, tx, ledgerUserA, "m1", 100)
+		ledgerMust(t, tx, "INSERT INTO platform.m3_entitlements (user_id, enabled) VALUES ($1, true)", ledgerUserB)
+		histGrant := ledgerPut(t, tx, ledgerGrantCols(ledgerUserA, "m1", 5).with("acting_admin_id", dis, "reason", "written while the admin was active"))
+		ledgerMust(t, tx, `INSERT INTO platform.admin_audit (admin_id, entry_type, action, target_type, target_id, reason)
+			VALUES ($1, 'action', 'history-before-disable', 'user', 'x', 'written while the admin was active')`, dis)
+		histRow := func() string {
+			return ledgerString(t, tx, "SELECT x::text FROM platform.ledger x WHERE id = $1", histGrant)
+		}
+		histBefore := histRow()
+
+		// 1. While B is ACTIVE every statement naming B passes (each in a savepoint that is rolled back): the statements are legal, so what follows is about disabled_at and nothing else.
+		for _, s := range stmts {
+			sql, args := s.Build(dis)
+			ledgerTrial(t, tx, func(sp pgx.Tx) { ledgerExpectOK(t, sp, "control, B active: "+s.Name, sql, args...) })
+		}
+
+		// 2. B is disabled: every statement naming B is refused with 23514 and the constraint name admin_is_active, by the trigger of that column (the message names it); the same
+		// statement naming an UNKNOWN admin is still the foreign key's to refuse (23503: the trigger leaves "not found" alone, and the foreign key is never the one that answers for a disabled
+		// admin); the same statement naming the ACTIVE admin A passes (and is kept, so it comes last).
+		ledgerMust(t, tx, "UPDATE platform.admins SET disabled_at = now() WHERE id = $1", dis)
+		if !ledgerBool(t, tx, "SELECT disabled_at IS NOT NULL FROM platform.admins WHERE id = $1", dis) {
+			t.Fatal("admin B is not disabled after the UPDATE: every refusal below would be vacuous")
+		}
+		for _, s := range stmts {
+			sql, args := s.Build(dis)
+			ledgerExpectRefused(t, tx, "B disabled: "+s.Name, "23514", ledgerWhy{Constraint: "admin_is_active", Message: s.Where + " names admin " + dis}, sql, args...)
+			sql, args = s.Build(ledgerNoSuchID)
+			ledgerExpectRefused(t, tx, "an unknown admin: "+s.Name, "23503", ledgerWhy{Constraint: s.FK}, sql, args...)
+			sql, args = s.Build(act)
+			ledgerExpectOK(t, tx, "control, the same statement naming the ACTIVE admin A: "+s.Name, sql, args...)
+		}
+
+		// 3. NULL is not a disabled admin: where the database accepted no admin before, it still does (an entitlement with no changed_by, an automatic expiry), and where it demanded one it
+		// still does, with its own message.
+		ledgerExpectOK(t, tx, "NULL changed_by on an entitlement INSERT while B is disabled", "INSERT INTO platform.m3_entitlements (user_id, enabled) VALUES ($1, true)", ledgerAdminA)
+		ledgerExpectOK(t, tx, "NULL changed_by on an entitlement UPDATE while B is disabled", "UPDATE platform.m3_entitlements SET enabled = false, changed_by = NULL WHERE user_id = $1", ledgerAdminA)
+		ledgerOKRow(t, tx, "m3_expire has no admin and passes while B is disabled", ledgerM3Cols("m3_expire", ledgerUserB))
+		ledgerExpectRefused(t, tx, "a price change with NO admin is still refused by the older rule, not by admin_is_active", "23514", ledgerWhy{Message: "needs changed_by"},
+			"UPDATE platform.unit_costs SET cost = 4, changed_by = NULL, change_reason = 'no admin' WHERE unit = 'm2_accepted'")
+
+		// 4. Disabling an admin does not rewrite history: what B did while active is still there, byte for byte, and still readable by the application's roles.
+		if got := histRow(); got != histBefore {
+			t.Fatalf("the ledger row B wrote while active changed after B was disabled:\n  before: %s\n  after:  %s", histBefore, got)
+		}
+		if got := ledgerString(t, tx, "SELECT acting_admin_id::text FROM platform.ledger WHERE id = $1", histGrant); got != dis {
+			t.Fatalf("the row B wrote now names %s, want %s", got, dis)
+		}
+		if n := ledgerInt64(t, tx, "SELECT count(*) FROM platform.admin_audit WHERE admin_id = $1 AND action = 'history-before-disable'", dis); n != 1 {
+			t.Fatalf("%d audit rows by B remain, want the 1 written while B was active", n)
+		}
+		if n := ledgerInt64(t, tx, "SELECT count(*) FROM platform.admins WHERE id = $1 AND disabled_at IS NOT NULL", dis); n != 1 {
+			t.Fatalf("admin B is not in platform.admins as a disabled admin (%d rows): disabling must keep the row that history points at", n)
+		}
+		ledgerRequireViewsEmpty(t, tx, "after B was disabled (the balance still equals the ledger)")
+		for _, role := range []string{"platform_app", "platform_admin"} {
+			ledgerSwitchRole(t, tx, role)
+			if n := ledgerInt64(t, tx, "SELECT count(*) FROM platform.ledger WHERE acting_admin_id = $1", dis); n < 1 {
+				t.Fatalf("%s sees %d ledger rows naming the disabled admin, want the history to stay readable", role, n)
+			}
+			ledgerResetRole(t, tx)
+		}
+
+		// 5. The trigger reads the row live: re-enabling B lets B act, disabling B again stops B.
+		ledgerMust(t, tx, "UPDATE platform.admins SET disabled_at = NULL WHERE id = $1", dis)
+		sql, args := stmts[0].Build(dis)
+		ledgerExpectOK(t, tx, "control: B re-enabled", sql, args...)
+		ledgerMust(t, tx, "UPDATE platform.admins SET disabled_at = now() WHERE id = $1", dis)
+		sql, args = stmts[0].Build(dis)
+		ledgerExpectRefused(t, tx, "B disabled again", "23514", ledgerWhy{Constraint: "admin_is_active", Message: stmts[0].Where + " names admin " + dis}, sql, args...)
+	})
+}
+
+// disabledAdminStmt is one statement that names an admin, buildable for any admin id: the unit of the disabled-admin proofs (TestConstraints_Admins and
+// TestConstraints_DisabledAdminThroughTheRoles). The same statement with an active admin is its paired control.
+type disabledAdminStmt struct {
+	Name  string
+	Table string   // the table whose privilege the statement needs
+	Where string   // the column the trigger names in its refusal
+	FK    string   // the foreign key that refuses an UNKNOWN admin in this statement
+	Roles []string // the roles that hold the privilege to run it
+	Build func(admin string) (string, []any)
+}
+
+// disabledAdminStmts expects: user A funded on m1, an m3_entitlements row for user B (changed_by NULL), no entitlement for user C.
+func disabledAdminStmts() []disabledAdminStmt {
+	insert := func(table string, cols func(admin string) ledgerCols) func(string) (string, []any) {
+		return func(ad string) (string, []any) { return ledgerInsertInto(table, cols(ad)) }
+	}
+	both, app := []string{"platform_app", "platform_admin"}, []string{"platform_app"}
+	const (
+		ledgerFKName = "ledger_acting_admin_id_fkey"
+		m3FKName     = "m3_entitlements_changed_by_fkey"
+		costFKName   = "unit_costs_changed_by_fkey"
+		m3Where      = "platform.m3_entitlements.changed_by"
+		costWhere    = "platform.unit_costs.changed_by"
+		ledgerWhere  = "platform.ledger.acting_admin_id"
+	)
+	return []disabledAdminStmt{
+		{"a ledger grant naming the admin", "ledger", ledgerWhere, ledgerFKName, both,
+			insert("platform.ledger", func(ad string) ledgerCols { return ledgerGrantCols(ledgerUserA, "m1", 1).with("acting_admin_id", ad) })},
+		{"a ledger adjustment naming the admin", "ledger", ledgerWhere, ledgerFKName, both,
+			insert("platform.ledger", func(ad string) ledgerCols {
+				return ledgerAdjustmentCols(ledgerUserA, "m1", 1).with("acting_admin_id", ad)
+			})},
+		{"an m3_enable event naming the admin", "ledger", ledgerWhere, ledgerFKName, both,
+			insert("platform.ledger", func(ad string) ledgerCols { return ledgerM3Cols("m3_enable", ledgerUserC).with("acting_admin_id", ad) })},
+		{"an admin_audit row written by the admin", "admin_audit", "platform.admin_audit.admin_id", "admin_audit_admin_id_fkey", both,
+			insert("platform.admin_audit", func(ad string) ledgerCols {
+				return ledgerCols{"admin_id": ad, "entry_type": "action", "action": "disabled-admin-proof", "target_type": "user", "target_id": "x", "reason": "proof"}
+			})},
+		{"an m3_entitlements INSERT with changed_by = the admin", "m3_entitlements", m3Where, m3FKName, app,
+			insert("platform.m3_entitlements", func(ad string) ledgerCols {
+				return ledgerCols{"user_id": ledgerUserC, "enabled": true, "changed_by": ad}
+			})},
+		{"an m3_entitlements UPDATE that changes changed_by to the admin", "m3_entitlements", m3Where, m3FKName, app,
+			func(ad string) (string, []any) {
+				return "UPDATE platform.m3_entitlements SET changed_by = $2 WHERE user_id = $1", []any{ledgerUserB, ad}
+			}},
+		{"a unit_costs cost change by the admin", "unit_costs", costWhere, costFKName, app,
+			func(ad string) (string, []any) {
+				return "UPDATE platform.unit_costs SET cost = 3, changed_by = $1, change_reason = 'disabled-admin proof' WHERE unit = 'm2_accepted'", []any{ad}
+			}},
+		{"a unit_costs changed_by change to the admin (the cost untouched)", "unit_costs", costWhere, costFKName, app,
+			func(ad string) (string, []any) {
+				return "UPDATE platform.unit_costs SET changed_by = $1 WHERE unit = 'm2_bounced'", []any{ad}
+			}},
+	}
+}
+
+// TestConstraints_DisabledAdminThroughTheRoles runs the disabled-admin proof as the two roles the service really runs as. The triggers that refuse a disabled admin run for the CALLER
+// (they are not the owner's), so a role that cannot use what they use fails here: with an ACTIVE admin every statement the role has the privilege for must pass, with a DISABLED one it
+// must be refused with 23514 admin_is_active (never with a permission error), and a statement the role has no privilege for is refused with 42501 before any trigger. It fails if a role
+// cannot write at all since platform_0004, or if the refusal for a disabled admin comes from anywhere but the trigger of the column that names the admin.
+func TestConstraints_DisabledAdminThroughTheRoles(t *testing.T) {
+	_, admin := migratedScratch(t)
+	dis, act := ledgerAdminB, ledgerAdminA
+	for _, role := range []string{"platform_app", "platform_admin"} {
+		role := role
+		t.Run(role, func(t *testing.T) {
+			tx := ledgerBegin(t, admin)
+			ledgerSeed(t, tx)
+			ledgerFund(t, tx, ledgerUserA, "m1", 100)
+			ledgerMust(t, tx, "INSERT INTO platform.m3_entitlements (user_id, enabled) VALUES ($1, true)", ledgerUserB)
+			ledgerMust(t, tx, "UPDATE platform.admins SET disabled_at = now() WHERE id = $1", dis)
+			if !ledgerBool(t, tx, "SELECT disabled_at IS NOT NULL FROM platform.admins WHERE id = $1", dis) {
+				t.Fatal("admin B is not disabled: every refusal below would be vacuous")
+			}
+			ledgerSwitchRole(t, tx, role)
+			ran, byPrivilege := 0, 0
+			for _, s := range disabledAdminStmts() {
+				if !containsString(s.Roles, role) {
+					sql, args := s.Build(act)
+					ledgerExpectRefused(t, tx, role+" holds no privilege for "+s.Name, "42501", ledgerWhy{Message: "permission denied for table " + s.Table}, sql, args...)
+					byPrivilege++
+					continue
+				}
+				sql, args := s.Build(dis)
+				ledgerExpectRefused(t, tx, role+": "+s.Name+", the admin disabled", "23514", ledgerWhy{Constraint: "admin_is_active", Message: s.Where + " names admin " + dis}, sql, args...)
+				sql, args = s.Build(act)
+				ledgerExpectOK(t, tx, "control: "+role+": "+s.Name+", the admin active", sql, args...)
+				ran++
+			}
+			if ran < 4 {
+				t.Fatalf("%s ran only %d statements: the instrument matched too little", role, ran)
+			}
+			if role == "platform_admin" && byPrivilege < 4 {
+				t.Fatalf("platform_admin was refused by privilege on only %d statements, want the 4 it holds no privilege for", byPrivilege)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// the system user (platform_0004, the owner's ruling OD-12)
+// ---------------------------------------------------------------------------------------------------------------------
+
+// TestConstraints_SystemUserHoldsNothing proves that the all-zero system user - module 2's owner of shared pools, a real row of public.users with no login - can hold no balance, no
+// ledger row, no entitlement and no suppression. The row EXISTS (checked first), so the foreign keys to public.users are satisfied and only the CHECK can be what refuses it; for each table the
+// paired controls are the same statement for a normal user (passes), the same statement for the system user with the CHECK dropped (passes: the CHECK is the only barrier), a NULL user
+// (refused by NOT NULL, so each CHECK is NULL-safe: CLAUDE.md rule 13) and a row MOVED to the system user by an UPDATE. The ledger path is two walls: the ledger CHECK fires first (so the
+// balance trigger never runs), and with it removed the balance trigger's own INSERT is refused by the balances CHECK. It fails if any of the four CHECKs is missing, misses an UPDATE, or
+// is renamed.
+func TestConstraints_SystemUserHoldsNothing(t *testing.T) {
+	_, admin := migratedScratch(t)
+	tx := ledgerBegin(t, admin)
+	ledgerSeed(t, tx)
+	sys, a, b := ledgerSystemUser, ledgerUserA, ledgerUserB
+
+	if n := ledgerInt64(t, tx, "SELECT count(*) FROM public.users WHERE id = $1", sys); n != 1 {
+		t.Fatalf("the system user row is missing from public.users (%d rows): a foreign key would refuse it and the CHECKs below would prove nothing", n)
+	}
+
+	for _, c := range []struct{ table, constraint, insert, move string }{
+		{"platform.balances", "balances_not_the_system_user", "INSERT INTO platform.balances (user_id, module_id) VALUES ($1, 'm1')",
+			"UPDATE platform.balances SET user_id = $1 WHERE user_id = $2 AND module_id = 'm1'"},
+		{"platform.m3_entitlements", "m3_entitlements_not_the_system_user", "INSERT INTO platform.m3_entitlements (user_id, enabled) VALUES ($1, true)",
+			"UPDATE platform.m3_entitlements SET user_id = $1 WHERE user_id = $2"},
+		{"platform.suppressions", "suppressions_not_the_system_user", "INSERT INTO platform.suppressions (user_id, email, source) VALUES ($1, 'sys@example.com', 'manual')",
+			"UPDATE platform.suppressions SET user_id = $1 WHERE user_id = $2"},
+	} {
+		c := c
+		t.Run(c.table, func(t *testing.T) {
+			ledgerExpectRefused(t, tx, "INSERT for the system user", "23514", ledgerWhy{Constraint: c.constraint}, c.insert, sys)
+			ledgerExpectRefused(t, tx, "INSERT for a NULL user (the column is NOT NULL, so the CHECK never sees a NULL)", "23502", ledgerWhy{Column: "user_id"}, c.insert, nil)
+			if tag := ledgerExpectOK(t, tx, "control: the same INSERT for a normal user", c.insert, a); tag.RowsAffected() != 1 {
+				t.Fatalf("the control inserted %d rows", tag.RowsAffected())
+			}
+			ledgerExpectRefused(t, tx, "moving a normal user's row to the system user", "23514", ledgerWhy{Constraint: c.constraint}, c.move, sys, a)
+			ledgerExpectOK(t, tx, "control: moving it to another normal user", c.move, b, a)
+			ledgerTrial(t, tx, func(sp pgx.Tx) {
+				ledgerMust(t, sp, "ALTER TABLE "+c.table+" DROP CONSTRAINT "+c.constraint)
+				ledgerExpectOK(t, sp, "control: without the CHECK the same INSERT for the system user passes (the CHECK is the only barrier)", c.insert, sys)
+			})
+		})
+	}
+
+	t.Run("platform.ledger: every kind that names the system user is refused; the balance trigger is a second wall", func(t *testing.T) {
+		const chk = "ledger_not_the_system_user"
+		nLedger := ledgerInt64(t, tx, "SELECT count(*) FROM platform.ledger")
+		for _, c := range []struct {
+			name string
+			cols ledgerCols
+		}{
+			{"a grant", ledgerGrantCols(sys, "m1", 10)},
+			{"an adjustment", ledgerAdjustmentCols(sys, "m1", 1)},
+			{"an m3_enable event", ledgerM3Cols("m3_enable", sys)},
+			{"an m3_expire event (no admin)", ledgerM3Cols("m3_expire", sys)},
+		} {
+			ledgerRefusedCheck(t, tx, "the system user: "+c.name, chk, c.cols)
+		}
+		ledgerRefusedRow(t, tx, "a grant for a NULL user", "23502", ledgerWhy{Column: "user_id"}, ledgerGrantCols(sys, "m1", 10).with("user_id", nil))
+		if got := ledgerInt64(t, tx, "SELECT count(*) FROM platform.ledger"); got != nLedger {
+			t.Fatalf("the refused rows left %d ledger rows behind", got-nLedger)
+		}
+		if bal := ledgerBalance(t, tx, sys, "m1"); bal.Exists {
+			t.Fatalf("a balance row exists for the system user: %+v", bal)
+		}
+		ledgerOKRow(t, tx, "control: the same grant for a normal user", ledgerGrantCols(a, "m1", 10))
+
+		ledgerTrial(t, tx, func(sp pgx.Tx) {
+			ledgerMust(t, sp, "ALTER TABLE platform.ledger DROP CONSTRAINT "+chk)
+			ledgerRefusedRow(t, sp, "with the ledger CHECK gone, the balance trigger's INSERT into platform.balances is refused", "23514",
+				ledgerWhy{Constraint: "balances_not_the_system_user", Table: "balances"}, ledgerGrantCols(sys, "m1", 10))
+		})
+		ledgerTrial(t, tx, func(sp pgx.Tx) {
+			ledgerMust(t, sp, "ALTER TABLE platform.ledger DROP CONSTRAINT "+chk)
+			ledgerMust(t, sp, "ALTER TABLE platform.balances DROP CONSTRAINT balances_not_the_system_user")
+			ledgerOKRow(t, sp, "control: with both walls gone the system user's grant passes", ledgerGrantCols(sys, "m1", 10))
+		})
+	})
+}
+
+// TestConstraints_ListableUsers proves platform.listable_users, "the only sanctioned way to list users": every real person (a Supabase login behind the row) and nothing else. The system user
+// is a row of public.users, so the view must be what leaves it out: the count of the view is the count of public.users less that row. Each of the view's two clauses is proven ALONE, on a
+// scratch copy where users_auth_link (the CHECK that makes the situation impossible) is dropped: a row with no auth link is left out by the second clause, and the system user is left out by the
+// first even when it is given an auth link. A new real user shows at once (the view is a query, not a copy), and both application roles can read it. It fails if the view lists the system
+// user, hides a real one, or loses a clause.
+func TestConstraints_ListableUsers(t *testing.T) {
+	_, admin := migratedScratch(t)
+	tx := ledgerBegin(t, admin)
+	ledgerSeed(t, tx) // three tenants and two admins (all real users) beside the system user platform_0001 seeds
+	const view = "platform.listable_users"
+	people := []string{ledgerUserA, ledgerUserB, ledgerUserC, ledgerAdminA, ledgerAdminB}
+	listed := func(t *testing.T, db ledgerDB) string {
+		t.Helper()
+		return strings.Join(ledgerRows(t, db, "SELECT id::text FROM "+view+" ORDER BY 1"), ",")
+	}
+
+	t.Run("the view lists the five real users and not the system user, which public.users holds", func(t *testing.T) {
+		if got, want := listed(t, tx), strings.Join(people, ","); got != want {
+			t.Fatalf("%s lists %s, want %s", view, got, want)
+		}
+		if total := ledgerInt64(t, tx, "SELECT count(*) FROM public.users"); total != int64(len(people))+1 {
+			t.Fatalf("public.users holds %d rows, want the %d real users and the system user: the comparison below would prove nothing", total, len(people))
+		}
+		if n := ledgerInt64(t, tx, "SELECT count(*) FROM public.users WHERE id = $1", ledgerSystemUser); n != 1 {
+			t.Fatalf("the system user is not in public.users (%d): the view's exclusion would be vacuous", n)
+		}
+		if n := ledgerInt64(t, tx, "SELECT count(*) FROM "+view+" WHERE id = $1", ledgerSystemUser); n != 0 {
+			t.Fatalf("the view lists the system user (%d rows)", n)
+		}
+		if listedN, total := ledgerInt64(t, tx, "SELECT count(*) FROM "+view), ledgerInt64(t, tx, "SELECT count(*) FROM public.users"); listedN != total-1 {
+			t.Fatalf("the view lists %d of the %d users of public.users, want exactly one fewer (the system user)", listedN, total)
+		}
+	})
+
+	t.Run("the columns are the people-facing ones, straight from public.users", func(t *testing.T) {
+		got := ledgerString(t, tx, "SELECT string_agg(attname::text, ',' ORDER BY attnum) FROM pg_attribute WHERE attrelid = 'platform.listable_users'::regclass AND attnum > 0 AND NOT attisdropped")
+		if want := "id,auth_user_id,email,is_active,created_at"; got != want {
+			t.Fatalf("the view's columns are %s, want %s", got, want)
+		}
+		if n := ledgerInt64(t, tx, `SELECT count(*) FROM platform.listable_users v JOIN public.users u ON u.id = v.id
+			WHERE v.auth_user_id IS NOT DISTINCT FROM u.auth_user_id AND v.email = u.email AND v.is_active = u.is_active AND v.created_at = u.created_at`); n != int64(len(people)) {
+			t.Fatalf("%d of the %d listed rows equal their public.users row", n, len(people))
+		}
+	})
+
+	t.Run("a new real user shows at once", func(t *testing.T) {
+		ledgerTrial(t, tx, func(sp pgx.Tx) {
+			const d = "ab000000-0000-0000-0000-0000000000d1"
+			ledgerMust(t, sp, "INSERT INTO auth.users (id, email) VALUES ($1, 'd@example.test')", d)
+			ledgerMust(t, sp, "INSERT INTO public.users (id, auth_user_id, email) VALUES ($1, $1, 'd@example.test')", d)
+			if n := ledgerInt64(t, sp, "SELECT count(*) FROM "+view+" WHERE id = $1", d); n != 1 {
+				t.Fatalf("a user inserted into public.users is listed %d times, want once", n)
+			}
+		})
+	})
+
+	t.Run("a row with no auth link is left out by the second clause alone", func(t *testing.T) {
+		ledgerTrial(t, tx, func(sp pgx.Tx) {
+			ledgerMust(t, sp, "ALTER TABLE public.users DROP CONSTRAINT users_auth_link") // the CHECK that makes this row impossible; dropped on this scratch copy only
+			const nolink, linked = "ab000000-0000-0000-0000-0000000000e1", "ab000000-0000-0000-0000-0000000000e2"
+			ledgerMust(t, sp, "INSERT INTO public.users (id, auth_user_id, email) VALUES ($1, NULL, 'nolink@example.test')", nolink)
+			ledgerMust(t, sp, "INSERT INTO auth.users (id, email) VALUES ($1, 'linked@example.test')", linked)
+			ledgerMust(t, sp, "INSERT INTO public.users (id, auth_user_id, email) VALUES ($1, $1, 'linked@example.test')", linked)
+			if n := ledgerInt64(t, sp, "SELECT count(*) FROM public.users WHERE id = $1", nolink); n != 1 {
+				t.Fatalf("the user with no auth link is not in public.users (%d): the exclusion below would be vacuous", n)
+			}
+			if n := ledgerInt64(t, sp, "SELECT count(*) FROM "+view+" WHERE id = $1", nolink); n != 0 {
+				t.Fatalf("the view lists a user with no auth link (%d rows)", n)
+			}
+			if n := ledgerInt64(t, sp, "SELECT count(*) FROM "+view+" WHERE id = $1", linked); n != 1 {
+				t.Fatalf("control: a user inserted the same way WITH an auth link is listed %d times, want once", n)
+			}
+			if listedN, total := ledgerInt64(t, sp, "SELECT count(*) FROM "+view), ledgerInt64(t, sp, "SELECT count(*) FROM public.users"); listedN != total-2 {
+				t.Fatalf("the view lists %d of %d users, want two fewer (the system user and the user with no link)", listedN, total)
+			}
+		})
+	})
+
+	t.Run("the system user is left out by the first clause alone, even with an auth link", func(t *testing.T) {
+		ledgerTrial(t, tx, func(sp pgx.Tx) {
+			ledgerMust(t, sp, "ALTER TABLE public.users DROP CONSTRAINT users_auth_link")
+			const link = "ab000000-0000-0000-0000-0000000000f1"
+			ledgerMust(t, sp, "INSERT INTO auth.users (id, email) VALUES ($1, 'sys-link@example.test')", link)
+			ledgerMust(t, sp, "UPDATE public.users SET auth_user_id = $1 WHERE id = $2", link, ledgerSystemUser)
+			if n := ledgerInt64(t, sp, "SELECT count(*) FROM public.users WHERE id = $1 AND auth_user_id IS NOT NULL", ledgerSystemUser); n != 1 {
+				t.Fatalf("the system row has no auth link after the UPDATE (%d): it would still be excluded by the second clause and this case would prove nothing about the first", n)
+			}
+			if n := ledgerInt64(t, sp, "SELECT count(*) FROM "+view+" WHERE id = $1", ledgerSystemUser); n != 0 {
+				t.Fatalf("the view lists the system user once it has an auth link (%d rows): the all-zero id is not excluded by itself", n)
+			}
+		})
+	})
+
+	t.Run("both application roles read it", func(t *testing.T) {
+		for _, role := range []string{"platform_app", "platform_admin"} {
+			ledgerSwitchRole(t, tx, role)
+			if got, want := listed(t, tx), strings.Join(people, ","); got != want {
+				t.Fatalf("as %s, %s lists %s, want %s", role, view, got, want)
+			}
+			ledgerResetRole(t, tx)
+		}
 	})
 }
 
@@ -324,10 +684,11 @@ func TestConstraints_UnitCosts(t *testing.T) {
 // ---------------------------------------------------------------------------------------------------------------------
 
 // TestConstraints_Jobs covers platform.jobs: the status vocabulary, the scheduled-needs-a-start rule, the shape of
-// frozen_settings, chaining (never its own source, same user), the unique module_job_ref, the one-executing-job slot (and the
-// control that a SCHEDULED job does not hold it: open decision 2), and jobs_guard (immutable columns, frozen_settings frozen once
-// the job leaves draft, updated_at owned by the trigger). It fails if any of these rules is missing, or the slot is held by
-// the wrong statuses.
+// frozen_settings, chaining (never its own source, same user), the unique module_job_ref, the one-ACTIVE-job slot (a scheduled,
+// running, paused or cancelling job holds it since platform_0004, the owner's ruling OD-2; a draft or a finished job holds none; every
+// held status is proven against every other status, and the slot is followed through a job's life), and jobs_guard (immutable columns,
+// frozen_settings frozen once the job leaves draft, updated_at owned by the trigger). It fails if any of these rules is missing, or
+// the slot is held by the wrong statuses.
 func TestConstraints_Jobs(t *testing.T) {
 	_, admin := migratedScratch(t)
 	tx := ledgerBegin(t, admin)
@@ -350,7 +711,8 @@ func TestConstraints_Jobs(t *testing.T) {
 		for _, s := range []struct{ status, user string }{{"draft", a}, {"running", a}, {"paused", b}, {"cancelling", c}, {"succeeded", a}, {"failed", a}, {"cancelled", a}} {
 			ok(t, "control: status "+s.status, job(s.user, "m2", "status", s.status))
 		}
-		ok(t, "control: status scheduled with a start", job(a, "m2", "status", "scheduled", "scheduled_start", start))
+		// since platform_0004 a SCHEDULED job holds the slot of its user and module, so this control takes a (user, module) pair no other job here is active on (user A has a running m2 job above)
+		ok(t, "control: status scheduled with a start", job(ledgerAdminA, "m3", "status", "scheduled", "scheduled_start", start))
 		for _, bad := range []string{"bogus", "Draft", "", "done"} {
 			refused(t, fmt.Sprintf("status %q", bad), "23514", ledgerWhy{Constraint: "jobs_status_vocabulary"}, job(a, "m2", "status", bad))
 		}
@@ -383,23 +745,66 @@ func TestConstraints_Jobs(t *testing.T) {
 		ok(t, "control: two jobs with no ref (NULLs are not equal)", job(a, "m1"))
 	})
 
-	t.Run("one executing job per user per module; a scheduled job does NOT hold the slot", func(t *testing.T) {
-		u, other := ledgerAdminB, ledgerAdminA // two users that have no jobs yet
-		const slot = "jobs_one_executing_per_user_module"
-		ok(t, "control: the first running m1 job", job(u, "m1", "status", "running"))
-		for _, st := range []string{"running", "paused", "cancelling"} {
-			refused(t, "a second "+st+" m1 job for the same user", "23505", ledgerWhy{Constraint: slot}, job(u, "m1", "status", st))
+	// The owner's ruling OD-2 (Docs/phase-2-spec.md, Part A row 2): a SCHEDULED job holds the one-active-job slot, in the database. Phase 1 pinned the opposite here ("a scheduled job does NOT
+	// hold the slot") against jobs_one_executing_per_user_module; platform_0004 replaced that index with jobs_one_active_per_user_module. Each holding status is tried against EVERY status
+	// (so each of the eight is proven to take the slot or to leave it), each time in a savepoint that is rolled back, with the legal first insert as the control.
+	t.Run("one ACTIVE job per user per module: scheduled, running, paused and cancelling hold the slot; draft and finished jobs hold none", func(t *testing.T) {
+		u, other := ledgerAdminB, ledgerAdminA // two users that have no m1 or m2 job yet
+		const slot = "jobs_one_active_per_user_module"
+		statuses := []string{"draft", "scheduled", "running", "paused", "cancelling", "succeeded", "failed", "cancelled"}
+		active := map[string]bool{"scheduled": true, "running": true, "paused": true, "cancelling": true}
+		mk := func(user, module, status string) ledgerCols {
+			c := job(user, module, "status", status)
+			if status == "scheduled" {
+				c = c.with("scheduled_start", start)
+			}
+			return c
 		}
-		ok(t, "control: a scheduled job does not hold the slot", job(u, "m1", "status", "scheduled", "scheduled_start", start))
-		for _, st := range []string{"draft", "succeeded", "failed", "cancelled"} {
-			ok(t, "control: a "+st+" job does not hold the slot", job(u, "m1", "status", st))
+		held := 0
+		for _, holder := range statuses {
+			if !active[holder] {
+				continue
+			}
+			holder := holder
+			held++
+			t.Run("held by a "+holder+" job", func(t *testing.T) {
+				ledgerTrial(t, tx, func(sp pgx.Tx) {
+					ledgerOKInsert(t, sp, "control: the first "+holder+" m1 job is legal", tbl, mk(u, "m1", holder))
+					for _, second := range statuses {
+						if active[second] {
+							ledgerRefusedInsert(t, sp, "a second "+second+" m1 job for the same user while a "+holder+" one holds the slot", "23505", ledgerWhy{Constraint: slot}, tbl, mk(u, "m1", second))
+						} else {
+							ledgerOKInsert(t, sp, "control: a "+second+" m1 job takes no slot, so it fits beside the "+holder+" one", tbl, mk(u, "m1", second))
+						}
+					}
+					ledgerOKInsert(t, sp, "control: the OTHER module is another slot (a "+holder+" m2 job)", tbl, mk(u, "m2", holder))
+					ledgerOKInsert(t, sp, "control: another USER has their own slot (a "+holder+" m1 job)", tbl, mk(other, "m1", holder))
+				})
+			})
 		}
-		ok(t, "control: another module has its own slot", job(u, "m2", "status", "running"))
-		ok(t, "control: another user has their own slot", job(other, "m1", "status", "running"))
-		sched := job(u, "m2", "status", "scheduled", "scheduled_start", start)
-		ok(t, "a scheduled m2 job (the slot of m2 is held by the running one)", sched)
-		ledgerExpectRefused(t, tx, "starting the scheduled job while another is executing (the start rule is P4's, the index backs it)", "23505", ledgerWhy{Constraint: slot},
-			"UPDATE platform.jobs SET status = 'running' WHERE id = $1", sched["id"])
+		if held != 4 {
+			t.Fatalf("%d statuses were tried as slot holders, want the 4 of the ruling (scheduled, running, paused, cancelling)", held)
+		}
+	})
+
+	t.Run("the slot follows the job: a second job cannot be confirmed while the first is active, and can once it has ended", func(t *testing.T) {
+		const slot = "jobs_one_active_per_user_module"
+		first, second := job(ledgerAdminB, "m1"), job(ledgerAdminB, "m1")
+		confirm := "UPDATE platform.jobs SET status = 'scheduled', scheduled_start = now() WHERE id = $1"
+		ledgerTrial(t, tx, func(sp pgx.Tx) {
+			ledgerOKInsert(t, sp, "control: a draft job", tbl, first)
+			ledgerOKInsert(t, sp, "control: a second draft job of the same user and module (a draft holds no slot)", tbl, second)
+			ledgerExpectOK(t, sp, "control: the first job is confirmed (draft -> scheduled) and takes the slot", confirm, first["id"])
+			ledgerExpectRefused(t, sp, "confirming the second job while the first is scheduled", "23505", ledgerWhy{Constraint: slot}, confirm, second["id"])
+			for _, st := range []string{"running", "paused", "cancelling"} {
+				ledgerExpectOK(t, sp, "control: the first job moves on to "+st+" (it already holds the slot, so its own move cannot collide)", "UPDATE platform.jobs SET status = $2 WHERE id = $1", first["id"], st)
+				ledgerExpectRefused(t, sp, "confirming the second job while the first is "+st, "23505", ledgerWhy{Constraint: slot}, confirm, second["id"])
+			}
+			ledgerExpectOK(t, sp, "control: the first job ends (cancelled) and frees the slot", "UPDATE platform.jobs SET status = 'cancelled' WHERE id = $1", first["id"])
+			ledgerExpectOK(t, sp, "control: now the second job can be confirmed", confirm, second["id"])
+			ledgerExpectRefused(t, sp, "the first job moved back to running while the second holds the slot (which transitions are legal is P4's rule; the index backs it)", "23505", ledgerWhy{Constraint: slot},
+				"UPDATE platform.jobs SET status = 'running' WHERE id = $1", first["id"])
+		})
 	})
 
 	t.Run("jobs_guard: user, module, source and creation time never change", func(t *testing.T) {
@@ -602,6 +1007,22 @@ func TestConstraints_Suppressions(t *testing.T) {
 			})
 		}
 		ledgerExpectOK(t, tx, "control: the same user takes a normalised address", ins, b, "ok@example.com", "unsubscribe")
+	})
+
+	// Single-label domains (a@b, a@localhost) are ACCEPTED: the owner's ruling (OD-11, Docs/phase-2-spec.md Part A row 9), not a gap. The database refuses only an EMPTY label (a@b..c).
+	t.Run("single-label domains are accepted (the owner's ruling OD-11); an empty label is not", func(t *testing.T) {
+		for _, e := range []string{"a@b", "a@localhost"} {
+			ledgerExpectOK(t, tx, "control: the single-label domain of "+e, ins, a, e, "manual")
+		}
+		for _, c := range []struct{ why, email string }{
+			{"an empty label after a single-letter one (a@b..c)", "a@b..c"},
+			{"a single-label domain with a trailing dot", "a@b."},
+		} {
+			c := c
+			t.Run(c.why, func(t *testing.T) {
+				ledgerExpectRefused(t, tx, c.why, "23514", ledgerWhy{Constraint: norm}, ins, b, c.email, "manual")
+			})
+		}
 	})
 
 	t.Run("the source vocabulary", func(t *testing.T) {

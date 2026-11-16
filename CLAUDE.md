@@ -46,13 +46,13 @@ The platform is the product users and the admin touch. The three modules do the 
 | Path | What |
 |---|---|
 | `cmd/platform`, `internal/…` | the Go service (`internal/config`, `logging`, `httpapi`, `server`, `app`, `dsnscrub`, `migrate`, `probe`) — one Go module at the repository root, `github.com/coldmail-platform/platform` |
-| `cmd/platform-migrate` | the migration runner (`up`, `down`, `status`, `set-app-password`, `up-and-set-password`) |
+| `cmd/platform-migrate` | the migration runner (`up`, `down`, `status`, `set-app-password`, `up-and-set-password`) and the one-time setup command `create-first-admin` (Docs/migrator-reference.md) |
 | `cmd/platform-probe` | the Phase 0 end-to-end caller (platform → each module's health, readiness, describe) |
 | `db/migrations/platform_NNNN_*.{up,down}.sql` | the `platform` schema, three roles, tracking table. No business tables before Phase 1 |
 | `web/` | React + TypeScript + Tailwind (Vite). A placeholder page only until Phase 6 |
 | `tests/harness/` | the real-infrastructure harness: `run.sh`, `docker-compose.yml`, the module-1 Dockerfile, the integration tests (`*_test.go`, tag `harness`), the exposure check |
 | `tests/floors-go.txt`, `floors-web.txt`, `floors-harness.txt` | the per-package test-count floors |
-| `scripts/` | the gates and their selftests: `check-test-floors`, `check-image-pins`, `check-migrations`, `check-gitleaksignore`, `check-public-schema` (+ `public-schema-listing.sql`), `check-fault-patches`, `check-balance-invariant`, `check-module-reads` |
+| `scripts/` | the gates and their selftests: `check-test-floors`, `check-image-pins`, `check-migrations`, `check-gitleaksignore`, `check-public-schema` (+ `public-schema-listing.sql`), `check-fault-patches`, `check-balance-invariant`, `check-module-reads`, `check-install-doc` (Docs/install.md), `check-user-lists` (+ `tests/user-list-exceptions.txt`: platform code lists users only through `platform.listable_users`, never `SELECT … FROM public.users`) |
 | `db/module-reads.txt`, `db/module-statements.txt` | what modules 2 and 3 require of `public.users` / `public.job_items`, derived from their code (columns; the exact statements), and the drift gate that fails when a pinned module starts referencing something not listed |
 | `ci/faults/<phase>/` | fault proofs: a `.patch` and a `.expect` per gate, run by the `fault-proofs` workflow (`ci/faults/README.md`); `ci/faults-archive/` holds the Phase 0 diffs (a record) |
 | `tests/supabase/` | the Supabase-shaped migration job: every migration as the non-superuser `postgres` of a digest-pinned `supabase/postgres`, blockers compared with committed lists |

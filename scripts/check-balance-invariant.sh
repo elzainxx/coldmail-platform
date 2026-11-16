@@ -80,6 +80,9 @@ INSERT INTO platform.ledger (user_id, module_id, kind, available_delta, reserved
 SELECT current_setting('bi.u')::uuid, 'm1', 'release', 4 * p.cost, -(4 * p.cost), p.job_id,
        (SELECT id FROM platform.ledger WHERE user_id = current_setting('bi.u')::uuid AND module_id = 'm1' AND idempotency_key = 'bi-reserve'), 'bi-release'
 FROM platform.job_unit_prices p WHERE p.job_id = current_setting('bi.j')::uuid AND p.unit = 'm1_own';
+INSERT INTO platform.ledger (user_id, module_id, kind, available_delta, acting_admin_id, reason, idempotency_key)
+SELECT current_setting('bi.u')::uuid, 'm1', 'adjustment', -(3 * p.cost), current_setting('bi.a')::uuid, 'balance-invariant exercise (rolled back)', 'bi-adjustment'
+FROM platform.job_unit_prices p WHERE p.job_id = current_setting('bi.j')::uuid AND p.unit = 'm1_own';
 SELECT 'EXERCISED', count(*) FROM platform.ledger WHERE user_id = current_setting('bi.u')::uuid;
 SELECT 'BALANCE', COALESCE(b.available, -1), COALESCE(b.reserved, -1)
 FROM (SELECT 1) AS one LEFT JOIN platform.balances b ON b.user_id = current_setting('bi.u')::uuid AND b.module_id = 'm1';
@@ -169,7 +172,7 @@ else
     case "$ex" in ''|*[!0-9]*) red "the exercise printed no ledger-row count (got '${ex:-nothing}'): the instrument matched nothing";; esac
     [ "$ex" -ge 5 ] || red "the exercise wrote only $ex ledger row(s) (floor 5): an exercise that exercised nothing proves nothing"
     bal="$(rows_of BALANCE "$T/out" | head -1)"
-    echo "check-balance-invariant: exercised $ex ledger row(s) (grant, grant, reserve, charge, charge, release) in one transaction that was rolled back; the stored balance after them was available|reserved = ${bal:-unknown}"
+    echo "check-balance-invariant: exercised $ex ledger row(s) (grant, grant, reserve, charge, charge, release, adjustment) in one transaction that was rolled back; the stored balance after them was available|reserved = ${bal:-unknown}"
   else
     run_sql "$DATA_SQL"; [ "$RC" -eq 0 ] || psql_failed "reading the views"
     cnt="$(rows_of COUNTS "$T/out" | head -1)"

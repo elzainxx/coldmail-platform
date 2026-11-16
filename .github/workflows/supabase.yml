@@ -4,7 +4,7 @@
 # TWO LEGS, TWO CONTAINERS. `supabase-migrations` is a matrix of exactly two legs, and every leg has its OWN service container, so each pass starts from a pristine image database
 # `postgres` (with the image's own auth schema, auth.users and extensions, which platform_0001 needs) and a pristine cluster: roles are no longer shared between the passes.
 #   BASELINE  NO provisioning                                  -> compared with tests/supabase/baseline-blockers.txt  (what fails without the fix: the evidence that it is needed)
-#   FIXED     tests/supabase/preprovision.sql applied first    -> compared with tests/supabase/known-blockers.txt     (goal: empty). The proposed no-module-change fix: the migrator is
+#   FIXED     db/install/preprovision.sql applied first    -> compared with tests/supabase/known-blockers.txt     (goal: empty). The proposed no-module-change fix: the migrator is
 #             granted the module owner roles WITH INHERIT, SET before the module bootstraps run.
 # Both legs migrate the database `postgres` as the role `postgres`. Why not two databases cloned in one container: the image's own background workers keep connections open on
 # `postgres` that a non-superuser cannot terminate, so `CREATE DATABASE ... TEMPLATE postgres` fails ("being accessed by other users", measured on the runner); a fresh container per pass is
@@ -49,7 +49,7 @@ jobs:
             preprovision: ''
           - label: FIXED
             known: known-blockers.txt
-            preprovision: tests/supabase/preprovision.sql
+            preprovision: db/install/preprovision.sql
     env:
       DEPLOY_KEY_COLDMAIL_VERIFY: ${{ secrets.DEPLOY_KEY_COLDMAIL_VERIFY }}
       DEPLOY_KEY_COLDMAIL_SEND_MANAGED: ${{ secrets.DEPLOY_KEY_COLDMAIL_SEND_MANAGED }}

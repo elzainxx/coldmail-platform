@@ -9,6 +9,8 @@
 #   check-public-schema  schema public holds only the allowlisted platform tables (the selftest here; the live check runs in the harness)
 #   check-module-reads   the declared module statements still appear in the pinned module sources, and no undeclared file references public.users / public.job_items (the selftest here; the live check runs in the harness)
 #   check-balance-invariant  the balance_drift / reserve_overdrawn gate (the selftest here; the live check runs in the harness and in the fault legs)
+#   check-user-lists     platform code never selects public.users directly: platform.listable_users is the only sanctioned user list (the selftest and the real run, both here)
+#   check-install-doc    Docs/install.md names only what exists and CI runs the install step it documents (the selftest and the real run, both here)
 #   run-leg              the fault-proof leg runner (ci/faults/run-leg.sh) passes only a good fault and fails, for the named reason, on every bad one
 #
 # NOT covered by this file: the secret scan (gitleaks.yml), the docs/citation checks (platform-check.yml), the Go/web builds (go.yml, web.yml)
@@ -34,7 +36,7 @@ jobs:
         run: |
           set -u
           rc=0
-          for t in scripts/check-test-floors-selftest.sh scripts/check-image-pins-selftest.sh scripts/check-migrations-selftest.sh scripts/check-gitleaksignore-selftest.sh scripts/check-fault-patches-selftest.sh ci/faults/run-leg-selftest.sh scripts/check-public-schema-selftest.sh scripts/check-module-reads-selftest.sh scripts/check-balance-invariant-selftest.sh; do
+          for t in scripts/check-test-floors-selftest.sh scripts/check-image-pins-selftest.sh scripts/check-migrations-selftest.sh scripts/check-gitleaksignore-selftest.sh scripts/check-fault-patches-selftest.sh ci/faults/run-leg-selftest.sh scripts/check-public-schema-selftest.sh scripts/check-module-reads-selftest.sh scripts/check-balance-invariant-selftest.sh scripts/check-user-lists-selftest.sh scripts/check-install-doc-selftest.sh; do
             echo "::group::$t"; bash "$t" || { echo "SELFTEST FAILED: $t"; rc=1; }; echo "::endgroup::"
           done
           exit $rc
@@ -47,6 +49,12 @@ jobs:
 
       - name: check-gitleaksignore on the real repository
         run: bash scripts/check-gitleaksignore.sh
+
+      - name: check-user-lists on the real repository (no platform code selects public.users except through platform.listable_users)
+        run: bash scripts/check-user-lists.sh
+
+      - name: check-install-doc on the real repository (Docs/install.md names only what exists, and CI runs the install step it documents)
+        run: bash scripts/check-install-doc.sh
 
       - name: check-fault-patches on the real repository (every ci/faults fault parses; every platform patch still applies)
         run: bash scripts/check-fault-patches.sh --min-faults 1

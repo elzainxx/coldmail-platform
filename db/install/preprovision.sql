@@ -1,4 +1,4 @@
--- preprovision.sql — PROPOSED no-module-change fix for the Supabase blockers of modules 2 and 3. Run ONCE by the migrator (the non-superuser `postgres`), BEFORE the module chains.
+-- preprovision.sql — the REQUIRED install step for modules 2 and 3 on Supabase (the owner's ruling OD-7, Phase 2; it was a proposal in Phase 1). No module is changed. Run ONCE by the migrator (the non-superuser `postgres`), BEFORE the module chains; Docs/install.md names it as step 2, and CI runs it exactly as an install does.
 --
 -- WHY. Modules 2 and 3 may not be changed from this repository. Their bootstraps (send_managed_0000 / send_byo_0000) create their owner role under a guard
 --   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '<module>_owner') THEN CREATE ROLE ...

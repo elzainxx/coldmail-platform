@@ -1,13 +1,13 @@
 # Minimum top-level test counts per Go package (scripts/check-test-floors.sh). A floor is a reviewed commitment: lowering one is a diff someone has to read,
 # and a package that runs tests but is not listed here is RED ("has no floor"). Set to the count declared by `go test -list` when the package was written.
 # cmd/platform has no test file (its wiring lives in internal/app); a package with no tests is not listed.
-go|github.com/coldmail-platform/platform/cmd/platform-migrate|7
+go|github.com/coldmail-platform/platform/cmd/platform-migrate|8
 go|github.com/coldmail-platform/platform/cmd/platform-probe|5
 go|github.com/coldmail-platform/platform/internal/app|8
 go|github.com/coldmail-platform/platform/internal/config|18
 go|github.com/coldmail-platform/platform/internal/dsnscrub|8
 go|github.com/coldmail-platform/platform/internal/httpapi|16
 go|github.com/coldmail-platform/platform/internal/logging|6
-go|github.com/coldmail-platform/platform/internal/migrate|34
+go|github.com/coldmail-platform/platform/internal/migrate|45
 go|github.com/coldmail-platform/platform/internal/probe|40
 go|github.com/coldmail-platform/platform/internal/server|10

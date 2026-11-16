@@ -106,6 +106,12 @@ var roleStatements = []roleStmt{
 	{"platform.reserve_overdrawn", "INSERT", `INSERT INTO platform.reserve_overdrawn DEFAULT VALUES`, "55000", "cannot insert into view", ""},
 	{"platform.reserve_overdrawn", "UPDATE", `UPDATE platform.reserve_overdrawn SET user_id = user_id`, "55000", "cannot update view", ""},
 	{"platform.reserve_overdrawn", "DELETE", `DELETE FROM platform.reserve_overdrawn`, "55000", "cannot delete from view", ""},
+	// platform_0004's user view is different: it selects one table without a join or an aggregate, so PostgreSQL makes it AUTO-UPDATABLE and the superuser's writes through it SUCCEED (Ctrl ""
+	// - roleWritableViews). What refuses the roles is therefore the privilege alone ("permission denied for view listable_users"), which is exactly what the grants must guarantee: a write
+	// privilege on this view would be a way to write public.users.
+	{"platform.listable_users", "INSERT", `INSERT INTO platform.listable_users (id, auth_user_id, email) VALUES ({U3}, {U3}, 'roles-u3-view@example.test')`, "", "", ""},
+	{"platform.listable_users", "UPDATE", `UPDATE platform.listable_users SET is_active = is_active WHERE id = {U2}`, "", "", ""},
+	{"platform.listable_users", "DELETE", `DELETE FROM platform.listable_users WHERE id = {U2}`, "", "", ""},
 
 	{"public.users", "INSERT", `INSERT INTO public.users (id, auth_user_id, email) VALUES ({U3}, {U3}, 'roles-u3@example.test')`, "", "", ""},
 	{"public.users", "UPDATE", `UPDATE public.users SET is_active = is_active WHERE id = {U2}`, "", "", ""},
@@ -125,19 +131,23 @@ var roleExpectations = map[string]map[string]string{
 	"platform_app": {
 		"platform.schema_migrations": "S", "platform.admins": "S", "platform.modules": "S", "platform.unit_costs": "S", "platform.unit_cost_history": "S",
 		"platform.jobs": "SIU", "platform.job_unit_prices": "SI", "platform.balances": "S", "platform.ledger": "SI", "platform.m3_entitlements": "SIU",
-		"platform.suppressions": "SI", "platform.admin_audit": "SI", "platform.balance_drift": "S", "platform.reserve_overdrawn": "S",
+		"platform.suppressions": "SI", "platform.admin_audit": "SI", "platform.balance_drift": "S", "platform.reserve_overdrawn": "S", "platform.listable_users": "S",
 		"public.users": "SIU", "public.job_items": "SIU",
 	},
 	"platform_admin": {
 		"platform.schema_migrations": "S", "platform.admins": "S", "platform.modules": "S", "platform.unit_costs": "S", "platform.unit_cost_history": "S",
 		"platform.jobs": "S", "platform.job_unit_prices": "S", "platform.balances": "S", "platform.ledger": "SI", "platform.m3_entitlements": "S",
-		"platform.suppressions": "S", "platform.admin_audit": "SI", "platform.balance_drift": "S", "platform.reserve_overdrawn": "S",
+		"platform.suppressions": "S", "platform.admin_audit": "SI", "platform.balance_drift": "S", "platform.reserve_overdrawn": "S", "platform.listable_users": "S",
 		"public.users": "S", "public.job_items": "S",
 	},
 }
 
 // roleViews are the relations that are views (the proof checks the catalogue agrees).
-var roleViews = map[string]bool{"platform.balance_drift": true, "platform.reserve_overdrawn": true}
+var roleViews = map[string]bool{"platform.balance_drift": true, "platform.reserve_overdrawn": true, "platform.listable_users": true}
+
+// roleWritableViews are the views a SUPERUSER can write through (an auto-updatable view: one table, no join, no aggregate). A role is refused them by privilege exactly like a table
+// ("permission denied for view <name>"); the other views are refused by the rewriter whoever runs the statement (55000, the Ctrl of their statements).
+var roleWritableViews = map[string]bool{"platform.listable_users": true}
 
 var rolePrivWords = map[byte]string{'S': "SELECT", 'I': "INSERT", 'U': "UPDATE", 'D': "DELETE", 'T': "TRUNCATE"}
 
@@ -239,10 +249,14 @@ func letterFor(priv string) byte {
 // rolesRefusal is what a refusal must look like: SQLSTATE and a substring of the message. A table: 42501 and the table's name. A write to a view is refused by the rewriter, for the
 // superuser too, with the state the catalogue states.
 func rolesRefusal(c roleCase) (state, why string) {
-	if roleViews[c.Stmt.Rel] && c.Stmt.Priv != "SELECT" {
+	if roleViews[c.Stmt.Rel] && !roleWritableViews[c.Stmt.Rel] && c.Stmt.Priv != "SELECT" {
 		return c.Stmt.Ctrl, c.Stmt.Why
 	}
-	return "42501", "permission denied for table " + c.Stmt.Rel[strings.IndexByte(c.Stmt.Rel, '.')+1:]
+	kind := "table"
+	if roleViews[c.Stmt.Rel] {
+		kind = "view" // a refusal of a relation of kind view names it as a view
+	}
+	return "42501", "permission denied for " + kind + " " + c.Stmt.Rel[strings.IndexByte(c.Stmt.Rel, '.')+1:]
 }
 
 // rolesWantResult asserts a statement's outcome: success when wantState is "", else exactly that SQLSTATE and a message containing why.
@@ -351,8 +365,8 @@ func TestRoles_UngrantedRoleIsRefusedEverywhere(t *testing.T) {
 	rolesSeed(t, ctx, tx)
 
 	rels := sortedMapKeys(roleExpectations["platform_app"])
-	if len(rels) < 16 {
-		t.Fatalf("found %d relations in the expectations, want at least 16 (14 in schema platform, 2 in public)", len(rels))
+	if len(rels) < 17 {
+		t.Fatalf("found %d relations in the expectations, want at least 17 (15 in schema platform, 2 in public)", len(rels))
 	}
 	// A role created inside the transaction is gone when it rolls back: nothing to clean up in the cluster.
 	for _, stmt := range []string{"CREATE ROLE zz_roles_ungranted NOLOGIN", "GRANT USAGE ON SCHEMA platform, public TO zz_roles_ungranted"} {
@@ -527,6 +541,16 @@ func TestRoles_ExpectationsAgreeWithDeclaredClasses(t *testing.T) {
 			exp["platform_admin"]["public.users"] += "D"
 			return stmts
 		}, []string{"platform_admin on public.users", "expects DELETE", "does not grant"}},
+		{"INSERT expected allowed on the user view for platform_app (expectation only: the view is auto-updatable, so that would be a write path into public.users)", func(exp map[string]map[string]string, platform, public map[string]privClass, stmts []roleStmt) []roleStmt {
+			exp["platform_app"]["platform.listable_users"] += "I"
+			return stmts
+		}, []string{"platform_app on platform.listable_users", "expects INSERT", "does not grant"}},
+		{"UPDATE granted on the user view to platform_admin (declared only)", func(exp map[string]map[string]string, platform, public map[string]privClass, stmts []roleStmt) []roleStmt {
+			c := platform["listable_users"]
+			c.Grants["platform_admin"] = append(c.Grants["platform_admin"], "UPDATE")
+			platform["listable_users"] = c
+			return stmts
+		}, []string{"platform_admin on platform.listable_users", "declared class grants UPDATE"}},
 		{"a table declared but with no expectation", func(exp map[string]map[string]string, platform, public map[string]privClass, stmts []roleStmt) []roleStmt {
 			platform["zz_new_table"] = classOf(privSelect, privSelect)
 			return stmts

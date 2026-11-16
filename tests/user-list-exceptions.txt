@@ -1,0 +1,4 @@
+# Files that may SELECT from public.users directly (scripts/check-user-lists.sh). One entry per line: relative/path|reason
+# The path is relative to the repository root and must be a file the gate scans (non-test *.go under internal/ and cmd/, *.sql under db/ outside db/migrations/).
+# An entry is RED when its file does not exist, contains no such SELECT, or has a blank reason (a register that rots hides the next miss). platform.listable_users is the way to list users;
+# an exception is for a read that must see the system user (for example a platform consistency check), and the reason says which.

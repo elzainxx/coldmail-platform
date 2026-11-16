@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -458,6 +459,438 @@ func TestSchemaLocks_FloorsBite(t *testing.T) {
 	shapeRequireReported(t, got, err, "for the primary-key rule", "the floor is 5")
 	shapeRequireReported(t, got, err, "foreign key(s) from schema platform to public.users", "the floor is 5")
 	shapeRequireReported(t, got, err, "in schema platform for the comment rule", "the floor is 5")
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// platform_0004 (the owner's rulings on the Phase 1 open decisions): what it leaves in the catalog. The five locks above are generic
+// rules and platform_0004 breaks none of them (it adds no table, no key, no foreign key, no money or time column); these are the
+// objects it ADDS or REPLACES, pinned by name so that a later migration that drops, weakens or renames one fails here.
+// ---------------------------------------------------------------------------------------------------------------------
+
+const phase2ZeroUUID = "00000000-0000-0000-0000-000000000000"
+
+var phase2Literal = regexp.MustCompile(`'([a-z_0-9]+)'`)
+
+// phase2Rows runs a query and returns every row as strings (a NULL is "<nil>": the queries below COALESCE what may be NULL).
+func phase2Rows(ctx context.Context, q querier, sql string, args ...any) ([][]string, error) {
+	rows, err := q.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out [][]string
+	for rows.Next() {
+		vals, err := rows.Values()
+		if err != nil {
+			return nil, err
+		}
+		row := make([]string, len(vals))
+		for i, x := range vals {
+			row[i] = fmt.Sprint(x)
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+// phase2Literals is the sorted set of quoted words in a deparsed expression: the statuses of an index predicate, the kinds of a CHECK or of a generated column.
+func phase2Literals(expr string) []string {
+	set := map[string]bool{}
+	for _, m := range phase2Literal.FindAllStringSubmatch(expr, -1) {
+		set[m[1]] = true
+	}
+	out := make([]string, 0, len(set))
+	for k := range set {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// phase2TriggerText renders pg_trigger.tgtype (ROW 1, BEFORE 2, INSERT 4, DELETE 8, UPDATE 16, TRUNCATE 32, INSTEAD OF 64) as the sentence a trigger definition would say.
+func phase2TriggerText(n int) string {
+	timing := "AFTER"
+	if n&2 != 0 {
+		timing = "BEFORE"
+	} else if n&64 != 0 {
+		timing = "INSTEAD OF"
+	}
+	var ev []string
+	for _, e := range []struct {
+		bit  int
+		name string
+	}{{4, "INSERT"}, {8, "DELETE"}, {16, "UPDATE"}, {32, "TRUNCATE"}} {
+		if n&e.bit != 0 {
+			ev = append(ev, e.name)
+		}
+	}
+	each := "FOR EACH STATEMENT"
+	if n&1 != 0 {
+		each = "FOR EACH ROW"
+	}
+	return timing + " " + strings.Join(ev, " OR ") + " " + each
+}
+
+// phase2CatalogCheck returns every way the catalog differs from what platform_0004 builds, as sentences naming the object; it never calls t.Error. It covers: the slot index
+// (unique, over (user_id, module_id), partial over exactly scheduled/running/paused/cancelling, the old index gone); the four system-user CHECKs, ledger_shape_adjustment and the
+// vocabulary CHECK (each named, a CHECK, validated, saying what it must); the ledger's module-metering foreign key; the generated column monetary (stored, naming exactly the five monetary
+// kinds); the four triggers (timing, events, row-level, WHEN, function, enabled); the functions (owner, return type, a pinned search_path, SECURITY DEFINER where the design needs it) and
+// unit_costs_guard calling the admin check; and the view listable_users (a view, its columns, both of its exclusions).
+//
+// What it does NOT cover, and says so: whether the triggers BEHAVE (the constraint and ledger tests do that, with a control for each), who may EXECUTE the functions (checkFunctionGrants), the
+// view's privileges (checkGrants) and the exact text of an expression (it reads the quoted words and the key tokens, which PostgreSQL deparses the same way on every version it runs on).
+func phase2CatalogCheck(ctx context.Context, q querier) ([]string, error) {
+	var v []string
+	add := func(format string, a ...any) { v = append(v, fmt.Sprintf(format, a...)) }
+
+	// 1. the slot index
+	rows, err := phase2Rows(ctx, q, `SELECT c.relname::text FROM pg_class c WHERE c.relnamespace = 'platform'::regnamespace AND c.relkind = 'i' AND c.relname::text = 'jobs_one_executing_per_user_module'`)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) > 0 {
+		add("platform.jobs_one_executing_per_user_module: the OLD slot index still exists beside its replacement (platform_0004 drops it)")
+	}
+	rows, err = phase2Rows(ctx, q, `SELECT i.indisunique::text, COALESCE(pg_get_expr(i.indpred, i.indrelid), ''), pg_get_indexdef(i.indexrelid), (i.indrelid = to_regclass('platform.jobs'))::text
+		FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+		WHERE c.relnamespace = 'platform'::regnamespace AND c.relname::text = 'jobs_one_active_per_user_module'`)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		add("platform.jobs_one_active_per_user_module: missing (the slot index of platform_0004: a scheduled, running, paused or cancelling job holds the slot)")
+	} else {
+		r := rows[0]
+		if r[0] != "true" {
+			add("platform.jobs_one_active_per_user_module: not unique (the slot is a UNIQUE partial index)")
+		}
+		if r[3] != "true" {
+			add("platform.jobs_one_active_per_user_module: not an index of platform.jobs")
+		}
+		if !strings.Contains(r[2], "(user_id, module_id)") {
+			add("platform.jobs_one_active_per_user_module: not over (user_id, module_id): %s", r[2])
+		}
+		if got, want := phase2Literals(r[1]), []string{"cancelling", "paused", "running", "scheduled"}; strings.Join(got, ",") != strings.Join(want, ",") {
+			add("platform.jobs_one_active_per_user_module: its predicate covers the statuses %v, want exactly %v (a scheduled job holds the slot since platform_0004)", got, want)
+		}
+	}
+
+	// 2. the CHECKs
+	sys := []string{"user_id", "<>", phase2ZeroUUID}
+	for _, c := range []struct {
+		rel, name string
+		tokens    []string
+	}{
+		{"platform.balances", "balances_not_the_system_user", sys},
+		{"platform.ledger", "ledger_not_the_system_user", sys},
+		{"platform.m3_entitlements", "m3_entitlements_not_the_system_user", sys},
+		{"platform.suppressions", "suppressions_not_the_system_user", sys},
+		{"platform.ledger", "ledger_shape_adjustment", []string{"'adjustment'", "available_delta < 0", "reserved_delta = 0", "job_id IS NULL", "reserve_id IS NULL", "unit_cost IS NULL",
+			"acting_admin_id IS NOT NULL", "reason IS NOT NULL", "btrim(reason)"}},
+		{"platform.ledger", "ledger_kind_vocabulary", []string{"'grant'", "'reserve'", "'charge'", "'release'", "'adjustment'", "'m3_enable'", "'m3_disable'", "'m3_expire'"}},
+	} {
+		rows, err := phase2Rows(ctx, q, `SELECT c.contype::text, c.convalidated::text, pg_get_constraintdef(c.oid) FROM pg_constraint c WHERE c.conrelid = to_regclass($1::text) AND c.conname::text = $2`, c.rel, c.name)
+		if err != nil {
+			return nil, err
+		}
+		if len(rows) == 0 {
+			add("%s.%s: missing", c.rel, c.name)
+			continue
+		}
+		r := rows[0]
+		if r[0] != "c" {
+			add("%s.%s: is not a CHECK constraint (type %q)", c.rel, c.name, r[0])
+		}
+		if r[1] != "true" {
+			add("%s.%s: not validated", c.rel, c.name)
+		}
+		for _, tok := range c.tokens {
+			if strings.Contains(r[2], tok) {
+				continue
+			}
+			if tok == phase2ZeroUUID {
+				add("%s.%s: the CHECK does not name the all-zero system user: %s", c.rel, c.name, r[2])
+			} else {
+				add("%s.%s: its definition lacks %q: %s", c.rel, c.name, tok, r[2])
+			}
+		}
+	}
+	rows, err = phase2Rows(ctx, q, `SELECT c.contype::text, (c.confrelid = to_regclass('platform.modules'))::text,
+		COALESCE((SELECT string_agg(a.attname::text, ',' ORDER BY k.ord) FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord) JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum), ''),
+		COALESCE((SELECT string_agg(a.attname::text, ',' ORDER BY k.ord) FROM unnest(c.confkey) WITH ORDINALITY AS k(attnum, ord) JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = k.attnum), '')
+		FROM pg_constraint c WHERE c.conrelid = to_regclass('platform.ledger') AND c.conname::text = 'ledger_module_metering_fk'`)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		add("platform.ledger.ledger_module_metering_fk: missing (re-created by platform_0004 over the new generated column)")
+	} else if r := rows[0]; r[0] != "f" || r[1] != "true" || r[2] != "module_id,monetary" || r[3] != "id,metered" {
+		add("platform.ledger.ledger_module_metering_fk: is %s (%s) -> modules=%s (%s), want a foreign key (module_id,monetary) -> platform.modules (id,metered)", r[0], r[2], r[1], r[3])
+	}
+
+	// 3. the generated column
+	rows, err = phase2Rows(ctx, q, `SELECT a.attgenerated::text, pg_get_expr(d.adbin, d.adrelid) FROM pg_attribute a JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+		WHERE a.attrelid = to_regclass('platform.ledger') AND a.attname::text = 'monetary' AND NOT a.attisdropped`)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		add("platform.ledger.monetary: missing (a generated column with an expression)")
+	} else {
+		if rows[0][0] != "s" {
+			add("platform.ledger.monetary: not a STORED generated column (attgenerated %q)", rows[0][0])
+		}
+		if got, want := phase2Literals(rows[0][1]), []string{"adjustment", "charge", "grant", "release", "reserve"}; strings.Join(got, ",") != strings.Join(want, ",") {
+			add("platform.ledger.monetary: the generated expression names the kinds %v, want exactly %v (an adjustment is money: the balance trigger and balance_drift read this column)", got, want)
+		}
+	}
+
+	// 4. the triggers
+	for _, tr := range []struct {
+		rel, name string
+		typ       int
+		when      bool
+	}{
+		{"platform.ledger", "ledger_require_active_admin", 1 + 2 + 4, false},
+		{"platform.ledger", "ledger_audit_adjustment", 1 + 4, true},
+		{"platform.admin_audit", "admin_audit_require_active_admin", 1 + 2 + 4, false},
+		{"platform.m3_entitlements", "m3_entitlements_require_active_admin", 1 + 2 + 4 + 16, false},
+		{"platform.unit_costs", "unit_costs_guard", 1 + 2 + 16, false},
+	} {
+		rows, err := phase2Rows(ctx, q, `SELECT t.tgtype::int::text, t.tgenabled::text, (t.tgqual IS NOT NULL)::text, p.proname::text FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid
+			WHERE NOT t.tgisinternal AND t.tgrelid = to_regclass($1::text) AND t.tgname::text = $2`, tr.rel, tr.name)
+		if err != nil {
+			return nil, err
+		}
+		if len(rows) == 0 {
+			add("%s trigger %s: missing", tr.rel, tr.name)
+			continue
+		}
+		r := rows[0]
+		if r[0] != strconv.Itoa(tr.typ) {
+			got, _ := strconv.Atoi(r[0])
+			add("%s trigger %s: fires as %s, want %s", tr.rel, tr.name, phase2TriggerText(got), phase2TriggerText(tr.typ))
+		}
+		if r[1] != "O" {
+			add("%s trigger %s: not enabled (state %q, want O)", tr.rel, tr.name, r[1])
+		}
+		if (r[2] == "true") != tr.when {
+			add("%s trigger %s: WHEN clause present = %s, want %v", tr.rel, tr.name, r[2], tr.when)
+		}
+		if r[3] != tr.name {
+			add("%s trigger %s: calls %s(), want %s()", tr.rel, tr.name, r[3], tr.name)
+		}
+	}
+
+	// 5. the functions
+	for _, f := range []struct {
+		name, args, ret string
+		definer         bool // must be SECURITY DEFINER (it reads or writes what the caller's role cannot)
+	}{
+		{"require_active_admin", "uuid, text", "void", true},
+		{"ledger_audit_adjustment", "", "trigger", true},
+		{"ledger_require_active_admin", "", "trigger", false},
+		{"admin_audit_require_active_admin", "", "trigger", false},
+		{"m3_entitlements_require_active_admin", "", "trigger", false},
+	} {
+		rows, err := phase2Rows(ctx, q, `SELECT p.prosecdef::text, (EXISTS (SELECT 1 FROM unnest(COALESCE(p.proconfig, ARRAY[]::text[])) cfg WHERE cfg = 'search_path=pg_catalog, pg_temp'))::text,
+				pg_get_userbyid(p.proowner), p.prorettype::regtype::text
+			FROM pg_proc p WHERE p.pronamespace = 'platform'::regnamespace AND p.proname::text = $1 AND oidvectortypes(p.proargtypes) = $2`, f.name, f.args)
+		if err != nil {
+			return nil, err
+		}
+		if len(rows) == 0 {
+			add("platform.%s(%s): missing", f.name, f.args)
+			continue
+		}
+		r := rows[0]
+		if r[2] != "platform_owner" {
+			add("platform.%s(%s): owned by %s, want platform_owner", f.name, f.args, r[2])
+		}
+		if r[3] != f.ret {
+			add("platform.%s(%s): returns %s, want %s", f.name, f.args, r[3], f.ret)
+		}
+		if r[1] != "true" {
+			add("platform.%s(%s): does not pin search_path = pg_catalog, pg_temp", f.name, f.args)
+		}
+		if f.definer && r[0] != "true" {
+			add("platform.%s(%s): is not SECURITY DEFINER (the application roles cannot do what it does)", f.name, f.args)
+		}
+	}
+	rows, err = phase2Rows(ctx, q, `SELECT (p.prosrc LIKE '%require_active_admin%')::text FROM pg_proc p WHERE p.pronamespace = 'platform'::regnamespace AND p.proname::text = 'unit_costs_guard'`)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		add("platform.unit_costs_guard(): missing")
+	} else if rows[0][0] != "true" {
+		add("platform.unit_costs_guard(): does not call require_active_admin (a disabled admin could change a price)")
+	}
+
+	// 6. the view
+	rows, err = phase2Rows(ctx, q, `SELECT c.relkind::text, COALESCE((SELECT string_agg(a.attname::text, ',' ORDER BY a.attnum) FROM pg_attribute a WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped), ''), pg_get_viewdef(c.oid)
+		FROM pg_class c WHERE c.relnamespace = 'platform'::regnamespace AND c.relname::text = 'listable_users'`)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		add("platform.listable_users: missing (the only sanctioned way to list users)")
+	} else {
+		r := rows[0]
+		if r[0] != "v" {
+			add("platform.listable_users: is relkind %q, want a view (v)", r[0])
+		}
+		if r[1] != "id,auth_user_id,email,is_active,created_at" {
+			add("platform.listable_users: its columns are %s, want id,auth_user_id,email,is_active,created_at", r[1])
+		}
+		if !strings.Contains(r[2], phase2ZeroUUID) {
+			add("platform.listable_users: the view does not exclude the system user (%s is not in its definition)", phase2ZeroUUID)
+		}
+		if !strings.Contains(r[2], "auth_user_id IS NOT NULL") {
+			add("platform.listable_users: the view does not exclude users with no auth link (no `auth_user_id IS NOT NULL` in its definition)")
+		}
+	}
+	return v, nil
+}
+
+// phase2After runs setup (as the superuser, in a transaction that is rolled back) and returns what phase2CatalogCheck says about the result.
+func phase2After(t *testing.T, db shapeDB, setup []string) []string {
+	t.Helper()
+	ctx := testCtx(t)
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	for _, s := range setup {
+		if _, err := tx.Exec(ctx, s); err != nil {
+			t.Fatalf("setup %q: %v", s, err)
+		}
+	}
+	got, err := phase2CatalogCheck(ctx, tx)
+	if err != nil {
+		t.Fatalf("the checker could not run on the broken database: %v", err)
+	}
+	return got
+}
+
+// TestSchemaLocks_Phase2Rulings pins what platform_0004 leaves in the catalog (see phase2CatalogCheck): clean on a freshly migrated scratch database and on the live one, and each
+// breakage below - a dropped, weakened, renamed, disabled or replaced object - is reported by the object's name. It fails when a later migration removes or weakens any of them.
+func TestSchemaLocks_Phase2Rulings(t *testing.T) {
+	_, admin := migratedScratch(t)
+	ctx := testCtx(t)
+	v, err := phase2CatalogCheck(ctx, admin)
+	requireNoViolations(t, v, err, "a freshly migrated scratch database")
+
+	t.Run("the live database holds them too", func(t *testing.T) {
+		v, err := phase2CatalogCheck(testCtx(t), liveAdmin(t))
+		requireNoViolations(t, v, err, "the live database")
+	})
+
+	slot := "platform.jobs (user_id, module_id)"
+	cases := []struct {
+		name  string
+		setup []string
+		want  [][]string // each entry: substrings that must all appear in one violation
+	}{
+		{"the slot index dropped",
+			[]string{"DROP INDEX platform.jobs_one_active_per_user_module"},
+			[][]string{{"jobs_one_active_per_user_module", "missing"}}},
+		{"the old slot index back beside the new one",
+			[]string{"CREATE UNIQUE INDEX jobs_one_executing_per_user_module ON " + slot + " WHERE status IN ('running', 'paused', 'cancelling')"},
+			[][]string{{"jobs_one_executing_per_user_module", "OLD slot index"}}},
+		{"the slot index without 'scheduled' (Phase 1's rule)",
+			[]string{"DROP INDEX platform.jobs_one_active_per_user_module", "CREATE UNIQUE INDEX jobs_one_active_per_user_module ON " + slot + " WHERE status IN ('running', 'paused', 'cancelling')"},
+			[][]string{{"jobs_one_active_per_user_module", "covers", "scheduled"}}},
+		{"the slot index not unique",
+			[]string{"DROP INDEX platform.jobs_one_active_per_user_module", "CREATE INDEX jobs_one_active_per_user_module ON " + slot + " WHERE status IN ('scheduled', 'running', 'paused', 'cancelling')"},
+			[][]string{{"jobs_one_active_per_user_module", "not unique"}}},
+		{"the slot index over one column",
+			[]string{"DROP INDEX platform.jobs_one_active_per_user_module", "CREATE UNIQUE INDEX jobs_one_active_per_user_module ON platform.jobs (user_id) WHERE status IN ('scheduled', 'running', 'paused', 'cancelling')"},
+			[][]string{{"jobs_one_active_per_user_module", "not over (user_id, module_id)"}}},
+		{"the four system-user CHECKs dropped",
+			[]string{"ALTER TABLE platform.balances DROP CONSTRAINT balances_not_the_system_user", "ALTER TABLE platform.ledger DROP CONSTRAINT ledger_not_the_system_user",
+				"ALTER TABLE platform.m3_entitlements DROP CONSTRAINT m3_entitlements_not_the_system_user", "ALTER TABLE platform.suppressions DROP CONSTRAINT suppressions_not_the_system_user"},
+			[][]string{{"balances_not_the_system_user", "missing"}, {"ledger_not_the_system_user", "missing"}, {"m3_entitlements_not_the_system_user", "missing"}, {"suppressions_not_the_system_user", "missing"}}},
+		{"a system-user CHECK that names another uuid",
+			[]string{"ALTER TABLE platform.ledger DROP CONSTRAINT ledger_not_the_system_user",
+				"ALTER TABLE platform.ledger ADD CONSTRAINT ledger_not_the_system_user CHECK (user_id <> '11111111-1111-1111-1111-111111111111'::uuid)"},
+			[][]string{{"ledger_not_the_system_user", "does not name the all-zero system user"}}},
+		{"ledger_shape_adjustment dropped",
+			[]string{"ALTER TABLE platform.ledger DROP CONSTRAINT ledger_shape_adjustment"},
+			[][]string{{"ledger_shape_adjustment", "missing"}}},
+		{"ledger_shape_adjustment that lets an adjustment move reserved credits",
+			[]string{"ALTER TABLE platform.ledger DROP CONSTRAINT ledger_shape_adjustment",
+				"ALTER TABLE platform.ledger ADD CONSTRAINT ledger_shape_adjustment CHECK (kind <> 'adjustment' OR (available_delta < 0 AND job_id IS NULL AND reserve_id IS NULL AND unit IS NULL AND units IS NULL AND unit_cost IS NULL AND acting_admin_id IS NOT NULL AND reason IS NOT NULL AND btrim(reason) <> ''))"},
+			[][]string{{"ledger_shape_adjustment", "lacks", "reserved_delta = 0"}}},
+		{"the kind vocabulary without adjustment",
+			[]string{"ALTER TABLE platform.ledger DROP CONSTRAINT ledger_kind_vocabulary",
+				"ALTER TABLE platform.ledger ADD CONSTRAINT ledger_kind_vocabulary CHECK (kind IN ('grant', 'reserve', 'charge', 'release', 'm3_enable', 'm3_disable', 'm3_expire'))"},
+			[][]string{{"ledger_kind_vocabulary", "lacks", "'adjustment'"}}},
+		{"the ledger audit trigger disabled",
+			[]string{"ALTER TABLE platform.ledger DISABLE TRIGGER ledger_audit_adjustment"},
+			[][]string{{"ledger_audit_adjustment", "not enabled"}}},
+		{"a disabled-admin trigger dropped",
+			[]string{"DROP TRIGGER m3_entitlements_require_active_admin ON platform.m3_entitlements"},
+			[][]string{{"m3_entitlements_require_active_admin", "missing"}}},
+		{"a disabled-admin trigger that fires AFTER the row is written",
+			[]string{"DROP TRIGGER admin_audit_require_active_admin ON platform.admin_audit",
+				"CREATE TRIGGER admin_audit_require_active_admin AFTER INSERT ON platform.admin_audit FOR EACH ROW EXECUTE FUNCTION platform.admin_audit_require_active_admin()"},
+			[][]string{{"admin_audit_require_active_admin", "fires as AFTER INSERT", "want BEFORE INSERT"}}},
+		{"the entitlement trigger that forgets UPDATE",
+			[]string{"DROP TRIGGER m3_entitlements_require_active_admin ON platform.m3_entitlements",
+				"CREATE TRIGGER m3_entitlements_require_active_admin BEFORE INSERT ON platform.m3_entitlements FOR EACH ROW EXECUTE FUNCTION platform.m3_entitlements_require_active_admin()"},
+			[][]string{{"m3_entitlements_require_active_admin", "fires as BEFORE INSERT FOR EACH ROW", "BEFORE INSERT OR UPDATE"}}},
+		{"the audit trigger firing for every kind (no WHEN)",
+			[]string{"DROP TRIGGER ledger_audit_adjustment ON platform.ledger",
+				"CREATE TRIGGER ledger_audit_adjustment AFTER INSERT ON platform.ledger FOR EACH ROW EXECUTE FUNCTION platform.ledger_audit_adjustment()"},
+			[][]string{{"ledger_audit_adjustment", "WHEN clause present = false"}}},
+		{"unit_costs_guard without the admin check",
+			[]string{"CREATE OR REPLACE FUNCTION platform.unit_costs_guard() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$ BEGIN RETURN NEW; END $$"},
+			[][]string{{"unit_costs_guard", "does not call require_active_admin"}}},
+		{"the admin check dropped",
+			[]string{"DROP FUNCTION platform.require_active_admin(uuid, text)"},
+			[][]string{{"require_active_admin(uuid, text)", "missing"}}},
+		{"the admin check without a pinned search_path (a definer anyone could hijack)",
+			[]string{"ALTER FUNCTION platform.require_active_admin(uuid, text) RESET search_path"},
+			[][]string{{"require_active_admin(uuid, text)", "does not pin search_path"}}},
+		{"the admin check no longer a definer (the roles could not read platform.admins FOR SHARE)",
+			[]string{"ALTER FUNCTION platform.require_active_admin(uuid, text) SECURITY INVOKER"},
+			[][]string{{"require_active_admin(uuid, text)", "is not SECURITY DEFINER"}}},
+		{"monetary without the adjustment kind (the balance trigger and balance_drift would ignore a clawback)",
+			[]string{"DROP VIEW platform.balance_drift", "ALTER TABLE platform.ledger DROP CONSTRAINT ledger_module_metering_fk", "ALTER TABLE platform.ledger DROP COLUMN monetary",
+				"ALTER TABLE platform.ledger ADD COLUMN monetary boolean GENERATED ALWAYS AS (kind IN ('grant', 'reserve', 'charge', 'release')) STORED"},
+			[][]string{{"platform.ledger.monetary", "adjustment"}, {"ledger_module_metering_fk", "missing"}}},
+		{"the module-metering key over the wrong columns",
+			[]string{"ALTER TABLE platform.ledger DROP CONSTRAINT ledger_module_metering_fk", "ALTER TABLE platform.ledger ADD CONSTRAINT ledger_module_metering_fk FOREIGN KEY (module_id) REFERENCES platform.modules (id)"},
+			[][]string{{"ledger_module_metering_fk", "want a foreign key (module_id,monetary)"}}},
+		{"the user view dropped",
+			[]string{"DROP VIEW platform.listable_users"},
+			[][]string{{"platform.listable_users", "missing"}}},
+		{"the user view that lists everyone",
+			[]string{"CREATE OR REPLACE VIEW platform.listable_users AS SELECT id, auth_user_id, email, is_active, created_at FROM public.users"},
+			[][]string{{"platform.listable_users", "does not exclude the system user"}, {"platform.listable_users", "does not exclude users with no auth link"}}},
+		{"the user view that only drops the system user",
+			[]string{"CREATE OR REPLACE VIEW platform.listable_users AS SELECT id, auth_user_id, email, is_active, created_at FROM public.users WHERE id <> '00000000-0000-0000-0000-000000000000'::uuid"},
+			[][]string{{"platform.listable_users", "does not exclude users with no auth link"}}},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			got := phase2After(t, admin, c.setup)
+			if len(got) == 0 {
+				t.Fatal("the checker reported nothing for a broken database: it cannot fail")
+			}
+			for _, want := range c.want {
+				if !hasViolation(got, want...) {
+					t.Fatalf("no violation mentions %v; the checker said:\n  %s", want, strings.Join(got, "\n  "))
+				}
+			}
+		})
+	}
+
+	v, err = phase2CatalogCheck(ctx, admin)
+	requireNoViolations(t, v, err, "the database after the rolled-back breakages")
 }
 
 // TestSchemaLocks_LiveDatabase runs every lock on the LIVE database the harness stack migrated (read-only).

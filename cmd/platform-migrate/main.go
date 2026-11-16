@@ -1,10 +1,11 @@
 // Command platform-migrate is the platform's migration runner: up, down, status, set-app-password and
-// up-and-set-password. All of its behaviour lives in internal/migrate; this file parses the command line, loads the
-// configuration from the environment and maps the outcome to an exit status:
+// up-and-set-password, plus the one-time setup command create-first-admin. All of its behaviour lives in internal/migrate;
+// this file parses the command line, loads the configuration from the environment and maps the outcome to an exit status:
 //
 //	0  success
-//	1  runtime error (the database, a migration file, a lock timeout)
-//	2  usage or configuration error (an unknown command, a missing or invalid variable, down while forbidden)
+//	1  runtime error (the database, a migration file, a lock timeout; create-first-admin refused because an admin exists
+//	   or the Supabase login does not)
+//	2  usage or configuration error (an unknown command, a missing or invalid variable or flag, down while forbidden)
 //
 // No message it prints carries the connection string or the app password.
 package main
@@ -48,6 +49,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	}
 	command := args[0]
 	version := ""
+	var firstAdmin migrate.FirstAdminInput
 	switch command {
 	case "-h", "--help", "help":
 		usage(stdout)
@@ -65,6 +67,13 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 			return fail(stderr, err, nil)
 		}
 		version = v
+	case migrate.CmdCreateFirstAdmin:
+		// Every flag is validated here, before the configuration is loaded and long before a connection is opened.
+		in, err := migrate.ParseFirstAdminArgs(args[1:])
+		if err != nil {
+			return fail(stderr, err, nil)
+		}
+		firstAdmin = in
 	default:
 		fmt.Fprintf(stderr, "platform-migrate: unknown command %q\n", command)
 		usage(stderr)
@@ -91,6 +100,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		if err = r.Up(ctx); err == nil {
 			err = r.SetAppPassword(ctx)
 		}
+	case migrate.CmdCreateFirstAdmin:
+		err = r.CreateFirstAdmin(ctx, firstAdmin)
 	}
 	if err != nil {
 		return fail(stderr, err, cfg.Secrets())
@@ -122,6 +133,9 @@ usage:
   platform-migrate status                show applied against pending (takes no lock)
   platform-migrate set-app-password      set the platform_app login password from PLATFORM_APP_PASSWORD
   platform-migrate up-and-set-password   up, then set-app-password (the password is checked first)
+  platform-migrate create-first-admin --auth-user-id <uuid> --display-name <text>
+                                         create the FIRST admin from an existing Supabase login (refused once any
+                                         admin exists; run it after up; the flags are validated before connecting)
   platform-migrate help
 
 environment (reference: Docs/migrator-reference.md):

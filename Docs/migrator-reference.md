@@ -48,12 +48,93 @@ unlock, rollback and close that run after the work are bounded at 5 seconds.
 | `status` | Prints each version as applied or PENDING and a summary. Takes no lock. |
 | `set-app-password` | Sets the `platform_app` login password from `PLATFORM_APP_PASSWORD`. |
 | `up-and-set-password` | `up`, then `set-app-password`. The password is checked first, so a missing one applies nothing. |
+| `create-first-admin --auth-user-id <uuid> --display-name <text>` | Creates the FIRST admin from an existing Supabase login, in one transaction, and refuses once any admin exists. See "Creating the first admin" below. |
 | `help` | Prints the usage and the variable list. |
 
 Exit status: **0** success. **1** runtime error: the database could not be reached, a migration failed or did not record itself,
-the lock timed out, the directory is unreadable or holds no migrations, a gap in the chain. **2** usage or configuration error:
-no command, an unknown command, `down` without exactly one version, a missing or invalid variable, a connection string the
-driver cannot parse, `down` while `PLATFORM_MIGRATE_ALLOW_DOWN` is not true.
+the lock timed out, the directory is unreadable or holds no migrations, a gap in the chain; and, for `create-first-admin`, a refusal
+that comes from the database's state (an admin already exists, the Supabase login does not exist or has no email). **2** usage or
+configuration error: no command, an unknown command, `down` without exactly one version, a missing or invalid variable, a
+connection string the driver cannot parse, `down` while `PLATFORM_MIGRATE_ALLOW_DOWN` is not true, and a missing, unknown, repeated
+or invalid flag of `create-first-admin`.
+
+## Creating the first admin
+
+```
+platform-migrate create-first-admin --auth-user-id <uuid> --display-name <text>
+```
+
+**Why it exists.** The platform has no admin before the first one is created out of band. An admin is a row of `platform.admins`
+(its `id` is a `public.users.id`), the service's login `platform_app` can only read that table, and there is no admin screen before
+Phase 7, so nobody inside the platform can create the first one. The owner's ruling is a documented setup command that creates it,
+run once by the person who runs the migrations; **managing admins afterwards (more admins, disabling one) stays in Phase 7**, which
+is why this command refuses to create a second.
+
+**Before you run it.** `platform-migrate up` has finished (the command writes tables `up` creates), and the person who will be the
+admin has a Supabase login: create it in the Supabase dashboard under Authentication > Users, give it an email, and copy its id.
+The command never creates, changes or deletes a login, and sets no password.
+
+**Environment.** The same as every command: `PLATFORM_MIGRATE_DATABASE_URL` (the direct connection of the migrating identity). The
+two timeouts apply as they do to a migration file: `PLATFORM_MIGRATE_LOCK_TIMEOUT_SEC` bounds the wait for the table lock below and
+`PLATFORM_MIGRATE_STATEMENT_TIMEOUT_SEC` each statement. No variable is added; the migrations directory and the app password are not
+read.
+
+**Flags** (both required, each once, `--flag value` or `--flag=value`). They are validated **before the command connects**; a bad one
+exits 2, names the flag and the rule, and touches nothing.
+
+| Flag | Rule |
+|---|---|
+| `--auth-user-id` | The id of the Supabase login: a lower-case, hyphenated uuid (8-4-4-4-12 hex digits, letters `a` to `f` in lower case), and not the all-zero uuid (the reserved system user, which has no login). |
+| `--display-name` | The name the admin's actions are recorded under: valid UTF-8, not blank after trimming, no control characters (tab, newline and the like), at most 200 bytes. Stored without leading or trailing space. |
+
+**What it does**, in one transaction as the migrating identity, in this order:
+
+1. `SET LOCAL ROLE platform_owner` first (the migrator is able to, from `platform_0000`): every write runs as the owner of the tables.
+2. `LOCK TABLE platform.admins IN SHARE ROW EXCLUSIVE MODE`. That mode conflicts with itself, so two invocations at once take turns:
+   the second waits (up to the lock timeout) and then finds the first one's admin and refuses. Two invocations can never both succeed.
+3. Refuses if `platform.admins` holds any row at all (a disabled admin counts).
+4. Reads the login's email from `auth.users`. This one read runs as the migrating identity (`SET LOCAL ROLE NONE`, then back to
+   `platform_owner`), because `platform_owner` has no grant on Supabase's `auth` schema. Refuses if there is no such login, or it has no email.
+5. Creates the login's `public.users` row (`id` = `auth_user_id` = the login's id, `email` = the login's email in lower case and
+   trimmed, which the table's `users_email_normalised` check demands, `is_active` true) with `ON CONFLICT (id) DO NOTHING`, then the
+   `platform.admins` row (`id`, `display_name`).
+6. Commits, and only then prints.
+
+**Output.** On success exactly one line on standard output, and nothing secret anywhere:
+
+```
+create-first-admin: created admin <uuid> (<display name>) for <email>
+```
+
+If the login already had a `public.users` row whose email is not the login's current one, the command goes on (the row is never
+rewritten) and prints one `create-first-admin: note: ...` line before the success line.
+
+**Refusals** (each writes nothing: the transaction is rolled back; the message is on standard error as `platform-migrate: FATAL: ...`).
+
+| Exit | When | The message says |
+|---|---|---|
+| 2 | a flag is missing, repeated, unknown or invalid | the flag and the rule (see the table above) |
+| 1 | any row exists in `platform.admins` | that an admin already exists and that the command only creates the FIRST one (admin management is Phase 7) |
+| 1 | `auth.users` has no row with that id | to create the login first (Supabase dashboard > Authentication > Users) and pass its id as `--auth-user-id` |
+| 1 | the login's email is NULL or blank | that the login needs an email |
+| 1 | the database cannot be reached, is not migrated, or the lock timed out | the driver's own error, with a hint to run `up` first or to raise the lock timeout |
+
+If another, different `public.users` row already has the login's email, the insert fails on `users_email_key`, exit 1, nothing written.
+
+**Example.**
+
+```
+$ export PLATFORM_MIGRATE_DATABASE_URL='postgres://postgres:...@db.<project>.supabase.co:5432/postgres'
+$ platform-migrate up
+$ platform-migrate create-first-admin --auth-user-id 123e4567-e89b-12d3-a456-426614174000 --display-name "Ada Boss"
+create-first-admin: created admin 123e4567-e89b-12d3-a456-426614174000 (Ada Boss) for ada@example.com
+$ platform-migrate create-first-admin --auth-user-id 123e4567-e89b-12d3-a456-426614174000 --display-name "Ada Boss"
+platform-migrate: FATAL: an admin already exists, so nothing was written: create-first-admin only creates the FIRST admin (managing admins comes with Phase 7)
+```
+
+**What it does not cover.** It does not take the migration advisory lock, so do not run it while `up` is running (the table lock is what
+serialises two `create-first-admin` runs). It does not check that the login is confirmed, active or the one the owner meant: that is
+the operator's act, and the id is the only link. An existing `public.users` row that is inactive (`is_active` false) is used as it is.
 
 ## Files
 
