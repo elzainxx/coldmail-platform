@@ -131,6 +131,16 @@ fact "select roleid::regrole as member_of, admin_option, inherit_option, set_opt
 echo "  schemas public / auth (owner, privileges):"
 fact "select nspname, pg_get_userbyid(nspowner) as owner, nspacl from pg_namespace where nspname in ('public', 'auth') order by 1"
 echo "  CREATE on the database for postgres:"; fact "select has_database_privilege(current_user, current_database(), 'CREATE') as can_create_in_database"
+# Phase 2 (moving the main harness onto this image): the integration tests need a SUPERUSER connection over TCP (to create scratch databases, SET session_replication_role, read pg_hba) while the
+# migrators run as `postgres`. These are facts, printed so the harness wiring is chosen from measurements and not from memory of the image.
+SUPER_DSN="${DSN/\/\/postgres:/\/\/supabase_admin:}"
+echo "  the image's superuser over TCP with the same password (the harness's test-admin identity):"
+psql -X -w -At -F '|' -v ON_ERROR_STOP=1 -c "select current_user, rolsuper, rolcreatedb from pg_roles where rolname = current_user" "$SUPER_DSN" < /dev/null 2>&1 | sed 's/^/  | /' || true
+echo "  pg_hba rules (superuser only):"
+psql -X -w -At -F '|' -c "select line_number, type, database, user_name, address, auth_method from pg_hba_file_rules order by line_number" "$SUPER_DSN" < /dev/null 2>&1 | sed 's/^/  | /' || true
+echo "  can postgres create and force-drop a scratch database (the scratch-database tests do):"
+{ psql -X -w -At -v ON_ERROR_STOP=1 -c "create database zz_probe_scratch" "$DSN" && psql -X -w -At -v ON_ERROR_STOP=1 -c "drop database zz_probe_scratch with (force)" "$DSN"; } < /dev/null 2>&1 | sed 's/^/  | /' || true
+echo "  does the database already hold roles platform_owner / platform_app / verify_* (a clean image should not):"; fact "select rolname from pg_roles where rolname ~ '^(platform|verify|send_)' order by 1"
 
 # run_file CHAIN FILE — run one SQL file through psql from its own directory (so psql prints the bare file name), classify its stderr, append the records to rec.CHAIN.tsv.
 # Sets RF_FAILS RF_BLK RF_CAS RF_RC RF_PROBLEM. stdout goes to a sidecar file so a result row can never be read as the tail of a statement.

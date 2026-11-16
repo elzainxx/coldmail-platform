@@ -32,9 +32,63 @@ Roadmap and locked decisions: [`coldmail-platform-build-plan.md`](coldmail-platf
 
 ### Charge rules (one pure function)
 
-`internal/charge`: `Decide(module, outcome) → Decision{Kind: Charge | Free | NotFinal | Unmapped, Unit, Reason}`. The table is **derived from module code** (three read-only reports, kept in `Docs/history/p2-research/`) and committed as data (`internal/charge/rules.tsv`, embedded) with one row per outcome; a test compares the Go table with the file, and `scripts/check-charge-table.sh` compares this section with the file, so the prose cannot drift from the code. **An outcome that does not map cleanly is `Unmapped` — flagged here and returned as an error, never guessed.** The table below is filled in chunk B1 (it needs the module reports).
+`internal/charge`: `Decide(Outcome) → Decision{Kind: Charge | Free | NotFinal | Unmapped, Unit, Rule}`. The table is **derived from module code** (three read-only reports, kept in `Docs/history/p2-research/`, every claim with a file and line) and is **data**: `internal/charge/rules.psv`, embedded and parsed, first match wins, one row per outcome. `scripts/check-charge-table.sh` fails when the block below differs from the file by one byte, so the prose cannot drift from the code; a test proves every legal module-1 status/reason pair is matched by an explicit row or by the explicit catch-all, and has one case per row.
 
-*(filled in B1)*
+Meaning of a decision: **charge** = one ledger charge row of that unit at the job's *frozen* price; **free** = final and not charged (no ledger row; the reserved credits come back at release); **notfinal** = not terminal, left unsettled; **unmapped** = *the module's response cannot tell us whether this is an answer or our own failure*. Unmapped is **flagged, not guessed**: nothing is charged, the item is returned to the caller in `SettleResult.Unmapped`, and the credits come back at release. It is the safe side for the customer, and it is a **module gap for the owner's ruling** (open decisions 12–14).
+
+Outcome columns: `state` is M1's `status` or M2's item `state` (or a platform-determined class for module `platform`); `reason` is M1's reason (`*` for M2); `cache` is M1's `flags.from_cache` (never `meta.from_cache`, which is always false in bulk); `skip` is M1's `signals.smtp_skipped_reason` (`none` = absent, `capacity` = one of `no_eligible_node`, `audit_red`, `warmup_cap`, `rate_limited`).
+
+<!-- charge-table:begin -->
+```
+id|module|state|reason|cache|skip|decision|unit|note
+M1-01|m1|*|*|yes|*|charge|m1_cache|answered from the cache, full price: the answer is the value (flags.from_cache, M1-G3)
+M1-02|m1|*|external_verified|no|*|charge|m1_vendor|vendor fallback, the premium unit (UNREACHABLE in the shipped build: buildExternal is nil, M1-G3)
+M1-03|m1|valid|accepted|no|*|charge|m1_own|a probed 2xx with no catch-all
+M1-04|m1|valid|mailbox_full|no|*|charge|m1_own|452/552: the mailbox exists
+M1-05|m1|invalid|no_mx|no|*|charge|m1_own|positive proof: no MX and no A/AAAA
+M1-06|m1|invalid|null_mx|no|*|charge|m1_own|
+M1-07|m1|invalid|spam_trap|no|*|charge|m1_own|
+M1-08|m1|invalid|mailbox_not_found|no|*|charge|m1_own|550/551/553 with an address-fault body
+M1-09|m1|invalid|historical_bounce|no|*|charge|m1_own|flywheel gate (off by default)
+M1-10|m1|invalid|invalid_syntax|no|*|charge|m1_own|never a bulk result (counted malformed at enqueue); mapped for completeness
+M1-11|m1|risky|disposable|no|*|charge|m1_own|
+M1-12|m1|risky|provider_no_smtp|no|*|charge|m1_own|a settled answer: the provider is routed to MX-only by policy
+M1-13|m1|risky|catch_all|no|*|charge|m1_own|
+M1-14|m1|risky|non_public_mx|no|*|charge|m1_own|no probe was made, the verdict comes from DNS facts
+M1-15|m1|risky|plausible|no|capacity|free||OUR capacity failure settled as risky/plausible (M1-G5): no node, audit red, warmup cap, rate limit
+M1-16|m1|risky|plausible|no|none|charge|m1_own|no skip token: cheap-layers answer (CAVEAT M1-G6: indistinguishable from SMTP being unwired at boot)
+M1-17|m1|unknown|greylisted|no|*|charge|m1_own|a genuine remote answer (in bulk: retries exhausted); not our own failure, so charged by the locked rule
+M1-18|m1|unknown|dns_error|no|*|unmapped||lookup failure: our resolver or the domain's servers cannot be told apart (M1-G4)
+M1-19|m1|unknown|smtp_timeout|no|*|unmapped||shares its reason between our node failure and a remote timeout (M1-G4)
+M1-20|m1|unknown|smtp_error|no|*|unmapped||shares its reason between our node failure and a remote error (M1-G4)
+M1-21|m1|unknown|connection_failed|no|*|unmapped||shares its reason between our egress/node failure and a remote refusal (M1-G4)
+M1-22|m1|unknown|smtp_blocked|no|*|unmapped||a remote policy rejection that can be OUR IP reputation (M1-G4)
+M1-99|m1|*|*|*|*|unmapped||any other pair, including every reason the pinned module can legally name but never emits
+M2-01|m2|sent|*|*|*|charge|m2_accepted|250 after DATA with a provider message id
+M2-02|m2|bounced|*|*|*|charge|m2_bounced|550/551/553 at RCPT: the work was done, the bad address is the user's list (M2-G4: includes relay policy 550s)
+M2-03|m2|failed|*|*|*|free||pool exhaustion is the ONLY writer of failed (M2-G2): our failure
+M2-04|m2|queued|*|*|*|notfinal||every SMTP failure that is not a hard bounce stays queued, uncapped (M2-G2)
+M2-05|m2|assigned|*|*|*|notfinal||
+M2-06|m2|sending|*|*|*|notfinal||
+M2-99|m2|*|*|*|*|unmapped||a state the pinned module does not define
+M3-01|m3|*|*|*|*|free||module 3 is not metered: entitlements, not credits
+P-01|platform|cancelled|*|*|*|free||cancelled by the user or an admin: work not done
+P-02|platform|expired|*|*|*|free||a scheduled job or entitlement expired: work not done
+P-03|platform|quarantined|*|*|*|free||quarantined by the platform: work not done
+P-04|platform|infrastructure_failure|*|*|*|free||our own failure (module outage, platform crash window)
+P-05|platform|pool_exhausted|*|*|*|free||no sending capacity: our own failure
+P-06|platform|smtp_login_rejected|*|*|*|free||the user's own SMTP rejected the login: nothing reached the outside world
+```
+<!-- charge-table:end -->
+
+**What does not map, and why (module gaps for your ruling — none changed from here; the module reports with file:line are in `Docs/history/p2-research/`):**
+- **M1-G1** a bulk result carries **no per-item id and no address**, so a verdict cannot be attributed to an input row; the platform can only settle a *complete* job over one full paginated read, with `item_ref = <job>:<ordinal>` (stable once complete, unattributable). The P4 exit "settlement matches the module report item by item" cannot hold for M1 until M1 returns an item id.
+- **M1-G2** M1's dedup is **global and permanent across jobs and owners** (`work_items.idempotency_key` UNIQUE, `ON CONFLICT DO NOTHING`): an address any tenant ever enqueued gets **no result** in a later job; the comment says "still-pending identical check", the constraint says forever. Rows 'duplicate' are never charged (no outcome exists), and the customer receives no verdict for them.
+- **M1-G3** provenance: cache is readable (`flags.from_cache`); the vendor path never runs in the shipped binary (`m1_vendor` is unreachable today); own-probe versus cheap-layers is not exposed and does not matter (both are `m1_own`).
+- **M1-G4** `unknown/dns_error|smtp_timeout|smtp_error|connection_failed|smtp_blocked` cannot be split into *our failure* and *a genuine answer* (rows M1-18..22): **unmapped**, proposal: M1 adds a `signals.failure_origin = own|remote` discriminator; until then they are never charged.
+- **M1-G5** our capacity failures settle as `risky/plausible` with a skip token, **not** `unknown`: charged by a naive filter on `unknown`; row M1-15 catches the four tokens. **M1-G6** `risky/plausible` without a token cannot show that SMTP was unwired at boot (charged, caveat recorded). **M1-G7** some failures never settle at all (decrypt/compute errors requeue forever; no terminal state).
+- **M2-G1/G2** the report has no reason or error class and a generic failure stays `queued` **with no retry cap**: a permanently failing item is never terminal, so it is never charged and the platform needs its own staleness policy (P4). **M2-G3** M2 has **no cancel route**: a platform-cancelled job leaves M2 items queued and they may still send (P4). **M2-G5** the campaign report's pagination skips one item per page boundary (settle per item, or campaigns ≤ the page size).
+- The five not-charged classes of the build plan are rows P-01..P-06 and M2-03/M1-15; "M1 `unknown` from our own failure" is only partly separable (M1-G4).
 
 ### Design (what is built and why)
 
