@@ -23,6 +23,11 @@ on:
         required: true
         default: 'p1'
         type: string
+      only:
+        description: 'Optional comma-separated gate names: run only those legs (for re-proving a leg whose message was wrong); every name must have an .expect'
+        required: false
+        default: ''
+        type: string
       min_legs:
         description: 'Fail unless at least this many legs (.expect files) exist'
         required: true
@@ -46,6 +51,7 @@ jobs:
         env:
           PHASE: ${{ inputs.phase }}
           MIN_LEGS: ${{ inputs.min_legs }}
+          ONLY: ${{ inputs.only }}
         run: |
           set -u
           case "$PHASE" in ''|*[!a-z0-9_-]*) echo "::error::phase '$PHASE' must match [a-z0-9_-]+"; exit 1;; esac
@@ -58,10 +64,12 @@ jobs:
           for f in "$dir"/*.expect; do
             [ -f "$f" ] || continue
             g="${f##*/}"; g="${g%.expect}"
+            if [ -n "$ONLY" ]; then case ",$ONLY," in *",$g,"*) ;; *) continue;; esac; fi
             case "$g" in ''|[!a-z0-9]*|*[!a-z0-9_-]*) echo "::error::$f: the gate name '$g' must match [a-z0-9][a-z0-9_-]*"; exit 1;; esac
             [ "$n" -eq 0 ] || json="$json,"
             json="$json\"$g\""; n=$((n + 1))
           done
+          if [ -n "$ONLY" ]; then want=$(printf '%s' "$ONLY" | awk -F, '{print NF}'); [ "$n" -eq "$want" ] || { echo "::error::only='$ONLY' names $want gate(s) but $n have an .expect in $dir"; exit 1; }; fi
           json="$json]"
           echo "legs found: $n (floor $min): $json"
           if [ "$n" -lt 1 ] || [ "$n" -lt "$min" ]; then
