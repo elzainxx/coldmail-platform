@@ -14,3 +14,6 @@ a47dd609|agent id: module-comparison verification agent (never returned, unanswe
 # A commit of the PRIVATE PARENT repository (elzainxx/coldmail, 2026-11-07 "Re-pin all four modules: force LF line endings"). The parent is not one of the four repositories
 # this check resolves against and no deploy key is issued for it, so CI cannot resolve it; it was verified from the parent's own clone on 2026-11-14.
 1a6536b|commit of the private parent repository (outside the four-repository layout)
+# The platform's two constant advisory-lock keys (decimal numbers that read as hex to the checker): the migrator's lock and the loop leader's lock (Docs/install.md names them in a SQL query).
+7100000001|the migrator's advisory-lock key (internal/migrate)
+7200000002|the loop leader's advisory-lock key (internal/entitlements, LeaderLockKey)
