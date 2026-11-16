@@ -1,0 +1,9 @@
+# The secret scanner's configuration may hold only decided, narrow exceptions (one rule; a path under audit-scratch or ONE existing commit): never a pattern over content. The fault adds an exception
+# by REGEX, which would hide anything matching it from the scan; the gate must name it. The control is the real configuration, which must be green.
+GATE=gitleaks-config
+TARGET=platform
+SETUP=
+STEP=check-gitleaks-config on the real repository
+CMD=bash scripts/check-gitleaks-config.sh
+MESSAGE=regexes, stopwords or disabledRules are configured
+MESSAGE=check-gitleaks-config: RED

@@ -17,3 +17,18 @@ useDefault = true
 description = "request ids / worker ids / error-reason names in the cited run logs (not secrets)"
 targetRules = ["generic-api-key"]
 paths = ['''(^|/)Docs/history/audit-scratch/.*\.log$''']
+
+# The SECOND exception (Phase 2): ONE rule, ONE commit.
+#
+# Commit 355299a6c605a2ca0601bf58afb0e0468d7fccb0 added tests/harness/m3_live_test.go. Its line 201 is a JSON map entry `"smtp_secret": "m3-live-harness"`: the PLACEHOLDER password that module 3's
+# account-creation route requires for the SMTP sink in the harness (Mailpit runs with MP_SMTP_AUTH_ACCEPT_ANY, so any value is accepted and nothing is protected by it; it exists only inside a private,
+# `internal: true` Docker network that lives for one CI run). `generic-api-key` flags it because the key name says "secret" and the value has entropy 3.5.
+# Read in full on 2026-11-16: it is the ONLY finding of the whole history (68 commits), and the commit holds no other.
+#
+# Why an allowlist and not a history rewrite or a .gitleaksignore line: the owner's rules for this phase forbid GitHub deletions (a force-push drops commits), and .gitleaksignore must stay EMPTY (a gate
+# fails on any entry). Why this is not a hole: the allowlist names one immutable commit, so nothing added later is covered by it; it targets one rule, so every other rule still runs on that commit; and
+# scripts/check-gitleaks-config.sh (workflow `gates`) fails on any other shape of exception and on a commit that is not in this repository's history.
+[[allowlists]]
+description = "placeholder SMTP-sink password in the harness's live module-3 test (commit 355299a6): not a secret"
+targetRules = ["generic-api-key"]
+commits = ["355299a6c605a2ca0601bf58afb0e0468d7fccb0"]
