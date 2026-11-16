@@ -1,0 +1,7 @@
+# A reserve settles at its FROZEN cost after unit_costs changes. The fault makes settlement read the current price table instead of the job's snapshot; the test that changes the vendor price after the reserve must go red.
+GATE=frozen-cost
+TARGET=platform
+SETUP=
+STEP=go test TestMoneyStore_SettlesAtItsFrozenCost (database integration test, real Postgres)
+CMD=H_PG_ADMIN_DSN="$FAULT_ADMIN_DSN" bash tests/harness/run-db-tests.sh '^TestMoneyStore_SettlesAtItsFrozenCost$'
+MESSAGE=--- FAIL: TestMoneyStore_SettlesAtItsFrozenCost

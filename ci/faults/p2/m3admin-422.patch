@@ -1,0 +1,11 @@
+--- a/internal/m3admin/m3admin.go
++++ b/internal/m3admin/m3admin.go
+@@ -243,7 +243,7 @@
+ 		return c.confirmChange(op, userID, suspended, r)
+ 	case http.StatusUnprocessableEntity:
+ 		env := parseEnvelope(r)
+-		if !env.conflict {
++		if false && !env.conflict {
+ 			return Result{}, c.retryable(op, r.status,
+ 				"a 422 without the documented {field: suspended, issue: conflict} detail"+c.where(env))
+ 		}

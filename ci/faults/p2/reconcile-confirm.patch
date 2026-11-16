@@ -1,0 +1,11 @@
+--- a/internal/entitlements/reconcile.go
++++ b/internal/entitlements/reconcile.go
+@@ -401,7 +401,7 @@
+ 	case want:
+ 		return verdict{kind: outConverged, state: want, changed: res.Changed}
+ 	case m3admin.StateSuspended, m3admin.StateActive:
+-		return verdict{kind: outMismatch, state: res.State,
++		return verdict{kind: outConverged, state: res.State,
+ 			text: fmt.Sprintf("module 3 answered %q but the wanted state is %q: the answer is not trusted", string(res.State), string(want))}
+ 	}
+ 	return verdict{kind: outFailed, text: "module 3 answered with a state this platform does not recognise"}

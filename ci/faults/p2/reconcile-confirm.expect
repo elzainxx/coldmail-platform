@@ -1,0 +1,7 @@
+# The reconciler judges convergence in ONE place: only an answer equal to the wanted state converges. The fault makes a contradicting answer count as converged; the test with a fake module 3 that answers the wrong state must go red.
+GATE=reconcile-confirm
+TARGET=platform
+SETUP=
+STEP=go test TestEntReconcile_AWrongAnswerIsAFailureNotAConvergence (database integration test, real Postgres)
+CMD=H_PG_ADMIN_DSN="$FAULT_ADMIN_DSN" bash tests/harness/run-db-tests.sh '^TestEntReconcile_AWrongAnswerIsAFailureNotAConvergence$'
+MESSAGE=--- FAIL: TestEntReconcile_AWrongAnswerIsAFailureNotAConvergence

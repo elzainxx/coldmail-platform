@@ -1,0 +1,10 @@
+--- a/db/migrations/platform_0005_money_core.up.sql
++++ b/db/migrations/platform_0005_money_core.up.sql
+@@ -76,7 +76,6 @@
+ END
+ $fn$;
+ COMMENT ON FUNCTION platform.ledger_check_reserve() IS 'SECURITY DEFINER (owner platform_owner): reads the price snapshot and unit costs, which a role may not row-lock. Refuses a reserve that is not at the dearest frozen price of a complete snapshot.';
+-CREATE TRIGGER ledger_check_reserve BEFORE INSERT ON platform.ledger FOR EACH ROW WHEN (NEW.kind = 'reserve') EXECUTE FUNCTION platform.ledger_check_reserve();
+ REVOKE ALL ON FUNCTION platform.ledger_check_reserve() FROM PUBLIC;
+ 
+ -- ── 4. what each reserve held, charged and released: written only by the ledger trigger ────────────────────────────────────────────────────────────────────────

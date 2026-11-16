@@ -1,0 +1,21 @@
+--- a/internal/money/money.go
++++ b/internal/money/money.go
+@@ -102,7 +102,7 @@
+ 
+ // lock takes the (user, module) advisory lock for the rest of the transaction. It waits for any other holder.
+ func (s *Store) lock(ctx context.Context, tx pgx.Tx, user, module string) error {
+-	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", lockKey(user, module)); err != nil {
++	if _, err := tx.Exec(ctx, "SELECT $1::bigint", lockKey(user, module)); err != nil {
+ 		return s.fail(err, pgCtx{})
+ 	}
+ 	return nil
+--- a/db/migrations/platform_0002_registry_and_money.up.sql
++++ b/db/migrations/platform_0002_registry_and_money.up.sql
+@@ -207,7 +207,6 @@
+     reserved   bigint      NOT NULL DEFAULT 0,
+     updated_at timestamptz NOT NULL DEFAULT now(),
+     CONSTRAINT balances_pk PRIMARY KEY (user_id, module_id),
+-    CONSTRAINT balances_available_not_negative CHECK (available >= 0),
+     CONSTRAINT balances_reserved_not_negative CHECK (reserved >= 0),
+     CONSTRAINT balances_module_is_metered_fk FOREIGN KEY (module_id, metered) REFERENCES platform.modules (id, metered)
+ );

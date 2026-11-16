@@ -1,0 +1,11 @@
+--- a/internal/money/jobs.go
++++ b/internal/money/jobs.go
+@@ -71,7 +71,7 @@
+ 
+ // jobPrices reads the job's FROZEN price snapshot (platform.job_unit_prices). Settlement reads this and never platform.unit_costs.
+ func (s *Store) jobPrices(ctx context.Context, tx pgx.Tx, jobID string) (map[string]int, error) {
+-	rows, err := tx.Query(ctx, `SELECT unit, cost FROM platform.job_unit_prices WHERE job_id = $1::uuid`, jobID)
++	rows, err := tx.Query(ctx, `SELECT unit, cost FROM platform.unit_costs WHERE module_id = (SELECT module_id FROM platform.jobs WHERE id = $1::uuid)`, jobID)
+ 	if err != nil {
+ 		return nil, s.fail(err, pgCtx{})
+ 	}

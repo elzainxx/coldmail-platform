@@ -82,7 +82,7 @@ var roleStatements = []roleStmt{
 	{"platform.ledger", "INSERT", `INSERT INTO platform.ledger (user_id, module_id, kind, available_delta, acting_admin_id, reason, idempotency_key) VALUES ({U1}, 'm1', 'grant', 7, {ADM}, 'roles proof', 'roles-proof-insert')`, "", "", ""},
 	{"platform.ledger", "UPDATE", `UPDATE platform.ledger SET reason = 'tampered'`, "23001", "append-only", ""},
 	{"platform.ledger", "DELETE", `DELETE FROM platform.ledger`, "23001", "append-only", ""},
-	{"platform.ledger", "TRUNCATE", `TRUNCATE platform.ledger`, "23001", "append-only", ""},
+	{"platform.ledger", "TRUNCATE", `TRUNCATE platform.ledger CASCADE`, "23001", "append-only", ""},
 
 	// platform_0006: nobody but the ledger trigger writes the entitlements, so every write is refused to both roles (the superuser's result is stated for each: its DELETE is stopped by the
 	// delivery row that references the entitlement, and its TRUNCATE needs CASCADE for the same reason)

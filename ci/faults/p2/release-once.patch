@@ -1,0 +1,10 @@
+--- a/db/migrations/platform_0005_money_core.up.sql
++++ b/db/migrations/platform_0005_money_core.up.sql
+@@ -47,7 +47,6 @@
+ 
+ -- ── 2. one reserve per job; one release per reserve ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ CREATE UNIQUE INDEX ledger_one_reserve_per_job ON platform.ledger (job_id) WHERE kind = 'reserve';
+-CREATE UNIQUE INDEX ledger_one_release_per_reserve ON platform.ledger (reserve_id) WHERE kind = 'release';
+ COMMENT ON INDEX platform.ledger_one_reserve_per_job IS 'A job holds credits once: reserve at confirm, exactly one reserve row.';
+ COMMENT ON INDEX platform.ledger_one_release_per_reserve IS 'The unused remainder of a reserve is returned once.';
+ 

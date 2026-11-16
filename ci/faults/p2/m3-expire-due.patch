@@ -1,0 +1,11 @@
+--- a/db/migrations/platform_0006_m3_entitlement_flow.up.sql
++++ b/db/migrations/platform_0006_m3_entitlement_flow.up.sql
+@@ -37,7 +37,7 @@
+         -- the automatic end: only an enabled entitlement whose date has passed (by the ledger row's own timestamp, the database's clock) may expire
+         UPDATE platform.m3_entitlements
+            SET enabled = false, enabled_until = NULL, changed_by = NULL, changed_at = NEW.created_at
+-         WHERE user_id = NEW.user_id AND enabled AND enabled_until IS NOT NULL AND enabled_until <= NEW.created_at;
++         WHERE user_id = NEW.user_id AND enabled AND enabled_until IS NOT NULL;
+         IF NOT FOUND THEN
+             RAISE EXCEPTION 'user % has no enabled entitlement that is due to expire: an entitlement is not expired early or twice', NEW.user_id
+                 USING ERRCODE = '23514', CONSTRAINT = 'm3_expire_is_due';

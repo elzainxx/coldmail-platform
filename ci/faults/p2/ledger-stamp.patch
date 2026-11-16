@@ -1,0 +1,10 @@
+--- a/db/migrations/platform_0005_money_core.up.sql
++++ b/db/migrations/platform_0005_money_core.up.sql
+@@ -32,7 +32,6 @@
+ END
+ $fn$;
+ COMMENT ON FUNCTION platform.ledger_stamp_created_at() IS 'Forces ledger.created_at to the database''s transaction timestamp, whatever the writer supplied.';
+-CREATE TRIGGER ledger_stamp_created_at BEFORE INSERT ON platform.ledger FOR EACH ROW EXECUTE FUNCTION platform.ledger_stamp_created_at();
+ REVOKE ALL ON FUNCTION platform.ledger_stamp_created_at() FROM PUBLIC;
+ 
+ -- ── 1. one unit, one job item, one charge ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

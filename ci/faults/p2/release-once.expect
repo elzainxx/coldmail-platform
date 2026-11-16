@@ -1,0 +1,7 @@
+# A reserve's remainder is returned exactly once. The fault drops the unique index on releases; a second release for the same reserve is then not refused by the database.
+GATE=release-once
+TARGET=platform
+SETUP=
+STEP=go test TestMoneySchema_ReleaseIsTheRemainder (database integration test, real Postgres)
+CMD=H_PG_ADMIN_DSN="$FAULT_ADMIN_DSN" bash tests/harness/run-db-tests.sh '^TestMoneySchema_ReleaseIsTheRemainder$'
+MESSAGE=--- FAIL: TestMoneySchema_ReleaseIsTheRemainder

@@ -1,0 +1,7 @@
+# The ledger's clock is the database's: a writer-supplied created_at is overwritten. The fault removes the stamping trigger; the supplied value is then kept.
+GATE=ledger-stamp
+TARGET=platform
+SETUP=
+STEP=go test TestMoneySchema_CreatedAtIsTheDatabasesClock (database integration test, real Postgres)
+CMD=H_PG_ADMIN_DSN="$FAULT_ADMIN_DSN" bash tests/harness/run-db-tests.sh '^TestMoneySchema_CreatedAtIsTheDatabasesClock$'
+MESSAGE=--- FAIL: TestMoneySchema_CreatedAtIsTheDatabasesClock

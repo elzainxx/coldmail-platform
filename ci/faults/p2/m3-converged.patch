@@ -1,0 +1,11 @@
+--- a/db/migrations/platform_0006_m3_entitlement_flow.up.sql
++++ b/db/migrations/platform_0006_m3_entitlement_flow.up.sql
+@@ -74,7 +74,7 @@
+     CONSTRAINT m3_sync_converged_only_when_observed CHECK (
+         converged_version < want_version
+         OR (want_suspended AND observed = 'suspended')
+-        OR (NOT want_suspended AND observed = 'active'))
++        OR (NOT want_suspended AND observed = 'active') OR true)
+ );
+ COMMENT ON TABLE platform.m3_sync IS 'Delivery of each entitlement to module 3. want_* is raised by a trigger when the entitlement changes; the reconcile loop records what module 3 answered (observed) and may set converged_version = want_version only while observed equals the wanted state (m3_sync_converged_only_when_observed): the platform never reports a state module 3 was not seen to be in.';
+ COMMENT ON COLUMN platform.m3_sync.want_suspended IS 'true when the entitlement is disabled or expired: module 3''s per-user suspend must be in force.';

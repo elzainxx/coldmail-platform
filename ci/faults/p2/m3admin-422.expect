@@ -1,0 +1,7 @@
+# The M3 admin client trusts a 422 as 'already in that state' ONLY when it carries the documented conflict detail. The fault accepts any 422; the unit test with a bare 422 must go red.
+GATE=m3admin-422
+TARGET=platform
+SETUP=
+STEP=go test TestSuspend_422WithoutConflictDetail_IsAnError (unit test, no database)
+CMD=GOTOOLCHAIN=local go test -count=1 -v -run '^TestSuspend_422WithoutConflictDetail_IsAnError$' ./internal/m3admin/
+MESSAGE=--- FAIL: TestSuspend_422WithoutConflictDetail_IsAnError

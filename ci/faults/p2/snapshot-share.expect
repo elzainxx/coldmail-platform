@@ -1,0 +1,7 @@
+# The snapshot equals unit_costs at that instant because a price change waits for the reserve transaction. The fault drops the FOR SHARE lock; the price change is then not blocked and the test must say so.
+GATE=snapshot-share
+TARGET=platform
+SETUP=
+STEP=go test TestMoneyStore_SnapshotEqualsTheTableAtThatInstant (database integration test, real Postgres)
+CMD=H_PG_ADMIN_DSN="$FAULT_ADMIN_DSN" bash tests/harness/run-db-tests.sh '^TestMoneyStore_SnapshotEqualsTheTableAtThatInstant$'
+MESSAGE=--- FAIL: TestMoneyStore_SnapshotEqualsTheTableAtThatInstant
