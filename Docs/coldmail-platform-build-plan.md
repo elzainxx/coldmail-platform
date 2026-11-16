@@ -12,7 +12,7 @@ Ordering principle: the most irreversible parts and the contract test come first
 |---|---|
 | P0 Groundwork | **done** — platform `main` @ `a6709c9`, all six workflows green: [harness run 43731666838](https://github.com/elzainxx/coldmail-platform/actions/runs/43731666838) (the three modules built from their pins, probe 42/42, exposure, outage). Spec and evidence: [`phase-0-spec.md`](phase-0-spec.md) |
 | P1 Schema | **done** — platform `main` @ `6565cd8`, every workflow green: [harness run 43774222470](https://github.com/elzainxx/coldmail-platform/actions/runs/43774222470) (module 1 moved into its own `verify` schema and running as `verify_app`; the three modules built from their pins against the platform's real `public.users` / `public.job_items`; 76/76 harness tests; probe 42/42). Spec, evidence and open decisions: [`phase-1-spec.md`](phase-1-spec.md) |
-| P2 Money core | **in progress** — Part A (the Phase 1 rulings) first, then the money core; spec: [`phase-2-spec.md`](phase-2-spec.md) |
+| P2 Money core | **in progress** — Part A (the Phase 1 rulings) **done** (platform `e5c58f4`, all eight workflows green on the Supabase image; [harness 43928798128](https://github.com/elzainxx/coldmail-platform/actions/runs/43928798128)); Part B (the money core) next; spec: [`phase-2-spec.md`](phase-2-spec.md) |
 | P3 Module integration | not started |
 | P4 Job engine | not started |
 | P5 Templates and rendering | not started |
