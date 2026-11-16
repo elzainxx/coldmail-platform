@@ -8,4 +8,4 @@
 +platform-migrate first-admin --auth-user-id <the login's id> --display-name "<name>"
  ```
  
- It creates the `public.users` row and the `platform.admins` row in one transaction, as the privileged migrating identity, and **refuses when any admin already exists** (admin management is built in Phase 7; until then more admins are added out of band by the owner). It refuses an unknown login, a blank name and the all-zero system user.
+ It creates the `public.users` row and the `platform.admins` row in one transaction, as the privileged migrating identity, and **refuses when any admin already exists** (admin management is built in Phase 7; until then more admins are added out of band by the owner). It refuses an unknown login, a blank name and the all-zero system user, and it refuses a login whose platform user already exists and is **inactive** (reactivate that user first, or use a different login; the command never reactivates anyone).
