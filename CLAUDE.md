@@ -41,18 +41,27 @@ The platform is the product users and the admin touch. The three modules do the 
 15. **The platform fits the module tables as built.** The shape of `public.users` and `public.job_items` is derived from module CODE (`db/module-reads.txt`); every module statement against them is executed as that module's role in the harness. A column no module reads must be nullable or defaulted; the platform grants the module roles nothing and never deletes from either table.
 16. **Migrations that create objects run `SET LOCAL ROLE platform_owner`** (the migrator is made able to by `platform_0000`), so ownership needs no ALTER step; the one exception is the public tables, which need CREATE on `public` and are re-owned.
 
+## Rules added in Phase 2
+
+17. **The install runs on the image CI runs.** `harness`, `db-tests` and `supabase` use the digest-pinned `supabase/postgres`; every migrator connects as the non-superuser `postgres` after the required provisioning step `db/install/preprovision.sql` (`Docs/install.md`, gate `check-install-doc`); only the integration tests use the image's superuser `supabase_admin`, and only to prove a refusal bites or to build scratch databases.
+18. **One writer per derived fact, and it is the ledger.** `platform.balances`, `platform.reserves` and `platform.m3_entitlements` are written only by triggers on `platform.ledger`; the application roles cannot write them; a recompute (`balance_drift`, `reserve_overdrawn`, a test per table) proves it. The ledger's own `created_at` is the database's (`ledger_stamp_created_at`).
+19. **Money writers of one (user, module) serialise on one advisory lock** in the platform band (`internal/money`'s `LockKey`), taken first in every money transaction; the database CHECKs stay as the second wall; concurrency tests force the interleave and prove both backends blocked.
+20. **An outcome that does not map cleanly is flagged, never guessed.** The charge table is data (`internal/charge/rules.psv`), mirrored byte for byte in `Docs/phase-2-spec.md` (`check-charge-table`); `unmapped` is never charged and is reported to the caller.
+21. **The platform never reports a module-3 state module 3 was not seen to be in.** `platform.m3_sync` refuses `converged_version = want_version` unless `observed` equals the wanted state; module 3 has no read route, so its POST answer (200 changed, 422 conflict already) is the confirmation.
+22. **Money and entitlement operations are idempotent per business key, enforced by the database** (a unique index per job item for charges, one reserve per job, one release per reserve), not only by the idempotency key code derives.
+
 ## Repository layout
 
 | Path | What |
 |---|---|
-| `cmd/platform`, `internal/…` | the Go service (`internal/config`, `logging`, `httpapi`, `server`, `app`, `dsnscrub`, `migrate`, `probe`) — one Go module at the repository root, `github.com/coldmail-platform/platform` |
+| `cmd/platform`, `internal/…` | the Go service (`internal/config`, `logging`, `httpapi`, `server`, `app`, `dsnscrub`, `migrate`, `probe`, and since Phase 2 `money` (grant, reserve, settle, release, adjust), `charge` (the charge table as data), `entitlements` (M3 enable/disable/expiry and the reconcile loop), `m3admin` (module 3's suspend client)) — one Go module at the repository root, `github.com/coldmail-platform/platform` |
 | `cmd/platform-migrate` | the migration runner (`up`, `down`, `status`, `set-app-password`, `up-and-set-password`) and the one-time setup command `create-first-admin` (Docs/migrator-reference.md) |
 | `cmd/platform-probe` | the Phase 0 end-to-end caller (platform → each module's health, readiness, describe) |
 | `db/migrations/platform_NNNN_*.{up,down}.sql` | the `platform` schema, three roles, tracking table. No business tables before Phase 1 |
 | `web/` | React + TypeScript + Tailwind (Vite). A placeholder page only until Phase 6 |
 | `tests/harness/` | the real-infrastructure harness: `run.sh`, `docker-compose.yml`, the module-1 Dockerfile, the integration tests (`*_test.go`, tag `harness`), the exposure check |
 | `tests/floors-go.txt`, `floors-web.txt`, `floors-harness.txt` | the per-package test-count floors |
-| `scripts/` | the gates and their selftests: `check-test-floors`, `check-image-pins`, `check-migrations`, `check-gitleaksignore`, `check-public-schema` (+ `public-schema-listing.sql`), `check-fault-patches`, `check-balance-invariant`, `check-module-reads`, `check-install-doc` (Docs/install.md), `check-user-lists` (+ `tests/user-list-exceptions.txt`: platform code lists users only through `platform.listable_users`, never `SELECT … FROM public.users`) |
+| `scripts/` | the gates and their selftests: `check-test-floors`, `check-image-pins`, `check-migrations`, `check-gitleaksignore`, `check-public-schema` (+ `public-schema-listing.sql`), `check-fault-patches`, `check-balance-invariant`, `check-module-reads`, `check-install-doc` (Docs/install.md), `check-user-lists` (+ `tests/user-list-exceptions.txt`: platform code lists users only through `platform.listable_users`, never `SELECT … FROM public.users`), `check-charge-table` (`internal/charge/rules.psv` equals the fenced charge table in `Docs/phase-2-spec.md` byte for byte, and charges only the units `platform_0002` seeds) |
 | `db/module-reads.txt`, `db/module-statements.txt` | what modules 2 and 3 require of `public.users` / `public.job_items`, derived from their code (columns; the exact statements), and the drift gate that fails when a pinned module starts referencing something not listed |
 | `ci/faults/<phase>/` | fault proofs: a `.patch` and a `.expect` per gate, run by the `fault-proofs` workflow (`ci/faults/README.md`); `ci/faults-archive/` holds the Phase 0 diffs (a record) |
 | `tests/supabase/` | the Supabase-shaped migration job: every migration as the non-superuser `postgres` of a digest-pinned `supabase/postgres`, blockers compared with committed lists |

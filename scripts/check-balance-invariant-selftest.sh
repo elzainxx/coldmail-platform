@@ -186,22 +186,22 @@ expect "--psql-cmd: a drift row is RED the same way" 1 "BALANCE DRIFT: user $U1 
 
 # ============================ --exercise: fixtures written through the ledger, then the views ============================
 reset_fake; put exercise.out "FIXTURE|$U1|$U2|0a000000-0000-0000-0000-000000000001
-EXERCISED|6
-BALANCE|993|0
+EXERCISED|11
+BALANCE|291|0
 ROLLED_BACK
 "
 run --dsn "postgres://u@h/db" --exercise
-expect "exercise, views empty: green, and says how many ledger rows it exercised" 0 "check-balance-invariant: OK" "exercised 6 ledger row(s)" "rolled back" "[live exercise]" "available|reserved = 993|0"
+expect "exercise, views empty: green, and says how many ledger rows it exercised" 0 "check-balance-invariant: OK" "exercised 11 ledger row(s)" "rolled back" "[live exercise]" "available|reserved = 291|0"
 assert "exercise: the SQL runs as ONE transaction that is rolled back: starts BEGIN;, has ROLLBACK;, has no COMMIT" bash -c 'f="$1/stdin"; [ "$(head -n 1 "$f")" = "BEGIN;" ] && grep -q "^ROLLBACK;" "$f" && ! grep -Eiq "(^|[^A-Za-z_])(COMMIT|END)[; ]" "$f"' _ "$T/fake"
 assert "exercise: the existence check ran first, then the exercise, and nothing else" test "$(cat "$T/fake/kinds")" = "$(printf 'views\nexercise')"
-reset_fake; put exercise.out "EXERCISED|6
+reset_fake; put exercise.out "EXERCISED|11
 BALANCE|-1|-1
 DRIFT|$U1|m1|0|1000|0|0
 ROLLED_BACK
 "
 run --dsn "postgres://u@h/db" --exercise
 expect "exercise, balance trigger disabled (no balance row, ledger 1000): RED, naming the stored and ledger values" 1 "BALANCE DRIFT: user $U1 module m1: stored available 0 vs ledger 1000, stored reserved 0 vs ledger 0" "[live exercise]"
-reset_fake; put exercise.out "EXERCISED|6
+reset_fake; put exercise.out "EXERCISED|11
 BALANCE|90|10
 OVERDRAWN|3|$U1|m1|j1|10|12
 ROLLED_BACK
@@ -212,17 +212,22 @@ reset_fake; put exercise.out "EXERCISED|3
 ROLLED_BACK
 "
 run --dsn "postgres://u@h/db" --exercise
-expect "exercise that exercised only 3 ledger rows: RED, an exercise that exercised nothing" 1 "the exercise wrote only 3 ledger row(s) (floor 5)" "an exercise that exercised nothing proves nothing"
-reset_fake; put exercise.out "EXERCISED|5
+expect "exercise that exercised only 3 ledger rows: RED, an exercise that exercised nothing" 1 "the exercise wrote only 3 ledger row(s) (floor 11)" "an exercise that exercised nothing proves nothing"
+reset_fake; put exercise.out "EXERCISED|11
 ROLLED_BACK
 "
 run --dsn "postgres://u@h/db" --exercise
-expect "exercise at the floor (5 rows) is accepted" 0 "exercised 5 ledger row(s)"
+expect "exercise at the floor (11 rows) is accepted" 0 "exercised 11 ledger row(s)"
+reset_fake; put exercise.out "EXERCISED|10
+ROLLED_BACK
+"
+run --dsn "postgres://u@h/db" --exercise
+expect "exercise one row below the floor (10 rows: a statement of the exercise did not run) is RED" 1 "the exercise wrote only 10 ledger row(s) (floor 11)"
 reset_fake; put exercise.out "ROLLED_BACK
 "
 run --dsn "postgres://u@h/db" --exercise
 expect "exercise that printed no row count: RED" 1 "the exercise printed no ledger-row count"
-reset_fake; put exercise.out "EXERCISED|6
+reset_fake; put exercise.out "EXERCISED|11
 "
 run --dsn "postgres://u@h/db" --exercise
 expect "exercise whose ROLLBACK marker never appeared: RED" 1 "the exercise never printed ROLLED_BACK"
@@ -237,11 +242,11 @@ VIEW|reserve_overdrawn|0
 run --dsn "postgres://u@h/db" --exercise
 expect "exercise against a database with a missing view: RED before anything is written" 1 "found no platform.reserve_overdrawn view: the instrument matched nothing"
 assert "  ...and the exercise SQL was never sent" test "$(cat "$T/fake/kinds")" = "views"
-reset_fake; put exercise.out "EXERCISED|6
+reset_fake; put exercise.out "EXERCISED|11
 ROLLED_BACK
 "
 run --psql-cmd "$T/bin/fakecmd --via-container" --exercise
-expect "exercise through --psql-cmd: the whole script goes on STDIN" 0 "exercised 6 ledger row(s)"
+expect "exercise through --psql-cmd: the whole script goes on STDIN" 0 "exercised 11 ledger row(s)"
 assert "  ...the first line on stdin is BEGIN;" test "$(head -n 1 "$T/fake/stdin")" = "BEGIN;"
 
 # ============================ the exercise SQL itself (static) ============================
@@ -250,6 +255,12 @@ assert "print-exercise-sql: exits 0 and prints a transaction: BEGIN; first, ROLL
 assert "print-exercise-sql: it writes all four monetary kinds through the ledger (grant, reserve, charge, release)" bash -c 'for k in grant reserve charge release; do printf "%s\n" "$1" | grep -q "INSERT INTO platform.ledger" && printf "%s\n" "$1" | grep -q "'"'"'$k'"'"'" || exit 1; done' _ "$OUT"
 assert "print-exercise-sql: it reads both views, restricted to its own fixture user" bash -c 'printf "%s\n" "$1" | grep -q "FROM platform.balance_drift WHERE user_id" && printf "%s\n" "$1" | grep -q "FROM platform.reserve_overdrawn WHERE user_id"' _ "$OUT"
 assert "print-exercise-sql: its final statement proves the ROLLBACK ran (SELECT 'ROLLED_BACK')" bash -c 'test "$(printf "%s\n" "$1" | tail -n 1)" = "SELECT '"'"'ROLLED_BACK'"'"';"' _ "$OUT"
+# platform_0005 changed what the ledger accepts, so the exercise must keep to the new rules or the live gate would be RED for the wrong reason (the database refusing the exercise itself): each rule is pinned
+assert "print-exercise-sql: a charge is ONE unit of one named item: six rows from generate_series(1, 6), each with its own item_ref" bash -c 'printf "%s\n" "$1" | grep -qF -- "generate_series(1, 6)" && printf "%s\n" "$1" | grep -qF -- "item_ref" && printf "%s\n" "$1" | grep -qF -- "'"'"'bi-item-'"'"' || g"' _ "$OUT"
+assert "print-exercise-sql: no charge row carries more than one unit (the 4-unit and 2-unit charges of Phase 1 are gone)" bash -c 'printf "%s\n" "$1" | grep -qF -- "p.unit, 1, p.cost," && ! printf "%s\n" "$1" | grep -qF -- "p.unit, 4, p.cost" && ! printf "%s\n" "$1" | grep -qF -- "p.unit, 2, p.cost"' _ "$OUT"
+assert "print-exercise-sql: the reserve is written at the DEAREST price of the job's snapshot (max(cost)), not at m1_own's" bash -c 'printf "%s\n" "$1" | grep -qF -- "max(cost)" && printf "%s\n" "$1" | grep -qF -- "p.cost = current_setting('"'"'bi.d'"'"')::bigint"' _ "$OUT"
+assert "print-exercise-sql: the release is exactly the remainder of the reserve (10 reserved at the dearest price less 6 charged at the cheap one)" bash -c 'printf "%s\n" "$1" | grep -qF -- "10 * current_setting('"'"'bi.d'"'"')::bigint - 6 * current_setting('"'"'bi.c'"'"')::bigint"' _ "$OUT"
+assert "print-exercise-sql: it has the six INSERT statements whose rows the EXERCISED floor counts (2 grants, 1 reserve, one statement of 6 charges, 1 release, 1 adjustment = 11 rows)" bash -c 'printf "%s\n" "$1" | grep -c -- "^INSERT INTO platform.ledger" | grep -qx 6' _ "$OUT"
 
 # ============================ the CONTROL: this selftest can fail ============================
 # `matches` is what every case above stands on. If it could not say "no", the whole file would be green whatever the gate did. Feed it outputs it MUST reject.

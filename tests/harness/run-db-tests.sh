@@ -12,7 +12,7 @@
 # Needs psql, go, openssl. It creates a database `platform_live_<random>` (the "live" database the tests expect, migrated by the real binary, with a platform_app password) and drops it at the end.
 set -u -o pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; ROOT="$(cd "$HERE/../.." && pwd)"
-RUN="${1:-.}"; ADMIN="${H_PG_ADMIN_DSN:-postgres://supabase_admin:ci@localhost:5432/postgres}"; MIG="${H_PG_MIGRATOR_DSN:-postgres://postgres:ci@localhost:5432/postgres}"; SKIP="${H_SKIP-TestLive_StackCoexists|TestModulesLive}"
+RUN="${1:-.}"; ADMIN="${H_PG_ADMIN_DSN:-postgres://supabase_admin:ci@localhost:5432/postgres}"; MIG="${H_PG_MIGRATOR_DSN:-postgres://postgres:ci@localhost:5432/postgres}"; SKIP="${H_SKIP-TestLive_StackCoexists|TestModulesLive|TestM3Live}"
 WORK="$(mktemp -d)"; DB="platform_live_$(openssl rand -hex 4)"
 case "$ADMIN" in postgres://*/postgres|postgresql://*/postgres) ;; *) echo "run-db-tests: H_PG_ADMIN_DSN must be a postgres:// URL ending in /postgres (got a different shape)"; exit 2;; esac
 case "$MIG" in postgres://*/postgres|postgresql://*/postgres) ;; *) echo "run-db-tests: H_PG_MIGRATOR_DSN must be a postgres:// URL ending in /postgres (got a different shape)"; exit 2;; esac
@@ -35,7 +35,7 @@ PLATFORM_MIGRATE_DATABASE_URL="$LIVEMIG" PLATFORM_MIGRATIONS_DIR="$ROOT/db/migra
 
 step "go test -tags harness -run '$RUN' (skip: ${SKIP:-nothing})"
 export HARNESS_ADMIN_DATABASE_URL="$LIVE" HARNESS_ADMIN_DATABASE_HOST_URL="$HOSTURL" HARNESS_PLATFORM_APP_PASSWORD="$APP_PW" HARNESS_MIGRATE_BIN="$WORK/platform-migrate$EXT" HARNESS_REPO_ROOT="$ROOT"
-args=(test -tags harness -count=1 -v -run "$RUN")
+args=(test -tags harness -count=1 -v -timeout 25m -run "$RUN")
 [ -z "$SKIP" ] || args+=(-skip "$SKIP")
 ( cd "$ROOT" && CGO_ENABLED=0 GOTOOLCHAIN=local go "${args[@]}" ./tests/harness ) 2>&1 | tee "$WORK/test.log"
 rc=${PIPESTATUS[0]}

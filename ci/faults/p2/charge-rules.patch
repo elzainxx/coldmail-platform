@@ -1,0 +1,26 @@
+diff --git a/Docs/phase-2-spec.md b/Docs/phase-2-spec.md
+index bd63170..3434191 100644
+--- a/Docs/phase-2-spec.md
++++ b/Docs/phase-2-spec.md
+@@ -55,7 +55,7 @@ M1-11|m1|risky|disposable|no|*|charge|m1_own|
+ M1-12|m1|risky|provider_no_smtp|no|*|charge|m1_own|a settled answer: the provider is routed to MX-only by policy
+ M1-13|m1|risky|catch_all|no|*|charge|m1_own|
+ M1-14|m1|risky|non_public_mx|no|*|charge|m1_own|no probe was made, the verdict comes from DNS facts
+-M1-15|m1|risky|plausible|no|capacity|free||OUR capacity failure settled as risky/plausible (M1-G5): no node, audit red, warmup cap, rate limit
++M1-15|m1|risky|plausible|no|capacity|charge|m1_own|OUR capacity failure settled as risky/plausible (M1-G5): no node, audit red, warmup cap, rate limit
+ M1-16|m1|risky|plausible|no|none|charge|m1_own|no skip token: cheap-layers answer (CAVEAT M1-G6: indistinguishable from SMTP being unwired at boot)
+ M1-17|m1|unknown|greylisted|no|*|charge|m1_own|a genuine remote answer (in bulk: retries exhausted); not our own failure, so charged by the locked rule
+ M1-18|m1|unknown|dns_error|no|*|unmapped||lookup failure: our resolver or the domain's servers cannot be told apart (M1-G4)
+diff --git a/internal/charge/rules.psv b/internal/charge/rules.psv
+index 9144262..e789340 100644
+--- a/internal/charge/rules.psv
++++ b/internal/charge/rules.psv
+@@ -13,7 +13,7 @@ M1-11|m1|risky|disposable|no|*|charge|m1_own|
+ M1-12|m1|risky|provider_no_smtp|no|*|charge|m1_own|a settled answer: the provider is routed to MX-only by policy
+ M1-13|m1|risky|catch_all|no|*|charge|m1_own|
+ M1-14|m1|risky|non_public_mx|no|*|charge|m1_own|no probe was made, the verdict comes from DNS facts
+-M1-15|m1|risky|plausible|no|capacity|free||OUR capacity failure settled as risky/plausible (M1-G5): no node, audit red, warmup cap, rate limit
++M1-15|m1|risky|plausible|no|capacity|charge|m1_own|OUR capacity failure settled as risky/plausible (M1-G5): no node, audit red, warmup cap, rate limit
+ M1-16|m1|risky|plausible|no|none|charge|m1_own|no skip token: cheap-layers answer (CAVEAT M1-G6: indistinguishable from SMTP being unwired at boot)
+ M1-17|m1|unknown|greylisted|no|*|charge|m1_own|a genuine remote answer (in bulk: retries exhausted); not our own failure, so charged by the locked rule
+ M1-18|m1|unknown|dns_error|no|*|unmapped||lookup failure: our resolver or the domain's servers cannot be told apart (M1-G4)

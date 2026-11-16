@@ -1,0 +1,13 @@
+diff --git a/internal/charge/rules.psv b/internal/charge/rules.psv
+index 9144262..47e9204 100644
+--- a/internal/charge/rules.psv
++++ b/internal/charge/rules.psv
+@@ -17,7 +17,7 @@ M1-15|m1|risky|plausible|no|capacity|free||OUR capacity failure settled as risky
+ M1-16|m1|risky|plausible|no|none|charge|m1_own|no skip token: cheap-layers answer (CAVEAT M1-G6: indistinguishable from SMTP being unwired at boot)
+ M1-17|m1|unknown|greylisted|no|*|charge|m1_own|a genuine remote answer (in bulk: retries exhausted); not our own failure, so charged by the locked rule
+ M1-18|m1|unknown|dns_error|no|*|unmapped||lookup failure: our resolver or the domain's servers cannot be told apart (M1-G4)
+-M1-19|m1|unknown|smtp_timeout|no|*|unmapped||shares its reason between our node failure and a remote timeout (M1-G4)
++M1-19|m1|unknown|smtp_timeout|no|*|charge|m1_own|shares its reason between our node failure and a remote timeout (M1-G4)
+ M1-20|m1|unknown|smtp_error|no|*|unmapped||shares its reason between our node failure and a remote error (M1-G4)
+ M1-21|m1|unknown|connection_failed|no|*|unmapped||shares its reason between our egress/node failure and a remote refusal (M1-G4)
+ M1-22|m1|unknown|smtp_blocked|no|*|unmapped||a remote policy rejection that can be OUR IP reputation (M1-G4)

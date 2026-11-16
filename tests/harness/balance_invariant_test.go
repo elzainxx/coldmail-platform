@@ -53,11 +53,12 @@ func balUnits(t *testing.T, db ledgerDB, module string) []balUnit {
 type balKey struct{ user, module string }
 
 type balReserve struct {
-	id        int64
-	user      string
-	module    string
-	job       string
-	remaining int64 // credits of this reserve not yet charged or released
+	id                      int64
+	user                    string
+	module                  string
+	job                     string
+	remaining               int64 // credits of this reserve not yet charged or released
+	held, charged, released int64 // what platform.reserves must say about it: the credits held, the credits charged, the credits released
 }
 
 type balDelta struct {
@@ -66,8 +67,10 @@ type balDelta struct {
 }
 
 // TestBalance_RandomisedSequenceKeepsInvariant drives 200 pseudo-random ledger writes (a FIXED seed, so a failure repeats):
-// three users, both metered modules, grants, reserves at a random unit's frozen price, charges at random units of the job's
-// snapshot, adjustments (platform_0004: an admin takes AVAILABLE credits back, never more than the balance holds) and releases,
+// three users, both metered modules, grants, reserves at the DEAREST unit's frozen price of a job that holds no reserve yet
+// (platform_0005: one reserve per job, at the dearest price of the complete snapshot), charges of ONE unit at a random unit of the
+// job's snapshot (platform_0005), adjustments (platform_0004: an admin takes AVAILABLE credits back, never more than the balance
+// holds) and releases of exactly the remainder of a reserve (platform_0005), which closes it,
 // each chosen within what its balance and its reserve still allow. Afterwards both views are empty and
 // every stored balance equals a recomputation done HERE, in Go, from the deltas of the rows this test inserted (not from the
 // database's own sums); a second recomputation in SQL agrees with the first; and the adjustments each left exactly one audit
@@ -82,11 +85,22 @@ func TestBalance_RandomisedSequenceKeepsInvariant(t *testing.T) {
 	modules := []string{"m1", "m2"}
 	units := map[string][]balUnit{}
 	jobs := map[balKey][]string{}
+	dearest := map[string][]balUnit{} // per module: the units whose price is the dearest of the module's snapshot (a reserve is written at that price)
 	n := 0
 	for _, m := range modules {
 		units[m] = balUnits(t, admin, m)
+		var top int64
+		for _, un := range units[m] {
+			top = max(top, un.cost)
+		}
+		for _, un := range units[m] {
+			if un.cost == top {
+				dearest[m] = append(dearest[m], un)
+			}
+		}
 		for _, u := range users {
-			for j := 0; j < 2; j++ {
+			// one reserve per job (platform_0005): enough jobs that the sequence never runs out of a job without one
+			for j := 0; j < 12; j++ {
 				n++
 				jobs[balKey{u, m}] = append(jobs[balKey{u, m}], ledgerNewJob(t, admin, ledgerUUID("bb", n), u, m, true))
 			}
@@ -96,6 +110,7 @@ func TestBalance_RandomisedSequenceKeepsInvariant(t *testing.T) {
 	rng := rand.New(rand.NewSource(seed))
 	available := map[balKey]int64{} // what the test believes each balance holds; it decides what is allowed
 	reserved := map[balKey]int64{}
+	reservedJobs := map[string]bool{} // the jobs that hold their one reserve
 	var opens []*balReserve
 	var written []balDelta // the independent record: the deltas of every row inserted
 	counts := map[string]int{}
@@ -128,18 +143,25 @@ func TestBalance_RandomisedSequenceKeepsInvariant(t *testing.T) {
 
 		switch kind {
 		case "reserve":
-			un := units[m][rng.Intn(len(units[m]))]
+			un := dearest[m][rng.Intn(len(dearest[m]))] // the reserve rate is the dearest price of the job's snapshot (platform_0005)
 			maxUnits := available[k] / un.cost
-			if maxUnits < 1 {
-				kind = "grant" // the balance cannot pay for one unit: fund it instead
+			var free []string // the user's jobs on this module that hold no reserve yet
+			for _, j := range jobs[k] {
+				if !reservedJobs[j] {
+					free = append(free, j)
+				}
+			}
+			if maxUnits < 1 || len(free) == 0 {
+				kind = "grant" // the balance cannot pay for one unit (or every job already holds its reserve): fund it instead
 				break
 			}
 			count := 1 + rng.Int63n(min(maxUnits, 20))
-			job := jobs[k][rng.Intn(len(jobs[k]))]
+			job := free[rng.Intn(len(free))]
+			reservedJobs[job] = true
 			id := ledgerPut(t, admin, ledgerReserveCols(u, m, job, un.name, count, un.cost))
 			available[k] -= count * un.cost
 			reserved[k] += count * un.cost
-			opens = append(opens, &balReserve{id: id, user: u, module: m, job: job, remaining: count * un.cost})
+			opens = append(opens, &balReserve{id: id, user: u, module: m, job: job, remaining: count * un.cost, held: count * un.cost})
 			written = append(written, balDelta{k, -count * un.cost, count * un.cost})
 		case "charge":
 			o := open[rng.Intn(len(open))]
@@ -154,23 +176,24 @@ func TestBalance_RandomisedSequenceKeepsInvariant(t *testing.T) {
 				// fall through to the release branch below
 			} else {
 				un := fit[rng.Intn(len(fit))]
-				count := 1 + rng.Int63n(min(o.remaining/un.cost, 10))
-				ledgerPut(t, admin, ledgerChargeCols(o.user, o.module, o.job, o.id, un.name, count, un.cost))
+				ledgerPut(t, admin, ledgerChargeCols(o.user, o.module, o.job, o.id, un.name, 1, un.cost)) // ONE unit per charge row (platform_0005)
 				ok := balKey{o.user, o.module}
-				reserved[ok] -= count * un.cost
-				o.remaining -= count * un.cost
-				written = append(written, balDelta{ok, 0, -count * un.cost})
+				reserved[ok] -= un.cost
+				o.remaining -= un.cost
+				o.charged += un.cost
+				written = append(written, balDelta{ok, 0, -un.cost})
 				break
 			}
 			fallthrough
 		case "release":
 			o := open[rng.Intn(len(open))]
-			amount := 1 + rng.Int63n(o.remaining)
+			amount := o.remaining // a release returns exactly what the reserve has left (platform_0005), which closes it: nothing more can be charged or released against it
 			ledgerPut(t, admin, ledgerReleaseCols(o.user, o.module, o.job, o.id, amount))
 			ok := balKey{o.user, o.module}
 			available[ok] += amount
 			reserved[ok] -= amount
 			o.remaining -= amount
+			o.released += amount
 			written = append(written, balDelta{ok, amount, -amount})
 		case "adjustment":
 			// NOT between "charge" and "release": the charge case falls through into the release case
@@ -255,6 +278,15 @@ func TestBalance_RandomisedSequenceKeepsInvariant(t *testing.T) {
 		t.Fatalf("SQL's SUM over the ledger differs from the recomputation done in Go\n  sql: %v\n  go:  %v", inSQL, recomputed)
 	}
 	ledgerRequireViewsEmpty(t, admin, "after the whole sequence")
+	// platform.reserves (written only by the ledger trigger, platform_0005) says what the test's own bookkeeping says about every reserve it opened: held, charged, released. The reserves were
+	// opened in increasing id order, so the two lists line up without sorting.
+	var wantReserves []string
+	for _, o := range opens {
+		wantReserves = append(wantReserves, fmt.Sprintf("%d|%d|%d|%d", o.id, o.held, o.charged, o.released))
+	}
+	if got := ledgerRows(t, admin, "SELECT reserve_id, reserved, charged, released FROM platform.reserves ORDER BY reserve_id"); strings.Join(got, "\n") != strings.Join(wantReserves, "\n") {
+		t.Fatalf("platform.reserves differs from the test's own bookkeeping (reserve_id|reserved|charged|released)\n  stored: %v\n  wanted: %v", got, wantReserves)
+	}
 	// every reserve is settled for no more than it held (the second view's claim, checked here by hand)
 	for _, o := range opens {
 		if o.remaining < 0 {
@@ -396,35 +428,51 @@ func TestBalance_DriftViewSeesAdjustments(t *testing.T) {
 }
 
 // TestBalance_ReserveOverdrawnSeesWhatBalanceCheckCannot proves the second view earns its place. Two reserves of one user and
-// one module share a single balance: a charge of 15 against a reserve of 10 leaves the balance's reserved column at 5 (20 - 15),
-// which the per-balance CHECK (reserved >= 0) accepts; only platform.reserve_overdrawn knows that reserve A was settled for more
-// than it held. With ONE reserve the same charge is caught by the CHECK. It fails if the view misses an overspend, lists a
-// reserve that was settled exactly, or if the CHECK stops being the net for a lone reserve.
+// one module (one per job: platform_0005 allows one reserve per job) share a single balance: 15 credits charged against a reserve of
+// 10 leave the balance's reserved column at 5 (20 - 15), which the per-balance CHECK (reserved >= 0) accepts; only
+// platform.reserve_overdrawn knows that reserve A was settled for more than it held.
+//
+// Since platform_0005 the DATABASE refuses such a charge itself (platform.reserves, CHECK charged + released <= reserved, written by a
+// trigger), so these cases switch the two per-reserve triggers off AFTER the reserves exist, in a transaction that is rolled back: the view is
+// the alarm for the day those triggers are off or bypassed, exactly as balance_drift is for the balance trigger. The last cases are the
+// paired controls: with the per-reserve wall ON the same overspend is refused (so the view stays empty in production), and the lone-reserve
+// case is still caught by the per-balance CHECK. It fails if the view misses an overspend, lists a reserve that was settled exactly, or if
+// either wall stops being a net.
 func TestBalance_ReserveOverdrawnSeesWhatBalanceCheckCannot(t *testing.T) {
 	_, admin := migratedScratch(t)
 	a := ledgerUserA
-	const jobA = ledgerJobA1
-	// two reserves of 10 credits each on one job, one funded balance: available 100 - 20, reserved 20
+	const jobA, jobB = ledgerJobA1, ledgerJobA1b
+	// two reserves of 10 credits each (5 units at the dearest price 2), one on each of two jobs, one funded balance: available 100 - 20, reserved 20
 	setup := func(t *testing.T) (tx pgx.Tx, reserveA, reserveB int64) {
 		t.Helper()
 		tx = ledgerBegin(t, admin)
 		ledgerSeed(t, tx)
 		ledgerFund(t, tx, a, "m1", 100)
-		reserveA = ledgerPut(t, tx, ledgerReserveCols(a, "m1", jobA, "m1_own", 10, 1))
-		reserveB = ledgerPut(t, tx, ledgerReserveCols(a, "m1", jobA, "m1_own", 10, 1))
+		reserveA = ledgerPut(t, tx, ledgerReserveCols(a, "m1", jobA, "m1_vendor", 5, 2))
+		reserveB = ledgerPut(t, tx, ledgerReserveCols(a, "m1", jobB, "m1_vendor", 5, 2))
 		ledgerRequireBalance(t, tx, "after the two reserves", a, "m1", 80, 20)
 		ledgerRequireViewsEmpty(t, tx, "after the two reserves")
 		return tx, reserveA, reserveB
 	}
-	charge := func(t *testing.T, tx pgx.Tx, reserve, units int64) {
+	// the per-reserve walls (the cap on charged + released, and the exact-remainder rule of a release) are switched off AFTER the reserves exist
+	wallsOff := func(t *testing.T, tx pgx.Tx) {
 		t.Helper()
-		ledgerOKRow(t, tx, fmt.Sprintf("charging %d against reserve %d", units, reserve), ledgerChargeCols(a, "m1", jobA, reserve, "m1_own", units, 1))
+		ledgerMust(t, tx, "ALTER TABLE platform.ledger DISABLE TRIGGER ledger_apply_to_reserves")
+		ledgerMust(t, tx, "ALTER TABLE platform.ledger DISABLE TRIGGER ledger_check_release")
+	}
+	// charge writes `credits` charges of ONE unit at the price 1 (m1_own): a charge is one unit (platform_0005), so 15 credits are 15 rows
+	charge := func(t *testing.T, tx pgx.Tx, job string, reserve, credits int64) {
+		t.Helper()
+		for i := int64(0); i < credits; i++ {
+			ledgerOKRow(t, tx, fmt.Sprintf("charge %d of %d against reserve %d", i+1, credits, reserve), ledgerChargeCols(a, "m1", job, reserve, "m1_own", 1, 1))
+		}
 	}
 	listed := func(t *testing.T, tx pgx.Tx) []string { t.Helper(); return ledgerOverdrawn(t, tx) }
 
-	t.Run("a charge of 15 against a reserve of 10: the balance check passes, the view lists the reserve", func(t *testing.T) {
+	t.Run("15 credits charged against a reserve of 10: the balance check passes, the view lists the reserve", func(t *testing.T) {
 		tx, reserveA, _ := setup(t)
-		charge(t, tx, reserveA, 15)
+		wallsOff(t, tx)
+		charge(t, tx, jobA, reserveA, 15)
 		ledgerRequireBalance(t, tx, "the per-balance CHECK saw reserved = 20 - 15 = 5 and was content", a, "m1", 80, 5)
 		if d := ledgerDrift(t, tx); len(d) != 0 {
 			t.Fatalf("balance_drift = %v: the balance and the ledger agree, so the first view must be empty", d)
@@ -435,9 +483,10 @@ func TestBalance_ReserveOverdrawnSeesWhatBalanceCheckCannot(t *testing.T) {
 		}
 	})
 
-	t.Run("control: a charge of exactly 10 settles the reserve and is not listed", func(t *testing.T) {
+	t.Run("control: charging exactly 10 credits settles the reserve and is not listed", func(t *testing.T) {
 		tx, reserveA, _ := setup(t)
-		charge(t, tx, reserveA, 10)
+		wallsOff(t, tx)
+		charge(t, tx, jobA, reserveA, 10)
 		if got := listed(t, tx); len(got) != 0 {
 			t.Fatalf("reserve_overdrawn = %v for a reserve settled exactly", got)
 		}
@@ -445,8 +494,9 @@ func TestBalance_ReserveOverdrawnSeesWhatBalanceCheckCannot(t *testing.T) {
 
 	t.Run("a charge plus a release that together exceed the reserve are listed", func(t *testing.T) {
 		tx, reserveA, _ := setup(t)
-		charge(t, tx, reserveA, 6)
-		ledgerOKRow(t, tx, "releasing 6 more", ledgerReleaseCols(a, "m1", jobA, reserveA, 6))
+		wallsOff(t, tx)
+		charge(t, tx, jobA, reserveA, 6)
+		ledgerOKRow(t, tx, "releasing 6 more (not the remainder: the rule that would refuse it is off)", ledgerReleaseCols(a, "m1", jobA, reserveA, 6))
 		ledgerRequireBalance(t, tx, "the balance is still within its CHECKs", a, "m1", 86, 8)
 		want := []string{fmt.Sprintf("%d|%s|m1|%s|10|12", reserveA, a, jobA)}
 		if got := listed(t, tx); strings.Join(got, ";") != strings.Join(want, ";") {
@@ -456,8 +506,8 @@ func TestBalance_ReserveOverdrawnSeesWhatBalanceCheckCannot(t *testing.T) {
 
 	t.Run("control: 4 charged and 6 released settle exactly 10 and are not listed; an unsettled reserve is not listed", func(t *testing.T) {
 		tx, reserveA, reserveB := setup(t)
-		charge(t, tx, reserveA, 4)
-		ledgerOKRow(t, tx, "releasing 6", ledgerReleaseCols(a, "m1", jobA, reserveA, 6))
+		charge(t, tx, jobA, reserveA, 4) // all the walls ON: 4 charged, then exactly the remainder 6 is the one legal release
+		ledgerOKRow(t, tx, "releasing the remainder, 6", ledgerReleaseCols(a, "m1", jobA, reserveA, ledgerReserveRemainder(t, tx, reserveA)))
 		if got := listed(t, tx); len(got) != 0 {
 			t.Fatalf("reserve_overdrawn = %v (reserve A settled 4 + 6 = 10 exactly; reserve %d has no settlement at all)", got, reserveB)
 		}
@@ -465,11 +515,24 @@ func TestBalance_ReserveOverdrawnSeesWhatBalanceCheckCannot(t *testing.T) {
 
 	t.Run("only the overspent reserve is listed, not its neighbour on the same balance", func(t *testing.T) {
 		tx, reserveA, reserveB := setup(t)
-		charge(t, tx, reserveA, 15)
-		charge(t, tx, reserveB, 5)
+		wallsOff(t, tx)
+		charge(t, tx, jobA, reserveA, 15)
+		charge(t, tx, jobB, reserveB, 5)
 		got := listed(t, tx)
 		if len(got) != 1 || !strings.HasPrefix(got[0], fmt.Sprintf("%d|", reserveA)) {
 			t.Fatalf("reserve_overdrawn = %v, want only reserve %d (B settled 5 of 10)", got, reserveA)
+		}
+	})
+
+	t.Run("control: with the per-reserve wall ON the same overspend is refused, so in production the view stays empty", func(t *testing.T) {
+		tx, reserveA, _ := setup(t)
+		charge(t, tx, jobA, reserveA, 10) // the reserve's own 10 credits, one unit each
+		// the 11th credit would be paid by the POOL (reserve B's 10 credits keep the balance's reserved column above zero), so only the per-reserve wall can refuse it
+		ledgerRefusedRow(t, tx, "an 11th credit against a reserve of 10 while the pool could pay", "23514", ledgerWhy{Constraint: "reserves_not_overspent", Table: "reserves"},
+			ledgerChargeCols(a, "m1", jobA, reserveA, "m1_own", 1, 1))
+		ledgerRequireBalance(t, tx, "after the refused charge", a, "m1", 80, 10)
+		if got := listed(t, tx); len(got) != 0 {
+			t.Fatalf("reserve_overdrawn = %v after a refused overspend", got)
 		}
 	})
 
@@ -477,9 +540,15 @@ func TestBalance_ReserveOverdrawnSeesWhatBalanceCheckCannot(t *testing.T) {
 		tx := ledgerBegin(t, admin)
 		ledgerSeed(t, tx)
 		ledgerFund(t, tx, a, "m1", 100)
-		only := ledgerPut(t, tx, ledgerReserveCols(a, "m1", jobA, "m1_own", 10, 1))
-		ledgerRefusedRow(t, tx, "a charge of 15 against the only reserve", "23514", ledgerWhy{Constraint: "balances_reserved_not_negative", Table: "balances"},
-			ledgerChargeCols(a, "m1", jobA, only, "m1_own", 15, 1))
+		only := ledgerPut(t, tx, ledgerReserveCols(a, "m1", jobA, "m1_vendor", 5, 2))
+		charge(t, tx, jobA, only, 10)
+		ledgerRequireBalance(t, tx, "the lone reserve is fully charged", a, "m1", 90, 0)
+		// the per-balance wall is proven ALONE: the per-reserve wall (which would refuse the same row) is switched off in a savepoint that is rolled back
+		ledgerTrial(t, tx, func(sp pgx.Tx) {
+			ledgerMust(t, sp, "ALTER TABLE platform.ledger DISABLE TRIGGER ledger_apply_to_reserves")
+			ledgerRefusedRow(t, sp, "an 11th credit against the only reserve", "23514", ledgerWhy{Constraint: "balances_reserved_not_negative", Table: "balances"},
+				ledgerChargeCols(a, "m1", jobA, only, "m1_own", 1, 1))
+		})
 		ledgerRequireViewsEmpty(t, tx, "after the refused charge")
 	})
 }
@@ -562,8 +631,9 @@ func TestBalance_TriggerFunctionsAreSafeDefiners(t *testing.T) {
 
 	definers := ledgerRows(t, tx, `SELECT p.proname || '|' || pg_get_userbyid(p.proowner) FROM pg_proc p WHERE p.pronamespace = 'platform'::regnamespace AND p.prosecdef ORDER BY 1`)
 	// What must be a definer, owned by platform_owner: the two writers of Phase 1 and, from platform_0004, the audit-row writer and the admin check (it reads platform.admins FOR SHARE,
-	// which the application roles cannot do).
-	want := []string{"admin_audit_require_active_admin|platform_owner", "ledger_apply_to_balance|platform_owner", "ledger_audit_adjustment|platform_owner", "ledger_require_active_admin|platform_owner", "m3_entitlements_require_active_admin|platform_owner", "require_active_admin|platform_owner", "unit_costs_guard|platform_owner", "unit_costs_record_history|platform_owner"}
+	// which the application roles cannot do); from platform_0005 the two reserve checks (they read the price snapshot and platform.reserves), the writer of platform.reserves and the
+	// release check; from platform_0006 the writer of platform.m3_entitlements (the ledger trigger) and the writer of platform.m3_sync (the entitlement trigger).
+	want := []string{"admin_audit_require_active_admin|platform_owner", "ledger_apply_to_balance|platform_owner", "ledger_apply_to_entitlements|platform_owner", "ledger_apply_to_reserves|platform_owner", "ledger_audit_adjustment|platform_owner", "ledger_check_release|platform_owner", "ledger_check_reserve|platform_owner", "ledger_require_active_admin|platform_owner", "m3_entitlements_raise_sync|platform_owner", "m3_entitlements_require_active_admin|platform_owner", "require_active_admin|platform_owner", "unit_costs_guard|platform_owner", "unit_costs_record_history|platform_owner"}
 	// The four functions that call platform.require_active_admin are definers too (platform_0004): they are trigger functions that run for the CALLER, and no role holds EXECUTE on
 	// require_active_admin, so without SECURITY DEFINER every application write would fail 42501 (TestConstraints_DisabledAdminThroughTheRoles proves the behaviour). Anything else is a
 	// definer nobody reviewed.
@@ -598,7 +668,9 @@ func TestBalance_TriggerFunctionsAreSafeDefiners(t *testing.T) {
 		// hold EXECUTE on it (or those functions are definers) is platform_0004's choice; the behavioural proofs (TestConstraints_DisabledAdminThroughTheRoles) and the EXECUTE
 		// judgement (TestGrantsInvariant_Functions) cover it either way.
 		for _, fn := range []string{"platform.ledger_apply_to_balance()", "platform.unit_costs_record_history()", "platform.ledger_audit_adjustment()",
-			"platform.ledger_require_active_admin()", "platform.admin_audit_require_active_admin()", "platform.m3_entitlements_require_active_admin()"} {
+			"platform.ledger_require_active_admin()", "platform.admin_audit_require_active_admin()", "platform.m3_entitlements_require_active_admin()",
+			"platform.ledger_check_reserve()", "platform.ledger_apply_to_reserves()", "platform.ledger_check_release()", "platform.ledger_apply_to_entitlements()", "platform.m3_entitlements_raise_sync()",
+			"platform.ledger_stamp_created_at()"} { // the stamp is SECURITY INVOKER (not in the definer list above) but no role may call it by hand either
 			for _, role := range []string{"platform_app", "platform_admin"} {
 				if ledgerBool(t, tx, "SELECT has_function_privilege($1::text, $2::text, 'EXECUTE')", role, fn) {
 					t.Fatalf("%s can EXECUTE %s", role, fn)

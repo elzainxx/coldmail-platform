@@ -67,9 +67,19 @@ var declaredClasses = map[string]privClass{
 	"jobs":            classOf(privSelectInsUpd, privSelect),
 	"job_unit_prices": classOf(privSelectInsert, privSelect),
 	"ledger":          classOf(privSelectInsert, privSelectInsert),
-	"m3_entitlements": classOf(privSelectInsUpd, privSelect),
+	// platform_0006: platform.m3_entitlements is written only by the ledger trigger (m3_enable, m3_disable, m3_expire); platform_app lost INSERT and UPDATE, and both roles read it
+	"m3_entitlements": classOf(privSelect, privSelect),
 	"suppressions":    classOf(privSelectInsert, privSelect),
 	"admin_audit":     classOf(privSelectInsert, privSelectInsert),
+	// platform_0005: what each reserve held, charged and released; written ONLY by the ledger trigger, so both roles read it and nothing else
+	"reserves": classOf(privSelect, privSelect),
+	// platform_0006: delivery of each entitlement to module 3. Both roles read it; platform_app may record what the reconcile loop observed (these seven columns, and no others: want_suspended,
+	// want_version and user_id are the entitlement trigger's, and nobody inserts or deletes a row)
+	"m3_sync": {
+		Owner:        "platform_owner",
+		Grants:       map[string][]string{"platform_app": privSelect, "platform_admin": privSelect},
+		ColumnGrants: map[string]map[string][]string{"platform_app": {"UPDATE": {"observed", "observed_at", "attempts", "last_attempt_at", "last_error", "converged_version", "updated_at"}}},
+	},
 }
 
 const grantSchema = "platform"
@@ -502,9 +512,10 @@ func checkNoDestructivePrivileges(ctx context.Context, q querier, tables []strin
 var functionExecuteAllowed = map[string][]string{ // empty since platform_0004 made the four callers of require_active_admin SECURITY DEFINER: no role holds EXECUTE on any function of the schema
 }
 
-// functionGrantsFloor is the fewest functions schema platform holds since platform_0004: reject_mutation, jobs_guard, unit_costs_guard, unit_costs_record_history, ledger_apply_to_balance (the
-// five of platform_0002), require_active_admin, ledger_audit_adjustment and the three trigger functions that call require_active_admin (platform_0004). A checker that sees fewer matched too little.
-const functionGrantsFloor = 10
+// functionGrantsFloor is the fewest functions schema platform holds since platform_0006: reject_mutation, jobs_guard, unit_costs_guard, unit_costs_record_history, ledger_apply_to_balance (the
+// five of platform_0002), require_active_admin, ledger_audit_adjustment and the three trigger functions that call require_active_admin (platform_0004), ledger_check_reserve,
+// ledger_apply_to_reserves, ledger_check_release and ledger_stamp_created_at (platform_0005), ledger_apply_to_entitlements and m3_entitlements_raise_sync (platform_0006). A checker that sees fewer matched too little.
+const functionGrantsFloor = 16
 
 // checkFunctionGrants judges the EXECUTE privilege of every function of schema platform (the part of the privilege picture checkGrants does not cover): the owner is platform_owner, nobody
 // but the owner (and the roles functionExecuteAllowed names for that function) holds EXECUTE, nobody holds it WITH GRANT OPTION, every allowance names a function that exists, and the
@@ -939,6 +950,53 @@ func TestGrantsInvariant_AntiVacuity(t *testing.T) {
 			[]string{"DROP VIEW platform.listable_users"},
 			[][]string{{"platform.listable_users", "declared privilege class", "does not exist"}}},
 
+		// ---- platform_0005 / platform_0006: the reserves table and the delivery table, and the write privileges platform_0006 took away ----
+		{"INSERT on reserves granted to platform_app (nobody writes it but the ledger trigger)",
+			[]string{"GRANT INSERT ON platform.reserves TO platform_app"},
+			[][]string{{"platform.reserves", "platform_app", "INSERT", "over-grant"}}},
+		{"UPDATE on reserves granted to platform_admin",
+			[]string{"GRANT UPDATE ON platform.reserves TO platform_admin"},
+			[][]string{{"platform.reserves", "platform_admin", "UPDATE", "over-grant"}}},
+		{"a grant on reserves to PUBLIC",
+			[]string{"GRANT SELECT ON platform.reserves TO PUBLIC"},
+			[][]string{{"platform.reserves", "PUBLIC", "SELECT", "over-grant"}}},
+		{"SELECT on reserves taken from platform_app",
+			[]string{"REVOKE SELECT ON platform.reserves FROM platform_app"},
+			[][]string{{"platform.reserves", "missing grant", "platform_app", "SELECT"}}},
+		{"INSERT on m3_entitlements given back to platform_app (platform_0006 revokes it)",
+			[]string{"GRANT INSERT ON platform.m3_entitlements TO platform_app"},
+			[][]string{{"platform.m3_entitlements", "platform_app", "INSERT", "over-grant"}}},
+		{"UPDATE on m3_entitlements given back to platform_app (platform_0006 revokes it)",
+			[]string{"GRANT UPDATE ON platform.m3_entitlements TO platform_app"},
+			[][]string{{"platform.m3_entitlements", "platform_app", "UPDATE", "over-grant"}}},
+		{"a column grant on m3_entitlements",
+			[]string{"GRANT UPDATE (enabled) ON platform.m3_entitlements TO platform_app"},
+			[][]string{{"platform.m3_entitlements", "column privilege", "platform_app", "UPDATE", "enabled"}}},
+		{"INSERT on m3_sync granted to platform_app",
+			[]string{"GRANT INSERT ON platform.m3_sync TO platform_app"},
+			[][]string{{"platform.m3_sync", "platform_app", "INSERT", "over-grant"}}},
+		{"table-level UPDATE on m3_sync given to platform_app on top of its columns",
+			[]string{"GRANT UPDATE ON platform.m3_sync TO platform_app"},
+			[][]string{{"platform.m3_sync", "platform_app", "UPDATE", "over-grant"}}},
+		{"a column grant on m3_sync that lets platform_app move the wanted state",
+			[]string{"GRANT UPDATE (want_version) ON platform.m3_sync TO platform_app"},
+			[][]string{{"platform.m3_sync", "column privilege", "platform_app", "UPDATE", "want_version"}}},
+		{"the m3_sync column grant taken away (converged_version)",
+			[]string{"REVOKE UPDATE (converged_version) ON platform.m3_sync FROM platform_app"},
+			[][]string{{"platform.m3_sync", "missing column grant", "platform_app", "UPDATE", "converged_version"}}},
+		{"the m3_sync column grant made grantable",
+			[]string{"GRANT UPDATE (observed) ON platform.m3_sync TO platform_app WITH GRANT OPTION"},
+			[][]string{{"platform.m3_sync", "column privilege", "platform_app", "UPDATE", "observed", "WITH GRANT OPTION"}}},
+		{"the m3_sync column grant given to the wrong role",
+			[]string{"GRANT UPDATE (observed) ON platform.m3_sync TO platform_admin"},
+			[][]string{{"platform.m3_sync", "column privilege", "platform_admin", "UPDATE", "observed"}}},
+		{"SELECT on m3_sync taken from platform_admin",
+			[]string{"REVOKE SELECT ON platform.m3_sync FROM platform_admin"},
+			[][]string{{"platform.m3_sync", "missing grant", "platform_admin", "SELECT"}}},
+		{"the delivery table dropped (a stale declaration)",
+			[]string{"DROP TABLE platform.m3_sync"},
+			[][]string{{"platform.m3_sync", "declared privilege class", "does not exist"}}},
+
 		// ---- Phase 1: the platform's two tables in schema public ----
 		{"DELETE on public.users granted to platform_app",
 			[]string{"GRANT DELETE ON public.users TO platform_app"},
@@ -1071,6 +1129,27 @@ func TestGrantsInvariant_FunctionsAntiVacuity(t *testing.T) {
 		{"EXECUTE on the audit-row writer granted to platform_admin",
 			[]string{"GRANT EXECUTE ON FUNCTION platform.ledger_audit_adjustment() TO platform_admin"},
 			[][]string{{"platform.ledger_audit_adjustment()", "platform_admin", "over-grant", "EXECUTE"}}},
+		{"EXECUTE on the reserve rate check granted to platform_app",
+			[]string{"GRANT EXECUTE ON FUNCTION platform.ledger_check_reserve() TO platform_app"},
+			[][]string{{"platform.ledger_check_reserve()", "platform_app", "over-grant", "EXECUTE"}}},
+		{"EXECUTE on the reserves writer granted to PUBLIC",
+			[]string{"GRANT EXECUTE ON FUNCTION platform.ledger_apply_to_reserves() TO PUBLIC"},
+			[][]string{{"platform.ledger_apply_to_reserves()", "over-grant", "PUBLIC", "EXECUTE"}}},
+		{"EXECUTE on the release check granted to platform_admin",
+			[]string{"GRANT EXECUTE ON FUNCTION platform.ledger_check_release() TO platform_admin"},
+			[][]string{{"platform.ledger_check_release()", "platform_admin", "over-grant", "EXECUTE"}}},
+		{"EXECUTE on the entitlement writer granted to platform_app",
+			[]string{"GRANT EXECUTE ON FUNCTION platform.ledger_apply_to_entitlements() TO platform_app"},
+			[][]string{{"platform.ledger_apply_to_entitlements()", "platform_app", "over-grant", "EXECUTE"}}},
+		{"EXECUTE on the created_at stamp granted to PUBLIC (the default of a new function, which platform_0005 revokes)",
+			[]string{"GRANT EXECUTE ON FUNCTION platform.ledger_stamp_created_at() TO PUBLIC"},
+			[][]string{{"platform.ledger_stamp_created_at()", "over-grant", "PUBLIC", "EXECUTE"}}},
+		{"EXECUTE on the created_at stamp granted to platform_app",
+			[]string{"GRANT EXECUTE ON FUNCTION platform.ledger_stamp_created_at() TO platform_app"},
+			[][]string{{"platform.ledger_stamp_created_at()", "platform_app", "over-grant", "EXECUTE"}}},
+		{"EXECUTE on the delivery-row writer granted to platform_app",
+			[]string{"GRANT EXECUTE ON FUNCTION platform.m3_entitlements_raise_sync() TO platform_app"},
+			[][]string{{"platform.m3_entitlements_raise_sync()", "platform_app", "over-grant", "EXECUTE"}}},
 		{"a function owned by the wrong role",
 			[]string{"ALTER FUNCTION platform.jobs_guard() OWNER TO platform_admin"},
 			[][]string{{"platform.jobs_guard()", "owned by platform_admin", "platform_owner"}}},

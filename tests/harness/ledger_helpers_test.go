@@ -231,19 +231,57 @@ func ledgerGrantCols(user, module string, amount int64) ledgerCols {
 		"acting_admin_id": ledgerAdminA, "reason": "test grant", "idempotency_key": ledgerNextKey("grant")}
 }
 
+// ledgerReserveCols is a legal reserve ONLY when cost is the DEAREST price of the job's complete price snapshot (platform_0005: the ledger_check_reserve trigger refuses any other rate, and a
+// second reserve for one job). With the seeded prices that is m1_vendor at 2 for module 1 and m2_accepted (or m2_bounced) at 1 for module 2; ledgerReserveAtDearest reads it from the snapshot.
 func ledgerReserveCols(user, module, job, unit string, units, cost int64) ledgerCols {
 	return ledgerCols{"user_id": user, "module_id": module, "kind": "reserve", "available_delta": -units * cost, "reserved_delta": units * cost,
 		"job_id": job, "unit": unit, "units": units, "unit_cost": cost, "idempotency_key": ledgerNextKey("reserve")}
 }
 
+// ledgerChargeCols is a charge of `units` units at the frozen price. Since platform_0005 a charge is exactly ONE unit of ONE job item: it carries an item_ref (a fresh one each call, so two
+// charges never collide on ledger_one_charge_per_item unless a test sets the same item_ref on purpose) and a legal charge has units = 1; the helper does not enforce it, so a test can build the
+// refused 2-unit charge with the same function.
 func ledgerChargeCols(user, module, job string, reserveID int64, unit string, units, cost int64) ledgerCols {
 	return ledgerCols{"user_id": user, "module_id": module, "kind": "charge", "available_delta": int64(0), "reserved_delta": -units * cost,
-		"job_id": job, "reserve_id": reserveID, "unit": unit, "units": units, "unit_cost": cost, "idempotency_key": ledgerNextKey("charge")}
+		"job_id": job, "reserve_id": reserveID, "unit": unit, "units": units, "unit_cost": cost, "item_ref": ledgerNextKey("item"), "idempotency_key": ledgerNextKey("charge")}
 }
 
+// ledgerReleaseCols is a legal release ONLY when amount is exactly what the reserve has left (reserved - charged - released, platform_0005: ledger_check_release); ledgerReserveRemainder reads it.
 func ledgerReleaseCols(user, module, job string, reserveID, amount int64) ledgerCols {
 	return ledgerCols{"user_id": user, "module_id": module, "kind": "release", "available_delta": amount, "reserved_delta": -amount,
 		"job_id": job, "reserve_id": reserveID, "idempotency_key": ledgerNextKey("release")}
+}
+
+// ledgerDearest is the unit and price a reserve of the job must be written at: the DEAREST price of the job's frozen snapshot (a tie goes to the unit whose name sorts first).
+func ledgerDearest(t *testing.T, db ledgerDB, job string) (unit string, cost int64) {
+	t.Helper()
+	if err := db.QueryRow(testCtx(t), "SELECT unit, cost FROM platform.job_unit_prices WHERE job_id = $1 ORDER BY cost DESC, unit LIMIT 1", job).Scan(&unit, &cost); err != nil {
+		t.Fatalf("the price snapshot of job %s is empty or unreadable: %v", job, err)
+	}
+	return unit, cost
+}
+
+// ledgerReserveAtDearest is a legal reserve of `units` units at the dearest price of the job's snapshot.
+func ledgerReserveAtDearest(t *testing.T, db ledgerDB, user, module, job string, units int64) ledgerCols {
+	t.Helper()
+	unit, cost := ledgerDearest(t, db, job)
+	return ledgerReserveCols(user, module, job, unit, units, cost)
+}
+
+// ledgerReserveRemainder is what the reserve has left, read from platform.reserves: the only amount a release may return.
+func ledgerReserveRemainder(t *testing.T, db ledgerDB, reserveID int64) int64 {
+	t.Helper()
+	return ledgerInt64(t, db, "SELECT reserved - charged - released FROM platform.reserves WHERE reserve_id = $1", reserveID)
+}
+
+// ledgerMakeDue simulates the passing of time for one user's entitlement WITHOUT the ledger: the superuser moves enabled_until an hour into the past, so that an m3_expire row written afterwards
+// (its created_at is the transaction's now()) is due. It is a test-only act (no role can write platform.m3_entitlements since platform_0006) and it fails unless it touched exactly one enabled row.
+func ledgerMakeDue(t *testing.T, db ledgerDB, user string) {
+	t.Helper()
+	tag := ledgerMust(t, db, "UPDATE platform.m3_entitlements SET enabled_until = now() - interval '1 hour' WHERE user_id = $1 AND enabled", user)
+	if tag.RowsAffected() != 1 {
+		t.Fatalf("ledgerMakeDue touched %d entitlement rows for %s, want exactly 1 enabled one", tag.RowsAffected(), user)
+	}
 }
 
 // ledgerAdjustmentCols is an adjustment (platform_0004, a clawback): an admin removes `amount` (> 0) AVAILABLE credits, with a reason, tied to no job, a reserve or a unit.
@@ -555,8 +593,12 @@ func ledgerSeedCommitted(t *testing.T, c *pgx.Conn) (reserveID int64) {
 	ledgerSeed(t, tx)
 	ledgerPut(t, tx, ledgerGrantCols(ledgerUserA, "m1", 100).with("idempotency_key", "ao-grant-a"))
 	ledgerPut(t, tx, ledgerGrantCols(ledgerUserB, "m1", 50).with("idempotency_key", "ao-grant-b")) // the one row nothing references
+	// 2 is the dearest price of the m1 snapshot (platform_0005: a reserve is written at it)
 	reserveID = ledgerPut(t, tx, ledgerReserveCols(ledgerUserA, "m1", ledgerJobA1, "m1_vendor", 10, 2))
-	ledgerPut(t, tx, ledgerChargeCols(ledgerUserA, "m1", ledgerJobA1, reserveID, "m1_own", 3, 1))
+	// a charge is one unit (platform_0005): three 1-credit charges consume the same 3 credits as the one 3-unit charge did
+	for i := 0; i < 3; i++ {
+		ledgerPut(t, tx, ledgerChargeCols(ledgerUserA, "m1", ledgerJobA1, reserveID, "m1_own", 1, 1))
+	}
 	ledgerMust(t, tx, `INSERT INTO platform.admin_audit (admin_id, entry_type, action, target_type, target_id, reason)
 		VALUES ($1, 'action', 'seed-action', 'user', $2, 'the row the append-only tests try to change')`, ledgerAdminA, ledgerUserA)
 	if err := tx.Commit(ctx); err != nil {

@@ -11,6 +11,8 @@
 #   7  probe     platform-probe calls every module over the private network with the service token (health, readyz, describe) — the Phase 0 end-to-end call
 #   8  exposure  no service publishes a port; the network is internal (two independent instruments)
 #   9  outage    the platform's /readyz follows the database: 200, then 503 with Postgres stopped, then 200 again
+#   5b worker    module 3's worker (own token and box row) and the SMTP sink: module 3 really sends
+#   9b m3-outage module 3 stopped while an entitlement expires: the platform retries, claims no convergence it did not see, converges when module 3 is back
 #   4b first admin   the documented platform-migrate create-first-admin, as postgres, on the real auth schema; a second run refused
 #  10  ledger    the balance invariant: the live ledger trigger is intact (a rolled-back exercise through the ledger leaves no drift and no overdrawn reserve)
 # and finally prints what it did NOT check. Nothing here is mocked: every module is the real, unmodified pinned source running as a real service.
@@ -66,8 +68,16 @@ M2_TOKEN="$(printf '%s\n' "$t2" | field ADMIN_API_KEY)"; M2_HASH="$(printf '%s\n
 M3_TOKEN="$(printf '%s\n' "$t3" | field ADMIN_API_KEY)"; M3_HASH="$(printf '%s\n' "$t3" | field ADMIN_API_KEY_HASH)"
 [ -n "$M2_TOKEN" ] && [ -n "$M2_HASH" ] && [ -n "$M3_TOKEN" ] && [ -n "$M3_HASH" ] || die "provision-worker admin-key printed no token/hash"
 [ "$M2_TOKEN" != "$M3_TOKEN" ] || die "the two module service tokens are identical — each module must have its own credential"
+# module 3's two further credentials (Phase 2, chunk B8): the WORKER's token (module 3's worker registers with it; its bcrypt hash is seeded into send_byo.boxes) and module 3's ADMIN key (the per-user suspend route is
+# Domain B, a DIFFERENT credential from the service token above): both minted with module 2's provision-worker like the tokens, never printed
+t3w="$(mint)"; t3a="$(mint)"
+M3_WORKER_TOKEN="$(printf '%s\n' "$t3w" | field ADMIN_API_KEY)"; M3_WORKER_HASH="$(printf '%s\n' "$t3w" | field ADMIN_API_KEY_HASH)"
+M3_ADMIN_KEY="$(printf '%s\n' "$t3a" | field ADMIN_API_KEY)"; M3_ADMIN_HASH="$(printf '%s\n' "$t3a" | field ADMIN_API_KEY_HASH)"
+M3_WORKER_ID="$(cat /proc/sys/kernel/random/uuid)"
+[ -n "$M3_WORKER_TOKEN" ] && [ -n "$M3_WORKER_HASH" ] && [ -n "$M3_ADMIN_KEY" ] && [ -n "$M3_ADMIN_HASH" ] && [ -n "$M3_WORKER_ID" ] || die "could not mint module 3's worker token and admin key"
+[ "$M3_ADMIN_KEY" != "$M3_TOKEN" ] && [ "$M3_ADMIN_KEY" != "$M3_WORKER_TOKEN" ] || die "module 3's admin key must differ from its service token and its worker token"
 M1_KEY="$(openssl rand -hex 32)"; M1_KEY_SHA="$(printf '%s' "$M1_KEY" | sha256sum | cut -d' ' -f1)"
-for v in "$M2_TOKEN" "$M3_TOKEN" "$M1_KEY"; do mask "$v"; done
+for v in "$M2_TOKEN" "$M3_TOKEN" "$M1_KEY" "$M3_WORKER_TOKEN" "$M3_ADMIN_KEY"; do mask "$v"; done
 PG_PASS="$(openssl rand -hex 16)"; PL_PASS="$(openssl rand -hex 16)"; M2_PASS="$(openssl rand -hex 16)"; M3_PASS="$(openssl rand -hex 16)"; M1_PEPPER="$(openssl rand -hex 32)"; M1_QUEUE_KEY="$(openssl rand -hex 32)"; M1_APP_PASS="$(openssl rand -hex 16)"
 for v in "$PG_PASS" "$PL_PASS" "$M2_PASS" "$M3_PASS" "$M1_PEPPER" "$M1_QUEUE_KEY" "$M1_APP_PASS"; do mask "$v"; done
 esc() { printf '%s' "$1" | sed 's/\$/$$/g'; }       # bcrypt hashes contain '$', which compose would interpolate
@@ -87,6 +97,10 @@ H_M2_TOKEN=$M2_TOKEN
 H_M3_TOKEN=$M3_TOKEN
 H_M2_TOKEN_HASH=$(esc "$M2_HASH")
 H_M3_TOKEN_HASH=$(esc "$M3_HASH")
+H_M3_WORKER_ID=$M3_WORKER_ID
+H_M3_WORKER_TOKEN=$M3_WORKER_TOKEN
+H_M3_ADMIN_KEY=$M3_ADMIN_KEY
+H_M3_ADMIN_KEY_HASH=$(esc "$M3_ADMIN_HASH")
 EOF
 )
 echo "  minted: 5 database/app passwords, 1 pepper, 1 module-1 queue key, 1 module-1 caller key, 2 module service tokens (+ bcrypt hashes), KMS keys and mTLS material for modules 2 and 3 — none printed"
@@ -155,12 +169,30 @@ DC ps --all --format 'table {{.Service}}\t{{.State}}\t{{.Health}}' | sed 's/^/  
 n="$(psql_ "select count(*) from pg_stat_activity where usename = 'verify_app'")"; [ "${n:-0}" -ge 1 ] || die "module 1 holds no connection as verify_app: it is not running as the least-privilege login"
 echo "  module 1 holds $n connection(s) as verify_app (pg_stat_activity)"
 
+# ── 5b. module 3's worker and an SMTP sink ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+# Phase 2 (chunks B8, B9): module 3 must REALLY send for the entitlement proofs to mean anything. Its worker registers with a token whose bcrypt hash is seeded into send_byo.boxes BEFORE the worker starts
+# (a worker that is rejected exits), the From-gate is switched off (module 3's own harness does the same: no DNS needed to send), and the sink is Mailpit, which accepts any credential and keeps what it received.
+STAGE=m3-worker; banner "5b" "module 3's worker (own token, own box row) and the SMTP sink"
+psql_su() { DC exec -T postgres psql -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -tAc "$1"; }
+psql_su "UPDATE send_byo.config SET value = '{\"v\":\"off\"}' WHERE key = 'from_gate_mode'" >/dev/null || die "could not switch module 3's From-gate off"
+t0="$(psql_su "select clock_timestamp()")"; [ -n "$t0" ] || die "could not read the database clock"
+psql_su "INSERT INTO send_byo.boxes (id, user_id, token_hash, status) VALUES ('$M3_WORKER_ID', '00000000-0000-0000-0000-000000000000', '$M3_WORKER_HASH', 'active')" >/dev/null || die "could not seed module 3's worker box row"
+DC up -d m3-worker smtp-sink || die "module 3's worker or the SMTP sink did not start"
+i=0; while [ $i -lt 60 ]; do
+  [ "$(psql_su "select count(*) from send_byo.boxes where id = '$M3_WORKER_ID' and status = 'active' and last_heartbeat_at > '$t0'")" = 1 ] && break
+  i=$((i+1)); sleep 2
+done
+[ "$i" -lt 60 ] || die "module 3's worker never heartbeated after $t0 (it registers over mTLS with its token; its logs are below)"
+i=0; while [ $i -lt 30 ]; do DC exec -T platform wget -q -O /dev/null http://smtp-sink:8025/api/v1/info 2>/dev/null && break; i=$((i+1)); sleep 2; done
+[ "$i" -lt 30 ] || die "the SMTP sink's API did not answer"
+echo "  module 3's worker is registered and heartbeating; the SMTP sink answers; From-gate off"
+
 # ── 6. tests ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 STAGE=tests; banner 6 "integration tests, compiled on the runner and run inside the network"
 ( cd "$PLATFORM_DIR" && CGO_ENABLED=0 GOTOOLCHAIN=local go test -tags harness -c -o "$WORK/out/harness.test" ./tests/harness && CGO_ENABLED=0 GOTOOLCHAIN=local go build -o "$WORK/out/platform-migrate" ./cmd/platform-migrate ) || die "the harness test binary (or platform-migrate) did not compile"
 DC run --rm -T harness-tests -test.list '.*' > "$WORK/h-list.log" 2>&1; lrc=$?
 [ "$lrc" = 0 ] || { cat "$WORK/h-list.log"; die "listing the declared integration tests failed ($lrc)"; }
-DC run --rm -T harness-tests -test.v -test.count=1 > "$WORK/h-run.log" 2>&1; trc=$?
+DC run --rm -T harness-tests -test.v -test.count=1 -test.timeout=40m > "$WORK/h-run.log" 2>&1; trc=$?
 sed 's/^/  | /' "$WORK/h-run.log" | tail -60
 # a failure must name itself: the tail above is only the end of the run, so print every failing test with its context
 [ "$trc" = 0 ] || { echo "  ---- failing tests (with context) ----"; grep -n -B1 -A12 -e '--- FAIL' "$WORK/h-run.log" | sed 's/^/  | /' | head -200; }
@@ -200,6 +232,33 @@ DC start postgres >/dev/null 2>&1 || die "could not restart postgres"
 wait_for 200 || die "readyz did not return to 200 after the database came back"
 echo "  readyz: 200 -> 503 (postgres stopped) -> 200 (postgres back)"
 
+# ── 9b. module 3 down at expiry ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+# Phase 2, chunk B9. The running PLATFORM SERVICE (its expiry and reconcile loops, the real module-3 client) with the REAL module 3 container stopped while an entitlement expires. The assertions are
+# the three the ruling asks for: (1) while module 3 is down the platform keeps retrying (attempts rise); (2) it NEVER records a convergence it did not see (converged_version stays behind and
+# `observed` keeps the last state module 3 really answered with); (3) once module 3 is back the platform converges, and module 3 itself says the user is suspended (a repeated suspend answers 422).
+STAGE=m3-outage; banner "9b" "module 3 is stopped while an entitlement expires; the platform retries, never reports success it did not see, and converges when module 3 is back"
+OU="$(cat /proc/sys/kernel/random/uuid)"
+psql_su "INSERT INTO auth.users (id, email) VALUES ('$OU', 'outage@example.test')" >/dev/null || die "could not create the outage user's login"
+psql_su "INSERT INTO public.users (id, auth_user_id, email) VALUES ('$OU', '$OU', 'outage@example.test')" >/dev/null || die "could not create the outage user"
+syncrow() { psql_su "select row_to_json(s) from platform.m3_sync s where user_id = '$OU'"; }
+waitfor() { desc="$1"; secs="$2"; q="$3"; i=0; while [ $i -lt "$secs" ]; do [ "$(psql_su "$q")" = t ] && return 0; i=$((i+1)); sleep 1; done; die "timed out after ${secs}s waiting for: $desc — m3_sync: $(syncrow)"; }
+psql_su "INSERT INTO platform.ledger (user_id, module_id, kind, acting_admin_id, reason, idempotency_key, until_at) VALUES ('$OU', 'm3', 'm3_enable', '$FA_ID', 'harness outage proof', 'outage-enable', now() + interval '25 seconds')" >/dev/null || die "could not enable module 3 for the outage user"
+waitfor "the platform's reconcile loop to deliver the enable to the REAL module 3 (converged, observed active)" 60 "select converged_version = want_version and observed = 'active' from platform.m3_sync where user_id = '$OU'"
+echo "  1. the enable was delivered: $(syncrow)"
+DC stop m3-worker m3 >/dev/null 2>&1 || die "could not stop module 3"
+waitfor "the platform's expiry loop to expire the entitlement (database clock)" 90 "select not enabled from platform.m3_entitlements where user_id = '$OU'"
+waitfor "the reconcile loop to RETRY at least 3 times against the stopped module 3" 120 "select attempts >= 3 and last_error is not null from platform.m3_sync where user_id = '$OU'"
+down="$(psql_su "select converged_version < want_version and want_suspended and observed <> 'suspended' from platform.m3_sync where user_id = '$OU'")"
+[ "$down" = t ] || die "while module 3 was down the platform recorded a convergence it did not see: $(syncrow)"
+echo "  2. module 3 down, the entitlement expired: the platform has retried and has NOT claimed convergence: $(syncrow)"
+DC up -d --wait --wait-timeout 240 m3 >/dev/null 2>&1 || die "module 3 did not come back healthy"
+DC up -d m3-worker >/dev/null 2>&1 || die "module 3's worker did not restart"
+waitfor "the platform to converge once module 3 is back (observed suspended, converged_version = want_version)" 240 "select converged_version = want_version and observed = 'suspended' and attempts = 0 from platform.m3_sync where user_id = '$OU'"
+echo "  3. module 3 is back and the platform converged: $(syncrow)"
+code="$(DC exec -T platform wget -S -q -O /dev/null --header "Authorization: Bearer $M3_ADMIN_KEY" --post-data '{}' "http://m3:8080/v1/admin/users/$OU/suspend" 2>&1 | awk '/HTTP\//{print $2; exit}')"
+[ "$code" = 422 ] || die "module 3 itself does not hold the user as suspended: a repeated suspend answered '$code', want 422 (already suspended)"
+echo "  module 3 itself confirms it: a repeated suspend answers 422 (already suspended)"
+
 # ── 10. ledger ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 STAGE=ledger; banner 10 "the balance invariant holds on the live database (rolled-back exercise through the ledger)"
 bash "$PLATFORM_DIR/scripts/check-balance-invariant.sh" --psql-cmd "docker compose --project-directory $HERE -f $HERE/docker-compose.yml --env-file $WORK/harness.env --profile probe --profile tests exec -T postgres psql -U supabase_admin -d postgres" --exercise || die "the balance invariant gate is red on the live database"
@@ -209,7 +268,7 @@ STAGE=done
 echo
 echo "================ NOT CHECKED (what this run did not and could not vouch for)"
 cat <<'EOF'
-  - workers, the SMTP sink and CoreDNS: not started (until Phase 2 chunk B8). No module sent, verified or billed anything; only health, readiness and describe were called.
+  - CoreDNS is not started and module 3's From-gate is OFF (module 3's own harness does the same). Module 3 REALLY sends here (its worker and an SMTP sink: Mailpit, which accepts any credential); module 2 has no worker and module 1 no SMTP node, so those two never send or probe.
   - real Supabase beyond the database image: this is the digest-pinned supabase/postgres (real auth schema, the non-superuser migrating role `postgres`, the required provisioning step). Not here: GoTrue (so
     no login is ever performed), the pooler (Supavisor), PostgREST and the exposed-schema setting (an owner action: Docs/install.md step 5), a hosted project's role grants and extensions.
   - the scratch databases of the integration tests (cloned from nothing: a fresh database, the auth.users FIXTURE, the platform migrated by the superuser) differ from the live database in exactly

@@ -91,6 +91,8 @@ var chainRelations = map[string][]string{
 	"0003": {"admin_audit", "suppressions"},
 	// platform_0004 adds one view (listable_users). It also drops and re-creates balance_drift (listed under 0002, where it first appears), so its relations are unchanged.
 	"0004": {"listable_users"},
+	"0005": {"reserves"},
+	"0006": {"m3_sync"},
 }
 
 // relationsThrough is the sorted union of what the listed versions add.
@@ -131,6 +133,13 @@ func downStepBefore(t *testing.T, c *pgx.Conn, v string) {
 	t.Helper()
 	when := "before down " + v
 	switch v {
+	case "0006":
+		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006"), when)
+		entitlementFlowObjects(t, c, true, when)
+		moneyCoreObjects(t, c, true, when) // the migration below is whole
+	case "0005":
+		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005"), when)
+		moneyCoreObjects(t, c, true, when)
 	case "0004":
 		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004"), when)
 		phase2Objects(t, c, true, when)
@@ -161,6 +170,16 @@ func downStepAfter(t *testing.T, c *pgx.Conn, v string) {
 	t.Helper()
 	when := "after down " + v
 	switch v {
+	case "0006":
+		// the delivery table, its writer, the entitlement writer, the date column are gone; the privileges of the application role on the entitlements are back; everything of 0005 and below is still there
+		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005"), when)
+		entitlementFlowObjects(t, c, false, when)
+		moneyCoreObjects(t, c, true, when)
+	case "0005":
+		// the reserves table, the four triggers and functions (the created_at stamp among them), the three unique indexes, the two CHECKs and the item_ref column are gone and the older money rules are back; 0004 is untouched
+		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004"), when)
+		moneyCoreObjects(t, c, false, when)
+		phase2Objects(t, c, true, when)
 	case "0004":
 		// the view is gone and everything of 0002 and 0003 is still there (balance_drift was dropped and re-created by 0004's up and its down: it must be back)
 		requireRelations(t, c, relationsThrough("0000", "0002", "0003"), when)
@@ -276,6 +295,166 @@ func lifecycleAdjustment(t *testing.T, c *pgx.Conn, accepted bool, when string) 
 	ledgerRefusedCheck(t, tx, when+": an adjustment (the kind is not in the vocabulary of the older chain)", "ledger_kind_vocabulary", adj)
 }
 
+// lifecycleCounter is the shape of every presence check below: `want` is 1 when the objects must be there and 0 when they must be gone, perItem is how many of the counted catalog rows one
+// listed object stands for, and the count must be exactly want * perItem - so a missing object cannot hide behind another's presence.
+func lifecycleCounter(t *testing.T, c *pgx.Conn, present bool, when string) func(what string, perItem int64, sql string, args ...any) {
+	return func(what string, perItem int64, sql string, args ...any) {
+		t.Helper()
+		want := int64(0)
+		if present {
+			want = 1
+		}
+		if got := ledgerInt64(t, c, sql, args...); got != want*perItem {
+			t.Fatalf("%s: %s: found %d, want %d", when, what, got, want*perItem)
+		}
+	}
+}
+
+// moneyCoreObjects is the CONTROL (present) and the ASSERTION (absent) of platform_0005's down: before it, everything the migration adds is there and the rules it states bite (a reserve
+// below the dearest price, a charge without an item or of three units, a release that is not the remainder are all refused, each for its named reason, and a written created_at is overwritten); after it, the table, the four
+// triggers and functions (the created_at stamp among them), the three unique indexes, the two CHECKs and the item_ref column are gone and the OLDER rules are back (the same four rows are accepted, and a written created_at is kept).
+func moneyCoreObjects(t *testing.T, c *pgx.Conn, present bool, when string) {
+	t.Helper()
+	expect := lifecycleCounter(t, c, present, when)
+	funcs := []string{"ledger_check_reserve", "ledger_apply_to_reserves", "ledger_check_release", "ledger_stamp_created_at"}
+	indexes := []string{"ledger_one_charge_per_item", "ledger_one_reserve_per_job", "ledger_one_release_per_reserve"}
+	checks := []string{"ledger_item_ref_shape", "ledger_charge_is_one_item", "reserves_not_overspent"}
+	expect("the table platform.reserves", 1, "SELECT count(*) FROM pg_class WHERE relnamespace = 'platform'::regnamespace AND relkind = 'r' AND relname::text = 'reserves'")
+	expect("the functions of 0005 (the reserve check, the reserves writer, the release check, the created_at stamp)", int64(len(funcs)),
+		"SELECT count(*) FROM pg_proc WHERE pronamespace = 'platform'::regnamespace AND proname::text = ANY($1::text[])", funcs)
+	expect("the triggers of 0005 on the ledger", int64(len(funcs)),
+		"SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal AND tgrelid = 'platform.ledger'::regclass AND tgname::text = ANY($1::text[])", funcs)
+	expect("the unique indexes of 0005", int64(len(indexes)),
+		"SELECT count(*) FROM pg_class WHERE relnamespace = 'platform'::regnamespace AND relkind = 'i' AND relname::text = ANY($1::text[])", indexes)
+	expect("the CHECKs of 0005 (item reference, one unit, the per-reserve cap)", int64(len(checks)),
+		"SELECT count(*) FROM pg_constraint WHERE conname::text = ANY($1::text[])", checks)
+	expect("the column platform.ledger.item_ref", 1,
+		"SELECT count(*) FROM pg_attribute WHERE attrelid = 'platform.ledger'::regclass AND attname::text = 'item_ref' AND NOT attisdropped")
+	if present {
+		for _, role := range []string{"platform_app", "platform_admin"} {
+			if !ledgerBool(t, c, "SELECT has_table_privilege($1::text, 'platform.reserves', 'SELECT')", role) {
+				t.Fatalf("%s: %s cannot SELECT platform.reserves", when, role)
+			}
+		}
+	}
+	lifecycleMoneyCore(t, c, present, when)
+}
+
+// lifecycleMoneyCore is the behavioural half of moneyCoreObjects, in a transaction that is ALWAYS rolled back (a transaction left open on this connection would hold the locks the next down
+// needs). With platform_0005 the four rows below are refused, each for its named reason, and platform.reserves holds the one reserve; without it the same kinds of row are accepted.
+func lifecycleMoneyCore(t *testing.T, c *pgx.Conn, enforced bool, when string) {
+	t.Helper()
+	tx, err := c.Begin(testCtx(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	a, job := ledgerUserA, ledgerJobA1
+	ledgerSeed(t, tx)
+	ledgerFund(t, tx, a, "m1", 100)
+	if enforced {
+		ledgerRefusedCheck(t, tx, when+": a reserve below the dearest price of the snapshot", "reserve_at_the_dearest_price", ledgerReserveCols(a, "m1", job, "m1_own", 10, 1))
+		reserve := ledgerOKRow(t, tx, when+": a reserve at the dearest price", ledgerReserveCols(a, "m1", job, "m1_vendor", 10, 2))
+		ledgerRefusedCheck(t, tx, when+": a charge with no item_ref", "ledger_item_ref_shape", ledgerChargeCols(a, "m1", job, reserve, "m1_own", 1, 1).without("item_ref"))
+		ledgerRefusedCheck(t, tx, when+": a charge of 3 units", "ledger_charge_is_one_item", ledgerChargeCols(a, "m1", job, reserve, "m1_own", 3, 1))
+		ledgerRefusedCheck(t, tx, when+": a release of 5 from a reserve with 20 left", "release_is_the_remainder", ledgerReleaseCols(a, "m1", job, reserve, 5))
+		if n := ledgerInt64(t, tx, "SELECT count(*) FROM platform.reserves"); n != 1 {
+			t.Fatalf("%s: platform.reserves holds %d rows after one reserve, want 1", when, n)
+		}
+		stamped := ledgerPut(t, tx, ledgerGrantCols(a, "m1", 1).with("created_at", "2999-01-01T00:00:00Z"))
+		if !ledgerBool(t, tx, "SELECT created_at = now() FROM platform.ledger WHERE id = $1", stamped) {
+			t.Fatalf("%s: a grant that supplied created_at = 2999 kept it: the ledger's clock is not the database's", when)
+		}
+		return
+	}
+	kept := ledgerPut(t, tx, ledgerGrantCols(a, "m1", 1).with("created_at", "2999-01-01T00:00:00Z"))
+	if !ledgerBool(t, tx, "SELECT created_at = '2999-01-01T00:00:00Z'::timestamptz FROM platform.ledger WHERE id = $1", kept) {
+		t.Fatalf("%s: a grant that supplied created_at = 2999 did not keep it: something still stamps the ledger's time", when)
+	}
+	reserve := ledgerOKRow(t, tx, when+": a reserve below the dearest price (the older chain has no such rule)", ledgerReserveCols(a, "m1", job, "m1_own", 10, 1))
+	ledgerOKRow(t, tx, when+": a second reserve for the same job", ledgerReserveCols(a, "m1", job, "m1_own", 5, 1))
+	ledgerOKRow(t, tx, when+": a charge of 3 units with no item_ref", ledgerChargeCols(a, "m1", job, reserve, "m1_own", 3, 1).without("item_ref"))
+	ledgerOKRow(t, tx, when+": a release of 5, which is not the remainder", ledgerReleaseCols(a, "m1", job, reserve, 5))
+	if ledgerBool(t, tx, "SELECT to_regclass('platform.reserves') IS NOT NULL") {
+		t.Fatalf("%s: platform.reserves still exists", when)
+	}
+}
+
+// entitlementFlowObjects is the CONTROL (present) and the ASSERTION (absent) of platform_0006's down: before it the delivery table, the two trigger functions and triggers, the end-date column
+// and its CHECK are there, platform_app holds no INSERT or UPDATE on the entitlements (and its column-level UPDATE on the delivery table), and the ledger writes the entitlement; after it all
+// of that is gone, platform_app holds INSERT and UPDATE on the entitlements again, and the ledger no longer writes them.
+func entitlementFlowObjects(t *testing.T, c *pgx.Conn, present bool, when string) {
+	t.Helper()
+	expect := lifecycleCounter(t, c, present, when)
+	funcs := []string{"ledger_apply_to_entitlements", "m3_entitlements_raise_sync"}
+	checks := []string{"ledger_until_at_shape", "m3_sync_converged_only_when_observed", "m3_sync_converged_not_ahead", "m3_sync_observed_vocabulary", "m3_sync_versions_are_positive", "m3_sync_attempts_not_negative"}
+	expect("the table platform.m3_sync", 1, "SELECT count(*) FROM pg_class WHERE relnamespace = 'platform'::regnamespace AND relkind = 'r' AND relname::text = 'm3_sync'")
+	expect("the functions of 0006", int64(len(funcs)),
+		"SELECT count(*) FROM pg_proc WHERE pronamespace = 'platform'::regnamespace AND proname::text = ANY($1::text[])", funcs)
+	expect("the triggers of 0006 (one on the ledger, one on the entitlements)", int64(len(funcs)),
+		"SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal AND tgname::text = ANY($1::text[])", funcs)
+	expect("the CHECKs of 0006 (the end-date rule and the delivery table's five)", int64(len(checks)),
+		"SELECT count(*) FROM pg_constraint WHERE conname::text = ANY($1::text[])", checks)
+	expect("the column platform.ledger.until_at", 1,
+		"SELECT count(*) FROM pg_attribute WHERE attrelid = 'platform.ledger'::regclass AND attname::text = 'until_at' AND NOT attisdropped")
+	// what 0006 takes from platform_app and its down gives back (the control is the same query before and after: it says false while 0006 is up and true once it is down)
+	for _, priv := range []string{"INSERT", "UPDATE"} {
+		if got := ledgerBool(t, c, "SELECT has_table_privilege('platform_app', 'platform.m3_entitlements', $1::text)", priv); got == present {
+			t.Fatalf("%s: platform_app's %s on platform.m3_entitlements is %v, want %v (platform_0006 revokes it and its down restores it)", when, priv, got, !present)
+		}
+	}
+	if present {
+		if !ledgerBool(t, c, "SELECT has_column_privilege('platform_app', 'platform.m3_sync', 'observed', 'UPDATE') AND NOT has_column_privilege('platform_app', 'platform.m3_sync', 'want_version', 'UPDATE')") {
+			t.Fatalf("%s: platform_app must hold UPDATE on m3_sync.observed and not on m3_sync.want_version", when)
+		}
+	}
+	lifecycleEntitlementFlow(t, c, present, when)
+}
+
+// lifecycleEntitlementFlow is the behavioural half of entitlementFlowObjects, in a transaction that is ALWAYS rolled back. With platform_0006 an m3_enable row with an end date creates the
+// entitlement and its delivery row, an m3_expire that is not due is refused (m3_expire_is_due) and platform_app is refused a direct INSERT (42501); without it the date column does not exist
+// (42703), an m3_enable creates no entitlement, an m3_expire for a user with none is accepted, and platform_app writes the entitlements itself again.
+func lifecycleEntitlementFlow(t *testing.T, c *pgx.Conn, enforced bool, when string) {
+	t.Helper()
+	tx, err := c.Begin(testCtx(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	a, b, cc := ledgerUserA, ledgerUserB, ledgerUserC
+	ledgerSeed(t, tx)
+	const enableWithDate = `INSERT INTO platform.ledger (user_id, module_id, kind, acting_admin_id, reason, idempotency_key, until_at)
+		VALUES ($1, 'm3', 'm3_enable', $2, 'lifecycle', $3, now() + interval '1 day')`
+	const directInsert = "INSERT INTO platform.m3_entitlements (user_id, enabled) VALUES ($1, true)"
+	if enforced {
+		ledgerExpectOK(t, tx, when+": an m3_enable with an end date", enableWithDate, a, ledgerAdminA, ledgerNextKey("lifecycle"))
+		if got := ledgerRows(t, tx, "SELECT enabled::text, (enabled_until IS NOT NULL)::text FROM platform.m3_entitlements WHERE user_id = $1", a); len(got) != 1 || got[0] != "true|true" {
+			t.Fatalf("%s: the entitlement written by the m3_enable reads %v, want [true|true]", when, got)
+		}
+		if got := ledgerRows(t, tx, "SELECT want_suspended::text, want_version, converged_version, observed FROM platform.m3_sync WHERE user_id = $1", a); len(got) != 1 || got[0] != "false|1|0|unknown" {
+			t.Fatalf("%s: the delivery row written by the entitlement trigger reads %v, want [false|1|0|unknown]", when, got)
+		}
+		ledgerRefusedCheck(t, tx, when+": an m3_expire that is not due", "m3_expire_is_due", ledgerM3Cols("m3_expire", a))
+		ledgerSwitchRole(t, tx, "platform_app")
+		ledgerExpectRefused(t, tx, when+": platform_app writing the entitlement itself", "42501", ledgerWhy{Message: "permission denied for table m3_entitlements"}, directInsert, b)
+		ledgerResetRole(t, tx)
+		return
+	}
+	ledgerExpectRefused(t, tx, when+": an end date on an m3_enable (the older ledger has no such column)", "42703", ledgerWhy{Message: "until_at"}, enableWithDate, a, ledgerAdminA, ledgerNextKey("lifecycle"))
+	ledgerOKRow(t, tx, when+": an m3_enable", ledgerM3Cols("m3_enable", a))
+	if n := ledgerInt64(t, tx, "SELECT count(*) FROM platform.m3_entitlements WHERE user_id = $1", a); n != 0 {
+		t.Fatalf("%s: an m3_enable wrote %d entitlement rows: something other than the application still writes them", when, n)
+	}
+	ledgerOKRow(t, tx, when+": an m3_expire for a user with no entitlement (the older chain checks nothing)", ledgerM3Cols("m3_expire", b))
+	ledgerSwitchRole(t, tx, "platform_app")
+	ledgerExpectOK(t, tx, when+": platform_app inserting an entitlement itself", directInsert, cc)
+	ledgerExpectOK(t, tx, when+": platform_app updating an entitlement itself", "UPDATE platform.m3_entitlements SET enabled = false WHERE user_id = $1", cc)
+	ledgerResetRole(t, tx)
+	if ledgerBool(t, tx, "SELECT to_regclass('platform.m3_sync') IS NOT NULL") {
+		t.Fatalf("%s: platform.m3_sync still exists", when)
+	}
+}
+
 func appliedAt(t *testing.T, c *pgx.Conn) map[string]string {
 	t.Helper()
 	rows, err := c.Query(testCtx(t), "SELECT version, applied_at::text FROM platform.schema_migrations")
@@ -306,7 +485,7 @@ func TestRunnerLifecycle(t *testing.T) {
 
 	// The executable expectation of the migration chain. scripts/check-migrations.sh reads this literal and fails when the
 	// newest migration is not named in it, so a migration cannot be added without extending this test.
-	wantChain := []string{"0000", "0001", "0002", "0003", "0004"}
+	wantChain := []string{"0000", "0001", "0002", "0003", "0004", "0005", "0006"}
 
 	dir := repoMigrationsDir(t)
 	if onDisk := chainOnDisk(t, dir); !sameStrings(onDisk, wantChain) {

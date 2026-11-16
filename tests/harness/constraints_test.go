@@ -214,7 +214,10 @@ func TestConstraints_Admins(t *testing.T) {
 		// still does, with its own message.
 		ledgerExpectOK(t, tx, "NULL changed_by on an entitlement INSERT while B is disabled", "INSERT INTO platform.m3_entitlements (user_id, enabled) VALUES ($1, true)", ledgerAdminA)
 		ledgerExpectOK(t, tx, "NULL changed_by on an entitlement UPDATE while B is disabled", "UPDATE platform.m3_entitlements SET enabled = false, changed_by = NULL WHERE user_id = $1", ledgerAdminA)
-		ledgerOKRow(t, tx, "m3_expire has no admin and passes while B is disabled", ledgerM3Cols("m3_expire", ledgerUserB))
+		// m3_expire names no admin, so it passes while B is disabled - once it is DUE (platform_0006 refuses an expiry unless the entitlement is enabled and its date has passed): user A's
+		// entitlement was enabled by the m3_enable statement above (kept for the active admin A), and time is made to pass for it.
+		ledgerMakeDue(t, tx, ledgerUserA)
+		ledgerOKRow(t, tx, "m3_expire has no admin and passes while B is disabled", ledgerM3Cols("m3_expire", ledgerUserA))
 		ledgerExpectRefused(t, tx, "a price change with NO admin is still refused by the older rule, not by admin_is_active", "23514", ledgerWhy{Message: "needs changed_by"},
 			"UPDATE platform.unit_costs SET cost = 4, changed_by = NULL, change_reason = 'no admin' WHERE unit = 'm2_accepted'")
 
@@ -261,12 +264,17 @@ type disabledAdminStmt struct {
 	Build func(admin string) (string, []any)
 }
 
-// disabledAdminStmts expects: user A funded on m1, an m3_entitlements row for user B (changed_by NULL), no entitlement for user C.
+// disabledAdminStmts expects: user A funded on m1 and holding NO entitlement, an m3_entitlements row for user B (changed_by NULL), no entitlement for user C.
+//
+// Since platform_0006 no application role can write platform.m3_entitlements (the ledger trigger is its only writer), so the two statements that write it directly are runnable by nobody but the
+// table's owner and a superuser (Roles is empty): TestConstraints_Admins still proves, as the superuser, that the entitlement trigger refuses a disabled admin; TestConstraints_DisabledAdminThroughTheRoles
+// proves the roles are refused them by privilege (42501) and that the ledger path (an m3_enable naming the admin) is refused by the ledger's own trigger.
 func disabledAdminStmts() []disabledAdminStmt {
 	insert := func(table string, cols func(admin string) ledgerCols) func(string) (string, []any) {
 		return func(ad string) (string, []any) { return ledgerInsertInto(table, cols(ad)) }
 	}
-	both, app := []string{"platform_app", "platform_admin"}, []string{"platform_app"}
+	both, none := []string{"platform_app", "platform_admin"}, []string{}
+	app := []string{"platform_app"}
 	const (
 		ledgerFKName = "ledger_acting_admin_id_fkey"
 		m3FKName     = "m3_entitlements_changed_by_fkey"
@@ -282,17 +290,18 @@ func disabledAdminStmts() []disabledAdminStmt {
 			insert("platform.ledger", func(ad string) ledgerCols {
 				return ledgerAdjustmentCols(ledgerUserA, "m1", 1).with("acting_admin_id", ad)
 			})},
+		// user A: the one user with no entitlement and no other statement of this list writing one (the statement writes the entitlement through the ledger trigger since platform_0006)
 		{"an m3_enable event naming the admin", "ledger", ledgerWhere, ledgerFKName, both,
-			insert("platform.ledger", func(ad string) ledgerCols { return ledgerM3Cols("m3_enable", ledgerUserC).with("acting_admin_id", ad) })},
+			insert("platform.ledger", func(ad string) ledgerCols { return ledgerM3Cols("m3_enable", ledgerUserA).with("acting_admin_id", ad) })},
 		{"an admin_audit row written by the admin", "admin_audit", "platform.admin_audit.admin_id", "admin_audit_admin_id_fkey", both,
 			insert("platform.admin_audit", func(ad string) ledgerCols {
 				return ledgerCols{"admin_id": ad, "entry_type": "action", "action": "disabled-admin-proof", "target_type": "user", "target_id": "x", "reason": "proof"}
 			})},
-		{"an m3_entitlements INSERT with changed_by = the admin", "m3_entitlements", m3Where, m3FKName, app,
+		{"an m3_entitlements INSERT with changed_by = the admin", "m3_entitlements", m3Where, m3FKName, none,
 			insert("platform.m3_entitlements", func(ad string) ledgerCols {
 				return ledgerCols{"user_id": ledgerUserC, "enabled": true, "changed_by": ad}
 			})},
-		{"an m3_entitlements UPDATE that changes changed_by to the admin", "m3_entitlements", m3Where, m3FKName, app,
+		{"an m3_entitlements UPDATE that changes changed_by to the admin", "m3_entitlements", m3Where, m3FKName, none,
 			func(ad string) (string, []any) {
 				return "UPDATE platform.m3_entitlements SET changed_by = $2 WHERE user_id = $1", []any{ledgerUserB, ad}
 			}},
@@ -370,13 +379,16 @@ func TestConstraints_SystemUserHoldsNothing(t *testing.T) {
 		t.Fatalf("the system user row is missing from public.users (%d rows): a foreign key would refuse it and the CHECKs below would prove nothing", n)
 	}
 
-	for _, c := range []struct{ table, constraint, insert, move string }{
+	for _, c := range []struct {
+		table, constraint, insert, move string
+		syncFollows                     bool // the row's key is also the key of a delivery row (platform_0006: platform.m3_sync), so it cannot be moved while that row exists
+	}{
 		{"platform.balances", "balances_not_the_system_user", "INSERT INTO platform.balances (user_id, module_id) VALUES ($1, 'm1')",
-			"UPDATE platform.balances SET user_id = $1 WHERE user_id = $2 AND module_id = 'm1'"},
+			"UPDATE platform.balances SET user_id = $1 WHERE user_id = $2 AND module_id = 'm1'", false},
 		{"platform.m3_entitlements", "m3_entitlements_not_the_system_user", "INSERT INTO platform.m3_entitlements (user_id, enabled) VALUES ($1, true)",
-			"UPDATE platform.m3_entitlements SET user_id = $1 WHERE user_id = $2"},
+			"UPDATE platform.m3_entitlements SET user_id = $1 WHERE user_id = $2", true},
 		{"platform.suppressions", "suppressions_not_the_system_user", "INSERT INTO platform.suppressions (user_id, email, source) VALUES ($1, 'sys@example.com', 'manual')",
-			"UPDATE platform.suppressions SET user_id = $1 WHERE user_id = $2"},
+			"UPDATE platform.suppressions SET user_id = $1 WHERE user_id = $2", false},
 	} {
 		c := c
 		t.Run(c.table, func(t *testing.T) {
@@ -386,7 +398,19 @@ func TestConstraints_SystemUserHoldsNothing(t *testing.T) {
 				t.Fatalf("the control inserted %d rows", tag.RowsAffected())
 			}
 			ledgerExpectRefused(t, tx, "moving a normal user's row to the system user", "23514", ledgerWhy{Constraint: c.constraint}, c.move, sys, a)
-			ledgerExpectOK(t, tx, "control: moving it to another normal user", c.move, b, a)
+			if c.syncFollows {
+				// the entitlement trigger wrote the delivery row of this user (m3_sync, which references the entitlement's key): the key cannot move under it ...
+				ledgerExpectRefused(t, tx, "moving the row to another normal user while its delivery row exists", "23503", ledgerWhy{Constraint: "m3_sync_user_id_fkey"}, c.move, b, a)
+				// ... and with the delivery row gone the very same move is legal, so the refusal above was the delivery row's and the CHECK's refusal of the system user is not hiding it
+				ledgerTrial(t, tx, func(sp pgx.Tx) {
+					if tag := ledgerMust(t, sp, "DELETE FROM platform.m3_sync WHERE user_id = $1", a); tag.RowsAffected() != 1 {
+						t.Fatalf("the delivery row of user A was not there (%d rows deleted): the control below would prove nothing", tag.RowsAffected())
+					}
+					ledgerExpectOK(t, sp, "control: moving it to another normal user once nothing references the key", c.move, b, a)
+				})
+			} else {
+				ledgerExpectOK(t, tx, "control: moving it to another normal user", c.move, b, a)
+			}
 			ledgerTrial(t, tx, func(sp pgx.Tx) {
 				ledgerMust(t, sp, "ALTER TABLE "+c.table+" DROP CONSTRAINT "+c.constraint)
 				ledgerExpectOK(t, sp, "control: without the CHECK the same INSERT for the system user passes (the CHECK is the only barrier)", c.insert, sys)
@@ -911,9 +935,11 @@ func TestConstraints_Balances(t *testing.T) {
 	}
 }
 
-// TestConstraints_M3Entitlements covers platform.m3_entitlements: an expiry date needs the entitlement to be enabled, one row
-// per user, changed_by an admin; the app maintains it, the break-glass role reads. It fails if a disabled entitlement can
-// carry a date (the expiry job would then re-disable an already-disabled user, or a date could outlive a disable).
+// TestConstraints_M3Entitlements covers platform.m3_entitlements. Since platform_0006 NO application role writes it (a trigger on the ledger kinds m3_enable, m3_disable and m3_expire is its only
+// writer), so its own rules - an expiry date needs the entitlement to be enabled, one row per user, changed_by an admin, a real user - are the last wall UNDER that trigger, and are proven here as the
+// SUPERUSER, whom no privilege stops. The other half is who may touch the table: both application roles read it and are refused INSERT, UPDATE, DELETE and TRUNCATE with 42501 (the paired control: the
+// superuser's own statements work, and an entitlement written THROUGH THE LEDGER by each role appears). It fails if a disabled entitlement can carry a date (the expiry job would then re-disable an
+// already-disabled user, or a date could outlive a disable), or if a role regains a write privilege.
 func TestConstraints_M3Entitlements(t *testing.T) {
 	_, admin := migratedScratch(t)
 	tx := ledgerBegin(t, admin)
@@ -936,18 +962,61 @@ func TestConstraints_M3Entitlements(t *testing.T) {
 		"UPDATE platform.m3_entitlements SET enabled = false WHERE user_id = $1", a)
 	ledgerExpectOK(t, tx, "control: disabling and clearing the date together", "UPDATE platform.m3_entitlements SET enabled = false, enabled_until = NULL WHERE user_id = $1", a)
 
-	t.Run("who may touch the table: the app inserts and updates, nobody deletes, the break-glass role reads", func(t *testing.T) {
-		ledgerSwitchRole(t, tx, "platform_app")
-		ledgerExpectOK(t, tx, "control: platform_app UPDATE", "UPDATE platform.m3_entitlements SET enabled = true WHERE user_id = $1", b)
-		ledgerOKInsert(t, tx, "control: platform_app INSERT", tbl, row(ledgerAdminB, true))
-		ledgerExpectRefused(t, tx, "platform_app DELETE", "42501", ledgerWhy{Message: "permission denied for table m3_entitlements"}, "DELETE FROM platform.m3_entitlements")
-		ledgerResetRole(t, tx)
-		ledgerSwitchRole(t, tx, "platform_admin")
-		if n := ledgerInt64(t, tx, "SELECT count(*) FROM platform.m3_entitlements"); n != 4 {
-			t.Fatalf("platform_admin sees %d entitlements, want 4", n)
+	t.Run("who may touch the table: nobody but the ledger trigger; both roles read", func(t *testing.T) {
+		type stmt struct {
+			op, sql string
+			args    []any
+			prep    string // run first by the control: the delivery row (platform.m3_sync) restricts a delete of its entitlement, even for the superuser
 		}
-		sql, args := ledgerInsertInto(tbl, row(ledgerAdminA, true))
-		ledgerExpectRefused(t, tx, "platform_admin INSERT", "42501", ledgerWhy{Message: "permission denied for table m3_entitlements"}, sql, args...)
+		stmts := []stmt{
+			{"INSERT", "INSERT INTO platform.m3_entitlements (user_id, enabled) VALUES ($1, true)", []any{ledgerAdminB}, ""},
+			{"UPDATE", "UPDATE platform.m3_entitlements SET enabled = true WHERE user_id = $1", []any{b}, ""},
+			{"DELETE", "DELETE FROM platform.m3_entitlements WHERE user_id = $1", []any{b}, "DELETE FROM platform.m3_sync WHERE user_id = $1"},
+			{"TRUNCATE", "TRUNCATE platform.m3_entitlements CASCADE", nil, ""},
+		}
+		// the control: the superuser's own statements work (each in a savepoint that is rolled back), so a refusal below is the role's, not a typo or a missing row
+		for _, s := range stmts {
+			s := s
+			ledgerTrial(t, tx, func(sp pgx.Tx) {
+				if s.prep != "" {
+					ledgerMust(t, sp, s.prep, s.args...)
+				}
+				tag := ledgerExpectOK(t, sp, "control: the superuser's "+s.op, s.sql, s.args...)
+				if s.op != "TRUNCATE" && tag.RowsAffected() != 1 {
+					t.Fatalf("control: the superuser's %s touched %d rows, want 1", s.op, tag.RowsAffected())
+				}
+			})
+		}
+		ledgerExpectRefused(t, tx, "even the superuser cannot delete an entitlement that has a delivery row", "23503", ledgerWhy{Constraint: "m3_sync_user_id_fkey"},
+			"DELETE FROM platform.m3_entitlements WHERE user_id = $1", b)
+
+		for _, role := range []string{"platform_app", "platform_admin"} {
+			ledgerSwitchRole(t, tx, role)
+			if n := ledgerInt64(t, tx, "SELECT count(*) FROM platform.m3_entitlements"); n != 3 {
+				t.Fatalf("%s sees %d entitlements, want the 3 written above (SELECT is granted)", role, n)
+			}
+			why := ledgerWhy{Message: "permission denied for table m3_entitlements"}
+			for _, s := range stmts {
+				ledgerExpectRefused(t, tx, role+" "+s.op+" on m3_entitlements", "42501", why, s.sql, s.args...)
+			}
+			ledgerResetRole(t, tx)
+		}
+
+		// What the roles CAN do is put a row in the LEDGER: the entitlement appears through the trigger (and its delivery row with it), written by neither role.
+		for _, w := range []struct{ role, user string }{{"platform_app", ledgerAdminB}, {"platform_admin", ledgerAdminA}} {
+			ledgerSwitchRole(t, tx, w.role)
+			ledgerOKRow(t, tx, "control: "+w.role+" enables an entitlement through the ledger", ledgerM3Cols("m3_enable", w.user))
+			ledgerResetRole(t, tx)
+			if got := ledgerString(t, tx, "SELECT enabled::text || '|' || COALESCE(changed_by::text, '') FROM platform.m3_entitlements WHERE user_id = $1", w.user); got != "true|"+ledgerAdminA {
+				t.Fatalf("the entitlement %s's ledger row created reads %q, want true|%s", w.role, got, ledgerAdminA)
+			}
+			if n := ledgerInt64(t, tx, "SELECT count(*) FROM platform.m3_sync WHERE user_id = $1", w.user); n != 1 {
+				t.Fatalf("the entitlement of %s has %d delivery rows, want the 1 its trigger wrote", w.user, n)
+			}
+		}
+		if n := ledgerInt64(t, tx, "SELECT count(*) FROM platform.m3_entitlements"); n != 5 {
+			t.Fatalf("%d entitlements after the two ledger writes, want 3 + 2", n)
+		}
 	})
 }
 

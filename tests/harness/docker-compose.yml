@@ -185,6 +185,7 @@ services:
       MTLS_CA_CERT: /secrets/mtls/ca.crt
       CREDENTIAL_KEY_ID: cred-dek-v1
       PLATFORM_TOKEN_HASHES: ${H_M3_TOKEN_HASH:?}
+      ADMIN_API_KEY_HASHES: ${H_M3_ADMIN_KEY_HASH:?}      # module 3 operator surface (the per-user suspend route) is mounted only when this is set: a credential DISTINCT from the service token
     volumes:
       - ${H_MODULES_ROOT:?}/coldmail-send-byo/secrets/dev/kms/dev-master.key:/secrets/kms/dev-master.key:ro
       - ${H_MODULES_ROOT:?}/coldmail-send-byo/secrets/dev/certs/control.crt:/secrets/mtls/control.crt:ro
@@ -199,6 +200,44 @@ services:
     depends_on: { postgres: { condition: service_healthy } }
     networks: [private]
 
+  # ── module 3's worker and the SMTP sink (Phase 2, chunk B8): module 3 must really SEND for the entitlement proofs to mean anything ────────────────────────────────────
+  # The worker registers over mTLS with a token whose bcrypt hash run.sh seeds into send_byo.boxes BEFORE it starts (a worker that is rejected exits). It is started by name (run.sh stage 5b), not by
+  # the `up --wait` of the three Controls. The sink MUST be named `smtp-sink`: the worker skips TLS validation only for that host name and private addresses (module 3 services/worker/src/smtp.js:136-145).
+  m3-worker:
+    build: { context: "${H_MODULES_ROOT:?}/coldmail-send-byo", dockerfile: services/worker/Dockerfile }
+    environment:
+      CONTROL_HOST: m3
+      CONTROL_WORKERLINK_PORT: "8443"
+      CONTROL_STREAM_PORT: "8444"
+      CONTROL_SERVER_NAME: control          # the Control certificate's name (SAN DNS:control); the dial uses the host m3 and this name separately
+      WORKER_ID: ${H_M3_WORKER_ID:?}
+      WORKER_TOKEN: ${H_M3_WORKER_TOKEN:?}
+      WORKER_HEARTBEAT_INTERVAL_SEC: "10"
+      WORKER_SMTP_TIMEOUT_MS: "30000"
+      MTLS_CLIENT_CERT: /secrets/mtls/worker.crt
+      MTLS_CLIENT_KEY: /secrets/mtls/worker.key
+      MTLS_CA_CERT: /secrets/mtls/ca.crt
+    volumes:
+      - ${H_MODULES_ROOT:?}/coldmail-send-byo/secrets/dev/certs/worker.crt:/secrets/mtls/worker.crt:ro
+      - ${H_MODULES_ROOT:?}/coldmail-send-byo/secrets/dev/certs/worker.key:/secrets/mtls/worker.key:ro
+      - ${H_MODULES_ROOT:?}/coldmail-send-byo/secrets/dev/certs/ca.crt:/secrets/mtls/ca.crt:ro
+    depends_on: { m3: { condition: service_healthy } }
+    networks: [private]
+    restart: "no"
+
+  smtp-sink:
+    image: axllent/mailpit:v1.33.1@sha256:aef2aacc11f075ec0fb6874275ee4a421e688e11a96ebb296134d1735c7761ce
+    environment:
+      MP_SMTP_AUTH_ALLOW_INSECURE: "false"
+      MP_SMTP_REQUIRE_STARTTLS: "true"
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"       # module 3's own harness sink: any credential is accepted, only the success path is exercised
+      MP_SMTP_TLS_CERT: /certs/sink.crt
+      MP_SMTP_TLS_KEY: /certs/sink.key
+    volumes:
+      - ${H_MODULES_ROOT:?}/coldmail-send-byo/secrets/dev/certs/sink.crt:/certs/sink.crt:ro
+      - ${H_MODULES_ROOT:?}/coldmail-send-byo/secrets/dev/certs/sink.key:/certs/sink.key:ro
+    networks: [private]
+
   # ── the platform ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   platform:
     build: *platform-build
@@ -207,6 +246,11 @@ services:
       PLATFORM_HTTP_ADDR: ":8080"
       PLATFORM_ENV: development
       PLATFORM_LOG_LEVEL: debug
+      # Module 3's control and its OPERATOR (admin) key, a different credential from the service token above: the entitlement loops suspend and resume users through its admin route.
+      PLATFORM_M3_URL: http://m3:8080
+      PLATFORM_M3_ADMIN_TOKEN: ${H_M3_ADMIN_KEY:?}
+      PLATFORM_ENTITLEMENT_EXPIRE_INTERVAL_SEC: "2"      # CI only: short loops so the proofs finish in seconds (production defaults are 30 and 5)
+      PLATFORM_M3_RECONCILE_INTERVAL_SEC: "2"
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/readyz || exit 1"]
       interval: 3s
@@ -246,6 +290,10 @@ services:
       HARNESS_MIGRATE_BIN: /h/platform-migrate
       HARNESS_REPO_ROOT: /repo
       HARNESS_MODULES_ROOT: /modules
+      HARNESS_M3_URL: http://m3:8080
+      HARNESS_M3_TOKEN: ${H_M3_TOKEN:?}
+      HARNESS_M3_ADMIN_KEY: ${H_M3_ADMIN_KEY:?}
+      HARNESS_SINK_URL: http://smtp-sink:8025
     volumes:
       - ${H_WORK:?}/out:/h:ro
       - ${H_PLATFORM_DIR:?}:/repo:ro

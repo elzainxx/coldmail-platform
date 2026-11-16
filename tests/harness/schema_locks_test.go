@@ -41,6 +41,7 @@ var shapePKExceptions = map[string]shapePKException{
 	"platform.balances":          {[]string{"user_id:uuid", "module_id:text"}, "one row per user per metered module: a composite natural key (user_id, module_id) with no surrogate, so there can never be a second balance for the same pair"},
 	"platform.job_unit_prices":   {[]string{"job_id:uuid", "unit:text"}, "one frozen price per unit per job: the composite key (job_id, unit) is what the ledger's frozen-price foreign key points at"},
 	"platform.suppressions":      {[]string{"user_id:uuid", "email:text"}, "one row per suppressed address per user: the composite key (user_id, email) is what makes suppressing the same address twice impossible"},
+	"platform.reserves":          {[]string{"reserve_id:bigint"}, "one row per reserve: the key IS the ledger id of the reserve row it describes (a foreign key to platform.ledger written by the ledger trigger), so a second row for one reserve is impossible and no surrogate id can drift from it"},
 }
 
 const shapeLocksScope = `(n.nspname = 'platform' OR (n.nspname = 'public' AND c.relname IN ('users', 'job_items')))`
@@ -535,7 +536,10 @@ func phase2TriggerText(n int) string {
 // (unique, over (user_id, module_id), partial over exactly scheduled/running/paused/cancelling, the old index gone); the four system-user CHECKs, ledger_shape_adjustment and the
 // vocabulary CHECK (each named, a CHECK, validated, saying what it must); the ledger's module-metering foreign key; the generated column monetary (stored, naming exactly the five monetary
 // kinds); the four triggers (timing, events, row-level, WHEN, function, enabled); the functions (owner, return type, a pinned search_path, SECURITY DEFINER where the design needs it) and
-// unit_costs_guard calling the admin check; and the view listable_users (a view, its columns, both of its exclusions).
+// unit_costs_guard calling the admin check; and the view listable_users (a view, its columns, both of its exclusions). It also pins what platform_0005 and platform_0006 add, by the same
+// method: the CHECKs of the one-unit charge, the item reference, the per-reserve cap, the end date and the delivery table; the three unique partial indexes of the ledger (one charge per job
+// item, one reserve per job, one release per reserve); the six triggers (timing, events, WHEN, enabled; the first to run is the created_at stamp) and their functions (SECURITY DEFINER except the stamp), whose BODIES must still name the constraints
+// they raise (a no-op body would keep every other fact).
 //
 // What it does NOT cover, and says so: whether the triggers BEHAVE (the constraint and ledger tests do that, with a control for each), who may EXECUTE the functions (checkFunctionGrants), the
 // view's privileges (checkGrants) and the exact text of an expression (it reads the quoted words and the key tokens, which PostgreSQL deparses the same way on every version it runs on).
@@ -588,6 +592,15 @@ func phase2CatalogCheck(ctx context.Context, q querier) ([]string, error) {
 		{"platform.ledger", "ledger_shape_adjustment", []string{"'adjustment'", "available_delta < 0", "reserved_delta = 0", "job_id IS NULL", "reserve_id IS NULL", "unit_cost IS NULL",
 			"acting_admin_id IS NOT NULL", "reason IS NOT NULL", "btrim(reason)"}},
 		{"platform.ledger", "ledger_kind_vocabulary", []string{"'grant'", "'reserve'", "'charge'", "'release'", "'adjustment'", "'m3_enable'", "'m3_disable'", "'m3_expire'"}},
+		// platform_0005: a charge is one unit of one named job item; the per-reserve cap
+		{"platform.ledger", "ledger_item_ref_shape", []string{"'charge'", "item_ref IS NOT NULL", "octet_length(item_ref) <= 200", "item_ref IS NULL"}},
+		{"platform.ledger", "ledger_charge_is_one_item", []string{"'charge'", "COALESCE", "units = 1"}},
+		{"platform.reserves", "reserves_not_overspent", []string{"(charged + released) <= reserved"}},
+		// platform_0006: the end date rides only on an m3_enable row; the delivery table's rules (the convergence rule is the one that stops a false success)
+		{"platform.ledger", "ledger_until_at_shape", []string{"until_at IS NULL", "'m3_enable'", "until_at > created_at"}},
+		{"platform.m3_sync", "m3_sync_converged_only_when_observed", []string{"converged_version < want_version", "NOT want_suspended", "'suspended'", "'active'"}},
+		{"platform.m3_sync", "m3_sync_converged_not_ahead", []string{"converged_version <= want_version"}},
+		{"platform.m3_sync", "m3_sync_observed_vocabulary", []string{"'unknown'", "'suspended'", "'active'"}},
 	} {
 		rows, err := phase2Rows(ctx, q, `SELECT c.contype::text, c.convalidated::text, pg_get_constraintdef(c.oid) FROM pg_constraint c WHERE c.conrelid = to_regclass($1::text) AND c.conname::text = $2`, c.rel, c.name)
 		if err != nil {
@@ -656,6 +669,16 @@ func phase2CatalogCheck(ctx context.Context, q querier) ([]string, error) {
 		{"platform.admin_audit", "admin_audit_require_active_admin", 1 + 2 + 4, false},
 		{"platform.m3_entitlements", "m3_entitlements_require_active_admin", 1 + 2 + 4 + 16, false},
 		{"platform.unit_costs", "unit_costs_guard", 1 + 2 + 16, false},
+		// platform_0005: BEFORE the row is written the reserve must be at the dearest price of a complete snapshot and a release exactly the remainder (each only for its own kind); AFTER it,
+		// platform.reserves follows the row
+		{"platform.ledger", "ledger_check_reserve", 1 + 2 + 4, true},
+		{"platform.ledger", "ledger_check_release", 1 + 2 + 4, true},
+		{"platform.ledger", "ledger_apply_to_reserves", 1 + 4, true},
+		// platform_0005, the first thing to run on a ledger row (BEFORE INSERT, every kind, no WHEN): created_at is overwritten with the transaction's now(), so no writer can supply the time
+		{"platform.ledger", "ledger_stamp_created_at", 1 + 2 + 4, false},
+		// platform_0006: the ledger writes the entitlement (AFTER, only for the three entitlement kinds) and the entitlement raises its delivery row (AFTER INSERT OR UPDATE)
+		{"platform.ledger", "ledger_apply_to_entitlements", 1 + 4, true},
+		{"platform.m3_entitlements", "m3_entitlements_raise_sync", 1 + 4 + 16, false},
 	} {
 		rows, err := phase2Rows(ctx, q, `SELECT t.tgtype::int::text, t.tgenabled::text, (t.tgqual IS NOT NULL)::text, p.proname::text FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid
 			WHERE NOT t.tgisinternal AND t.tgrelid = to_regclass($1::text) AND t.tgname::text = $2`, tr.rel, tr.name)
@@ -692,6 +715,13 @@ func phase2CatalogCheck(ctx context.Context, q querier) ([]string, error) {
 		{"ledger_require_active_admin", "", "trigger", false},
 		{"admin_audit_require_active_admin", "", "trigger", false},
 		{"m3_entitlements_require_active_admin", "", "trigger", false},
+		// platform_0005 and platform_0006: each reads or writes what the application roles cannot (the price snapshot, platform.reserves, platform.m3_entitlements, platform.m3_sync)
+		{"ledger_check_reserve", "", "trigger", true},
+		{"ledger_check_release", "", "trigger", true},
+		{"ledger_apply_to_reserves", "", "trigger", true},
+		{"ledger_stamp_created_at", "", "trigger", false}, // SECURITY INVOKER: it reads and writes nothing but the row it is given
+		{"ledger_apply_to_entitlements", "", "trigger", true},
+		{"m3_entitlements_raise_sync", "", "trigger", true},
 	} {
 		rows, err := phase2Rows(ctx, q, `SELECT p.prosecdef::text, (EXISTS (SELECT 1 FROM unnest(COALESCE(p.proconfig, ARRAY[]::text[])) cfg WHERE cfg = 'search_path=pg_catalog, pg_temp'))::text,
 				pg_get_userbyid(p.proowner), p.prorettype::regtype::text
@@ -725,6 +755,64 @@ func phase2CatalogCheck(ctx context.Context, q querier) ([]string, error) {
 		add("platform.unit_costs_guard(): missing")
 	} else if rows[0][0] != "true" {
 		add("platform.unit_costs_guard(): does not call require_active_admin (a disabled admin could change a price)")
+	}
+
+	// 5b. what the new trigger functions DO (the quoted names are the constraint names a refusal carries): a body replaced by a no-op keeps the trigger, the owner and the search_path, and
+	// would pass every check above
+	for _, b := range []struct {
+		fn     string
+		tokens []string
+	}{
+		{"ledger_check_reserve", []string{"reserve_at_the_dearest_price", "reserve_needs_the_complete_snapshot", "job_unit_prices", "unit_costs"}},
+		{"ledger_check_release", []string{"release_is_the_remainder", "platform.reserves"}},
+		{"ledger_apply_to_reserves", []string{"platform.reserves", "charged", "released", "reserve_row_exists"}},
+		{"ledger_apply_to_entitlements", []string{"m3_expire_is_due", "platform.m3_entitlements", "m3_enable", "m3_disable", "m3_expire"}},
+		{"m3_entitlements_raise_sync", []string{"platform.m3_sync", "want_version", "ON CONFLICT"}},
+		{"ledger_stamp_created_at", []string{"NEW.created_at", "now()"}},
+	} {
+		rows, err := phase2Rows(ctx, q, `SELECT p.prosrc FROM pg_proc p WHERE p.pronamespace = 'platform'::regnamespace AND p.proname::text = $1`, b.fn)
+		if err != nil {
+			return nil, err
+		}
+		if len(rows) == 0 {
+			continue // reported as missing by the function check above
+		}
+		for _, tok := range b.tokens {
+			if !strings.Contains(rows[0][0], tok) {
+				add("platform.%s(): its body does not mention %q (a no-op body would keep the trigger and every catalog fact above)", b.fn, tok)
+			}
+		}
+	}
+
+	// 5c. the unique indexes of platform_0005: one charge per (job, item), one reserve per job, one release per reserve - each a UNIQUE index of platform.ledger over exactly its columns and
+	// partial over exactly its kind
+	for _, ix := range []struct{ name, cols, kind string }{
+		{"ledger_one_charge_per_item", "(job_id, item_ref)", "charge"},
+		{"ledger_one_reserve_per_job", "(job_id)", "reserve"},
+		{"ledger_one_release_per_reserve", "(reserve_id)", "release"},
+	} {
+		rows, err := phase2Rows(ctx, q, `SELECT i.indisunique::text, COALESCE(pg_get_expr(i.indpred, i.indrelid), ''), pg_get_indexdef(i.indexrelid), (i.indrelid = to_regclass('platform.ledger'))::text
+			FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid WHERE c.relnamespace = 'platform'::regnamespace AND c.relname::text = $1`, ix.name)
+		if err != nil {
+			return nil, err
+		}
+		if len(rows) == 0 {
+			add("platform.%s: missing (a unique partial index of platform.ledger %s where kind = '%s')", ix.name, ix.cols, ix.kind)
+			continue
+		}
+		r := rows[0]
+		if r[0] != "true" {
+			add("platform.%s: not unique", ix.name)
+		}
+		if r[3] != "true" {
+			add("platform.%s: not an index of platform.ledger", ix.name)
+		}
+		if !strings.Contains(r[2], ix.cols) {
+			add("platform.%s: not over %s: %s", ix.name, ix.cols, r[2])
+		}
+		if got, want := phase2Literals(r[1]), []string{ix.kind}; strings.Join(got, ",") != strings.Join(want, ",") {
+			add("platform.%s: its predicate covers the kinds %v, want exactly %v", ix.name, got, want)
+		}
 	}
 
 	// 6. the view
@@ -873,6 +961,128 @@ func TestSchemaLocks_Phase2Rulings(t *testing.T) {
 		{"the user view that only drops the system user",
 			[]string{"CREATE OR REPLACE VIEW platform.listable_users AS SELECT id, auth_user_id, email, is_active, created_at FROM public.users WHERE id <> '00000000-0000-0000-0000-000000000000'::uuid"},
 			[][]string{{"platform.listable_users", "does not exclude users with no auth link"}}},
+
+		// ---- platform_0005: the money core ----
+		{"the item_ref shape dropped (a charge could carry no item)",
+			[]string{"ALTER TABLE platform.ledger DROP CONSTRAINT ledger_item_ref_shape"},
+			[][]string{{"ledger_item_ref_shape", "missing"}}},
+		{"the item_ref shape without the length bound",
+			[]string{"ALTER TABLE platform.ledger DROP CONSTRAINT ledger_item_ref_shape",
+				"ALTER TABLE platform.ledger ADD CONSTRAINT ledger_item_ref_shape CHECK ((kind = 'charge' AND item_ref IS NOT NULL AND btrim(item_ref) <> '') OR (kind <> 'charge' AND item_ref IS NULL))"},
+			[][]string{{"ledger_item_ref_shape", "lacks", "octet_length(item_ref) <= 200"}}},
+		{"the one-item rule weakened to at least one unit",
+			[]string{"ALTER TABLE platform.ledger DROP CONSTRAINT ledger_charge_is_one_item",
+				"ALTER TABLE platform.ledger ADD CONSTRAINT ledger_charge_is_one_item CHECK (kind <> 'charge' OR COALESCE(units >= 1, false))"},
+			[][]string{{"ledger_charge_is_one_item", "lacks", "units = 1"}}},
+		{"the per-reserve cap dropped",
+			[]string{"ALTER TABLE platform.reserves DROP CONSTRAINT reserves_not_overspent"},
+			[][]string{{"platform.reserves.reserves_not_overspent", "missing"}}},
+		{"the one-charge-per-item index dropped",
+			[]string{"DROP INDEX platform.ledger_one_charge_per_item"},
+			[][]string{{"ledger_one_charge_per_item", "missing"}}},
+		{"the one-reserve-per-job index not unique",
+			[]string{"DROP INDEX platform.ledger_one_reserve_per_job", "CREATE INDEX ledger_one_reserve_per_job ON platform.ledger (job_id) WHERE kind = 'reserve'"},
+			[][]string{{"ledger_one_reserve_per_job", "not unique"}}},
+		{"the one-release-per-reserve index over every kind (no predicate)",
+			[]string{"DROP INDEX platform.ledger_one_release_per_reserve", "CREATE UNIQUE INDEX ledger_one_release_per_reserve ON platform.ledger (reserve_id)"},
+			[][]string{{"ledger_one_release_per_reserve", "its predicate covers"}}},
+		{"the one-charge-per-item index over the job only",
+			[]string{"DROP INDEX platform.ledger_one_charge_per_item", "CREATE UNIQUE INDEX ledger_one_charge_per_item ON platform.ledger (job_id) WHERE kind = 'charge'"},
+			[][]string{{"ledger_one_charge_per_item", "not over (job_id, item_ref)"}}},
+		{"the reserve rate trigger dropped",
+			[]string{"DROP TRIGGER ledger_check_reserve ON platform.ledger"},
+			[][]string{{"ledger_check_reserve", "missing"}}},
+		{"the reserve rate trigger that fires for every kind (no WHEN)",
+			[]string{"DROP TRIGGER ledger_check_reserve ON platform.ledger",
+				"CREATE TRIGGER ledger_check_reserve BEFORE INSERT ON platform.ledger FOR EACH ROW EXECUTE FUNCTION platform.ledger_check_reserve()"},
+			[][]string{{"ledger_check_reserve", "WHEN clause present = false"}}},
+		{"the reserve rate trigger disabled",
+			[]string{"ALTER TABLE platform.ledger DISABLE TRIGGER ledger_check_reserve"},
+			[][]string{{"ledger_check_reserve", "not enabled"}}},
+		{"the reserve rate trigger turned into a no-op (it is still there, still a definer, still pinned)",
+			[]string{"CREATE OR REPLACE FUNCTION platform.ledger_check_reserve() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$ BEGIN RETURN NEW; END $$"},
+			[][]string{{"ledger_check_reserve()", "its body does not mention", "reserve_at_the_dearest_price"}, {"ledger_check_reserve()", "reserve_needs_the_complete_snapshot"}}},
+		{"the release trigger that fires AFTER the row is written",
+			[]string{"DROP TRIGGER ledger_check_release ON platform.ledger",
+				"CREATE TRIGGER ledger_check_release AFTER INSERT ON platform.ledger FOR EACH ROW WHEN (NEW.kind = 'release') EXECUTE FUNCTION platform.ledger_check_release()"},
+			[][]string{{"ledger_check_release", "fires as AFTER INSERT", "want BEFORE INSERT"}}},
+		{"the release check turned into a no-op",
+			[]string{"CREATE OR REPLACE FUNCTION platform.ledger_check_release() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$ BEGIN RETURN NEW; END $$"},
+			[][]string{{"ledger_check_release()", "its body does not mention", "release_is_the_remainder"}}},
+		{"the reserves writer dropped (nothing would track a reserve)",
+			[]string{"DROP TRIGGER ledger_apply_to_reserves ON platform.ledger"},
+			[][]string{{"ledger_apply_to_reserves", "missing"}}},
+		{"the reserves writer without its WHEN (it would fire for every kind)",
+			[]string{"DROP TRIGGER ledger_apply_to_reserves ON platform.ledger",
+				"CREATE TRIGGER ledger_apply_to_reserves AFTER INSERT ON platform.ledger FOR EACH ROW EXECUTE FUNCTION platform.ledger_apply_to_reserves()"},
+			[][]string{{"ledger_apply_to_reserves", "WHEN clause present = false"}}},
+		{"the reserves writer no longer a definer (the roles cannot write platform.reserves)",
+			[]string{"ALTER FUNCTION platform.ledger_apply_to_reserves() SECURITY INVOKER"},
+			[][]string{{"ledger_apply_to_reserves()", "is not SECURITY DEFINER"}}},
+		{"the reserves writer that silently skips a charge whose reserve has no row (the older body)",
+			[]string{"CREATE OR REPLACE FUNCTION platform.ledger_apply_to_reserves() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$ BEGIN " +
+				"IF NEW.kind = 'reserve' THEN INSERT INTO platform.reserves (reserve_id, user_id, module_id, job_id, reserved) VALUES (NEW.id, NEW.user_id, NEW.module_id, NEW.job_id, NEW.reserved_delta); " +
+				"ELSIF NEW.kind = 'charge' THEN UPDATE platform.reserves SET charged = charged - NEW.reserved_delta WHERE reserve_id = NEW.reserve_id; " +
+				"ELSE UPDATE platform.reserves SET released = released + NEW.available_delta WHERE reserve_id = NEW.reserve_id; END IF; RETURN NULL; END $$"},
+			[][]string{{"ledger_apply_to_reserves()", "its body does not mention", "reserve_row_exists"}}},
+
+		// ---- platform_0005: the ledger's clock is the database's ----
+		{"the created_at stamp dropped (a writer could supply the time again)",
+			[]string{"DROP TRIGGER ledger_stamp_created_at ON platform.ledger"},
+			[][]string{{"ledger_stamp_created_at", "missing"}}},
+		{"the created_at stamp disabled",
+			[]string{"ALTER TABLE platform.ledger DISABLE TRIGGER ledger_stamp_created_at"},
+			[][]string{{"ledger_stamp_created_at", "not enabled"}}},
+		{"the created_at stamp that fires AFTER the row is written (too late to matter)",
+			[]string{"DROP TRIGGER ledger_stamp_created_at ON platform.ledger",
+				"CREATE TRIGGER ledger_stamp_created_at AFTER INSERT ON platform.ledger FOR EACH ROW EXECUTE FUNCTION platform.ledger_stamp_created_at()"},
+			[][]string{{"ledger_stamp_created_at", "fires as AFTER INSERT", "want BEFORE INSERT"}}},
+		{"the created_at stamp that only fires for one kind (a WHEN clause)",
+			[]string{"DROP TRIGGER ledger_stamp_created_at ON platform.ledger",
+				"CREATE TRIGGER ledger_stamp_created_at BEFORE INSERT ON platform.ledger FOR EACH ROW WHEN (NEW.kind = 'm3_expire') EXECUTE FUNCTION platform.ledger_stamp_created_at()"},
+			[][]string{{"ledger_stamp_created_at", "WHEN clause present = true"}}},
+		{"the created_at stamp turned into a no-op (the trigger, the owner and the search_path are all still there)",
+			[]string{"CREATE OR REPLACE FUNCTION platform.ledger_stamp_created_at() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$ BEGIN RETURN NEW; END $$"},
+			[][]string{{"ledger_stamp_created_at()", "its body does not mention", "now()"}}},
+
+		// ---- platform_0006: the entitlement flow ----
+		{"the until_at rule dropped",
+			[]string{"ALTER TABLE platform.ledger DROP CONSTRAINT ledger_until_at_shape"},
+			[][]string{{"ledger_until_at_shape", "missing"}}},
+		{"the until_at rule that lets any kind carry a date",
+			[]string{"ALTER TABLE platform.ledger DROP CONSTRAINT ledger_until_at_shape", "ALTER TABLE platform.ledger ADD CONSTRAINT ledger_until_at_shape CHECK (until_at IS NULL OR until_at > created_at)"},
+			[][]string{{"ledger_until_at_shape", "lacks", "'m3_enable'"}}},
+		{"the entitlement writer dropped (the entitlement would no longer follow the ledger)",
+			[]string{"DROP TRIGGER ledger_apply_to_entitlements ON platform.ledger"},
+			[][]string{{"ledger_apply_to_entitlements", "missing"}}},
+		{"the entitlement writer turned into a no-op",
+			[]string{"CREATE OR REPLACE FUNCTION platform.ledger_apply_to_entitlements() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$ BEGIN RETURN NULL; END $$"},
+			[][]string{{"ledger_apply_to_entitlements()", "its body does not mention", "m3_expire_is_due"}}},
+		{"the entitlement writer without its pinned search_path (a definer anyone could hijack)",
+			[]string{"ALTER FUNCTION platform.ledger_apply_to_entitlements() RESET search_path"},
+			[][]string{{"ledger_apply_to_entitlements()", "does not pin search_path"}}},
+		{"the delivery-row trigger back to a bare UPDATE (a missing delivery row would be skipped in silence)",
+			[]string{"CREATE OR REPLACE FUNCTION platform.m3_entitlements_raise_sync() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$ BEGIN " +
+				"IF TG_OP = 'INSERT' THEN INSERT INTO platform.m3_sync (user_id, want_suspended) VALUES (NEW.user_id, NOT NEW.enabled); " +
+				"ELSIF NEW.enabled IS DISTINCT FROM OLD.enabled THEN UPDATE platform.m3_sync SET want_suspended = NOT NEW.enabled, want_version = want_version + 1 WHERE user_id = NEW.user_id; END IF; RETURN NULL; END $$"},
+			[][]string{{"m3_entitlements_raise_sync()", "its body does not mention", "ON CONFLICT"}}},
+		{"the delivery-row trigger that forgets UPDATE (a later disable would never raise want_version)",
+			[]string{"DROP TRIGGER m3_entitlements_raise_sync ON platform.m3_entitlements",
+				"CREATE TRIGGER m3_entitlements_raise_sync AFTER INSERT ON platform.m3_entitlements FOR EACH ROW EXECUTE FUNCTION platform.m3_entitlements_raise_sync()"},
+			[][]string{{"m3_entitlements_raise_sync", "fires as AFTER INSERT FOR EACH ROW", "AFTER INSERT OR UPDATE"}}},
+		{"the convergence rule dropped (converged could be recorded for a state module 3 was never seen in)",
+			[]string{"ALTER TABLE platform.m3_sync DROP CONSTRAINT m3_sync_converged_only_when_observed"},
+			[][]string{{"platform.m3_sync.m3_sync_converged_only_when_observed", "missing"}}},
+		{"the convergence rule that ignores what was observed",
+			[]string{"ALTER TABLE platform.m3_sync DROP CONSTRAINT m3_sync_converged_only_when_observed",
+				"ALTER TABLE platform.m3_sync ADD CONSTRAINT m3_sync_converged_only_when_observed CHECK (converged_version < want_version OR want_suspended)"},
+			[][]string{{"m3_sync_converged_only_when_observed", "lacks", "'active'"}}},
+		{"the converged-not-ahead rule dropped",
+			[]string{"ALTER TABLE platform.m3_sync DROP CONSTRAINT m3_sync_converged_not_ahead"},
+			[][]string{{"m3_sync_converged_not_ahead", "missing"}}},
+		{"the observed vocabulary dropped",
+			[]string{"ALTER TABLE platform.m3_sync DROP CONSTRAINT m3_sync_observed_vocabulary"},
+			[][]string{{"m3_sync_observed_vocabulary", "missing"}}},
 	}
 	for _, c := range cases {
 		c := c

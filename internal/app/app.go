@@ -1,6 +1,6 @@
-// Package app wires the platform service: configuration, logger, database pool, handler and server. The
-// process entry point (cmd/platform) is a thin shell around Run, so everything with behaviour is here,
-// where it can be tested over a real listener.
+// Package app wires the platform service: configuration, logger, database pool, handler, server and the two
+// entitlement loops. The process entry point (cmd/platform) is a thin shell around Run, so everything with
+// behaviour is here, where it can be tested over a real listener.
 package app
 
 import (
@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"sync/atomic"
 	"time"
 
@@ -15,8 +17,10 @@ import (
 
 	"github.com/coldmail-platform/platform/internal/config"
 	"github.com/coldmail-platform/platform/internal/dsnscrub"
+	"github.com/coldmail-platform/platform/internal/entitlements"
 	"github.com/coldmail-platform/platform/internal/httpapi"
 	"github.com/coldmail-platform/platform/internal/logging"
+	"github.com/coldmail-platform/platform/internal/m3admin"
 	"github.com/coldmail-platform/platform/internal/server"
 )
 
@@ -51,6 +55,11 @@ func ExitCode(err error) int {
 // from the first moment and /readyz reports the database truthfully, so a database outage leaves the
 // process alive and not ready, which is what an orchestrator needs to see.
 //
+// Once the HTTP server is listening, the two entitlement loops start (expiry of module 3 entitlements, and
+// reconciliation of module 3's suspend state). On shutdown they are cancelled and WAITED FOR before the
+// pool closes, so no pass is writing to a closed pool. A failed pass never ends a loop, and neither loop
+// changes what /healthz and /readyz say.
+//
 // No returned error contains the database URL: parse and pool errors pass through dsnscrub, and a
 // configuration error names variables and reasons only.
 func Run(ctx context.Context, getenv func(string) string, logw io.Writer) error {
@@ -63,11 +72,29 @@ func Run(ctx context.Context, getenv func(string) string, logw io.Writer) error 
 		return fmt.Errorf("build logger: %w", err)
 	}
 
+	m3, err := newSuspender(cfg)
+	if err != nil {
+		return err
+	}
+
 	pool, err := openPool(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return err
 	}
-	defer pool.Close()
+	defer pool.Close() // runs after the loops have stopped: see stopLoops below
+
+	ent, err := entitlements.New(entitlements.Config{
+		Pool:           pool,
+		M3:             m3,
+		Log:            log,
+		ExpireEvery:    cfg.EntitlementExpireInterval,
+		ReconcileEvery: cfg.M3ReconcileInterval,
+		ReverifyEvery:  cfg.M3ReverifyInterval,
+		Redact:         []string{cfg.M3AdminToken.Reveal()},
+	})
+	if err != nil {
+		return fmt.Errorf("build the entitlement loops: %w", err)
+	}
 
 	var draining atomic.Bool
 	handler := httpapi.NewHandler(httpapi.Deps{
@@ -81,12 +108,67 @@ func Run(ctx context.Context, getenv func(string) string, logw io.Writer) error 
 	// The startup line names what an operator needs and nothing from the Config struct as a whole.
 	log.InfoContext(ctx, "platform starting", "version", Version, "addr", cfg.HTTPAddr, "env", cfg.Env)
 
-	if err := server.Run(ctx, serverConfig(cfg), handler, draining.Store, log); err != nil {
+	// The loops start when the server reports it is listening and stop, and are waited for, when Run is
+	// leaving, whichever way it leaves: the deferred pool.Close above then closes an idle pool.
+	ready := make(chan net.Addr, 1)
+	sc := serverConfig(cfg)
+	sc.Ready = ready
+	stopLoops := runLoops(ctx, ent, ready)
+
+	err = server.Run(ctx, sc, handler, draining.Store, log)
+	stopLoops()
+	if err != nil {
 		log.ErrorContext(ctx, "platform stopped with an error", "error", err.Error())
 		return err
 	}
 	log.InfoContext(ctx, "platform stopped", "reason", "clean drain")
 	return nil
+}
+
+// runLoops starts the entitlement loops once ready delivers (the HTTP server is listening) and returns the
+// function that stops them: it cancels the loops and returns only after they have ended. The loops also end
+// when ctx is cancelled, which is the shutdown signal. If the server never becomes ready (it failed to listen)
+// the loops never start and the stop function returns at once.
+func runLoops(ctx context.Context, ent *entitlements.Service, ready <-chan net.Addr) (stop func()) {
+	loopCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		select {
+		case <-ready:
+			_ = ent.Run(loopCtx) // returns nil once both loops have stopped
+		case <-loopCtx.Done():
+		}
+	}()
+	return func() {
+		cancel()
+		<-done
+	}
+}
+
+// newSuspender builds the module 3 admin client from the configuration. It is a variable so that a test can
+// supply a fake; nothing else assigns it. The client's HTTP side follows the platform's house style (the probe
+// client): the per-request timeout of PLATFORM_M3_REQUEST_TIMEOUT_SEC, no redirect followed, no proxy, and a
+// fresh connection per request.
+var newSuspender = func(cfg config.Config) (entitlements.Suspender, error) {
+	c, err := m3admin.New(cfg.M3URL, cfg.M3AdminToken, newM3HTTPClient(cfg.M3RequestTimeout))
+	if err != nil {
+		// m3admin's errors never contain the URL or the key, so this text is safe to return and print.
+		return nil, fmt.Errorf("build the module 3 client: %w", err)
+	}
+	return c, nil
+}
+
+// newM3HTTPClient is the transport of the module 3 client.
+func newM3HTTPClient(timeout time.Duration) *http.Client {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.Proxy = nil
+	tr.DisableKeepAlives = true
+	return &http.Client{
+		Timeout:       timeout,
+		Transport:     tr,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
 }
 
 // serverConfig is where the HTTP-server dials meet their consumer.

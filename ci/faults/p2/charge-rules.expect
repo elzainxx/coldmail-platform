@@ -1,0 +1,9 @@
+# The Go unit test of every row must catch a table that charges what it must not even when the gate cannot: the fault edits M1-15 (OUR capacity failure, settled as risky/plausible with a skip token: free)
+# into a charge of m1_own in BOTH the embedded rules.psv and the fenced block of the spec, so check-charge-table stays green, and TestDecide_Rows/M1-15 must go red. The control is the real tree, whose
+# tests must all pass. The leg needs Go only (the workflow sets it up); no database.
+GATE=charge-rules
+TARGET=platform
+SETUP=
+STEP=go test -run TestDecide ./internal/charge/ (one case per row of the table)
+CMD=GOTOOLCHAIN=local go test -count=1 -v -run 'TestDecide' ./internal/charge/
+MESSAGE=--- FAIL: TestDecide_Rows/M1-15

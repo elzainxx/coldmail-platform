@@ -52,18 +52,40 @@ func TestLedger_Lifecycle(t *testing.T) {
 			t.Fatalf("the reserve row must carry the frozen rate (unit, units, unit_cost) = m1_vendor|10|2, got %v", got)
 		}
 
-		c1 := ledgerPut(t, tx, ledgerChargeCols(a, "m1", ledgerJobA1, reserve, "m1_own", 3, 1))
-		step(t, "after charging 3 units at the frozen price 1 (m1_own)", "m1", 80, 17)
-		c2 := ledgerPut(t, tx, ledgerChargeCols(a, "m1", ledgerJobA1, reserve, "m1_vendor", 2, 2))
-		step(t, "after charging 2 units at the frozen price 2 (m1_vendor)", "m1", 80, 13)
-		for id, want := range map[int64]string{c1: "m1_own|3|1|-3", c2: "m1_vendor|2|2|-4"} {
-			if got := ledgerRows(t, tx, "SELECT unit, units, unit_cost, reserved_delta FROM platform.ledger WHERE id = $1", id); len(got) != 1 || got[0] != want {
-				t.Fatalf("charge row %d must carry the unit, the frozen price and the consumed credits %s, got %v", id, want, got)
+		// a charge is exactly ONE unit of one job item (platform_0005): three m1_own units are three rows of 1 credit, two m1_vendor units are two rows of 2
+		var own, vendor []int64
+		for i := 0; i < 3; i++ {
+			own = append(own, ledgerPut(t, tx, ledgerChargeCols(a, "m1", ledgerJobA1, reserve, "m1_own", 1, 1)))
+		}
+		step(t, "after charging 3 units at the frozen price 1 (m1_own), one row each", "m1", 80, 17)
+		for i := 0; i < 2; i++ {
+			vendor = append(vendor, ledgerPut(t, tx, ledgerChargeCols(a, "m1", ledgerJobA1, reserve, "m1_vendor", 1, 2)))
+		}
+		step(t, "after charging 2 units at the frozen price 2 (m1_vendor), one row each", "m1", 80, 13)
+		for _, id := range own {
+			if got := ledgerRows(t, tx, "SELECT unit, units, unit_cost, reserved_delta FROM platform.ledger WHERE id = $1", id); len(got) != 1 || got[0] != "m1_own|1|1|-1" {
+				t.Fatalf("charge row %d must carry the unit, the frozen price and the consumed credits m1_own|1|1|-1, got %v", id, got)
 			}
 		}
+		for _, id := range vendor {
+			if got := ledgerRows(t, tx, "SELECT unit, units, unit_cost, reserved_delta FROM platform.ledger WHERE id = $1", id); len(got) != 1 || got[0] != "m1_vendor|1|2|-2" {
+				t.Fatalf("charge row %d must carry the unit, the frozen price and the consumed credits m1_vendor|1|2|-2, got %v", id, got)
+			}
+		}
+		// platform.reserves (written only by the ledger trigger) says the same: 20 held, 3 + 4 charged, nothing released yet
+		if got := ledgerRows(t, tx, "SELECT reserved, charged, released FROM platform.reserves WHERE reserve_id = $1", reserve); len(got) != 1 || got[0] != "20|7|0" {
+			t.Fatalf("platform.reserves for the reserve reads %v after the charges, want [20|7|0] (reserved|charged|released)", got)
+		}
 
+		// a release returns exactly the remainder (platform_0005): 20 - 3 - 4 = 13
+		if rem := ledgerReserveRemainder(t, tx, reserve); rem != 13 {
+			t.Fatalf("the reserve has %d credits left, want 13", rem)
+		}
 		ledgerPut(t, tx, ledgerReleaseCols(a, "m1", ledgerJobA1, reserve, 13))
 		step(t, "after releasing the remaining 13", "m1", 93, 0)
+		if got := ledgerRows(t, tx, "SELECT reserved, charged, released FROM platform.reserves WHERE reserve_id = $1", reserve); len(got) != 1 || got[0] != "20|7|13" {
+			t.Fatalf("platform.reserves for the reserve reads %v after the release, want [20|7|13]", got)
+		}
 
 		// Settlement adds up: what was charged and released is exactly what was reserved.
 		settled := ledgerInt64(t, tx, `SELECT COALESCE(sum(CASE WHEN kind = 'charge' THEN -reserved_delta ELSE available_delta END), 0)::bigint
@@ -72,9 +94,18 @@ func TestLedger_Lifecycle(t *testing.T) {
 			t.Fatalf("charges plus releases of the reserve add up to %d, want exactly the 20 that were reserved", settled)
 		}
 
-		// Control: the balance check is wired. The reserve is fully settled, so one more charge would take reserved below zero and is refused.
-		ledgerRefusedRow(t, tx, "a charge on a fully settled reserve", "23514", ledgerWhy{Constraint: "balances_reserved_not_negative"},
-			ledgerChargeCols(a, "m1", ledgerJobA1, reserve, "m1_own", 1, 1))
+		// Control: both walls are wired. The reserve is fully settled, so one more charge would take the pooled reserved column below zero AND would take the reserve's own charged + released
+		// above what it held. Two walls refuse it; each is proven ALONE by switching the other's trigger off in a savepoint, because which of the two answers first when both are on is the order
+		// of the trigger names (not a rule worth pinning).
+		extra := ledgerChargeCols(a, "m1", ledgerJobA1, reserve, "m1_own", 1, 1)
+		ledgerTrial(t, tx, func(sp pgx.Tx) {
+			ledgerMust(t, sp, "ALTER TABLE platform.ledger DISABLE TRIGGER ledger_apply_to_reserves")
+			ledgerRefusedRow(t, sp, "a charge on a fully settled reserve, per-reserve wall off: the per-balance wall", "23514", ledgerWhy{Constraint: "balances_reserved_not_negative"}, extra)
+		})
+		ledgerTrial(t, tx, func(sp pgx.Tx) {
+			ledgerMust(t, sp, "ALTER TABLE platform.ledger DISABLE TRIGGER ledger_apply_to_balance")
+			ledgerRefusedRow(t, sp, "a charge on a fully settled reserve, per-balance wall off: the per-reserve wall", "23514", ledgerWhy{Constraint: "reserves_not_overspent", Table: "reserves"}, extra)
+		})
 		step(t, "after the refused extra charge (nothing may have changed)", "m1", 93, 0)
 	})
 
@@ -86,7 +117,9 @@ func TestLedger_Lifecycle(t *testing.T) {
 		step(t, "after the m2 grant of 50", "m2", 50, 0)
 		reserve := ledgerPut(t, tx, ledgerReserveCols(a, "m2", ledgerJobA2, "m2_accepted", 5, 1))
 		step(t, "after reserving 5 m2 units", "m2", 45, 5)
-		ledgerPut(t, tx, ledgerChargeCols(a, "m2", ledgerJobA2, reserve, "m2_accepted", 4, 1))
+		for i := 0; i < 4; i++ { // one row per job item (platform_0005)
+			ledgerPut(t, tx, ledgerChargeCols(a, "m2", ledgerJobA2, reserve, "m2_accepted", 1, 1))
+		}
 		step(t, "after charging 4 accepted sends", "m2", 45, 1)
 		ledgerPut(t, tx, ledgerChargeCols(a, "m2", ledgerJobA2, reserve, "m2_bounced", 1, 1))
 		step(t, "after charging 1 bounce", "m2", 45, 0)
@@ -110,11 +143,25 @@ func TestLedger_KindShapes(t *testing.T) {
 		name string
 		cols ledgerCols
 	}
-	refuse := func(t *testing.T, constraint string, cases []shapeCase) {
+	// refuse proves each case is refused by the named CHECK. triggersOff names ledger triggers switched off (in a savepoint that is rolled back) around each case: since platform_0005 a BEFORE
+	// trigger runs before the CHECK constraints, so for a malformed reserve or release it answers first (23514 too, with its own constraint name). Proving the shape CHECK ALONE therefore
+	// takes the trigger away, exactly as the Phase 1 assertion read; what the trigger says about the same rows is asserted separately, with the trigger on.
+	refuse := func(t *testing.T, constraint string, cases []shapeCase, triggersOff ...string) {
 		t.Helper()
 		for _, c := range cases {
 			c := c
-			t.Run(c.name, func(t *testing.T) { ledgerRefusedCheck(t, tx, c.name, constraint, c.cols) })
+			t.Run(c.name, func(t *testing.T) {
+				if len(triggersOff) == 0 {
+					ledgerRefusedCheck(t, tx, c.name, constraint, c.cols)
+					return
+				}
+				ledgerTrial(t, tx, func(sp pgx.Tx) {
+					for _, trg := range triggersOff {
+						ledgerMust(t, sp, "ALTER TABLE platform.ledger DISABLE TRIGGER "+trg)
+					}
+					ledgerRefusedCheck(t, sp, c.name, constraint, c.cols)
+				})
+			})
 		}
 	}
 
@@ -140,7 +187,8 @@ func TestLedger_KindShapes(t *testing.T) {
 	})
 
 	t.Run("reserve", func(t *testing.T) {
-		r := func() ledgerCols { return ledgerReserveCols(a, "m1", ledgerJobA1, "m1_vendor", 10, 2) }
+		// job A1b: a job of its own for this subtest (one reserve per job, platform_0005), at the dearest price of its complete snapshot (m1_vendor, 2)
+		r := func() ledgerCols { return ledgerReserveCols(a, "m1", ledgerJobA1b, "m1_vendor", 10, 2) }
 		ledgerOKRow(t, tx, "control: the legal reserve (10 units x 2)", r())
 		refuse(t, "ledger_shape_reserve", []shapeCase{
 			{"the arithmetic is wrong: 10 x 2 is not 19", r().with("available_delta", int64(-19), "reserved_delta", int64(19))},
@@ -154,41 +202,75 @@ func TestLedger_KindShapes(t *testing.T) {
 			{"no unit cost (NULL)", r().with("unit_cost", nil)},
 			{"zero units", r().with("units", int64(0), "available_delta", int64(0), "reserved_delta", int64(0))},
 			{"a unit cost of zero", r().with("unit_cost", int64(0), "available_delta", int64(0), "reserved_delta", int64(0))},
-		})
+		}, "ledger_check_reserve")
+
+		// With the trigger ON, the three rows whose malformed field the trigger reads answer to the trigger first (it runs before the CHECKs): a NULL job has no snapshot, a NULL or zero
+		// unit cost is not the dearest price. The same rows are still shape violations (proved above with the trigger off), so nothing became legal: only the first reason changed.
+		ledgerRefusedCheck(t, tx, "no job: the trigger finds no snapshot", "reserve_needs_the_complete_snapshot", r().with("job_id", nil))
+		ledgerRefusedCheck(t, tx, "no unit cost (NULL): the trigger's IS DISTINCT FROM is NULL-safe", "reserve_at_the_dearest_price", r().with("unit_cost", nil))
+		ledgerRefusedCheck(t, tx, "a unit cost of zero: not the dearest price", "reserve_at_the_dearest_price", r().with("unit_cost", int64(0), "available_delta", int64(0), "reserved_delta", int64(0)))
 	})
 
 	base := ledgerOKRow(t, tx, "the reserve the settlement rows point at", ledgerReserveCols(a, "m1", ledgerJobA1, "m1_vendor", 10, 2))
 
 	t.Run("charge", func(t *testing.T) {
-		c := func() ledgerCols { return ledgerChargeCols(a, "m1", ledgerJobA1, base, "m1_own", 3, 1) }
-		ledgerOKRow(t, tx, "control: the legal charge (3 units x 1)", c())
+		// a charge is ONE unit (platform_0005), so the legal row is 1 unit x 1 credit
+		c := func() ledgerCols { return ledgerChargeCols(a, "m1", ledgerJobA1, base, "m1_own", 1, 1) }
+		ledgerOKRow(t, tx, "control: the legal charge (1 unit x 1)", c())
 		refuse(t, "ledger_shape_charge", []shapeCase{
 			{"moves available credits", c().with("available_delta", int64(1))},
 			{"consumes nothing", c().with("reserved_delta", int64(0))},
-			{"adds to reserved", c().with("reserved_delta", int64(3))},
-			{"the arithmetic is wrong: 3 x 1 is not 4", c().with("reserved_delta", int64(-4))},
+			{"adds to reserved", c().with("reserved_delta", int64(1))},
+			{"the arithmetic is wrong: 1 x 1 is not 2", c().with("reserved_delta", int64(-2))},
 			{"no job", c().with("job_id", nil)},
 			{"no reserve it settles (NULL)", c().with("reserve_id", nil)},
 			{"no unit (NULL)", c().with("unit", nil)},
-			{"no units (NULL)", c().with("units", nil)},
 			{"no unit cost (NULL)", c().with("unit_cost", nil)},
-			{"zero units", c().with("units", int64(0), "reserved_delta", int64(0))},
 		})
+		// units = 0 and units = NULL are refused by BOTH ledger_charge_is_one_item and ledger_shape_charge, so each CHECK is proven ALONE by dropping the other in a savepoint that is rolled back
+		// (which of the two PostgreSQL names first is not a rule worth pinning; the one-item rule is also NULL-safe: COALESCE turns the NULL into a refusal)
+		for _, bad := range []shapeCase{
+			{"zero units", c().with("units", int64(0), "reserved_delta", int64(0))},
+			{"no units (NULL)", c().with("units", nil)},
+		} {
+			bad := bad
+			t.Run(bad.name+" (the one-item rule alone, with the shape CHECK dropped)", func(t *testing.T) {
+				ledgerTrial(t, tx, func(sp pgx.Tx) {
+					ledgerMust(t, sp, "ALTER TABLE platform.ledger DROP CONSTRAINT ledger_shape_charge")
+					ledgerRefusedCheck(t, sp, bad.name, "ledger_charge_is_one_item", bad.cols)
+				})
+			})
+			t.Run(bad.name+" (the shape CHECK alone, with the one-item rule dropped)", func(t *testing.T) {
+				ledgerTrial(t, tx, func(sp pgx.Tx) {
+					ledgerMust(t, sp, "ALTER TABLE platform.ledger DROP CONSTRAINT ledger_charge_is_one_item")
+					ledgerRefusedCheck(t, sp, bad.name, "ledger_shape_charge", bad.cols)
+				})
+			})
+		}
 	})
 
 	t.Run("release", func(t *testing.T) {
-		r := func() ledgerCols { return ledgerReleaseCols(a, "m1", ledgerJobA1, base, 5) }
-		ledgerOKRow(t, tx, "control: the legal release of 5", r())
+		// a release of exactly the remainder of a reserve of its own (platform_0005): 10 units x 2 = 20 credits held, nothing charged, so the legal release is 20
+		relJob := ledgerNewJob(t, tx, ledgerUUID("d1", 1), a, "m1", true)
+		rel := ledgerOKRow(t, tx, "the reserve the release points at", ledgerReserveCols(a, "m1", relJob, "m1_vendor", 10, 2))
+		r := func() ledgerCols { return ledgerReleaseCols(a, "m1", relJob, rel, 20) }
+		ledgerTrial(t, tx, func(sp pgx.Tx) { ledgerOKRow(t, sp, "control: the legal release of the whole remainder (20)", r()) })
 		refuse(t, "ledger_shape_release", []shapeCase{
 			{"releases nothing", r().with("available_delta", int64(0), "reserved_delta", int64(0))},
-			{"a negative release", r().with("available_delta", int64(-5), "reserved_delta", int64(5))},
-			{"available and reserved do not mirror", r().with("reserved_delta", int64(-4))},
+			{"a negative release", r().with("available_delta", int64(-20), "reserved_delta", int64(20))},
+			{"available and reserved do not mirror", r().with("reserved_delta", int64(-19))},
 			{"no job", r().with("job_id", nil)},
 			{"no reserve it settles (NULL)", r().with("reserve_id", nil)},
 			{"carries a unit", r().with("unit", "m1_own")},
 			{"carries units", r().with("units", int64(5))},
 			{"carries a unit cost", r().with("unit_cost", int64(1))},
-		})
+		}, "ledger_check_release")
+
+		// With the trigger ON, the rows whose amount or reserve the trigger reads answer to the trigger first: it runs before the CHECKs and a release is exactly the remainder or nothing.
+		ledgerRefusedCheck(t, tx, "releases nothing", "release_is_the_remainder", r().with("available_delta", int64(0), "reserved_delta", int64(0)))
+		ledgerRefusedCheck(t, tx, "a negative release", "release_is_the_remainder", r().with("available_delta", int64(-20), "reserved_delta", int64(20)))
+		ledgerRefusedCheck(t, tx, "no reserve it settles (NULL): the trigger finds no reserve", "release_is_the_remainder", r().with("reserve_id", nil))
+		ledgerOKRow(t, tx, "control: the legal release goes in once the refusals are done", r())
 	})
 }
 
@@ -204,7 +286,11 @@ func TestLedger_M3Kinds(t *testing.T) {
 	t.Run("controls: enable and disable name an admin, expire names none", func(t *testing.T) {
 		ledgerOKRow(t, tx, "m3_enable with an admin", ledgerM3Cols("m3_enable", a))
 		ledgerOKRow(t, tx, "m3_disable with an admin", ledgerM3Cols("m3_disable", a))
-		ledgerOKRow(t, tx, "m3_expire by the system (no admin)", ledgerM3Cols("m3_expire", a))
+		// Since platform_0006 an m3_expire row is refused unless the user's entitlement is enabled and its date has passed (m3_expire_is_due; the full proof is in
+		// TestM3Schema_ExpireIsRefusedUnlessDue): user C is enabled, time passes (ledgerMakeDue), and the system, which names no admin, expires it.
+		ledgerOKRow(t, tx, "m3_enable for user C", ledgerM3Cols("m3_enable", ledgerUserC))
+		ledgerMakeDue(t, tx, ledgerUserC)
+		ledgerOKRow(t, tx, "m3_expire by the system (no admin) of an entitlement that is due", ledgerM3Cols("m3_expire", ledgerUserC))
 	})
 
 	t.Run("the admin rule", func(t *testing.T) {
@@ -257,8 +343,8 @@ func TestLedger_M3Kinds(t *testing.T) {
 		if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
 			t.Fatalf("balances after the m3 events = %v, want %v: an entitlement event must change nothing", got, want)
 		}
-		if n := ledgerInt64(t, tx, "SELECT count(*) FROM platform.ledger WHERE kind LIKE 'm3_%' AND NOT monetary"); n != 3 {
-			t.Fatalf("%d m3 events are in the ledger and flagged non-monetary, want the 3 legal controls", n)
+		if n := ledgerInt64(t, tx, "SELECT count(*) FROM platform.ledger WHERE kind LIKE 'm3_%' AND NOT monetary"); n != 4 {
+			t.Fatalf("%d m3 events are in the ledger and flagged non-monetary, want the 4 legal controls (enable, disable, enable, expire)", n)
 		}
 		ledgerRequireViewsEmpty(t, tx, "after the m3 events")
 	})
@@ -286,7 +372,7 @@ func TestLedger_IdempotencyKey(t *testing.T) {
 	})
 	t.Run("the key covers every kind: a reserve reusing a grant's key is refused", func(t *testing.T) {
 		ledgerRefusedRow(t, tx, "a reserve with the grant's key", "23505", ledgerWhy{Constraint: "ledger_idempotency_key"},
-			ledgerReserveCols(a, "m1", ledgerJobA1, "m1_own", 1, 1).with("idempotency_key", "retry-me"))
+			ledgerReserveCols(a, "m1", ledgerJobA1, "m1_vendor", 1, 2).with("idempotency_key", "retry-me")) // at the dearest price, so only the key can refuse it
 	})
 	t.Run("controls: the same key is fine for another user and for another module", func(t *testing.T) {
 		ledgerOKRow(t, tx, "the same key for user B", first.with("user_id", b))
@@ -309,14 +395,32 @@ func TestLedger_ForeignKeys(t *testing.T) {
 	ledgerSeedFunded(t, tx)
 	a, b := ledgerUserA, ledgerUserB
 	reserveA := ledgerOKRow(t, tx, "A's reserve on job A1", ledgerReserveCols(a, "m1", ledgerJobA1, "m1_vendor", 10, 2))
-	reserveB := ledgerOKRow(t, tx, "B's reserve on B's own job (the control for the job key)", ledgerReserveCols(b, "m1", ledgerJobB1, "m1_own", 5, 1))
+	reserveB := ledgerOKRow(t, tx, "B's reserve on B's own job (the control for the job key)", ledgerReserveCols(b, "m1", ledgerJobB1, "m1_vendor", 5, 2))
 	chargeA := ledgerOKRow(t, tx, "A's charge", ledgerChargeCols(a, "m1", ledgerJobA1, reserveA, "m1_own", 1, 1))
 	grantA := ledgerInt64(t, tx, "SELECT id FROM platform.ledger WHERE user_id = $1 AND kind = 'grant' AND module_id = 'm1'", a)
 
+	// Since platform_0005 three BEFORE INSERT triggers answer before the foreign keys can: the reserve trigger (a rate that is not the dearest price of a complete snapshot) and the release
+	// trigger (an amount that is not the remainder of a reserve it finds). Every row below that is meant to prove a FOREIGN KEY is therefore built to PASS those triggers (a reserve at the dearest
+	// price on a job that holds no reserve yet, since a second reserve for one job is refused by its unique index before any foreign key; a release of exactly its reserve's remainder), or the
+	// trigger is switched off in a savepoint that is rolled back, so the key is still proven ALONE and as strictly as before.
+	fkWithout := func(t *testing.T, what, constraint string, triggers []string, c ledgerCols) {
+		ledgerTrial(t, tx, func(sp pgx.Tx) {
+			for _, trg := range triggers {
+				ledgerMust(t, sp, "ALTER TABLE platform.ledger DISABLE TRIGGER "+trg)
+			}
+			ledgerRefusedFK(t, sp, what, constraint, c)
+		})
+	}
+
 	t.Run("ledger_job_fk: a job's rows belong to the job's own user and module", func(t *testing.T) {
-		ledgerRefusedFK(t, tx, "B reserving against A's job", "ledger_job_fk", ledgerReserveCols(b, "m1", ledgerJobA1, "m1_own", 1, 1))
-		ledgerRefusedFK(t, tx, "a release recorded on module m2 against an m1 job", "ledger_job_fk", ledgerReleaseCols(a, "m2", ledgerJobA1, reserveA, 5))
-		ledgerOKRow(t, tx, "control: A releasing on A's own job and module", ledgerReleaseCols(a, "m1", ledgerJobA1, reserveA, 5))
+		// job A1b is user A's job and holds no reserve yet: B's reserve at the dearest price passes the trigger and the unique index, and only the key can refuse it
+		ledgerRefusedFK(t, tx, "B reserving against A's job", "ledger_job_fk", ledgerReserveCols(b, "m1", ledgerJobA1b, "m1_vendor", 1, 2))
+		// the release is exactly the remainder (20 held, 1 charged), so the release trigger lets it through to the key
+		remA := ledgerReserveRemainder(t, tx, reserveA)
+		ledgerRefusedFK(t, tx, "a release recorded on module m2 against an m1 job", "ledger_job_fk", ledgerReleaseCols(a, "m2", ledgerJobA1, reserveA, remA))
+		ledgerTrial(t, tx, func(sp pgx.Tx) {
+			ledgerOKRow(t, sp, "control: A releasing on A's own job and module", ledgerReleaseCols(a, "m1", ledgerJobA1, reserveA, remA))
+		})
 	})
 
 	t.Run("ledger_reserve_fk: a charge or release points at a RESERVE row of the same user and job", func(t *testing.T) {
@@ -324,23 +428,31 @@ func TestLedger_ForeignKeys(t *testing.T) {
 		ledgerRefusedFK(t, tx, "A's charge on job A1b pointing at the reserve of job A1", "ledger_reserve_fk", ledgerChargeCols(a, "m1", ledgerJobA1b, reserveA, "m1_own", 1, 1))
 		ledgerRefusedFK(t, tx, "a charge pointing at a grant row", "ledger_reserve_fk", ledgerChargeCols(a, "m1", ledgerJobA1, grantA, "m1_own", 1, 1))
 		ledgerRefusedFK(t, tx, "a charge pointing at nothing", "ledger_reserve_fk", ledgerChargeCols(a, "m1", ledgerJobA1, 999999999, "m1_own", 1, 1))
-		ledgerRefusedFK(t, tx, "a release pointing at a charge row", "ledger_reserve_fk", ledgerReleaseCols(a, "m1", ledgerJobA1, chargeA, 1))
-		ledgerRefusedFK(t, tx, "B's release pointing at A's reserve", "ledger_reserve_fk", ledgerReleaseCols(b, "m1", ledgerJobB1, reserveA, 1))
+		// a release pointing at a charge row finds no reserve for the trigger: with the trigger on that is the trigger's refusal; with it off the key refuses the very same row
+		ledgerRefusedCheck(t, tx, "a release pointing at a charge row: the trigger finds no reserve", "release_is_the_remainder", ledgerReleaseCols(a, "m1", ledgerJobA1, chargeA, 1))
+		fkWithout(t, "a release pointing at a charge row", "ledger_reserve_fk", []string{"ledger_check_release"}, ledgerReleaseCols(a, "m1", ledgerJobA1, chargeA, 1))
+		// B's release names A's reserve: the trigger only reads the reserve (it is A's remainder it compares), so the exact remainder passes it and the key refuses B
+		ledgerRefusedFK(t, tx, "B's release pointing at A's reserve", "ledger_reserve_fk", ledgerReleaseCols(b, "m1", ledgerJobB1, reserveA, ledgerReserveRemainder(t, tx, reserveA)))
 		ledgerOKRow(t, tx, "control: A's charge at A's reserve", ledgerChargeCols(a, "m1", ledgerJobA1, reserveA, "m1_own", 1, 1))
 		ledgerOKRow(t, tx, "control: B's charge at B's reserve", ledgerChargeCols(b, "m1", ledgerJobB1, reserveB, "m1_own", 1, 1))
-		ledgerOKRow(t, tx, "control: B's release at B's reserve", ledgerReleaseCols(b, "m1", ledgerJobB1, reserveB, 1))
+		ledgerOKRow(t, tx, "control: B's release at B's reserve (its exact remainder)", ledgerReleaseCols(b, "m1", ledgerJobB1, reserveB, ledgerReserveRemainder(t, tx, reserveB)))
 	})
 
 	t.Run("ledger_frozen_price_fk: the unit and its price must be in the job's snapshot", func(t *testing.T) {
 		fk := func(what string, c ledgerCols) { ledgerRefusedFK(t, tx, what, "ledger_frozen_price_fk", c) }
-		fk("a reserve at price 3, which the snapshot does not hold", ledgerReserveCols(a, "m1", ledgerJobA1, "m1_vendor", 10, 3))
-		fk("a reserve of a unit of another module", ledgerReserveCols(a, "m1", ledgerJobA1, "m2_accepted", 10, 1))
-		fk("a reserve on a job that has no snapshot at all", ledgerReserveCols(a, "m1", ledgerJobA0, "m1_own", 1, 1))
-		fk("a reserve of a unit that does not exist", ledgerReserveCols(a, "m1", ledgerJobA1, "m1_bogus", 1, 1))
-		fk("the right unit at the price of another unit (m1_cache costs 1, not 2)", ledgerReserveCols(a, "m1", ledgerJobA1, "m1_cache", 5, 2))
+		// reserves on job A1b (no reserve yet), at price 2, the dearest the snapshot holds, so the reserve trigger passes and only the key can refuse the unit
+		fk("a reserve of a unit of another module (m2_accepted at 2)", ledgerReserveCols(a, "m1", ledgerJobA1b, "m2_accepted", 10, 2))
+		fk("a reserve of a unit that does not exist", ledgerReserveCols(a, "m1", ledgerJobA1b, "m1_bogus", 1, 2))
+		fk("the right unit at the price of another unit (m1_cache costs 1, not 2)", ledgerReserveCols(a, "m1", ledgerJobA1b, "m1_cache", 5, 2))
+		// the two refusals the trigger would otherwise answer first: a price the snapshot does not hold, and a job with no snapshot at all. Both the trigger's reason (with it on) and the key's
+		// (with it off) are asserted, so the key is as strictly proven as in Phase 1 and the trigger's answer is pinned beside it.
+		ledgerRefusedCheck(t, tx, "a reserve at price 3, which the snapshot does not hold: not the dearest price", "reserve_at_the_dearest_price", ledgerReserveCols(a, "m1", ledgerJobA1b, "m1_vendor", 10, 3))
+		fkWithout(t, "a reserve at price 3, which the snapshot does not hold", "ledger_frozen_price_fk", []string{"ledger_check_reserve"}, ledgerReserveCols(a, "m1", ledgerJobA1b, "m1_vendor", 10, 3))
+		ledgerRefusedCheck(t, tx, "a reserve on a job that has no snapshot at all: no complete snapshot", "reserve_needs_the_complete_snapshot", ledgerReserveCols(a, "m1", ledgerJobA0, "m1_own", 1, 1))
+		fkWithout(t, "a reserve on a job that has no snapshot at all", "ledger_frozen_price_fk", []string{"ledger_check_reserve"}, ledgerReserveCols(a, "m1", ledgerJobA0, "m1_own", 1, 1))
 		fk("a charge of m1_own at 2, which is the vendor's price", ledgerChargeCols(a, "m1", ledgerJobA1, reserveA, "m1_own", 1, 2))
-		ledgerOKRow(t, tx, "control: a reserve at the snapshot price of m1_cache", ledgerReserveCols(a, "m1", ledgerJobA1, "m1_cache", 5, 1))
 		ledgerOKRow(t, tx, "control: a charge at the snapshot price of m1_vendor", ledgerChargeCols(a, "m1", ledgerJobA1, reserveA, "m1_vendor", 1, 2))
+		ledgerOKRow(t, tx, "control: a reserve at the snapshot's dearest price (m1_vendor, 2)", ledgerReserveCols(a, "m1", ledgerJobA1b, "m1_vendor", 5, 2))
 	})
 	ledgerRequireViewsEmpty(t, tx, "after the foreign-key cases")
 }
@@ -374,7 +486,8 @@ func TestLedger_FrozenPriceSurvivesUnitCostChange(t *testing.T) {
 		if got := ledgerInt64(t, tx, "SELECT cost FROM platform.job_unit_prices WHERE job_id = $1 AND unit = 'm1_own'", jobs[i]); got != p {
 			t.Fatalf("job %d was confirmed at m1_own = %d but its snapshot holds %d", i, p, got)
 		}
-		reserves[i] = ledgerPut(t, tx, ledgerReserveCols(a, "m1", jobs[i], "m1_own", 10, p))
+		// the reserve is at the DEAREST price of the job's snapshot (platform_0005): m1_vendor at 2 for the job confirmed while m1_own cost 1, m1_own itself (5, then 9) for the others
+		reserves[i] = ledgerPut(t, tx, ledgerReserveAtDearest(t, tx, a, "m1", jobs[i], 10))
 	}
 
 	t.Run("the price changes are recorded: who, why, from what", func(t *testing.T) {
@@ -405,7 +518,7 @@ func TestLedger_FrozenPriceSurvivesUnitCostChange(t *testing.T) {
 				t.Fatalf("job %d (confirmed at %d) was charged %d credits in total, want exactly its one unit at %d", i, jp, got, jp)
 			}
 		}
-		// Every job consumed exactly one unit at its own price: 1 + 5 + 9 credits out of the 10 x (1 + 5 + 9) reserved.
+		// Every job consumed exactly one unit at its own price: 1 + 5 + 9 credits out of the 20 + 50 + 90 reserved (10 units at each job's dearest price: 2, 5 and 9).
 		if got := ledgerInt64(t, tx, "SELECT -sum(reserved_delta) FROM platform.ledger WHERE kind = 'charge'"); got != 15 {
 			t.Fatalf("charged credits = %d, want 1 + 5 + 9 = 15", got)
 		}
@@ -439,24 +552,43 @@ func TestLedger_OverdrawRefusedByDatabase(t *testing.T) {
 		ledgerRequireBalance(t, tx, "after the refused reserve", a, "m1", 100, 0)
 		reserve := ledgerOKRow(t, tx, "control: reserving exactly the 100 available (50 x 2)", ledgerReserveCols(a, "m1", ledgerJobA1, "m1_vendor", 50, 2))
 		ledgerRequireBalance(t, tx, "after reserving everything", a, "m1", 0, 100)
-		ledgerRefusedRow(t, tx, "one more credit when none is available", "23514", ledgerWhy{Constraint: "balances_available_not_negative", Table: "balances"},
-			ledgerReserveCols(a, "m1", ledgerJobA1, "m1_cache", 1, 1))
+		// "one more credit when none is available": a reserve is at the dearest price (platform_0005), so the smallest reserve is one unit at 2 credits; on job A1b, which holds no reserve yet
+		ledgerRefusedRow(t, tx, "two more credits (one unit at the dearest price) when none is available", "23514", ledgerWhy{Constraint: "balances_available_not_negative", Table: "balances"},
+			ledgerReserveCols(a, "m1", ledgerJobA1b, "m1_vendor", 1, 2))
 
 		t.Run("reserved cannot go below zero", func(t *testing.T) {
-			ledgerRefusedRow(t, tx, "charging 101 units against 100 reserved credits", "23514", ledgerWhy{Constraint: "balances_reserved_not_negative", Table: "balances"},
-				ledgerChargeCols(a, "m1", ledgerJobA1, reserve, "m1_cache", 101, 1))
-			ledgerRequireBalance(t, tx, "after the refused charge", a, "m1", 0, 100)
-			ledgerOKRow(t, tx, "control: charging exactly the 100 reserved", ledgerChargeCols(a, "m1", ledgerJobA1, reserve, "m1_cache", 100, 1))
+			// A charge is ONE unit (platform_0005), so the 100 reserved credits are consumed one unit at a time: 49 charges of 2 leave 2, the 50th takes exactly the last 2, a 51st would take the
+			// pooled reserved column below zero.
+			for i := 0; i < 49; i++ {
+				ledgerPut(t, tx, ledgerChargeCols(a, "m1", ledgerJobA1, reserve, "m1_vendor", 1, 2))
+			}
+			ledgerRequireBalance(t, tx, "after 49 charges", a, "m1", 0, 2)
+			ledgerOKRow(t, tx, "control: the 50th charge takes exactly the last 2 reserved credits", ledgerChargeCols(a, "m1", ledgerJobA1, reserve, "m1_vendor", 1, 2))
 			ledgerRequireBalance(t, tx, "after settling everything", a, "m1", 0, 0)
+			// the per-balance wall is proven ALONE: the per-reserve wall (which would refuse the same row) is switched off in a savepoint that is rolled back
+			ledgerTrial(t, tx, func(sp pgx.Tx) {
+				ledgerMust(t, sp, "ALTER TABLE platform.ledger DISABLE TRIGGER ledger_apply_to_reserves")
+				ledgerRefusedRow(t, sp, "a 51st unit against 100 reserved credits that are all spent", "23514", ledgerWhy{Constraint: "balances_reserved_not_negative", Table: "balances"},
+					ledgerChargeCols(a, "m1", ledgerJobA1, reserve, "m1_vendor", 1, 2))
+			})
+			ledgerRequireBalance(t, tx, "after the refused charge", a, "m1", 0, 0)
 		})
 	})
 
-	t.Run("a release larger than the reserve is refused the same way", func(t *testing.T) {
+	t.Run("a release that is not the remainder is refused (platform_0005); the per-balance wall still stands behind it", func(t *testing.T) {
 		ledgerFund(t, tx, a, "m1", 20)
-		reserve := ledgerPut(t, tx, ledgerReserveCols(a, "m1", ledgerJobA1b, "m1_own", 10, 1))
+		reserve := ledgerPut(t, tx, ledgerReserveCols(a, "m1", ledgerJobA1b, "m1_vendor", 5, 2))
 		ledgerRequireBalance(t, tx, "after the second reserve", a, "m1", 10, 10)
-		ledgerRefusedRow(t, tx, "releasing 11 credits of a reserve of 10", "23514", ledgerWhy{Constraint: "balances_reserved_not_negative", Table: "balances"},
-			ledgerReleaseCols(a, "m1", ledgerJobA1b, reserve, 11))
+		ledgerRefusedRow(t, tx, "releasing 11 credits of a reserve of 10", "23514", ledgerWhy{Constraint: "release_is_the_remainder"}, ledgerReleaseCols(a, "m1", ledgerJobA1b, reserve, 11))
+		ledgerRefusedRow(t, tx, "releasing 9 credits of a reserve of 10", "23514", ledgerWhy{Constraint: "release_is_the_remainder"}, ledgerReleaseCols(a, "m1", ledgerJobA1b, reserve, 9))
+		// Phase 1's assertion, kept as strict: an over-large release is refused by the per-balance CHECK, proven ALONE with the two newer walls (the remainder rule and the per-reserve cap) off.
+		ledgerTrial(t, tx, func(sp pgx.Tx) {
+			ledgerMust(t, sp, "ALTER TABLE platform.ledger DISABLE TRIGGER ledger_check_release")
+			ledgerMust(t, sp, "ALTER TABLE platform.ledger DISABLE TRIGGER ledger_apply_to_reserves")
+			ledgerRefusedRow(t, sp, "releasing 11 credits of a reserve of 10, the newer walls off", "23514", ledgerWhy{Constraint: "balances_reserved_not_negative", Table: "balances"},
+				ledgerReleaseCols(a, "m1", ledgerJobA1b, reserve, 11))
+		})
+		ledgerRequireBalance(t, tx, "after the refused releases", a, "m1", 10, 10)
 		ledgerOKRow(t, tx, "control: releasing exactly the 10", ledgerReleaseCols(a, "m1", ledgerJobA1b, reserve, 10))
 		ledgerRequireBalance(t, tx, "after the release", a, "m1", 20, 0)
 	})
@@ -474,13 +606,16 @@ func TestLedger_GeneratedColumnsAndIdentity(t *testing.T) {
 	a := ledgerUserA
 
 	grant := ledgerFund(t, tx, a, "m1", 100)
-	reserve := ledgerPut(t, tx, ledgerReserveCols(a, "m1", ledgerJobA1, "m1_own", 5, 1))
-	charge := ledgerPut(t, tx, ledgerChargeCols(a, "m1", ledgerJobA1, reserve, "m1_own", 2, 1))
-	release := ledgerPut(t, tx, ledgerReleaseCols(a, "m1", ledgerJobA1, reserve, 3))
-	adjust := ledgerPut(t, tx, ledgerAdjustmentCols(a, "m1", 1)) // platform_0004: 100 - 5 + 3 = 98 available, so one credit can be taken back
+	reserve := ledgerPut(t, tx, ledgerReserveCols(a, "m1", ledgerJobA1, "m1_vendor", 5, 2)) // 10 credits, at the dearest price of the snapshot (platform_0005)
+	charge := ledgerPut(t, tx, ledgerChargeCols(a, "m1", ledgerJobA1, reserve, "m1_own", 1, 1))
+	release := ledgerPut(t, tx, ledgerReleaseCols(a, "m1", ledgerJobA1, reserve, ledgerReserveRemainder(t, tx, reserve))) // exactly the 9 credits the reserve has left
+	adjust := ledgerPut(t, tx, ledgerAdjustmentCols(a, "m1", 1))                                                          // platform_0004: 100 - 10 + 9 = 99 available, so one credit can be taken back
 	enable := ledgerPut(t, tx, ledgerM3Cols("m3_enable", a))
 	disable := ledgerPut(t, tx, ledgerM3Cols("m3_disable", a))
-	expire := ledgerPut(t, tx, ledgerM3Cols("m3_expire", a))
+	// m3_expire is refused unless the entitlement is enabled and its date has passed (platform_0006): user B is enabled, time passes, then the system expires it (ids stay increasing in the order below)
+	ledgerPut(t, tx, ledgerM3Cols("m3_enable", ledgerUserB))
+	ledgerMakeDue(t, tx, ledgerUserB)
+	expire := ledgerPut(t, tx, ledgerM3Cols("m3_expire", ledgerUserB))
 
 	t.Run("the generated columns come out right for every kind", func(t *testing.T) {
 		for _, c := range []struct {
@@ -592,9 +727,10 @@ func TestLedger_AdjustmentShapes(t *testing.T) {
 	})
 }
 
-// TestLedger_AdjustmentMoney proves the arithmetic of a clawback, with the numbers of the ruling: available 10 and reserved 5 (15
-// granted, 5 reserved). An adjustment of 10 passes and reserved stays 5; an adjustment of 11 is refused by the balance CHECK even
-// though 15 credits exist, and the refusal leaves no ledger row and no audit row; one credit more is refused again; a user who
+// TestLedger_AdjustmentMoney proves the arithmetic of a clawback, with the numbers of the ruling except one: available 10 and reserved 6 (16
+// granted, one reserve of 3 units at the dearest price 2; the ruling's 5 reserved cannot be written since platform_0005 holds a reserve at the dearest price). An adjustment of 10
+// passes and reserved stays 6; an adjustment of 11 is refused by the balance CHECK even
+// though 16 credits exist, and the refusal leaves no ledger row and no audit row; one credit more is refused again; a user who
 // never held credits cannot be put into debt; another module's balance is untouched. It fails if an adjustment can touch reserved
 // credits, take available below zero, or leave a trace when it is refused.
 func TestLedger_AdjustmentMoney(t *testing.T) {
@@ -607,12 +743,12 @@ func TestLedger_AdjustmentMoney(t *testing.T) {
 		return ledgerInt64(t, tx, "SELECT count(*) FROM "+table)
 	}
 
-	ledgerFund(t, tx, a, "m1", 15)
-	ledgerPut(t, tx, ledgerReserveCols(a, "m1", ledgerJobA1, "m1_own", 5, 1))
-	ledgerRequireBalance(t, tx, "the starting point: 15 granted, 5 of them reserved", a, "m1", 10, 5)
+	ledgerFund(t, tx, a, "m1", 16)
+	ledgerPut(t, tx, ledgerReserveCols(a, "m1", ledgerJobA1, "m1_vendor", 3, 2))
+	ledgerRequireBalance(t, tx, "the starting point: 16 granted, 6 of them reserved", a, "m1", 10, 6)
 	ledgerRequireViewsEmpty(t, tx, "at the starting point")
 
-	t.Run("adjusting 11 is refused although 15 credits exist: 5 are reserved and an adjustment never draws on them", func(t *testing.T) {
+	t.Run("adjusting 11 is refused although 16 credits exist: 6 are reserved and an adjustment never draws on them", func(t *testing.T) {
 		nLedger, nAudit := count(t, "platform.ledger"), count(t, "platform.admin_audit")
 		ledgerRefusedRow(t, tx, "adjusting 11 off 10 available", "23514", ledgerWhy{Constraint: "balances_available_not_negative", Table: "balances"}, ledgerAdjustmentCols(a, "m1", 11))
 		if got := count(t, "platform.ledger"); got != nLedger {
@@ -621,32 +757,32 @@ func TestLedger_AdjustmentMoney(t *testing.T) {
 		if got := count(t, "platform.admin_audit"); got != nAudit {
 			t.Fatalf("the refused adjustment left %d admin_audit row(s) behind", got-nAudit)
 		}
-		ledgerRequireBalance(t, tx, "after the refused adjustment", a, "m1", 10, 5)
+		ledgerRequireBalance(t, tx, "after the refused adjustment", a, "m1", 10, 6)
 	})
 
 	t.Run("modules are separate: an m2 adjustment leaves the m1 balance alone", func(t *testing.T) {
 		ledgerFund(t, tx, a, "m2", 20)
 		ledgerOKRow(t, tx, "control: an m2 adjustment of 7", ledgerAdjustmentCols(a, "m2", 7))
 		ledgerRequireBalance(t, tx, "m2 after its adjustment", a, "m2", 13, 0)
-		ledgerRequireBalance(t, tx, "m1 after the m2 adjustment", a, "m1", 10, 5)
+		ledgerRequireBalance(t, tx, "m1 after the m2 adjustment", a, "m1", 10, 6)
 	})
 
-	t.Run("control: adjusting exactly the 10 available passes, and reserved stays 5", func(t *testing.T) {
+	t.Run("control: adjusting exactly the 10 available passes, and reserved stays 6", func(t *testing.T) {
 		nAudit := count(t, "platform.admin_audit")
 		ledgerOKRow(t, tx, "adjusting exactly the available credits", ledgerAdjustmentCols(a, "m1", 10))
-		ledgerRequireBalance(t, tx, "after the adjustment of 10", a, "m1", 0, 5)
+		ledgerRequireBalance(t, tx, "after the adjustment of 10", a, "m1", 0, 6)
 		if got := count(t, "platform.admin_audit"); got != nAudit+1 {
 			t.Fatalf("the adjustment wrote %d admin_audit row(s), want exactly 1", got-nAudit)
 		}
 	})
 
-	t.Run("one credit more is refused: nothing is available and the 5 reserved credits are not a reserve to draw on", func(t *testing.T) {
+	t.Run("one credit more is refused: nothing is available and the 6 reserved credits are not a reserve to draw on", func(t *testing.T) {
 		nLedger := count(t, "platform.ledger")
 		ledgerRefusedRow(t, tx, "adjusting 1 off 0 available", "23514", ledgerWhy{Constraint: "balances_available_not_negative", Table: "balances"}, ledgerAdjustmentCols(a, "m1", 1))
 		if got := count(t, "platform.ledger"); got != nLedger {
 			t.Fatalf("the refused adjustment left %d ledger row(s) behind", got-nLedger)
 		}
-		ledgerRequireBalance(t, tx, "after the refused adjustment", a, "m1", 0, 5)
+		ledgerRequireBalance(t, tx, "after the refused adjustment", a, "m1", 0, 6)
 	})
 
 	t.Run("an adjustment cannot put a user into debt: a user who never held credits", func(t *testing.T) {
@@ -683,13 +819,18 @@ func TestLedger_AdjustmentAudit(t *testing.T) {
 			t.Fatalf("%d admin_audit rows after three grants, want none: only an adjustment writes one", n)
 		}
 		reserve := ledgerPut(t, tx, ledgerReserveCols(a, "m1", ledgerJobA1, "m1_vendor", 10, 2))
-		ledgerPut(t, tx, ledgerChargeCols(a, "m1", ledgerJobA1, reserve, "m1_own", 3, 1))
-		ledgerPut(t, tx, ledgerReleaseCols(a, "m1", ledgerJobA1, reserve, 13))
-		for _, k := range []string{"m3_enable", "m3_disable", "m3_expire"} {
+		for i := 0; i < 3; i++ { // a charge is one unit (platform_0005)
+			ledgerPut(t, tx, ledgerChargeCols(a, "m1", ledgerJobA1, reserve, "m1_own", 1, 1))
+		}
+		ledgerPut(t, tx, ledgerReleaseCols(a, "m1", ledgerJobA1, reserve, 17)) // exactly the remainder: 20 - 3
+		for _, k := range []string{"m3_enable", "m3_disable"} {
 			ledgerPut(t, tx, ledgerM3Cols(k, a))
 		}
+		ledgerPut(t, tx, ledgerM3Cols("m3_enable", ledgerUserC)) // an m3_expire is refused unless the entitlement is enabled and due (platform_0006)
+		ledgerMakeDue(t, tx, ledgerUserC)
+		ledgerPut(t, tx, ledgerM3Cols("m3_expire", ledgerUserC))
 		if n := totalAudits(t, tx); n != 0 {
-			t.Fatalf("%d admin_audit rows after a reserve, a charge, a release and three entitlement events, want none", n)
+			t.Fatalf("%d admin_audit rows after a reserve, charges, a release and four entitlement events, want none", n)
 		}
 	})
 
@@ -724,7 +865,7 @@ func TestLedger_AdjustmentAudit(t *testing.T) {
 
 	t.Run("a refused adjustment (overdraw, shape) writes no row", func(t *testing.T) {
 		nLedger := ledgerInt64(t, tx, "SELECT count(*) FROM platform.ledger")
-		ledgerRefusedRow(t, tx, "an adjustment of 5000, far more than the 986 available", "23514", ledgerWhy{Constraint: "balances_available_not_negative", Table: "balances"}, ledgerAdjustmentCols(a, "m1", 5000))
+		ledgerRefusedRow(t, tx, "an adjustment of 5000, far more than the 990 available", "23514", ledgerWhy{Constraint: "balances_available_not_negative", Table: "balances"}, ledgerAdjustmentCols(a, "m1", 5000))
 		ledgerRefusedCheck(t, tx, "an adjustment without a reason", "ledger_shape_adjustment", ledgerAdjustmentCols(a, "m1", 1).with("reason", nil))
 		if n := len(adjustmentAudits(t, tx)); n != 1 {
 			t.Fatalf("%d audit rows after two refused adjustments, want still 1", n)
@@ -832,8 +973,8 @@ func ledgerLogTables() []ledgerLogTable {
 			name:          "ledger",
 			update:        "UPDATE platform.ledger SET reason = 'tampered' WHERE idempotency_key = 'ao-grant-b'",
 			del:           "DELETE FROM platform.ledger WHERE idempotency_key = 'ao-grant-b'",
-			truncate:      "TRUNCATE platform.ledger",
-			ownerTruncate: "TRUNCATE platform.ledger",
+			truncate:      "TRUNCATE platform.ledger CASCADE", // CASCADE since platform_0005: platform.reserves references the ledger, and a plain TRUNCATE of a referenced table is refused by the foreign key (0A000) before the BEFORE TRUNCATE trigger can answer
+			ownerTruncate: "TRUNCATE platform.ledger CASCADE",
 			prep:          []string{"ALTER TABLE platform.ledger DISABLE TRIGGER ledger_append_only", "ALTER TABLE platform.ledger DISABLE TRIGGER ledger_no_truncate"},
 			insert: func() string {
 				return fmt.Sprintf("INSERT INTO platform.ledger (user_id, module_id, kind, available_delta, acting_admin_id, reason, idempotency_key) VALUES ('%s', 'm1', 'grant', 1, '%s', 'insert control', '%s')",
@@ -1043,7 +1184,7 @@ func TestLedger_AppendOnly_OwnerIsStoppedByTriggers(t *testing.T) {
 func TestLedger_AppendOnly_OwnerResidualPower(t *testing.T) {
 	_, admin := migratedScratch(t)
 	ledgerSeedCommitted(t, admin)
-	tables := []string{"platform.ledger", "platform.job_unit_prices", "platform.unit_cost_history", "platform.admin_audit", "platform.balances"}
+	tables := []string{"platform.ledger", "platform.job_unit_prices", "platform.unit_cost_history", "platform.admin_audit", "platform.balances", "platform.reserves"}
 	before := map[string]string{}
 	for _, tb := range tables {
 		before[tb] = ledgerDigest(t, admin, tb)
@@ -1135,7 +1276,7 @@ func TestLedger_AppendOnly_OwnerResidualPower(t *testing.T) {
 			}
 		}
 		ledgerRequireViewsEmpty(t, admin, "on the committed ledger after the owner's rolled-back tampering")
-		for _, trg := range []string{"ledger_append_only", "ledger_no_truncate", "ledger_apply_to_balance"} {
+		for _, trg := range []string{"ledger_append_only", "ledger_no_truncate", "ledger_apply_to_balance", "ledger_check_reserve", "ledger_apply_to_reserves", "ledger_check_release", "ledger_apply_to_entitlements", "ledger_stamp_created_at"} {
 			if st := ledgerString(t, admin, "SELECT tgenabled::text FROM pg_trigger WHERE tgrelid = 'platform.ledger'::regclass AND tgname = $1", trg); st != "O" {
 				t.Fatalf("trigger %s is in state %q after the tests, want O (enabled)", trg, st)
 			}

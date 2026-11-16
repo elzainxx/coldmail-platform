@@ -129,14 +129,23 @@ func blackHole(t *testing.T) (dsn string, accepted *atomic.Int32) {
 	return "postgres://platform_app:" + canary + "@" + ln.Addr().String() + "/platform?sslmode=disable", accepted
 }
 
+// m3Canary is the module 3 operator key of these tests: a canary, so that a test can prove it never reaches a log.
+const m3Canary = "CANARY-m3-operator-key-3382"
+
+// m3Env is the two required variables of module 3's entitlement flow. The URL points at a port nothing listens on:
+// no test here reaches module 3 (the harness does that against the real one).
+func m3Env() map[string]string {
+	return map[string]string{config.VarM3URL: "http://127.0.0.1:1", config.VarM3AdminToken: m3Canary}
+}
+
 // base is the environment of a service that binds a free local port.
 func base(dsn string) map[string]string {
-	return map[string]string{
+	return merge(m3Env(), map[string]string{
 		config.VarDatabaseURL:        dsn,
 		config.VarHTTPAddr:           "127.0.0.1:0",
 		config.VarReadyzTimeoutMS:    "500",
 		config.VarShutdownTimeoutSec: "5",
-	}
+	})
 }
 
 type running struct {
@@ -216,7 +225,7 @@ func TestRun_AMissingDatabaseURLIsAConfigErrorNamingTheVariable(t *testing.T) {
 	}
 
 	// Paired control: a DIFFERENT invalid variable is named instead, and the missing one is not.
-	err = Run(context.Background(), envOf(map[string]string{config.VarDatabaseURL: closedPortDSN(t), config.VarLogLevel: "loud"}), logs)
+	err = Run(context.Background(), envOf(merge(m3Env(), map[string]string{config.VarDatabaseURL: closedPortDSN(t), config.VarLogLevel: "loud"})), logs)
 	if err == nil || !strings.Contains(err.Error(), config.VarLogLevel) || strings.Contains(err.Error(), config.VarDatabaseURL) {
 		t.Errorf("an invalid %s was reported as: %v", config.VarLogLevel, err)
 	}
@@ -231,7 +240,7 @@ func TestRun_AnUnparseableDatabaseURLNeverEchoesTheCredential(t *testing.T) {
 	for name, dsn := range dsns {
 		t.Run(name, func(t *testing.T) {
 			logs := &syncBuffer{}
-			err := Run(context.Background(), envOf(map[string]string{config.VarDatabaseURL: dsn}), logs)
+			err := Run(context.Background(), envOf(merge(m3Env(), map[string]string{config.VarDatabaseURL: dsn})), logs)
 
 			var ce *config.Error
 			if !errors.As(err, &ce) {
@@ -462,12 +471,12 @@ func TestRun_StartupAndShutdownLinesAndTheLogLevel(t *testing.T) {
 // ---- every dial has a consumer ----------------------------------------------------------------------------
 
 func TestServerConfig_TheServerDialsReachTheServer(t *testing.T) {
-	custom, err := config.Load(envOf(map[string]string{
+	custom, err := config.Load(envOf(merge(m3Env(), map[string]string{
 		config.VarDatabaseURL:          "postgres://platform_app:x@h/db",
 		config.VarHTTPAddr:             "127.0.0.1:9191",
 		config.VarShutdownTimeoutSec:   "41",
 		config.VarReadHeaderTimeoutSec: "13",
-	}))
+	})))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -478,7 +487,7 @@ func TestServerConfig_TheServerDialsReachTheServer(t *testing.T) {
 
 	// Paired control: the defaults map to different values, so the assertion above is not satisfied by a
 	// serverConfig that ignores its input.
-	def, err := config.Load(envOf(map[string]string{config.VarDatabaseURL: "postgres://platform_app:x@h/db"}))
+	def, err := config.Load(envOf(merge(m3Env(), map[string]string{config.VarDatabaseURL: "postgres://platform_app:x@h/db"})))
 	if err != nil {
 		t.Fatal(err)
 	}

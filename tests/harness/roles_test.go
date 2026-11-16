@@ -84,10 +84,27 @@ var roleStatements = []roleStmt{
 	{"platform.ledger", "DELETE", `DELETE FROM platform.ledger`, "23001", "append-only", ""},
 	{"platform.ledger", "TRUNCATE", `TRUNCATE platform.ledger`, "23001", "append-only", ""},
 
+	// platform_0006: nobody but the ledger trigger writes the entitlements, so every write is refused to both roles (the superuser's result is stated for each: its DELETE is stopped by the
+	// delivery row that references the entitlement, and its TRUNCATE needs CASCADE for the same reason)
 	{"platform.m3_entitlements", "INSERT", `INSERT INTO platform.m3_entitlements (user_id, enabled, changed_by) VALUES ({U2}, true, {ADM})`, "", "", ""},
 	{"platform.m3_entitlements", "UPDATE", `UPDATE platform.m3_entitlements SET enabled = false, enabled_until = NULL, changed_by = {ADM}, changed_at = now() WHERE user_id = {U1}`, "", "", ""},
-	{"platform.m3_entitlements", "DELETE", `DELETE FROM platform.m3_entitlements`, "", "", ""},
-	{"platform.m3_entitlements", "TRUNCATE", `TRUNCATE platform.m3_entitlements`, "", "", ""},
+	{"platform.m3_entitlements", "DELETE", `DELETE FROM platform.m3_entitlements`, "23503", "m3_sync", ""},
+	{"platform.m3_entitlements", "TRUNCATE", `TRUNCATE platform.m3_entitlements CASCADE`, "", "", ""},
+
+	// platform_0005: what each reserve held, charged and released. Written only by the ledger trigger: both roles read it and nothing else.
+	{"platform.reserves", "INSERT", `INSERT INTO platform.reserves (reserve_id, user_id, module_id, job_id, reserved) SELECT id, {U1}, 'm1', {JOB2}, 5 FROM platform.ledger WHERE idempotency_key = 'roles-seed-grant'`, "", "", ""},
+	{"platform.reserves", "UPDATE", `UPDATE platform.reserves SET charged = charged`, "", "", ""},
+	{"platform.reserves", "DELETE", `DELETE FROM platform.reserves`, "", "", ""},
+	{"platform.reserves", "TRUNCATE", `TRUNCATE platform.reserves`, "", "", ""},
+
+	// platform_0006: delivery of each entitlement to module 3. Both roles read it; platform_app may update exactly the seven columns the reconcile loop records (the column-level statements
+	// below); nobody inserts or deletes a row (the entitlement trigger inserts it). The superuser's INSERT meets the row the trigger already wrote for the seeded entitlement.
+	{"platform.m3_sync", "INSERT", `INSERT INTO platform.m3_sync (user_id, want_suspended) VALUES ({U1}, false)`, "23505", "m3_sync_pkey", ""},
+	{"platform.m3_sync", "UPDATE", `UPDATE platform.m3_sync SET want_version = want_version + 1`, "", "", ""},
+	{"platform.m3_sync", "DELETE", `DELETE FROM platform.m3_sync`, "", "", ""},
+	{"platform.m3_sync", "TRUNCATE", `TRUNCATE platform.m3_sync`, "", "", ""},
+	{"platform.m3_sync", "UPDATE(observed,observed_at,attempts,last_attempt_at,last_error,converged_version,updated_at)", `UPDATE platform.m3_sync SET observed = 'active', observed_at = now(), attempts = attempts + 1, last_attempt_at = now(), last_error = NULL, converged_version = converged_version, updated_at = now() WHERE user_id = {U1}`, "", "", "platform_app"},
+	{"platform.m3_sync", "UPDATE(want_suspended,want_version)", `UPDATE platform.m3_sync SET want_suspended = NOT want_suspended, want_version = want_version + 1 WHERE user_id = {U1}`, "", "", ""},
 
 	{"platform.suppressions", "INSERT", `INSERT INTO platform.suppressions (user_id, email, source) VALUES ({U1}, 'proof@example.com', 'manual')`, "", "", ""},
 	{"platform.suppressions", "UPDATE", `UPDATE platform.suppressions SET source = 'import'`, "", "", ""},
@@ -130,14 +147,16 @@ var roleStatements = []roleStmt{
 var roleExpectations = map[string]map[string]string{
 	"platform_app": {
 		"platform.schema_migrations": "S", "platform.admins": "S", "platform.modules": "S", "platform.unit_costs": "S", "platform.unit_cost_history": "S",
-		"platform.jobs": "SIU", "platform.job_unit_prices": "SI", "platform.balances": "S", "platform.ledger": "SI", "platform.m3_entitlements": "SIU",
+		"platform.jobs": "SIU", "platform.job_unit_prices": "SI", "platform.balances": "S", "platform.ledger": "SI", "platform.m3_entitlements": "S",
 		"platform.suppressions": "SI", "platform.admin_audit": "SI", "platform.balance_drift": "S", "platform.reserve_overdrawn": "S", "platform.listable_users": "S",
+		"platform.reserves": "S", "platform.m3_sync": "S", // m3_sync: plus UPDATE of seven columns (the column-level statement), which a table-level letter cannot say
 		"public.users": "SIU", "public.job_items": "SIU",
 	},
 	"platform_admin": {
 		"platform.schema_migrations": "S", "platform.admins": "S", "platform.modules": "S", "platform.unit_costs": "S", "platform.unit_cost_history": "S",
 		"platform.jobs": "S", "platform.job_unit_prices": "S", "platform.balances": "S", "platform.ledger": "SI", "platform.m3_entitlements": "S",
 		"platform.suppressions": "S", "platform.admin_audit": "SI", "platform.balance_drift": "S", "platform.reserve_overdrawn": "S", "platform.listable_users": "S",
+		"platform.reserves": "S", "platform.m3_sync": "S",
 		"public.users": "S", "public.job_items": "S",
 	},
 }
@@ -365,8 +384,8 @@ func TestRoles_UngrantedRoleIsRefusedEverywhere(t *testing.T) {
 	rolesSeed(t, ctx, tx)
 
 	rels := sortedMapKeys(roleExpectations["platform_app"])
-	if len(rels) < 17 {
-		t.Fatalf("found %d relations in the expectations, want at least 17 (15 in schema platform, 2 in public)", len(rels))
+	if len(rels) < 19 {
+		t.Fatalf("found %d relations in the expectations, want at least 19 (17 in schema platform, 2 in public)", len(rels))
 	}
 	// A role created inside the transaction is gone when it rolls back: nothing to clean up in the cluster.
 	for _, stmt := range []string{"CREATE ROLE zz_roles_ungranted NOLOGIN", "GRANT USAGE ON SCHEMA platform, public TO zz_roles_ungranted"} {
@@ -574,6 +593,31 @@ func TestRoles_ExpectationsAgreeWithDeclaredClasses(t *testing.T) {
 			}
 			return out
 		}, []string{"platform_admin on platform.unit_costs", "UPDATE(cost,changed_by,change_reason)", "claimed allowed", "says refused"}},
+		{"INSERT granted on reserves to platform_app (declared only: nobody writes it but the ledger trigger)", func(exp map[string]map[string]string, platform, public map[string]privClass, stmts []roleStmt) []roleStmt {
+			c := platform["reserves"]
+			c.Grants["platform_app"] = append(c.Grants["platform_app"], "INSERT")
+			platform["reserves"] = c
+			return stmts
+		}, []string{"platform_app on platform.reserves", "declared class grants INSERT"}},
+		{"UPDATE expected allowed on m3_entitlements for platform_app (expectation only: since platform_0006 the ledger trigger is its only writer)", func(exp map[string]map[string]string, platform, public map[string]privClass, stmts []roleStmt) []roleStmt {
+			exp["platform_app"]["platform.m3_entitlements"] += "U"
+			return stmts
+		}, []string{"platform_app on platform.m3_entitlements", "expects UPDATE", "does not grant"}},
+		{"the m3_sync column grant widened to the wanted state in the declaration only", func(exp map[string]map[string]string, platform, public map[string]privClass, stmts []roleStmt) []roleStmt {
+			c := platform["m3_sync"]
+			c.ColumnGrants["platform_app"]["UPDATE"] = append(c.ColumnGrants["platform_app"]["UPDATE"], "want_suspended", "want_version")
+			platform["m3_sync"] = c
+			return stmts
+		}, []string{"platform_app on platform.m3_sync", "UPDATE(want_suspended,want_version)", "claimed refused", "says allowed"}},
+		{"the m3_sync column statement claimed for platform_admin", func(exp map[string]map[string]string, platform, public map[string]privClass, stmts []roleStmt) []roleStmt {
+			out := append([]roleStmt(nil), stmts...)
+			for i := range out {
+				if strings.HasPrefix(out[i].Priv, "UPDATE(observed,") {
+					out[i].Only = "platform_app,platform_admin"
+				}
+			}
+			return out
+		}, []string{"platform_admin on platform.m3_sync", "claimed allowed", "says refused"}},
 	}
 	for _, b := range breaks {
 		b := b

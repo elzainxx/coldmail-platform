@@ -22,10 +22,10 @@
 #
 # LIVE MODE reads the real database: it is RED if psql fails, if either view does not exist ("found no platform.balance_drift view: the instrument matched nothing"), or if any view has a row.
 # --exercise (the proof that the gate can see the fault it exists for): in ONE transaction that is ALWAYS rolled back (there is no COMMIT in it: --print-exercise-sql shows it) the script
-#   creates its own fixtures (an auth.users row, a public.users row, an admin, a job and its price snapshot), writes a grant, a reserve, two partial charges and a release THROUGH THE LEDGER, and
+#   creates its own fixtures (an auth.users row, a public.users row, an admin, a job and its price snapshot), writes two grants, a reserve (at the DEAREST price of the job's complete snapshot, as platform_0005 requires), six ONE-unit charges (each with its own item_ref), a release of exactly the remainder and an adjustment THROUGH THE LEDGER, and
 #   THEN reads the two views, restricted to its own fixture user, in the same transaction. A missing or disabled balance trigger leaves the stored balance behind the ledger, the views are
 #   not empty and the gate is RED: that is the fault it is proven against (scripts/check-balance-invariant-selftest.sh proves the parsing; the fault-proofs leg proves it against a real
-#   database whose trigger was disabled). It prints how many ledger rows it exercised and is RED below 5: an exercise that exercised nothing proves nothing. It needs a role that may write
+#   database whose trigger was disabled). It prints how many ledger rows it exercised and is RED below 11 (two grants, the reserve, six charges, the release, the adjustment): an exercise that exercised nothing proves nothing. It needs a role that may write
 #   the fixtures (the migrator), and leaves nothing behind.
 #
 # EXIT: 0 green; 1 RED (the reason is printed; a row of a view starts BALANCE DRIFT or RESERVE OVERDRAWN and names user, module, stored and ledger values); 2 usage error.
@@ -59,30 +59,26 @@ INSERT INTO platform.admins (id, display_name) VALUES (current_setting('bi.a')::
 INSERT INTO platform.jobs (id, user_id, module_id) VALUES (current_setting('bi.j')::uuid, current_setting('bi.u')::uuid, 'm1');
 INSERT INTO platform.job_unit_prices (job_id, module_id, unit, cost)
 SELECT current_setting('bi.j')::uuid, module_id, unit, cost FROM platform.unit_costs WHERE module_id = 'm1';
-INSERT INTO platform.ledger (user_id, module_id, kind, available_delta, acting_admin_id, reason, idempotency_key)
-SELECT current_setting('bi.u')::uuid, 'm1', 'grant', 100 * p.cost, current_setting('bi.a')::uuid, 'balance-invariant exercise (rolled back)', 'bi-grant-1'
+SELECT 'PRICES', set_config('bi.c', p.cost::text, true), set_config('bi.d', (SELECT max(cost) FROM platform.job_unit_prices WHERE job_id = current_setting('bi.j')::uuid)::text, true)
 FROM platform.job_unit_prices p WHERE p.job_id = current_setting('bi.j')::uuid AND p.unit = 'm1_own';
 INSERT INTO platform.ledger (user_id, module_id, kind, available_delta, acting_admin_id, reason, idempotency_key)
-SELECT current_setting('bi.u')::uuid, 'm1', 'grant', 50 * p.cost, current_setting('bi.a')::uuid, 'balance-invariant exercise (rolled back)', 'bi-grant-2'
-FROM platform.job_unit_prices p WHERE p.job_id = current_setting('bi.j')::uuid AND p.unit = 'm1_own';
+VALUES (current_setting('bi.u')::uuid, 'm1', 'grant', 100 * current_setting('bi.d')::bigint, current_setting('bi.a')::uuid, 'balance-invariant exercise (rolled back)', 'bi-grant-1');
+INSERT INTO platform.ledger (user_id, module_id, kind, available_delta, acting_admin_id, reason, idempotency_key)
+VALUES (current_setting('bi.u')::uuid, 'm1', 'grant', 50 * current_setting('bi.d')::bigint, current_setting('bi.a')::uuid, 'balance-invariant exercise (rolled back)', 'bi-grant-2');
 INSERT INTO platform.ledger (user_id, module_id, kind, available_delta, reserved_delta, job_id, unit, units, unit_cost, idempotency_key)
 SELECT current_setting('bi.u')::uuid, 'm1', 'reserve', -(10 * p.cost), 10 * p.cost, p.job_id, p.unit, 10, p.cost, 'bi-reserve'
-FROM platform.job_unit_prices p WHERE p.job_id = current_setting('bi.j')::uuid AND p.unit = 'm1_own';
-INSERT INTO platform.ledger (user_id, module_id, kind, available_delta, reserved_delta, job_id, reserve_id, unit, units, unit_cost, idempotency_key)
-SELECT current_setting('bi.u')::uuid, 'm1', 'charge', 0, -(4 * p.cost), p.job_id,
-       (SELECT id FROM platform.ledger WHERE user_id = current_setting('bi.u')::uuid AND module_id = 'm1' AND idempotency_key = 'bi-reserve'), p.unit, 4, p.cost, 'bi-charge-1'
-FROM platform.job_unit_prices p WHERE p.job_id = current_setting('bi.j')::uuid AND p.unit = 'm1_own';
-INSERT INTO platform.ledger (user_id, module_id, kind, available_delta, reserved_delta, job_id, reserve_id, unit, units, unit_cost, idempotency_key)
-SELECT current_setting('bi.u')::uuid, 'm1', 'charge', 0, -(2 * p.cost), p.job_id,
-       (SELECT id FROM platform.ledger WHERE user_id = current_setting('bi.u')::uuid AND module_id = 'm1' AND idempotency_key = 'bi-reserve'), p.unit, 2, p.cost, 'bi-charge-2'
-FROM platform.job_unit_prices p WHERE p.job_id = current_setting('bi.j')::uuid AND p.unit = 'm1_own';
+FROM platform.job_unit_prices p WHERE p.job_id = current_setting('bi.j')::uuid AND p.cost = current_setting('bi.d')::bigint ORDER BY p.unit LIMIT 1;
+INSERT INTO platform.ledger (user_id, module_id, kind, available_delta, reserved_delta, job_id, reserve_id, unit, units, unit_cost, item_ref, idempotency_key)
+SELECT current_setting('bi.u')::uuid, 'm1', 'charge', 0, -p.cost, p.job_id,
+       (SELECT id FROM platform.ledger WHERE user_id = current_setting('bi.u')::uuid AND module_id = 'm1' AND idempotency_key = 'bi-reserve'), p.unit, 1, p.cost,
+       'bi-item-' || g, 'bi-charge-' || g
+FROM platform.job_unit_prices p CROSS JOIN generate_series(1, 6) AS g WHERE p.job_id = current_setting('bi.j')::uuid AND p.unit = 'm1_own';
 INSERT INTO platform.ledger (user_id, module_id, kind, available_delta, reserved_delta, job_id, reserve_id, idempotency_key)
-SELECT current_setting('bi.u')::uuid, 'm1', 'release', 4 * p.cost, -(4 * p.cost), p.job_id,
+SELECT current_setting('bi.u')::uuid, 'm1', 'release', 10 * current_setting('bi.d')::bigint - 6 * current_setting('bi.c')::bigint, -(10 * current_setting('bi.d')::bigint - 6 * current_setting('bi.c')::bigint), p.job_id,
        (SELECT id FROM platform.ledger WHERE user_id = current_setting('bi.u')::uuid AND module_id = 'm1' AND idempotency_key = 'bi-reserve'), 'bi-release'
 FROM platform.job_unit_prices p WHERE p.job_id = current_setting('bi.j')::uuid AND p.unit = 'm1_own';
 INSERT INTO platform.ledger (user_id, module_id, kind, available_delta, acting_admin_id, reason, idempotency_key)
-SELECT current_setting('bi.u')::uuid, 'm1', 'adjustment', -(3 * p.cost), current_setting('bi.a')::uuid, 'balance-invariant exercise (rolled back)', 'bi-adjustment'
-FROM platform.job_unit_prices p WHERE p.job_id = current_setting('bi.j')::uuid AND p.unit = 'm1_own';
+VALUES (current_setting('bi.u')::uuid, 'm1', 'adjustment', -(3 * current_setting('bi.c')::bigint), current_setting('bi.a')::uuid, 'balance-invariant exercise (rolled back)', 'bi-adjustment');
 SELECT 'EXERCISED', count(*) FROM platform.ledger WHERE user_id = current_setting('bi.u')::uuid;
 SELECT 'BALANCE', COALESCE(b.available, -1), COALESCE(b.reserved, -1)
 FROM (SELECT 1) AS one LEFT JOIN platform.balances b ON b.user_id = current_setting('bi.u')::uuid AND b.module_id = 'm1';
@@ -170,9 +166,9 @@ else
     grep -q '^ROLLED_BACK' "$T/out" || red "the exercise never printed ROLLED_BACK: its final ROLLBACK did not run, so what it wrote cannot be assumed gone"
     ex="$(rows_of EXERCISED "$T/out" | head -1)"
     case "$ex" in ''|*[!0-9]*) red "the exercise printed no ledger-row count (got '${ex:-nothing}'): the instrument matched nothing";; esac
-    [ "$ex" -ge 5 ] || red "the exercise wrote only $ex ledger row(s) (floor 5): an exercise that exercised nothing proves nothing"
+    [ "$ex" -ge 11 ] || red "the exercise wrote only $ex ledger row(s) (floor 11): an exercise that exercised nothing proves nothing"
     bal="$(rows_of BALANCE "$T/out" | head -1)"
-    echo "check-balance-invariant: exercised $ex ledger row(s) (grant, grant, reserve, charge, charge, release, adjustment) in one transaction that was rolled back; the stored balance after them was available|reserved = ${bal:-unknown}"
+    echo "check-balance-invariant: exercised $ex ledger row(s) (two grants, a reserve at the dearest price, six one-unit charges, a release of exactly the remainder, an adjustment) in one transaction that was rolled back; the stored balance after them was available|reserved = ${bal:-unknown}"
   else
     run_sql "$DATA_SQL"; [ "$RC" -eq 0 ] || psql_failed "reading the views"
     cnt="$(rows_of COUNTS "$T/out" | head -1)"

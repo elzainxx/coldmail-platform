@@ -15,15 +15,21 @@ import (
 	"time"
 )
 
-const goodURL = "postgres://platform_app:pw@db.example:5432/postgres"
+const (
+	goodURL        = "postgres://platform_app:pw@db.example:5432/postgres"
+	goodM3URL      = "http://m3.example:8080"
+	goodM3Operator = "operator-operator-ok"
+)
 
 // envOf is an injected getenv: Load never sees the process environment in these tests.
 func envOf(m map[string]string) func(string) string {
 	return func(k string) string { return m[k] }
 }
 
-// base is the smallest environment Load accepts.
-func base() map[string]string { return map[string]string{VarDatabaseURL: goodURL} }
+// base is the smallest environment Load accepts: the three required variables.
+func base() map[string]string {
+	return map[string]string{VarDatabaseURL: goodURL, VarM3URL: goodM3URL, VarM3AdminToken: goodM3Operator}
+}
 
 func with(m map[string]string, k, v string) map[string]string {
 	out := make(map[string]string, len(m)+1)
@@ -58,15 +64,25 @@ func TestVars_AreWellFormed(t *testing.T) {
 			t.Errorf("%s is optional and has no default: Load would have nothing to fall back on", v.Name)
 		}
 	}
-	// The one secret the platform has today, and it must be both secret and required.
-	var db *Var
-	for i := range vars {
-		if vars[i].Name == VarDatabaseURL {
-			db = &vars[i]
+	// The two secrets the platform has (the database login and module 3's operator key), each both secret
+	// and required; module 3's URL is required and is NOT a secret (it is printed in the loaded state).
+	byName := map[string]Var{}
+	for _, v := range vars {
+		byName[v.Name] = v
+	}
+	for _, name := range []string{VarDatabaseURL, VarM3AdminToken} {
+		if v, ok := byName[name]; !ok || !v.Secret || !v.Required {
+			t.Errorf("%s must be declared Required and Secret, got %+v", name, v)
 		}
 	}
-	if db == nil || !db.Secret || !db.Required {
-		t.Errorf("%s must be declared Required and Secret, got %+v", VarDatabaseURL, db)
+	if v, ok := byName[VarM3URL]; !ok || v.Secret || !v.Required {
+		t.Errorf("%s must be declared Required and not Secret, got %+v", VarM3URL, v)
+	}
+	// Every other variable is a non-secret dial: a new secret must be added to the list above on purpose.
+	for _, v := range vars {
+		if v.Secret && v.Name != VarDatabaseURL && v.Name != VarM3AdminToken {
+			t.Errorf("%s is Secret but is not one of the two known secrets: extend this test deliberately", v.Name)
+		}
 	}
 
 	// Vars returns a copy: mutating it must not change what the next caller sees.
@@ -86,6 +102,11 @@ func TestLoad_DefaultsAreTheDocumentedOnes(t *testing.T) {
 		"PLATFORM_SHUTDOWN_TIMEOUT_SEC":    "30",
 		"PLATFORM_READYZ_TIMEOUT_MS":       "2000",
 		"PLATFORM_READ_HEADER_TIMEOUT_SEC": "10",
+
+		"PLATFORM_ENTITLEMENT_EXPIRE_INTERVAL_SEC": "30",
+		"PLATFORM_M3_RECONCILE_INTERVAL_SEC":       "5",
+		"PLATFORM_M3_REVERIFY_INTERVAL_SEC":        "300",
+		"PLATFORM_M3_REQUEST_TIMEOUT_SEC":          "10",
 	}
 	got := map[string]string{}
 	for _, v := range Vars() {
@@ -105,6 +126,10 @@ func TestLoad_DefaultsAreTheDocumentedOnes(t *testing.T) {
 		cfg.ShutdownTimeout != 30*time.Second || cfg.ReadyzTimeout != 2*time.Second ||
 		cfg.ReadHeaderTimeout != 10*time.Second || cfg.DatabaseURL.Reveal() != goodURL {
 		t.Fatalf("defaults did not reach the Config: %v", cfg)
+	}
+	if cfg.M3URL != goodM3URL || cfg.M3AdminToken.Reveal() != goodM3Operator || cfg.EntitlementExpireInterval != 30*time.Second ||
+		cfg.M3ReconcileInterval != 5*time.Second || cfg.M3ReverifyInterval != 300*time.Second || cfg.M3RequestTimeout != 10*time.Second {
+		t.Fatalf("the module 3 defaults did not reach the Config: %v", cfg)
 	}
 
 	// Paired control: a blank value means "unset", so an environment that spells every default out loud
@@ -221,6 +246,13 @@ var alternatives = map[string]string{
 	VarShutdownTimeoutSec:   "45",
 	VarReadyzTimeoutMS:      "750",
 	VarReadHeaderTimeoutSec: "7",
+
+	VarM3URL:                        "https://m3.internal:9443",
+	VarM3AdminToken:                 "another-operator-key",
+	VarEntitlementExpireIntervalSec: "77",
+	VarM3ReconcileIntervalSec:       "9",
+	VarM3ReverifyIntervalSec:        "600",
+	VarM3RequestTimeoutSec:          "25",
 }
 
 func TestLoad_EveryVarChangesTheConfig(t *testing.T) {
@@ -263,17 +295,19 @@ func TestLoad_TheConsumerCheckCanFail(t *testing.T) {
 func TestLoad_DoesNotReadTheProcessEnvironment(t *testing.T) {
 	t.Setenv(VarEnv, "from-the-process")
 	t.Setenv(VarDatabaseURL, "postgres://from-the-process")
+	t.Setenv(VarM3URL, "http://from-the-process:8080")
+	t.Setenv(VarM3AdminToken, "process-process-process")
 
 	cfg, err := Load(envOf(base()))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Env != "development" || cfg.DatabaseURL.Reveal() != goodURL {
+	if cfg.Env != "development" || cfg.DatabaseURL.Reveal() != goodURL || cfg.M3URL != goodM3URL || cfg.M3AdminToken.Reveal() != goodM3Operator {
 		t.Fatalf("Load picked up the process environment: %v", cfg)
 	}
 	// Paired control: the variables are really set, and a getenv that reads the process sees them.
 	viaOS, err := Load(os.Getenv)
-	if err != nil || viaOS.Env != "from-the-process" {
+	if err != nil || viaOS.Env != "from-the-process" || viaOS.M3URL != "http://from-the-process:8080" || viaOS.M3AdminToken.Reveal() != "process-process-process" {
 		t.Fatalf("control failed: Load(os.Getenv) = %v, %v", viaOS, err)
 	}
 }
@@ -299,6 +333,27 @@ func TestLoad_InvalidValuesNameTheVariableAndNeverEchoTheValue(t *testing.T) {
 		{VarReadyzTimeoutMS, "60001", "between 1 and 60000"},
 		{VarReadHeaderTimeoutSec, "2.5", "integer"},
 		{VarReadHeaderTimeoutSec, "0", "between 1 and 3600"},
+		{VarM3URL, "ftp://m3-XYZ123:8080", "http or https URL"},
+		{VarM3URL, "m3-XYZ123:8080", "http or https URL"},
+		{VarM3URL, "https://", "http or https URL"}, // a scheme and no host
+		{VarM3URL, "http://user-XYZ123:pw-XYZ123@m3:8080", "no credentials"},
+		{VarM3URL, "http://m3-XYZ123:8080?key=1", "http or https URL"},
+		{VarM3URL, "http://m3-XYZ123:8080/#frag", "http or https URL"},
+		{VarEntitlementExpireIntervalSec, "often-XYZ123", "integer"},
+		{VarEntitlementExpireIntervalSec, "0", "between 1 and 3600"},
+		{VarEntitlementExpireIntervalSec, "3601", "between 1 and 3600"},
+		{VarM3ReconcileIntervalSec, "0", "between 1 and 3600"},
+		{VarM3ReconcileIntervalSec, "3601", "between 1 and 3600"},
+		{VarM3ReconcileIntervalSec, "1.5", "integer"},
+		{VarM3ReverifyIntervalSec, "9", "between 10 and 86400"},
+		{VarM3ReverifyIntervalSec, "86401", "between 10 and 86400"},
+		{VarM3ReverifyIntervalSec, "never-XYZ123", "integer"},
+		{VarM3RequestTimeoutSec, "0", "between 1 and 120"},
+		{VarM3RequestTimeoutSec, "121", "between 1 and 120"},
+		{VarM3RequestTimeoutSec, "-3", "between 1 and 120"},
+		{VarM3AdminToken, "two words-XYZ123", "printable ASCII"},
+		{VarM3AdminToken, "café-key-XYZ123", "printable ASCII"},
+		{VarM3AdminToken, "inner\ttab-XYZ123", "printable ASCII"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name+"="+tc.value, func(t *testing.T) {
@@ -327,12 +382,18 @@ func TestLoad_AcceptsTheEdgesOfEveryRange(t *testing.T) {
 	// The pairing for the table above: the boundary values just inside each range load fine, so the
 	// rejections are about the value and not about the variable being unusable.
 	cfg, err := Load(envOf(map[string]string{
-		VarDatabaseURL:          goodURL,
-		VarHTTPAddr:             "127.0.0.1:0",
-		VarLogLevel:             "WARN",
-		VarShutdownTimeoutSec:   "3600",
-		VarReadyzTimeoutMS:      "1",
-		VarReadHeaderTimeoutSec: "1",
+		VarDatabaseURL:                  goodURL,
+		VarHTTPAddr:                     "127.0.0.1:0",
+		VarLogLevel:                     "WARN",
+		VarShutdownTimeoutSec:           "3600",
+		VarReadyzTimeoutMS:              "1",
+		VarReadHeaderTimeoutSec:         "1",
+		VarM3URL:                        "http://m3:8080",
+		VarM3AdminToken:                 goodM3Operator,
+		VarEntitlementExpireIntervalSec: "3600",
+		VarM3ReconcileIntervalSec:       "1",
+		VarM3ReverifyIntervalSec:        "10",
+		VarM3RequestTimeoutSec:          "120",
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -341,24 +402,81 @@ func TestLoad_AcceptsTheEdgesOfEveryRange(t *testing.T) {
 		cfg.ReadyzTimeout != time.Millisecond || cfg.ReadHeaderTimeout != time.Second {
 		t.Fatalf("edge values loaded wrongly: %v", cfg)
 	}
+	if cfg.M3URL != "http://m3:8080" || cfg.EntitlementExpireInterval != time.Hour || cfg.M3ReconcileInterval != time.Second ||
+		cfg.M3ReverifyInterval != 10*time.Second || cfg.M3RequestTimeout != 2*time.Minute {
+		t.Fatalf("module 3 edge values loaded wrongly: %v", cfg)
+	}
+	// The upper edge of the reverify dial, and an https URL with a port, an IPv6 host and a path prefix.
+	upper, err := Load(envOf(with(with(base(), VarM3ReverifyIntervalSec, "86400"), VarM3URL, "https://[::1]:8443/m3")))
+	if err != nil || upper.M3ReverifyInterval != 24*time.Hour || upper.M3URL != "https://[::1]:8443/m3" {
+		t.Fatalf("the upper edge of the reverify dial, or an https/IPv6/path URL, was refused: %v (%v)", upper, err)
+	}
+}
+
+// TestLoad_M3URLShapes pins which module 3 URLs load: any http or https URL with a host and no credentials,
+// query or fragment, and nothing else. Each rejected shape has an accepted twin that differs in that one thing.
+func TestLoad_M3URLShapes(t *testing.T) {
+	accepted := []string{
+		"http://m3:8080", "https://m3.internal", "http://10.0.0.5:8080/base", "HTTP://M3:8080", "http://[::1]:8080",
+	}
+	rejected := map[string]string{ // value -> the shape it breaks (its twin is in `accepted`)
+		"ftp://m3:8080":         "scheme (twin http://m3:8080)",
+		"//m3:8080":             "no scheme",
+		"m3:8080":               "no scheme, a bare host:port",
+		"http:///path":          "no host",
+		"http://u:p@m3:8080":    "credentials",
+		"http://u@m3:8080":      "a user name",
+		"http://m3:8080?a=b":    "a query",
+		"http://m3:8080?":       "an empty query",
+		"http://m3:8080#x":      "a fragment",
+		"http://m3 :8080":       "a space in the host",
+		"mailto:ops@example.io": "an opaque URL",
+	}
+	for _, v := range accepted {
+		cfg, err := Load(envOf(with(base(), VarM3URL, v)))
+		if err != nil || cfg.M3URL != v {
+			t.Errorf("%q was refused or altered: %v (%v)", v, cfg.M3URL, err)
+		}
+	}
+	for v, why := range rejected {
+		_, err := Load(envOf(with(base(), VarM3URL, v)))
+		var ce *Error
+		if !errors.As(err, &ce) || len(ce.Problems) != 1 || ce.Problems[0].Name != VarM3URL {
+			t.Errorf("%q (%s) loaded, or was refused for another variable: %v", v, why, err)
+		}
+	}
+	if len(accepted) < 5 || len(rejected) < 11 {
+		t.Fatal("the shape tables shrank: the check would pass over fewer cases than it was written for")
+	}
 }
 
 func TestLoad_RequiredVariableMissingBlankOrWhitespace(t *testing.T) {
-	for name, env := range map[string]map[string]string{
-		"unset":      {},
-		"empty":      {VarDatabaseURL: ""},
-		"whitespace": {VarDatabaseURL: " \t "},
-	} {
-		t.Run(name, func(t *testing.T) {
-			_, err := Load(envOf(env))
-			var ce *Error
-			if !errors.As(err, &ce) || len(ce.Problems) != 1 || ce.Problems[0].Name != VarDatabaseURL {
-				t.Fatalf("Load = %v, want one problem naming %s", err, VarDatabaseURL)
-			}
-			if !strings.Contains(err.Error(), VarDatabaseURL) || !strings.Contains(err.Error(), "required") {
-				t.Fatalf("message does not say which variable is required: %v", err)
-			}
-		})
+	// Each of the three required variables, taken away from an otherwise complete environment in three
+	// ways: exactly one problem, naming that variable, saying it is required.
+	for _, required := range []string{VarDatabaseURL, VarM3URL, VarM3AdminToken} {
+		for name, value := range map[string]*string{"unset": nil, "empty": ptr(""), "whitespace": ptr(" \t ")} {
+			t.Run(required+"/"+name, func(t *testing.T) {
+				env := base()
+				delete(env, required)
+				if value != nil {
+					env[required] = *value
+				}
+				_, err := Load(envOf(env))
+				var ce *Error
+				if !errors.As(err, &ce) || len(ce.Problems) != 1 || ce.Problems[0].Name != required {
+					t.Fatalf("Load = %v, want one problem naming %s", err, required)
+				}
+				if !strings.Contains(err.Error(), required) || !strings.Contains(err.Error(), "required") {
+					t.Fatalf("message does not say which variable is required: %v", err)
+				}
+			})
+		}
+	}
+	// Nothing set at all names all three, and only those.
+	_, err := Load(envOf(map[string]string{}))
+	var ce *Error
+	if !errors.As(err, &ce) || len(ce.Problems) != 3 {
+		t.Fatalf("an empty environment gave %v, want exactly the three required variables", err)
 	}
 	if _, err := Load(envOf(base())); err != nil {
 		t.Fatalf("control failed: the base environment is rejected: %v", err)
@@ -367,6 +485,8 @@ func TestLoad_RequiredVariableMissingBlankOrWhitespace(t *testing.T) {
 		t.Fatal("a nil getenv was accepted")
 	}
 }
+
+func ptr(s string) *string { return &s }
 
 func TestLoad_ReportsEveryProblemAtOnceInDeclarationOrder(t *testing.T) {
 	_, err := Load(envOf(map[string]string{
@@ -382,7 +502,7 @@ func TestLoad_ReportsEveryProblemAtOnceInDeclarationOrder(t *testing.T) {
 	for _, p := range ce.Problems {
 		names = append(names, p.Name)
 	}
-	want := []string{VarHTTPAddr, VarDatabaseURL, VarLogLevel, VarReadHeaderTimeoutSec}
+	want := []string{VarHTTPAddr, VarDatabaseURL, VarLogLevel, VarReadHeaderTimeoutSec, VarM3URL, VarM3AdminToken}
 	if !reflect.DeepEqual(names, want) {
 		t.Fatalf("problems named %v, want %v", names, want)
 	}
@@ -390,25 +510,35 @@ func TestLoad_ReportsEveryProblemAtOnceInDeclarationOrder(t *testing.T) {
 
 func TestLoad_ErrorsNeverContainTheSecret(t *testing.T) {
 	const canary = "CANARY-s3cr3t-7731"
+	const m3Canary = "CANARY-m3key-4410"
 	secretURL := "postgres://platform_app:" + canary + "@db.example:5432/postgres"
 
-	// Every other variable invalid while the secret is set: the error is non-empty (so the absence of the
-	// canary is not an artefact of Load returning nothing) and still has no canary.
+	// Every other variable invalid while the secrets are set: the error is non-empty (so the absence of the
+	// canaries is not an artefact of Load returning nothing) and still has neither. The module 3 URL is
+	// invalid too and carries credentials, which must not be echoed either.
 	bad := map[string]string{
-		VarDatabaseURL:          secretURL,
-		VarHTTPAddr:             "nope",
-		VarLogLevel:             "nope",
-		VarShutdownTimeoutSec:   "nope",
-		VarReadyzTimeoutMS:      "nope",
-		VarReadHeaderTimeoutSec: "nope",
+		VarDatabaseURL:                  secretURL,
+		VarHTTPAddr:                     "nope",
+		VarLogLevel:                     "nope",
+		VarShutdownTimeoutSec:           "nope",
+		VarReadyzTimeoutMS:              "nope",
+		VarReadHeaderTimeoutSec:         "nope",
+		VarM3URL:                        "http://operator:" + m3Canary + "@m3:8080",
+		VarM3AdminToken:                 m3Canary,
+		VarEntitlementExpireIntervalSec: "nope",
+		VarM3ReconcileIntervalSec:       "nope",
+		VarM3ReverifyIntervalSec:        "nope",
+		VarM3RequestTimeoutSec:          "nope",
 	}
 	_, err := Load(envOf(bad))
 	var ce *Error
-	if !errors.As(err, &ce) || len(ce.Problems) != 5 {
-		t.Fatalf("control failed: expected five problems, got %v", err)
+	if !errors.As(err, &ce) || len(ce.Problems) != 10 {
+		t.Fatalf("control failed: expected ten problems, got %v", err)
 	}
-	if strings.Contains(err.Error(), canary) || strings.Contains(fmt.Sprintf("%+v %#v %q", ce, ce, err), canary) {
-		t.Fatalf("the secret leaked into a validation error: %v", err)
+	for _, c := range []string{canary, m3Canary} {
+		if strings.Contains(err.Error(), c) || strings.Contains(fmt.Sprintf("%+v %#v %q", ce, ce, err), c) {
+			t.Fatalf("the secret %q leaked into a validation error: %v", c, err)
+		}
 	}
 
 	// And the same with the secret itself being the problem (blank next to a set value elsewhere).
@@ -494,6 +624,57 @@ func TestConfig_PrintingNeverRevealsTheDatabaseURL(t *testing.T) {
 	}
 }
 
+// TestConfig_PrintingNeverRevealsTheM3AdminToken is the module 3 half of the printing proof: the operator key
+// is a Secret field like the database URL, so no sink the standard library offers renders it.
+func TestConfig_PrintingNeverRevealsTheM3AdminToken(t *testing.T) {
+	const canary = "CANARY-m3-operator-8841"
+	cfg, err := Load(envOf(with(base(), VarM3AdminToken, canary)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Paired control 1: the value really is in the Config, behind Reveal.
+	if cfg.M3AdminToken.Reveal() != canary {
+		t.Fatalf("control failed: Reveal() = %q", cfg.M3AdminToken.Reveal())
+	}
+	sinks := map[string]string{
+		"String":   cfg.String(),
+		"GoString": cfg.GoString(),
+		"Sprintln": fmt.Sprintln(cfg, &cfg),
+		"token":    fmt.Sprintf("%v %+v %#v %s %q %x %d", cfg.M3AdminToken, cfg.M3AdminToken, cfg.M3AdminToken, cfg.M3AdminToken, cfg.M3AdminToken, cfg.M3AdminToken, cfg.M3AdminToken),
+	}
+	for _, h := range []string{"json", "text"} {
+		var buf bytes.Buffer
+		var handler slog.Handler = slog.NewJSONHandler(&buf, nil)
+		if h == "text" {
+			handler = slog.NewTextHandler(&buf, nil)
+		}
+		slog.New(handler).Info("loaded", "config", cfg, "token", cfg.M3AdminToken)
+		sinks["slog "+h] = buf.String()
+	}
+	for _, v := range []any{cfg, &cfg, cfg.M3AdminToken} {
+		b, err := json.Marshal(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sinks[fmt.Sprintf("json %T", v)] = string(b)
+	}
+	for name, out := range sinks {
+		if out == "" {
+			t.Errorf("%s produced no output: the check would pass over nothing", name)
+		}
+		if strings.Contains(out, canary) {
+			t.Errorf("%s reveals the operator key: %s", name, out)
+		}
+	}
+	// Paired control 2: a plain string field of the same shape DOES leak through the same sinks.
+	type naive struct{ M3AdminToken string }
+	var buf bytes.Buffer
+	slog.New(slog.NewJSONHandler(&buf, nil)).Info("naive", "config", naive{canary})
+	if !strings.Contains(buf.String(), canary) || !strings.Contains(fmt.Sprintf("%+v", naive{canary}), canary) {
+		t.Fatal("control failed: a plain string field did not reach the sinks, so the checks above prove nothing")
+	}
+}
+
 func TestConfig_LogValueShowsTheNonSecretsAndRedactsTheSecret(t *testing.T) {
 	cfg, err := Load(envOf(with(base(), VarEnv, "staging")))
 	if err != nil {
@@ -513,6 +694,9 @@ func TestConfig_LogValueShowsTheNonSecretsAndRedactsTheSecret(t *testing.T) {
 	}
 	if line.Config["database_url"] != "[redacted]" {
 		t.Errorf("database_url = %v, want the redaction marker", line.Config["database_url"])
+	}
+	if line.Config["m3_admin_token"] != "[redacted]" || line.Config["m3_url"] != goodM3URL {
+		t.Errorf("m3_admin_token = %v, m3_url = %v, want the redaction marker and the URL", line.Config["m3_admin_token"], line.Config["m3_url"])
 	}
 
 	// Every Config field is rendered: a field added without a log attribute (or the reverse) is caught.

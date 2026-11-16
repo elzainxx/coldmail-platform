@@ -38,7 +38,8 @@ func rolesExpand(sql string) string {
 }
 
 // rolesSeedSQL gives every table of the platform at least one row, run as the superuser: a refusal or a COUNT on an empty table proves less than one on a table with rows, and a
-// trigger that guards a row (the append-only ones) only fires when a row exists. The ledger insert also gives balances its row (the trigger is the only writer).
+// trigger that guards a row (the append-only ones) only fires when a row exists. The ledger inserts also give balances its row and (the reserve, at the dearest price of the job's complete
+// snapshot) platform.reserves its row, and the entitlement insert gives platform.m3_sync its row: those four tables have one writer each, a trigger.
 const rolesSeedSQL = `
 INSERT INTO auth.users (id, email) VALUES ({U1}, 'roles-u1@example.test'), ({U2}, 'roles-u2@example.test'), ({U3}, 'roles-u3@example.test'), ({ADM}, 'roles-adm@example.test'), ({ADM2}, 'roles-adm2@example.test');
 INSERT INTO public.users (id, auth_user_id, email) VALUES ({U1}, {U1}, 'roles-u1@example.test'), ({U2}, {U2}, 'roles-u2@example.test'), ({ADM}, {ADM}, 'roles-adm@example.test'), ({ADM2}, {ADM2}, 'roles-adm2@example.test');
@@ -46,6 +47,7 @@ INSERT INTO platform.admins (id, display_name) VALUES ({ADM}, 'Roles Admin'), ({
 INSERT INTO platform.jobs (id, user_id, module_id) VALUES ({JOB}, {U1}, 'm1'), ({JOB2}, {U1}, 'm1');
 INSERT INTO platform.job_unit_prices (job_id, module_id, unit, cost) SELECT {JOB}, module_id, unit, cost FROM platform.unit_costs WHERE module_id = 'm1';
 INSERT INTO platform.ledger (user_id, module_id, kind, available_delta, acting_admin_id, reason, idempotency_key) VALUES ({U1}, 'm1', 'grant', 100, {ADM}, 'roles seed', 'roles-seed-grant');
+INSERT INTO platform.ledger (user_id, module_id, kind, available_delta, reserved_delta, job_id, unit, units, unit_cost, idempotency_key) VALUES ({U1}, 'm1', 'reserve', -20, 20, {JOB}, 'm1_vendor', 10, 2, 'roles-seed-reserve');
 INSERT INTO platform.m3_entitlements (user_id, enabled, changed_by) VALUES ({U1}, true, {ADM});
 INSERT INTO platform.suppressions (user_id, email, source) VALUES ({U1}, 'seed@example.com', 'manual');
 INSERT INTO platform.admin_audit (admin_id, entry_type, action, target_type, target_id, reason) VALUES ({ADM}, 'action', 'roles-seed', 'user', 'x', 'seeding');
