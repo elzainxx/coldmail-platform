@@ -1,10 +1,11 @@
 --- a/db/migrations/platform_0005_money_core.up.sql
 +++ b/db/migrations/platform_0005_money_core.up.sql
-@@ -42,7 +42,6 @@
+@@ -42,8 +42,6 @@
      (kind = 'charge' AND item_ref IS NOT NULL AND btrim(item_ref) <> '' AND octet_length(item_ref) <= 200)
      OR (kind <> 'charge' AND item_ref IS NULL));
  ALTER TABLE platform.ledger ADD CONSTRAINT ledger_charge_is_one_item CHECK (kind <> 'charge' OR COALESCE(units = 1, false));
 -CREATE UNIQUE INDEX ledger_one_charge_per_item ON platform.ledger (job_id, item_ref) WHERE kind = 'charge';
- COMMENT ON INDEX platform.ledger_one_charge_per_item IS 'Settle is idempotent per job item: a second charge for the same (job, item) is refused here whatever idempotency key the writer derived.';
+-COMMENT ON INDEX platform.ledger_one_charge_per_item IS 'Settle is idempotent per job item: a second charge for the same (job, item) is refused here whatever idempotency key the writer derived.';
  
  -- ── 2. one reserve per job; one release per reserve ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ CREATE UNIQUE INDEX ledger_one_reserve_per_job ON platform.ledger (job_id) WHERE kind = 'reserve';

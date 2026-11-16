@@ -194,6 +194,8 @@ DC run --rm -T harness-tests -test.list '.*' > "$WORK/h-list.log" 2>&1; lrc=$?
 [ "$lrc" = 0 ] || { cat "$WORK/h-list.log"; die "listing the declared integration tests failed ($lrc)"; }
 DC run --rm -T harness-tests -test.v -test.count=1 -test.timeout=40m > "$WORK/h-run.log" 2>&1; trc=$?
 sed 's/^/  | /' "$WORK/h-run.log" | tail -60
+# the live module-3 proof logs its numbers (sink counts, bounds, timestamps): print them whole, they are the evidence the tail above can cut off
+echo "  ---- the live module-3 proof: the test's own log lines ----"; grep -E " m3_live(_helpers)?_test.go:[0-9]+: " "$WORK/h-run.log" | sed 's/^/  | /' | head -120
 # a failure must name itself: the tail above is only the end of the run, so print every failing test with its context
 [ "$trc" = 0 ] || { echo "  ---- failing tests (with context) ----"; grep -n -B1 -A12 -e '--- FAIL' "$WORK/h-run.log" | sed 's/^/  | /' | head -200; }
 # a compiled test binary prints no `ok <pkg>` line (go test does); the floor gate reads one, so write it from the binary's own exit status
@@ -275,7 +277,7 @@ cat <<'EOF'
     those two ways; what runs as the non-superuser `postgres` on the real auth schema is the live database and the `supabase` workflow.
   - module BEHAVIOUR on the platform's tables beyond the statements the modules issue against public.users / public.job_items (db/module-statements.txt, executed as each module's role in a rolled-back transaction): no job was run end to end (Phase 3).
   - module behaviour beyond health, readiness and describe (Phase 3); module 1 has NO describe at all (Docs/phase-0-spec.md F1) and runs here as the least-privilege login verify_app (since Phase 1, A2).
-  - reachability from another host, a firewall or a cloud security group; TLS termination; the modules' mTLS worker ports (they are up, unexercised).
+  - reachability from another host, a firewall or a cloud security group; TLS termination; the mTLS worker links of modules 1 and 2 (module 3's is exercised by its worker).
   - that every module commit other than the three pins in tools/modules.lock still works with the platform.
 EOF
 echo
