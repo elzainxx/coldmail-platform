@@ -1,9 +1,9 @@
 --- a/.gitleaks.toml
 +++ b/.gitleaks.toml
-@@ -32,3 +32,9 @@
- description = "placeholder SMTP-sink password in the harness's live module-3 test (commit 355299a6): not a secret"
+@@ -40,3 +40,9 @@
+ description = "the placeholder SMTP-sink password quoted in the Phase 2 spec text (commit 7b05c78): not a secret"
  targetRules = ["generic-api-key"]
- commits = ["355299a6c605a2ca0601bf58afb0e0468d7fccb0"]
+ commits = ["7b05c78367ed7c7799628c07d8ed5342eb5a3bdf"]
 +
 +[[allowlists]]
 +description = "a regex exception that would hide anything matching it"
