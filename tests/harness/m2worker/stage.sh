@@ -21,6 +21,10 @@ M2W_TESTS=(
   TestM2Worker_SentBouncedAndAttemptsExhausted
   TestM2Worker_ControlHeldCampaignAllSent
   TestM2Worker_CancelStopsSending
+  TestM2Worker_AdapterEndToEndSettlesItemByItem
+  TestM2Worker_AdapterPaginationAcrossPageBoundaries
+  TestM2Worker_AdapterCrossTenantReadsAndCancelAreRefused
+  TestM2Worker_AdapterCancelSettlesFreeAndReleasesTheReserve
 )
 
 m2w_psql_su() { DC exec -T postgres psql -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -tAc "$1"; }
@@ -93,7 +97,7 @@ m2w_stage_5c() {
 # ── stage 6 helpers ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 m2w_evidence() {
   echo "  ---- module 2's real worker: the test's own log lines (the sink's per-recipient counts, timings, snapshots) ----"
-  grep -E " m2_worker(_helpers)?_test.go:[0-9]+: |^--- (PASS|FAIL|SKIP): TestM2Worker_" "$1" | sed 's/^/  | /' | head -400
+  grep -E " m2_worker(_e2e)?(_helpers)?_test.go:[0-9]+: |^--- (PASS|FAIL|SKIP): TestM2Worker_" "$1" | sed 's/^/  | /' | head -700
 }
 
 m2w_require_pass() {

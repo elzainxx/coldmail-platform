@@ -9,7 +9,7 @@
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 T="$(mktemp -d)" || exit 2; trap 'rm -rf "$T"' EXIT
-MIN=11; cases=0; ok=0; bad=0
+MIN=13; cases=0; ok=0; bad=0
 verdict() { # label want-rc want-substring out rc [forbidden-substring]
   local label="$1" want="$2" sub="$3" out="$4" rc="$5" forbid="${6:-}" n f=0
   cases=$((cases+1))
@@ -59,14 +59,19 @@ verdict "m2w_mint: a tool that printed nothing is refused" 1 "could not mint mod
 pass_run() { # log
   ( set -u; WORK="$T"; . "$T/env.sh"; . "$HERE/stage.sh"; m2w_require_pass "$1" ) 2>&1
 }
-all="--- PASS: TestM2Worker_Preconditions (1.00s)
---- PASS: TestM2Worker_ControlAllSent (1.00s)
---- PASS: TestM2Worker_SentBouncedAndAttemptsExhausted (1.00s)
---- PASS: TestM2Worker_ControlHeldCampaignAllSent (1.00s)
---- PASS: TestM2Worker_CancelStopsSending (1.00s)"
+# the PASS lines of EVERY test stage.sh lists (M2W_TESTS is the one list: the five tests of m2_worker_test.go and the four adapter tests of m2_worker_e2e_test.go), so that a test added to the stage cannot be forgotten here
+all="$( . "$HERE/stage.sh"; for name in "${M2W_TESTS[@]}"; do printf -- '--- PASS: %s (1.00s)\n' "$name"; done )"
+ntests="$( . "$HERE/stage.sh"; echo "${#M2W_TESTS[@]}" )"
+[ "$ntests" -ge 9 ] || { echo "selftest: RED — stage.sh lists only $ntests test(s): the adapter tests (B9, B10, B11, B13) are not all in M2W_TESTS"; exit 1; }
 printf '%s\n' "$all" > "$T/pass-all.log"
 out="$(pass_run "$T/pass-all.log")"; rc=$?
-verdict "m2w_require_pass: all five passed" 0 "5 TestM2Worker_* tests have a '--- PASS' line" "$out" "$rc"
+verdict "m2w_require_pass: every listed test passed" 0 "$ntests TestM2Worker_* tests have a '--- PASS' line" "$out" "$rc"
+printf '%s\n' "$all" | grep -v AdapterEndToEndSettlesItemByItem > "$T/pass-no-e2e.log"
+out="$(pass_run "$T/pass-no-e2e.log")"; rc=$?
+verdict "m2w_require_pass: the adapter end-to-end test has no PASS line" 1 "TestM2Worker_AdapterEndToEndSettlesItemByItem has no '--- PASS' line" "$out" "$rc"
+printf '%s\n' "$all" | grep -v AdapterCancelSettlesFree > "$T/pass-no-adcancel.log"
+out="$(pass_run "$T/pass-no-adcancel.log")"; rc=$?
+verdict "m2w_require_pass: the adapter cancel test has no PASS line" 1 "TestM2Worker_AdapterCancelSettlesFreeAndReleasesTheReserve has no '--- PASS' line" "$out" "$rc"
 printf '%s\n' "$all" | grep -v CancelStopsSending > "$T/pass-missing.log"
 out="$(pass_run "$T/pass-missing.log")"; rc=$?
 verdict "m2w_require_pass: the cancel test has no PASS line" 1 "TestM2Worker_CancelStopsSending has no '--- PASS' line" "$out" "$rc"
