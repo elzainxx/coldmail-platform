@@ -28,6 +28,11 @@ func (f *fakeSuspender) SetSuspended(context.Context, string, bool, string) (m3a
 	return m3admin.Result{}, errors.New("fake: not reachable in this test")
 }
 
+func (f *fakeSuspender) Suspension(context.Context, string) (m3admin.SuspensionState, error) {
+	f.calls.Add(1)
+	return m3admin.SuspensionState{}, errors.New("fake: not reachable in this test")
+}
+
 // withSuspender replaces the module 3 client builder for one test and returns what it was asked to build from.
 func withSuspender(t *testing.T, fake entitlements.Suspender, buildErr error) *atomic.Pointer[config.Config] {
 	t.Helper()

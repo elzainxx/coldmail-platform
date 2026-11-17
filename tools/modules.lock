@@ -1,6 +1,6 @@
 # The exact commit of each module that this platform is built and tested against (the harness builds the three modules from these commits and nothing else).
 # One line per module: <repository> <40-hex commit id>. tools/fetch-modules.sh --lock checks each module out at its pin and fails unless HEAD equals it.
 # The parent repository (elzainxx/coldmail) pins the same three commits as submodules; tools/check-modules-lock.sh <parent-dir> compares the two when you re-pin.
-coldmail-verify 4824e50bba4e30a3f50bc6b3599dc70d26d14deb
+coldmail-verify e32c1b99a58dde748b71303db6a3595b73a14c2c
 coldmail-send-managed 02a71fc13615bd2ff9ec9e9e70f204b1edae15ea
 coldmail-send-byo 238bd0a987afc139202f03eed8cf88aeea2081b5

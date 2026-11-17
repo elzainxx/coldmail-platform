@@ -274,12 +274,16 @@ func TestSyncState_Converged(t *testing.T) {
 		st   SyncState
 		want bool
 	}{
-		{"suspended and seen suspended", SyncState{Exists: true, WantSuspended: true, WantVersion: 3, ConvergedVersion: 3, Observed: "suspended"}, true},
-		{"active and seen active", SyncState{Exists: true, WantSuspended: false, WantVersion: 1, ConvergedVersion: 1, Observed: "active"}, true},
+		{"suspended and seen suspended", SyncState{Exists: true, WantSuspended: true, WantVersion: 3, ConvergedVersion: 3, Observed: "suspended", ObservedVersion: i64(3)}, true},
+		{"active and seen active", SyncState{Exists: true, WantSuspended: false, WantVersion: 1, ConvergedVersion: 1, Observed: "active", ObservedVersion: i64(1)}, true},
 		{"never converged", SyncState{Exists: true, WantSuspended: true, WantVersion: 1, ConvergedVersion: 0, Observed: "unknown"}, false},
-		{"converged an older version", SyncState{Exists: true, WantSuspended: true, WantVersion: 4, ConvergedVersion: 3, Observed: "suspended"}, false},
-		{"versions equal but observed the other state", SyncState{Exists: true, WantSuspended: true, WantVersion: 2, ConvergedVersion: 2, Observed: "active"}, false},
+		{"converged an older version", SyncState{Exists: true, WantSuspended: true, WantVersion: 4, ConvergedVersion: 3, Observed: "suspended", ObservedVersion: i64(3)}, false},
+		{"versions equal but observed the other state", SyncState{Exists: true, WantSuspended: true, WantVersion: 2, ConvergedVersion: 2, Observed: "active", ObservedVersion: i64(2)}, false},
 		{"versions equal but never observed", SyncState{Exists: true, WantSuspended: false, WantVersion: 2, ConvergedVersion: 2, Observed: "unknown"}, false},
+		// D5: the observation must be of THIS version. Each of these would have been Converged() before the observed version existed.
+		{"the right state observed at an OLDER version (a stale observation)", SyncState{Exists: true, WantSuspended: false, WantVersion: 3, ConvergedVersion: 3, Observed: "active", ObservedVersion: i64(1)}, false},
+		{"the right state with no observed version at all", SyncState{Exists: true, WantSuspended: true, WantVersion: 2, ConvergedVersion: 2, Observed: "suspended"}, false},
+		{"the right state observed at a version AHEAD of the wanted one", SyncState{Exists: true, WantSuspended: true, WantVersion: 2, ConvergedVersion: 2, Observed: "suspended", ObservedVersion: i64(3)}, false},
 		{"no row", SyncState{}, false},
 	} {
 		if got := tc.st.Converged(); got != tc.want {
@@ -287,3 +291,6 @@ func TestSyncState_Converged(t *testing.T) {
 		}
 	}
 }
+
+// i64 is the address of a version, for the SyncState fixtures.
+func i64(n int64) *int64 { return &n }

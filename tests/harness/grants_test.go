@@ -73,12 +73,12 @@ var declaredClasses = map[string]privClass{
 	"admin_audit":     classOf(privSelectInsert, privSelectInsert),
 	// platform_0005: what each reserve held, charged and released; written ONLY by the ledger trigger, so both roles read it and nothing else
 	"reserves": classOf(privSelect, privSelect),
-	// platform_0006: delivery of each entitlement to module 3. Both roles read it; platform_app may record what the reconcile loop observed (these seven columns, and no others: want_suspended,
+	// platform_0006: delivery of each entitlement to module 3. Both roles read it; platform_app may record what the reconcile loop observed (these nine columns, and no others (platform_0008 added observed_version and m3_version to the seven of platform_0006): want_suspended,
 	// want_version and user_id are the entitlement trigger's, and nobody inserts or deletes a row)
 	"m3_sync": {
 		Owner:        "platform_owner",
 		Grants:       map[string][]string{"platform_app": privSelect, "platform_admin": privSelect},
-		ColumnGrants: map[string]map[string][]string{"platform_app": {"UPDATE": {"observed", "observed_at", "attempts", "last_attempt_at", "last_error", "converged_version", "updated_at"}}},
+		ColumnGrants: map[string]map[string][]string{"platform_app": {"UPDATE": {"observed", "observed_at", "attempts", "last_attempt_at", "last_error", "converged_version", "updated_at", "observed_version", "m3_version"}}},
 	},
 }
 

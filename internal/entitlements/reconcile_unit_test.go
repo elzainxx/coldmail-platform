@@ -255,7 +255,7 @@ func hasVersionGuard(sql string) bool {
 }
 
 func TestSQL_TheUpdatesAreCompareAndSetOnTheVersionActedOn(t *testing.T) {
-	for name, sql := range map[string]string{"converge": sqlConverge, "fail": sqlFail, "mismatch": sqlMismatch} {
+	for name, sql := range map[string]string{"converge": sqlConverge, "fail": sqlFail, "mismatch": sqlMismatch, "post answered": sqlPostAnswered} {
 		if !hasVersionGuard(sql) {
 			t.Errorf("%s: the WHERE clause does not pin want_version = $3: a stale answer could mark a newer version\n%s", name, whereClause(sql))
 		}
@@ -271,6 +271,10 @@ func TestSQL_TheUpdatesAreCompareAndSetOnTheVersionActedOn(t *testing.T) {
 	if !strings.Contains(setClause(sqlConverge), "converged_version = $3") {
 		t.Errorf("converge: converged_version is not set to the pinned version $3: %s", setClause(sqlConverge))
 	}
+	// D5: and the observation it records is stamped with that same pinned version, so that the database's CHECK sees an observation of the version the row converges at
+	if !strings.Contains(setClause(sqlConverge), "observed_version = $3") {
+		t.Errorf("converge: observed_version is not set to the pinned version $3: %s", setClause(sqlConverge))
+	}
 	// Paired control: an UPDATE without the guard is recognised as unguarded.
 	unguarded := `UPDATE platform.m3_sync SET converged_version = $3, observed = $2 WHERE user_id = $1::uuid`
 	if hasVersionGuard(unguarded) {
@@ -279,9 +283,9 @@ func TestSQL_TheUpdatesAreCompareAndSetOnTheVersionActedOn(t *testing.T) {
 }
 
 func TestSQL_OnlyTheColumnsPlatformAppMayWriteAreAssigned(t *testing.T) {
-	// platform_0006 grants platform_app UPDATE on exactly these columns of platform.m3_sync; want_* belong to the trigger.
-	allowed := map[string]bool{"observed": true, "observed_at": true, "attempts": true, "last_attempt_at": true, "last_error": true, "converged_version": true, "updated_at": true}
-	for name, sql := range map[string]string{"converge": sqlConverge, "fail": sqlFail, "mismatch": sqlMismatch} {
+	// platform_0006 and platform_0008 grant platform_app UPDATE on exactly these columns of platform.m3_sync; want_* belong to the trigger.
+	allowed := map[string]bool{"observed": true, "observed_at": true, "observed_version": true, "m3_version": true, "attempts": true, "last_attempt_at": true, "last_error": true, "converged_version": true, "updated_at": true}
+	for name, sql := range map[string]string{"converge": sqlConverge, "fail": sqlFail, "mismatch": sqlMismatch, "post answered": sqlPostAnswered} {
 		cols := setColumns(sql)
 		if len(cols) < 4 {
 			t.Fatalf("%s: parsed %d assigned columns from %q: the instrument matched too little", name, len(cols), setClause(sql))
@@ -294,8 +298,14 @@ func TestSQL_OnlyTheColumnsPlatformAppMayWriteAreAssigned(t *testing.T) {
 	}
 	// The failure statement never touches the convergence columns; the mismatch statement only ever LOWERS the version.
 	for _, c := range setColumns(sqlFail) {
-		if c == "converged_version" || c == "observed" || c == "observed_at" {
+		if c == "converged_version" || c == "observed" || c == "observed_at" || c == "observed_version" || c == "m3_version" {
 			t.Errorf("a FAILED attempt assigns %s: a failure must not record an observation or a convergence", c)
+		}
+	}
+	// a call's confirmation without the read-back is an observation and never a convergence, and it carries no module 3 counter (none was read)
+	for _, c := range setColumns(sqlPostAnswered) {
+		if c == "converged_version" || c == "m3_version" {
+			t.Errorf("the statement that keeps a confirmed call without its read-back assigns %s: only a read-back converges, and only a read-back has a counter", c)
 		}
 	}
 	if !strings.Contains(setClause(sqlMismatch), "converged_version = LEAST(converged_version, want_version - 1)") {
@@ -311,7 +321,7 @@ func TestSQL_EveryStatementNamesItsSchema(t *testing.T) {
 	stmts := map[string]string{
 		"entry by key": sqlEntryByKey, "insert entry": sqlInsertEntry, "due users": sqlDueUsers, "still due": sqlStillDue, "insert expiry": sqlInsertExpiry,
 		"get entitlement": sqlGetEntitlement, "get sync": sqlGetSync, "count unconverged": sqlCountUnconverged,
-		"select unconverged": sqlSelectUnconverged, "select reverify": sqlSelectReverify, "converge": sqlConverge, "fail": sqlFail, "mismatch": sqlMismatch,
+		"select unconverged": sqlSelectUnconverged, "select reverify": sqlSelectReverify, "converge": sqlConverge, "fail": sqlFail, "mismatch": sqlMismatch, "post answered": sqlPostAnswered,
 	}
 	rel := regexp.MustCompile(`(?i)\b(?:FROM|JOIN|INTO|UPDATE)\s+([a-z_][a-z0-9_.]*)`)
 	seen := 0

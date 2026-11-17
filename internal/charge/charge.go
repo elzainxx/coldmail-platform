@@ -7,12 +7,20 @@
 // (scripts/check-charge-table.sh and TestRulesFileMatchesSpec fail when they differ), and it is derived from module code, not invented
 // (Docs/history/p2-research/m1-verify-outcomes.txt, m2-send-managed-outcomes.txt).
 //
-// A broken table never runs: the parser refuses a table with the wrong header, a wrong column count, an unknown decision, a charge row
-// without a unit, a non-charge row with one, a unit that is not one of the five seeded units (or belongs to the other module), a duplicate
-// id, a module that is not one of m1, m2, m3 or platform (a wildcard module is refused, so an unknown module can never match a row and is
-// always Unmapped), and a row that an earlier row shadows completely (it could never match). The panic at initialisation names the row.
+// THE UNKNOWN RULE (the owner's, verbatim): "An unknown caused by the recipient's server is charged; one caused by us, or that can't be
+// proven either way, is free." Module 1 says who caused an unknown in signals.failure_origin (own, remote, undetermined); the table reads
+// it in its `origin` column, so the rule is rows, not code: remote is charged, own and undetermined are free, and an unknown that names no
+// origin (an older module) is Unmapped, never charged.
 //
-// Inputs are compared EXACTLY: no trimming, no case folding, and the string "*" in an Outcome is an ordinary value, never a wildcard.
+// A broken table never runs: the parser refuses a table with the wrong header, a wrong column count, an unknown decision, an origin cell
+// that is none of *, own, remote, undetermined, none, a charge row without a unit, a non-charge row with one, a unit that is not one of
+// the five seeded units (or belongs to the other module), a duplicate id, a module that is not one of m1, m2, m3 or platform (a wildcard
+// module is refused, so an unknown module can never match a row and is always Unmapped), and a row that an earlier row shadows completely
+// (it could never match). The panic at initialisation names the row.
+//
+// Inputs are compared EXACTLY: no trimming, no case folding, and the string "*" in an Outcome is an ordinary value, never a wildcard. An
+// origin that is none of own, remote, undetermined or "" therefore matches no origin-specific row; it falls through to the module's
+// catch-all row (M1-99), which is Unmapped.
 package charge
 
 import (
@@ -29,15 +37,18 @@ var rulesPSV string
 type Outcome struct {
 	// Module is "m1", "m2", "m3" or "platform".
 	Module string
-	// State is M1's status (valid, invalid, risky, unknown), M2's item state (sent, bounced, failed, queued, assigned, sending) or, for
-	// Module "platform", one of cancelled, expired, quarantined, infrastructure_failure, pool_exhausted, smtp_login_rejected.
+	// State is M1's status (valid, invalid, risky, unknown), M2's item state (sent, bounced, failed, queued, assigned, sending, cancelled) or,
+	// for Module "platform", one of cancelled, expired, quarantined, infrastructure_failure, pool_exhausted, smtp_login_rejected, duplicate.
 	State string
-	// Reason is M1's reason ("" for every other module).
+	// Reason is the module's reason: M1's reason, or M2's item reason ("" when the module names none, and for every other module).
 	Reason string
 	// FromCache is M1's flags.from_cache (never meta.from_cache, which is always false in a bulk result).
 	FromCache bool
 	// SkipReason is M1's signals.smtp_skipped_reason ("" = absent).
 	SkipReason string
+	// FailureOrigin is M1's signals.failure_origin: "own", "remote" or "undetermined" ("" = the key is absent: an older module, or a result that is not an unknown).
+	// Compared exactly, like every field: any other string matches no origin-specific row.
+	FailureOrigin string
 }
 
 // Kind is the class of a decision. The zero Kind is none of them, so an uninitialised Decision can never read as a Charge.
@@ -74,7 +85,7 @@ type Decision struct {
 	Kind Kind
 	// Unit is set only for Charge, and is always one of Units().
 	Unit string
-	// Rule is the id of the row that decided ("M1-17"), or "none" when no row names the outcome's module and state.
+	// Rule is the id of the row that decided ("M1-20"), or "none" when no row names the outcome's module and state.
 	Rule string
 	// Note is the row's note.
 	Note string
@@ -88,6 +99,7 @@ type Rule struct {
 	Reason string // "*" or an exact value
 	Cache  string // "yes", "no" or "*", matched against Outcome.FromCache
 	Skip   string // "*", "none" (SkipReason is ""), "capacity" (one of the four capacity tokens) or an exact token
+	Origin string // "*", "own", "remote", "undetermined" or "none" (FailureOrigin is ""), matched against Outcome.FailureOrigin
 	Kind   Kind
 	Unit   string // only for Charge
 	Note   string
@@ -97,9 +109,13 @@ const (
 	wildcard = "*"
 	// noRule is the Rule of a Decision that no row produced.
 	noRule  = "none"
-	header  = "id|module|state|reason|cache|skip|decision|unit|note"
-	columns = 9
+	header  = "id|module|state|reason|cache|skip|origin|decision|unit|note"
+	columns = 10
 )
+
+// origins are the cell values of the table's origin column other than "*": the three values of M1's signals.failure_origin, and "none" for
+// an Outcome whose FailureOrigin is "" (the key absent).
+var origins = []string{"own", "remote", "undetermined", "none"}
 
 // units are the five units platform_0002 seeds into platform.unit_costs, each with the module that owns it.
 var units = []string{"m1_own", "m1_cache", "m1_vendor", "m2_accepted", "m2_bounced"}
@@ -143,7 +159,8 @@ func (r Rule) matches(o Outcome) bool {
 		cellMatches(r.State, o.State) &&
 		cellMatches(r.Reason, o.Reason) &&
 		cacheMatches(r.Cache, o.FromCache) &&
-		skipMatches(r.Skip, o.SkipReason)
+		skipMatches(r.Skip, o.SkipReason) &&
+		originMatches(r.Origin, o.FailureOrigin)
 }
 
 // cellMatches is an exact comparison; only the table's own "*" is a wildcard (the value in an Outcome is never interpreted).
@@ -169,6 +186,18 @@ func skipMatches(col, v string) bool {
 		return v == ""
 	case "capacity":
 		return isCapacity(v)
+	}
+	return col == v
+}
+
+// originMatches: "none" means the Outcome names no origin (""), and nothing else; own, remote and undetermined are exact. A garbage value
+// (a string that is none of those, "none" and "*" included) is matched by no cell but the table's own "*".
+func originMatches(col, v string) bool {
+	switch col {
+	case wildcard:
+		return true
+	case "none":
+		return v == ""
 	}
 	return col == v
 }
@@ -239,9 +268,9 @@ func parseRow(line string, n int) (Rule, error) {
 		id = "?"
 	}
 	if len(f) != columns {
-		return Rule{}, rowErr(id, n, "has %d columns, want %d (id|module|state|reason|cache|skip|decision|unit|note)", len(f), columns)
+		return Rule{}, rowErr(id, n, "has %d columns, want %d (%s)", len(f), columns, header)
 	}
-	r := Rule{ID: f[0], Module: f[1], State: f[2], Reason: f[3], Cache: f[4], Skip: f[5], Unit: f[7], Note: f[8]}
+	r := Rule{ID: f[0], Module: f[1], State: f[2], Reason: f[3], Cache: f[4], Skip: f[5], Origin: f[6], Unit: f[8], Note: f[9]}
 	if !idPattern.MatchString(r.ID) {
 		return Rule{}, rowErr(id, n, "the id must look like M1-17 or P-01")
 	}
@@ -258,9 +287,12 @@ func parseRow(line string, n int) (Rule, error) {
 	default:
 		return Rule{}, rowErr(id, n, "the cache cell %q must be yes, no or *", r.Cache)
 	}
-	k, ok := kindOfWord[f[6]]
+	if r.Origin != wildcard && !contains(origins, r.Origin) {
+		return Rule{}, rowErr(id, n, "the origin cell %q must be *, %s", r.Origin, strings.Join(origins, ", "))
+	}
+	k, ok := kindOfWord[f[7]]
 	if !ok {
-		return Rule{}, rowErr(id, n, "unknown decision %q (want charge, free, notfinal or unmapped)", f[6])
+		return Rule{}, rowErr(id, n, "unknown decision %q (want charge, free, notfinal or unmapped)", f[7])
 	}
 	r.Kind = k
 	if k == Charge {
@@ -275,7 +307,7 @@ func parseRow(line string, n int) (Rule, error) {
 			return Rule{}, rowErr(id, n, "unit %q belongs to module %s, not %s", r.Unit, owner, r.Module)
 		}
 	} else if r.Unit != "" {
-		return Rule{}, rowErr(id, n, "decision %q must not carry a unit (found %q): only a charge row names one", f[6], r.Unit)
+		return Rule{}, rowErr(id, n, "decision %q must not carry a unit (found %q): only a charge row names one", f[7], r.Unit)
 	}
 	return r, nil
 }
@@ -294,7 +326,8 @@ func covers(e, r Rule) bool {
 		(e.State == wildcard || e.State == r.State) &&
 		(e.Reason == wildcard || e.Reason == r.Reason) &&
 		(e.Cache == wildcard || e.Cache == r.Cache) &&
-		(e.Skip == wildcard || e.Skip == r.Skip || (e.Skip == "capacity" && isCapacity(r.Skip)))
+		(e.Skip == wildcard || e.Skip == r.Skip || (e.Skip == "capacity" && isCapacity(r.Skip))) &&
+		(e.Origin == wildcard || e.Origin == r.Origin)
 }
 
 func contains(list []string, v string) bool {

@@ -1,0 +1,22 @@
+--- a/Docs/phase-2-spec.md
++++ b/Docs/phase-2-spec.md
+@@ -65,7 +65,7 @@
+ M1-18|m1|unknown|greylisted|no|*|remote|charge|m1_own|retries exhausted: the recipient's server kept deferring
+ M1-19|m1|unknown|unknown_error|no|*|own|free||the attempt cap: a decrypt or compute error repeated to M1's cap, settled by M1 as unknown/unknown_error with origin own
+ M1-20|m1|unknown|*|no|*|remote|charge|m1_own|an unknown caused by the recipient's server
+-M1-21|m1|unknown|*|no|*|own|free||an unknown caused by us
++M1-21|m1|unknown|*|no|*|bogus|free||an unknown caused by us
+ M1-22|m1|unknown|*|no|*|undetermined|free||an unknown that cannot be proven either way
+ M1-23|m1|unknown|*|no|*|none|unmapped||an older module that does not name an origin: never charged, reported
+ M1-99|m1|*|*|*|*|*|unmapped||any other pair, including every reason the pinned module can legally name but never emits
+--- a/internal/charge/rules.psv
++++ b/internal/charge/rules.psv
+@@ -19,7 +19,7 @@
+ M1-18|m1|unknown|greylisted|no|*|remote|charge|m1_own|retries exhausted: the recipient's server kept deferring
+ M1-19|m1|unknown|unknown_error|no|*|own|free||the attempt cap: a decrypt or compute error repeated to M1's cap, settled by M1 as unknown/unknown_error with origin own
+ M1-20|m1|unknown|*|no|*|remote|charge|m1_own|an unknown caused by the recipient's server
+-M1-21|m1|unknown|*|no|*|own|free||an unknown caused by us
++M1-21|m1|unknown|*|no|*|bogus|free||an unknown caused by us
+ M1-22|m1|unknown|*|no|*|undetermined|free||an unknown that cannot be proven either way
+ M1-23|m1|unknown|*|no|*|none|unmapped||an older module that does not name an origin: never charged, reported
+ M1-99|m1|*|*|*|*|*|unmapped||any other pair, including every reason the pinned module can legally name but never emits

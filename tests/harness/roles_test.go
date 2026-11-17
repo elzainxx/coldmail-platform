@@ -97,13 +97,13 @@ var roleStatements = []roleStmt{
 	{"platform.reserves", "DELETE", `DELETE FROM platform.reserves`, "", "", ""},
 	{"platform.reserves", "TRUNCATE", `TRUNCATE platform.reserves`, "", "", ""},
 
-	// platform_0006: delivery of each entitlement to module 3. Both roles read it; platform_app may update exactly the seven columns the reconcile loop records (the column-level statements
+	// platform_0006: delivery of each entitlement to module 3. Both roles read it; platform_app may update exactly the nine columns the reconcile loop records (seven since platform_0006, observed_version and m3_version since platform_0008; the column-level statements
 	// below); nobody inserts or deletes a row (the entitlement trigger inserts it). The superuser's INSERT meets the row the trigger already wrote for the seeded entitlement.
 	{"platform.m3_sync", "INSERT", `INSERT INTO platform.m3_sync (user_id, want_suspended) VALUES ({U1}, false)`, "23505", "m3_sync_pkey", ""},
 	{"platform.m3_sync", "UPDATE", `UPDATE platform.m3_sync SET want_version = want_version + 1`, "", "", ""},
 	{"platform.m3_sync", "DELETE", `DELETE FROM platform.m3_sync`, "", "", ""},
 	{"platform.m3_sync", "TRUNCATE", `TRUNCATE platform.m3_sync`, "", "", ""},
-	{"platform.m3_sync", "UPDATE(observed,observed_at,attempts,last_attempt_at,last_error,converged_version,updated_at)", `UPDATE platform.m3_sync SET observed = 'active', observed_at = now(), attempts = attempts + 1, last_attempt_at = now(), last_error = NULL, converged_version = converged_version, updated_at = now() WHERE user_id = {U1}`, "", "", "platform_app"},
+	{"platform.m3_sync", "UPDATE(observed,observed_at,attempts,last_attempt_at,last_error,converged_version,updated_at,observed_version,m3_version)", `UPDATE platform.m3_sync SET observed = 'active', observed_at = now(), attempts = attempts + 1, last_attempt_at = now(), last_error = NULL, converged_version = converged_version, updated_at = now(), observed_version = observed_version, m3_version = 3 WHERE user_id = {U1}`, "", "", "platform_app"},
 	{"platform.m3_sync", "UPDATE(want_suspended,want_version)", `UPDATE platform.m3_sync SET want_suspended = NOT want_suspended, want_version = want_version + 1 WHERE user_id = {U1}`, "", "", ""},
 
 	{"platform.suppressions", "INSERT", `INSERT INTO platform.suppressions (user_id, email, source) VALUES ({U1}, 'proof@example.com', 'manual')`, "", "", ""},
@@ -149,7 +149,7 @@ var roleExpectations = map[string]map[string]string{
 		"platform.schema_migrations": "S", "platform.admins": "S", "platform.modules": "S", "platform.unit_costs": "S", "platform.unit_cost_history": "S",
 		"platform.jobs": "SIU", "platform.job_unit_prices": "SI", "platform.balances": "S", "platform.ledger": "SI", "platform.m3_entitlements": "S",
 		"platform.suppressions": "SI", "platform.admin_audit": "SI", "platform.balance_drift": "S", "platform.reserve_overdrawn": "S", "platform.listable_users": "S",
-		"platform.reserves": "S", "platform.m3_sync": "S", // m3_sync: plus UPDATE of seven columns (the column-level statement), which a table-level letter cannot say
+		"platform.reserves": "S", "platform.m3_sync": "S", // m3_sync: plus UPDATE of nine columns (the column-level statement), which a table-level letter cannot say
 		"public.users": "SIU", "public.job_items": "SIU",
 	},
 	"platform_admin": {

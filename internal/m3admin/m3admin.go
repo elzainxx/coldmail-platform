@@ -5,6 +5,12 @@
 //	POST {base}/v1/admin/users/{id}/suspend     200 {"user_id","suspended":true,"reason":"operator"}
 //	POST {base}/v1/admin/users/{id}/unsuspend   200 {"user_id","suspended":false}
 //	GET  {base}/v1/admin/users/{id}/config      200 the user exists, 404 it does not (an existence probe only)
+//	GET  {base}/v1/admin/users/{id}/suspension  200 {"user_id","suspended","suspended_at","reinstated_at","version"}
+//
+// The last route is module 3's suspension READ route (module 3 238bd0a, Docs/api-contract.md "Reading a
+// user's suspension state"): Suspension reads the state back, which is what the platform's reconciler
+// treats as the confirmation of a convergence. The POST routes answer a change (200) or "already in that
+// state" (422); only this route says what state the user is in.
 //
 // The credential is module 3's ADMIN key (Authorization: Bearer), a different credential from the
 // platform service token.
@@ -24,10 +30,19 @@
 // answers the same 422 conflict as a user who is simply not suspended. The 422 is therefore confirmed as
 // StateActive only after GET .../config says 200; a 404 there is ErrUnknownUser.
 //
+// WHAT SUSPENSION PROMISES. Suspension returns a SuspensionState only for a 200 whose JSON carries the five
+// documented keys with their documented types (user_id equal to the id asked for, suspended a boolean,
+// suspended_at and reinstated_at an RFC 3339 instant or null, version a non-negative integer); a key that is
+// missing, a wrong type, a user id that is not the one asked for or a body that is not one JSON object is a
+// *RetryableError and NEVER a state. A key the contract does not list is ignored (module 3's API is additive).
+// A 404 is ErrUnknownUser (module 3's own not_found envelope, as for the POST routes), never "not
+// suspended": a user module 3 does not know has no state to report, and the caller must not read it as an
+// active one. A user module 3 knows but never suspended is a 200 with suspended false and version 0.
+//
 // ERRORS (use errors.Is / errors.As):
 //
 //	ErrUnauthorized  401: the admin key is wrong or revoked. A configuration fault: never retry in a loop.
-//	ErrUnknownUser   module 3 does not know the user (404 on suspend, or 404 from the existence probe).
+//	ErrUnknownUser   module 3 does not know the user (404 on suspend, the suspension read or the existence probe).
 //	ErrInvalid       400 from module 3, or an id/reason refused here BEFORE any request was made.
 //	*RetryableError  nothing was confirmed: a network error, a timeout, 5xx, 429, a redirect, a status or a
 //	                 body that is not the documented shape. Retryable(err) is the test for it.
@@ -65,6 +80,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -119,7 +135,7 @@ var (
 // RetryableError means nothing was confirmed and asking again is the right response. Because module 3's
 // effects are idempotent, asking again converges even when the first call did change the state.
 type RetryableError struct {
-	Op         string // "suspend", "unsuspend" or "unsuspend (existence probe)"
+	Op         string // "suspend", "unsuspend", "unsuspend (existence probe)" or "suspension read"
 	HTTPStatus int    // the status that was received, 0 when there was no response
 	Reason     string // a fixed phrase written here; never text from the response
 	Cause      error  // the underlying error, if any; reachable with errors.Is / errors.As, never printed
@@ -298,6 +314,128 @@ func (c *Client) requireKnown(ctx context.Context, userID string) error {
 		return nil
 	}
 	return c.failure(op, r)
+}
+
+// ---- the suspension read ----------------------------------------------------------------------------------------
+
+// opSuspensionRead is the Op of every error of Suspension.
+const opSuspensionRead = "suspension read"
+
+// SuspensionState is what module 3's suspension read route answered for one user (module 3 Docs/api-contract.md,
+// "Reading a user's suspension state"). A user module 3 knows but has never suspended reads Suspended false, both
+// timestamps nil and Version 0.
+type SuspensionState struct {
+	// User is the user id module 3 echoed: always the one that was asked for (anything else is an error).
+	User string
+	// Suspended is whether the user is suspended right now.
+	Suspended bool
+	// SuspendedAt is when the most recent suspension began (UTC); it is kept after a reinstatement. Nil if never suspended.
+	SuspendedAt *time.Time
+	// ReinstatedAt is when the most recent reinstatement happened (UTC); it is kept by a later re-suspension. Nil if never reinstated.
+	ReinstatedAt *time.Time
+	// Version is module 3's own counter of suspension-state transitions for this user: 0 for a user with no row,
+	// then 1 for the first suspend, 2 for the unsuspend after it, and so on. It never decreases.
+	Version int64
+}
+
+// State is the state the read reports, in the vocabulary of SetSuspended.
+func (s SuspensionState) State() State {
+	if s.Suspended {
+		return StateSuspended
+	}
+	return StateActive
+}
+
+// Suspension reads the user's suspension state from module 3 (GET /v1/admin/users/{id}/suspension). It returns a
+// state only when module 3 itself answered 200 with the documented body for this user (see the package comment);
+// an unknown user is ErrUnknownUser and never an "active" answer, and a failure, an unreadable or oversized body or
+// a body for another user is an error (a *RetryableError unless it is one of the typed errors) and never a state.
+func (c *Client) Suspension(ctx context.Context, userID string) (SuspensionState, error) {
+	if why := validateUserID(userID); why != "" {
+		return SuspensionState{}, fmt.Errorf("%w: %s: %s", ErrInvalid, opSuspensionRead, why)
+	}
+	r, err := c.send(ctx, opSuspensionRead, http.MethodGet, "/v1/admin/users/"+userID+"/suspension", nil)
+	if err != nil {
+		return SuspensionState{}, err
+	}
+	if r.status != http.StatusOK {
+		return SuspensionState{}, c.failure(opSuspensionRead, r)
+	}
+	return c.confirmSuspension(userID, r)
+}
+
+// confirmSuspension accepts a 200 only when its JSON is one object with the five documented keys, each of its
+// documented type, naming the user that was asked for.
+func (c *Client) confirmSuspension(userID string, r response) (SuspensionState, error) {
+	const op = opSuspensionRead
+	if r.oversized {
+		return SuspensionState{}, c.retryable(op, r.status, "the 200 body is larger than 1 MiB")
+	}
+	notShape := func(what string) (SuspensionState, error) {
+		return SuspensionState{}, c.retryable(op, r.status, "the 200 body is not the documented {user_id, suspended, suspended_at, reinstated_at, version} shape: "+what)
+	}
+	// RawMessage keeps an absent key apart from a null one, and a number apart from a quoted string.
+	var body struct {
+		UserID       *string         `json:"user_id"`
+		Suspended    *bool           `json:"suspended"`
+		SuspendedAt  json.RawMessage `json:"suspended_at"`
+		ReinstatedAt json.RawMessage `json:"reinstated_at"`
+		Version      json.RawMessage `json:"version"`
+	}
+	if !decodeOne(r.body, &body) {
+		return notShape("not one JSON object")
+	}
+	if body.UserID == nil || body.Suspended == nil {
+		return notShape("user_id or suspended is missing or not the documented type")
+	}
+	if *body.UserID != userID {
+		return SuspensionState{}, c.retryable(op, r.status, "the 200 body names a different user")
+	}
+	suspendedAt, ok := nullableInstant(body.SuspendedAt)
+	if !ok {
+		return notShape("suspended_at is missing or neither an RFC 3339 instant nor null")
+	}
+	reinstatedAt, ok := nullableInstant(body.ReinstatedAt)
+	if !ok {
+		return notShape("reinstated_at is missing or neither an RFC 3339 instant nor null")
+	}
+	version, ok := counter(body.Version)
+	if !ok {
+		return notShape("version is missing or not a non-negative integer")
+	}
+	return SuspensionState{User: *body.UserID, Suspended: *body.Suspended, SuspendedAt: suspendedAt, ReinstatedAt: reinstatedAt, Version: version}, nil
+}
+
+// nullableInstant reads a JSON value that must be present and be either null (nil, true) or an RFC 3339 string
+// (the instant in UTC, true). Absent, any other type or an unparseable string is false.
+func nullableInstant(raw json.RawMessage) (*time.Time, bool) {
+	raw = bytes.TrimSpace(raw)
+	switch {
+	case len(raw) == 0:
+		return nil, false
+	case string(raw) == "null":
+		return nil, true
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return nil, false
+	}
+	t, err := time.Parse(time.RFC3339Nano, s)
+	if err != nil {
+		return nil, false
+	}
+	t = t.UTC()
+	return &t, true
+}
+
+// counter reads a JSON value that must be a bare integer token that fits an int64 and is not negative: a quoted
+// "1", 1.5, 1e3, null, an absent key and a negative number are all refused.
+func counter(raw json.RawMessage) (int64, bool) {
+	n, err := strconv.ParseInt(string(bytes.TrimSpace(raw)), 10, 64)
+	if err != nil || n < 0 {
+		return 0, false
+	}
+	return n, true
 }
 
 // ---- one request ------------------------------------------------------------------------------------------------

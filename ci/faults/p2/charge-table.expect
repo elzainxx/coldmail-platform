@@ -1,10 +1,10 @@
 # The charge table the owner rules on (the fenced block in Docs/phase-2-spec.md) and the table the code embeds (internal/charge/rules.psv) must stay one table. The fault edits ONE row of the embedded
-# file, M1-19 (unknown/smtp_timeout, a failure the module cannot attribute to us or to the customer: unmapped) into a charge of m1_own, WITHOUT touching the spec: the gate must go red naming the first
+# file, M1-21 (unknown with failure_origin own, caused by us: free) into a charge of m1_own, WITHOUT touching the spec: the gate must go red naming the first
 # differing line. The control is the real repository, which must be green.
 GATE=charge-table
 TARGET=platform
 SETUP=
 STEP=check-charge-table on the real repository
 CMD=bash scripts/check-charge-table.sh
-MESSAGE=first difference at line 20
+MESSAGE=first difference at line 22
 MESSAGE=check-charge-table: RED

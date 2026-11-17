@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -70,15 +71,27 @@ type fakeM3 struct {
 	known     map[string]bool
 	suspended map[string]bool
 	force     func(seen) *reply
+
+	// What the suspension read route reports besides the flag: module 3's transition counter and the two instants. A user with no entry reads
+	// version 0 and null timestamps, as a user with no row does in module 3. Every real transition bumps the counter, as module 3's does.
+	versions     map[string]int64
+	suspendedAt  map[string]time.Time
+	reinstatedAt map[string]time.Time
+	clock        time.Time // the fake's own clock: each transition is stamped one second after the last
 }
 
 // newFake starts the fake with userA (exists, active) and userB (exists, suspended); userC is unknown.
 func newFake(t *testing.T) *fakeM3 {
 	t.Helper()
+	base := time.Date(2026, 11, 17, 9, 30, 0, 123456000, time.UTC)
 	f := &fakeM3{
-		release:   make(chan struct{}),
-		known:     map[string]bool{userA: true, userB: true},
-		suspended: map[string]bool{userB: true},
+		release:      make(chan struct{}),
+		known:        map[string]bool{userA: true, userB: true},
+		suspended:    map[string]bool{userB: true},
+		versions:     map[string]int64{userB: 1},
+		suspendedAt:  map[string]time.Time{userB: base},
+		reinstatedAt: map[string]time.Time{},
+		clock:        base,
 	}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.srv.Close)
@@ -144,7 +157,7 @@ func (f *fakeM3) model(s seen) *reply {
 		return notFound()
 	}
 	post := action == "suspend" || action == "unsuspend"
-	if !post && action != "config" {
+	if !post && action != "config" && action != "suspension" {
 		return notFound()
 	}
 	if post != (s.Method == http.MethodPost) || !post && s.Method != http.MethodGet {
@@ -178,6 +191,8 @@ func (f *fakeM3) model(s seen) *reply {
 			return conflict("This user is already suspended.")
 		}
 		f.suspended[id] = true
+		f.versions[id]++
+		f.suspendedAt[id] = f.tick()
 		return &reply{status: 200, body: okBody(id, true)}
 	case "unsuspend":
 		// No existence check: an unknown user is the same 422 as a user who is not suspended.
@@ -185,7 +200,15 @@ func (f *fakeM3) model(s seen) *reply {
 			return conflict("This user is not suspended.")
 		}
 		delete(f.suspended, id)
+		f.versions[id]++
+		f.reinstatedAt[id] = f.tick()
 		return &reply{status: 200, body: okBody(id, false)}
+	case "suspension":
+		// module 3's read route: 200 for a user that exists (no row = never suspended, version 0), 404 for one that does not
+		if !f.known[id] {
+			return notFound()
+		}
+		return &reply{status: 200, body: suspensionBody(id, f.suspended[id], f.suspendedAt[id], f.reinstatedAt[id], f.versions[id])}
 	}
 	// config: 200 for a user that exists (with or without an override row), 404 for one that does not.
 	if !f.known[id] {
@@ -194,7 +217,26 @@ func (f *fakeM3) model(s seen) *reply {
 	return &reply{status: 200, body: `{"user_id":"` + id + `","overrides":{}}`}
 }
 
+// tick is the next instant of the fake's clock (call it with f.mu held).
+func (f *fakeM3) tick() time.Time {
+	f.clock = f.clock.Add(time.Second)
+	return f.clock
+}
+
 // ---- response builders --------------------------------------------------------------------------------------------
+
+// instant renders a timestamp the way module 3 does (RFC 3339, nanosecond precision, UTC, trailing zeros dropped), or null for the zero time.
+func instant(t time.Time) string {
+	if t.IsZero() {
+		return "null"
+	}
+	return `"` + t.UTC().Format(time.RFC3339Nano) + `"`
+}
+
+// suspensionBody is the 200 body of the read route exactly as module 3 writes it: five keys, always present, in this order.
+func suspensionBody(id string, suspended bool, suspendedAt, reinstatedAt time.Time, version int64) string {
+	return fmt.Sprintf(`{"user_id":%q,"suspended":%t,"suspended_at":%s,"reinstated_at":%s,"version":%d}`, id, suspended, instant(suspendedAt), instant(reinstatedAt), version)
+}
 
 // okBody is the 200 body exactly as module 3 writes it.
 func okBody(id string, suspended bool) string {

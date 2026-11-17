@@ -1,0 +1,8 @@
+# Close-out D5 (open decision 12): a convergence (converged_version = want_version) needs an observation made at THIS want_version (observed_version = want_version) and equal to the wanted state. The fault removes the version clause from platform_0008's CHECK (the NULL guard and the observed-equals-wanted clause stay); an observation made for an older version, which matches the wanted state again after the entitlement went active, suspended, active, is then ACCEPTED by the database, and the test must say so.
+GATE=observed-version
+TARGET=platform
+SETUP=
+STEP=go test TestEntObserved_TheDatabaseRefusesAStaleObservation (database integration test, real Postgres)
+CMD=H_PG_ADMIN_DSN="$FAULT_ADMIN_DSN" bash tests/harness/run-db-tests.sh '^TestEntObserved_TheDatabaseRefusesAStaleObservation$'
+MESSAGE=--- FAIL: TestEntObserved_TheDatabaseRefusesAStaleObservation
+MESSAGE=ACCEPTED by the database, want 23514 / m3_sync_converged_only_when_observed_at_version

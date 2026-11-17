@@ -1,0 +1,10 @@
+--- a/db/migrations/platform_0008_m3_observed_version.up.sql
++++ b/db/migrations/platform_0008_m3_observed_version.up.sql
+@@ -39,7 +39,6 @@
+ ALTER TABLE platform.m3_sync ADD CONSTRAINT m3_sync_converged_only_when_observed_at_version CHECK (
+     converged_version < want_version
+     OR (observed_version IS NOT NULL
+-        AND observed_version = want_version
+         AND ((want_suspended AND observed = 'suspended')
+              OR (NOT want_suspended AND observed = 'active'))));
+ COMMENT ON CONSTRAINT m3_sync_converged_only_when_observed_at_version ON platform.m3_sync IS 'D5 (open decision 12): "converged" (converged_version = want_version) may be recorded only while module 3 was observed in the wanted state AT THIS want_version (observed_version = want_version). A stale observation, an observation of another version and a NULL version are all refused.';

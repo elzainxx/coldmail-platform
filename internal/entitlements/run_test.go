@@ -135,6 +135,10 @@ func (nopSuspender) SetSuspended(context.Context, string, bool, string) (m3admin
 	return m3admin.Result{}, nil
 }
 
+func (nopSuspender) Suspension(context.Context, string) (m3admin.SuspensionState, error) {
+	return m3admin.SuspensionState{}, nil
+}
+
 func TestNew_RefusesWhatCannotRun(t *testing.T) {
 	ok := Config{Pool: lazyPool(t), M3: nopSuspender{}, ExpireEvery: time.Second, ReconcileEvery: time.Second, ReverifyEvery: time.Minute}
 	// Control: the complete configuration builds, so each refusal below is about the one thing taken away.

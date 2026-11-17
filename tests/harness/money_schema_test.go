@@ -1007,13 +1007,15 @@ func TestM3Schema_EntitlementEqualsLastEvent(t *testing.T) {
 // state) and accepted while it is 'active'; a refusal also stops observed from being moved away from the wanted state while the row claims convergence. Disabling the entitlement raises want_version above
 // converged_version again (the earlier convergence does not carry over), and with the wanted state SUSPENDED the same rule holds the other way round. converged_version beyond want_version is refused
 // (m3_sync_converged_not_ahead); `observed` outside {unknown, suspended, active} is refused (m3_sync_observed_vocabulary, with the other rules not in play), NULL by NOT NULL; the version and attempt
-// counters cannot go negative. Every refusal is named and has its legal update as the control. It fails if "converged" can be recorded for a state module 3 was not seen to be in.
+// counters cannot go negative. Every refusal is named and has its legal update as the control. It fails if "converged" can be recorded for a state module 3 was not seen to be in. Since platform_0008
+// the rule is m3_sync_converged_only_when_observed_at_version and every statement that claims convergence names the version too (observed_version = want_version): the stale-version half of the rule
+// is TestEntObserved_TheDatabaseRefusesAStaleObservation.
 func TestM3Schema_SyncConvergenceRule(t *testing.T) {
 	_, admin := migratedScratch(t)
 	tx := ledgerBegin(t, admin)
 	ledgerSeed(t, tx)
 	a, b := ledgerUserA, ledgerUserB
-	const only, ahead = "m3_sync_converged_only_when_observed", "m3_sync_converged_not_ahead"
+	const only, ahead = "m3_sync_converged_only_when_observed_at_version", "m3_sync_converged_not_ahead"
 	set := func(user, sets string) (string, []any) {
 		return "UPDATE platform.m3_sync SET " + sets + " WHERE user_id = $1", []any{user}
 	}
@@ -1036,17 +1038,18 @@ func TestM3Schema_SyncConvergenceRule(t *testing.T) {
 	}
 
 	t.Run("wanted ACTIVE (want_version 1): converged only while module 3 was seen active", func(t *testing.T) {
-		refused(t, "converged = want while observed is 'unknown'", only, a, "converged_version = 1")
-		refused(t, "converged = want while observed is 'suspended' (the opposite of the wanted state)", only, a, "converged_version = 1, observed = 'suspended'")
-		refused(t, "converged = want while observed is 'unknown', set explicitly", only, a, "converged_version = 1, observed = 'unknown'")
+		// every statement that claims convergence names the version (observed_version = 1), so that it is the OBSERVED STATE that is wrong and nothing else (the stale version has its own test)
+		refused(t, "converged = want while observed is 'unknown'", only, a, "converged_version = 1, observed_version = 1")
+		refused(t, "converged = want while observed is 'suspended' (the opposite of the wanted state)", only, a, "converged_version = 1, observed = 'suspended', observed_version = 1")
+		refused(t, "converged = want while observed is 'unknown', set explicitly", only, a, "converged_version = 1, observed = 'unknown', observed_version = 1")
 		ok(t, "control: observed 'suspended' alone (not converged: converged 0 < want 1)", a, "observed = 'suspended'")
-		ok(t, "control: converged = want while observed is 'active'", a, "converged_version = 1, observed = 'active'")
+		ok(t, "control: converged = want while observed is 'active' at version 1", a, "converged_version = 1, observed = 'active', observed_version = 1")
 		if got := mschSync(t, tx, a); got != "false|1|1|active" {
 			t.Fatalf("the converged row reads %q, want false|1|1|active", got)
 		}
 		refused(t, "moving observed away from the wanted state while the row still claims convergence", only, a, "observed = 'unknown'")
 		ok(t, "control: dropping the claim and the observation together", a, "converged_version = 0, observed = 'unknown'")
-		ok(t, "control: re-converging while active", a, "converged_version = 1, observed = 'active'")
+		ok(t, "control: re-converging while active", a, "converged_version = 1, observed = 'active', observed_version = 1")
 	})
 
 	t.Run("a later entitlement change makes want_version exceed converged_version again", func(t *testing.T) {
@@ -1060,9 +1063,9 @@ func TestM3Schema_SyncConvergenceRule(t *testing.T) {
 	})
 
 	t.Run("wanted SUSPENDED (want_version 2): converged only while module 3 was seen suspended", func(t *testing.T) {
-		refused(t, "converged = want while observed is still 'active' (the opposite)", only, a, "converged_version = 2")
-		refused(t, "converged = want while observed is 'unknown'", only, a, "converged_version = 2, observed = 'unknown'")
-		ok(t, "control: converged = want while observed is 'suspended'", a, "converged_version = 2, observed = 'suspended'")
+		refused(t, "converged = want while observed is still 'active' (the opposite), the version named", only, a, "converged_version = 2, observed_version = 2")
+		refused(t, "converged = want while observed is 'unknown', the version named", only, a, "converged_version = 2, observed = 'unknown', observed_version = 2")
+		ok(t, "control: converged = want while observed is 'suspended' at version 2", a, "converged_version = 2, observed = 'suspended', observed_version = 2")
 		if got := mschSync(t, tx, a); got != "true|2|2|suspended" {
 			t.Fatalf("the converged row reads %q, want true|2|2|suspended", got)
 		}
@@ -1083,7 +1086,7 @@ func TestM3Schema_SyncConvergenceRule(t *testing.T) {
 		ledgerExpectRefused(t, tx, "observed = NULL", "23502", ledgerWhy{Column: "observed"}, sql, args...)
 		refused(t, "a negative attempt count", "m3_sync_attempts_not_negative", b, "attempts = -1")
 		// want_version 0 needs converged_version 0 beside it (not ahead), and converged = want needs observed to match the wanted state, so that every other rule is quiet
-		refused(t, "want_version 0 (with converged 0 and observed 'active', so only the counter rule is in play)", "m3_sync_versions_are_positive", b, "want_version = 0, observed = 'active'")
+		refused(t, "want_version 0 (with converged 0 and observed 'active' at version 0, so only the counter rule is in play)", "m3_sync_versions_are_positive", b, "want_version = 0, observed = 'active', observed_version = 0")
 		refused(t, "converged_version -1", "m3_sync_versions_are_positive", b, "converged_version = -1")
 		ok(t, "control: every legal value of observed, in turn", b, "observed = 'suspended'")
 		ok(t, "control: observed 'active'", b, "observed = 'active'")
@@ -1092,10 +1095,10 @@ func TestM3Schema_SyncConvergenceRule(t *testing.T) {
 	})
 }
 
-// TestM3Schema_RolesAndPrivileges proves who may write what since platform_0006. platform_app: updates EXACTLY the seven columns of platform.m3_sync the reconcile loop records (observed, observed_at,
-// attempts, last_attempt_at, last_error, converged_version, updated_at) - each alone, and all together - and is refused (42501) any statement that touches want_suspended, want_version or user_id, alone or
+// TestM3Schema_RolesAndPrivileges proves who may write what since platform_0006 (and platform_0008). platform_app: updates EXACTLY the nine columns of platform.m3_sync the reconcile loop records (observed, observed_at,
+// attempts, last_attempt_at, last_error, converged_version, updated_at, and since platform_0008 observed_version and m3_version) - each alone, and all together - and is refused (42501) any statement that touches want_suspended, want_version or user_id, alone or
 // beside an allowed column (all or nothing), and INSERT, DELETE and TRUNCATE; it reads platform.m3_entitlements and is refused INSERT, UPDATE, DELETE and TRUNCATE there. platform_admin only reads both
-// tables (it is refused the seven columns too). The paired control of every refusal is the superuser running the same statement successfully on a real row; and the entitlement and delivery row appear
+// tables (it is refused the nine columns too). The paired control of every refusal is the superuser running the same statement successfully on a real row; and the entitlement and delivery row appear
 // when either role writes the LEDGER (m3_enable), written by neither role. It fails if a role regains a write it lost or loses one it needs.
 func TestM3Schema_RolesAndPrivileges(t *testing.T) {
 	_, admin := migratedScratch(t)
@@ -1113,6 +1116,8 @@ func TestM3Schema_RolesAndPrivileges(t *testing.T) {
 		{"last_error", "last_error = 'connection refused'"},
 		{"converged_version", "converged_version = converged_version"},
 		{"updated_at", "updated_at = now()"},
+		{"observed_version", "observed_version = want_version"},
+		{"m3_version", "m3_version = 7"},
 	}
 	forbidden := []struct{ col, set string }{
 		{"want_suspended", "want_suspended = NOT want_suspended"},
@@ -1140,7 +1145,7 @@ func TestM3Schema_RolesAndPrivileges(t *testing.T) {
 		})
 	})
 
-	t.Run("platform_app updates exactly the seven columns, and nothing else", func(t *testing.T) {
+	t.Run("platform_app updates exactly the nine columns, and nothing else", func(t *testing.T) {
 		ledgerSwitchRole(t, tx, "platform_app")
 		why := ledgerWhy{Message: "permission denied for table m3_sync"}
 		for _, l := range listed {
@@ -1154,7 +1159,7 @@ func TestM3Schema_RolesAndPrivileges(t *testing.T) {
 			all[i] = l.set
 		}
 		sql, args := update(strings.Join(all, ", "))
-		ledgerExpectOK(t, tx, "platform_app updating all seven at once", sql, args...)
+		ledgerExpectOK(t, tx, "platform_app updating all nine at once", sql, args...)
 		for _, f := range forbidden {
 			sql, args := update(f.set)
 			ledgerExpectRefused(t, tx, "platform_app updating "+f.col, "42501", why, sql, args...)

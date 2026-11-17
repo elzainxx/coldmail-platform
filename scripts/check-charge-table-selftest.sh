@@ -9,7 +9,7 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 MIN_CASES=30
 n=0; bad=0
 t() { n=$((n+1)); }
-HEADER='id|module|state|reason|cache|skip|decision|unit|note'
+HEADER='id|module|state|reason|cache|skip|origin|decision|unit|note'
 BEGIN='<!-- charge-table:begin -->'; END='<!-- charge-table:end -->'
 PSV_REL="internal/charge/rules.psv"; SPEC_REL="Docs/phase-2-spec.md"; SQL_REL="db/migrations/platform_0002_registry_and_money.up.sql"
 
@@ -30,24 +30,28 @@ INSERT INTO platform.unit_costs_other (unit, module_id) VALUES
     ('m1_decoy2',   'm1');
 SQL
 }
-# good_tree DIR: a tree the gate accepts: 32 rows, 22 charge rows, 5 unmapped rows (M1-01 is line 2 of the table, M1-04 is line 5)
+# good_tree DIR: a tree the gate accepts: 32 rows, 22 charge rows, 5 unmapped rows (M1-01 is line 2 of the table, M1-04 is line 5). The fixture's rows carry no meaning (the gate checks shape, units,
+# origin values and byte equality, not what a row decides); between them they use all five legal origin cells: * own remote undetermined none.
 good_tree() {
   d="$1"; rm -rf "$d"; mkdir -p "$d/Docs" "$d/internal/charge" "$d/db/migrations"
   {
     echo "$HEADER"
-    echo 'M1-01|m1|*|*|yes|*|charge|m1_cache|n'
-    echo 'M1-02|m1|*|external_verified|no|*|charge|m1_vendor|n'
-    for i in $(seq 3 20); do printf 'M1-%02d|m1|valid|r%02d|no|*|charge|m1_own|n\n' "$i" "$i"; done
-    for i in 21 22 23; do printf 'M1-%02d|m1|unknown|e%02d|no|*|unmapped||n\n' "$i" "$i"; done
-    echo 'M1-99|m1|*|*|*|*|unmapped||n'
-    echo 'M2-01|m2|sent|*|*|*|charge|m2_accepted|n'
-    echo 'M2-02|m2|bounced|*|*|*|charge|m2_bounced|n'
-    echo 'M2-03|m2|failed|*|*|*|free||n'
-    echo 'M2-04|m2|queued|*|*|*|notfinal||n'
-    echo 'M2-99|m2|*|*|*|*|unmapped||n'
-    echo 'M3-01|m3|*|*|*|*|free||n'
-    echo 'P-01|platform|cancelled|*|*|*|free||n'
-    echo 'P-02|platform|expired|*|*|*|free||n'
+    echo 'M1-01|m1|*|*|yes|*|*|charge|m1_cache|n'
+    echo 'M1-02|m1|*|external_verified|no|*|*|charge|m1_vendor|n'
+    for i in $(seq 3 19); do printf 'M1-%02d|m1|valid|r%02d|no|*|*|charge|m1_own|n\n' "$i" "$i"; done
+    echo 'M1-20|m1|unknown|e20|no|*|none|charge|m1_own|n'
+    echo 'M1-21|m1|unknown|e21|no|*|remote|unmapped||n'
+    echo 'M1-22|m1|unknown|e22|no|*|own|unmapped||n'
+    echo 'M1-23|m1|unknown|e23|no|*|undetermined|unmapped||n'
+    echo 'M1-99|m1|*|*|*|*|*|unmapped||n'
+    echo 'M2-01|m2|sent|*|*|*|*|charge|m2_accepted|n'
+    echo 'M2-02|m2|bounced|*|*|*|*|charge|m2_bounced|n'
+    echo 'M2-03|m2|failed|*|*|*|*|free||n'
+    echo 'M2-04|m2|queued|*|*|*|*|notfinal||n'
+    echo 'M2-99|m2|*|*|*|*|*|unmapped||n'
+    echo 'M3-01|m3|*|*|*|*|*|free||n'
+    echo 'P-01|platform|cancelled|*|*|*|*|free||n'
+    echo 'P-02|platform|expired|*|*|*|*|free||n'
   } > "$d/$PSV_REL"
   write_sql "$d"; write_spec "$d"
 }
@@ -98,25 +102,38 @@ good_tree "$D"; awk '/^```/ { k++; print; next } k == 1 { next } { print }' "$D/
 good_tree "$D"; awk '/^```/ { k++; if (k == 2) { print "``` trailing"; next } } { print }' "$D/$SPEC_REL" > "$D/s" && mv "$D/s" "$D/$SPEC_REL"; expect "a closing fence with text after it" "$D" 1 "the closing fence between the markers in $SPEC_REL is not exactly three backticks"
 
 # ---- the spec block and rules.psv differ -------------------------------------------------------------------------------------------------------------------------------------------
-good_tree "$D"; sed -i 's/^M1-04|m1|valid|r04|no|\*|charge|m1_own|n$/M1-04|m1|valid|r04|no|*|free||n/' "$D/$PSV_REL"
-expect "one row of rules.psv changed, the spec not: the first differing line is named, with both lines" "$D" 1 "$PSV_REL differs from the fenced block in $SPEC_REL: first difference at line 5" "spec block: M1-04|m1|valid|r04|no|*|charge|m1_own|n" "rules.psv : M1-04|m1|valid|r04|no|*|free||n"
-good_tree "$D"; sed -i 's/^M1-05|m1|valid|r05|no|\*|charge|m1_own|n$/M1-05|m1|valid|r05|no|*|charge|m1_own|CHANGED/' "$D/$SPEC_REL"
-expect "one row of the spec changed, rules.psv not" "$D" 1 "first difference at line 6" "spec block: M1-05|m1|valid|r05|no|*|charge|m1_own|CHANGED" "rules.psv : M1-05|m1|valid|r05|no|*|charge|m1_own|n"
-good_tree "$D"; echo 'P-03|platform|quarantined|*|*|*|free||n' >> "$D/$PSV_REL"; expect "rules.psv has a row the spec does not" "$D" 1 "first difference at line 34" "<the spec block ends before this line>"
+good_tree "$D"; sed -i 's/^M1-04|m1|valid|r04|no|\*|\*|charge|m1_own|n$/M1-04|m1|valid|r04|no|*|*|free||n/' "$D/$PSV_REL"
+expect "one row of rules.psv changed, the spec not: the first differing line is named, with both lines" "$D" 1 "$PSV_REL differs from the fenced block in $SPEC_REL: first difference at line 5" "spec block: M1-04|m1|valid|r04|no|*|*|charge|m1_own|n" "rules.psv : M1-04|m1|valid|r04|no|*|*|free||n"
+good_tree "$D"; sed -i 's/^M1-05|m1|valid|r05|no|\*|\*|charge|m1_own|n$/M1-05|m1|valid|r05|no|*|*|charge|m1_own|CHANGED/' "$D/$SPEC_REL"
+expect "one row of the spec changed, rules.psv not" "$D" 1 "first difference at line 6" "spec block: M1-05|m1|valid|r05|no|*|*|charge|m1_own|CHANGED" "rules.psv : M1-05|m1|valid|r05|no|*|*|charge|m1_own|n"
+good_tree "$D"; sed -i 's/^M1-21|m1|unknown|e21|no|\*|remote|unmapped||n$/M1-21|m1|unknown|e21|no|*|own|unmapped||n/' "$D/$PSV_REL"
+expect "only an origin cell of rules.psv changed, the spec not: the origin is part of the byte comparison" "$D" 1 "first difference at line 22" "spec block: M1-21|m1|unknown|e21|no|*|remote|unmapped||n" "rules.psv : M1-21|m1|unknown|e21|no|*|own|unmapped||n"
+good_tree "$D"; echo 'P-03|platform|quarantined|*|*|*|*|free||n' >> "$D/$PSV_REL"; expect "rules.psv has a row the spec does not" "$D" 1 "first difference at line 34" "<the spec block ends before this line>"
 good_tree "$D"; sed -i '$d' "$D/$PSV_REL"; expect "rules.psv lacks the spec's last row" "$D" 1 "first difference at line 33" "<rules.psv ends before this line>"
 good_tree "$D"; printf '%s' "$(cat "$D/$PSV_REL")" > "$D/p" && mv "$D/p" "$D/$PSV_REL"; expect "rules.psv without its final newline" "$D" 1 "in its final newline only"
 good_tree "$D"; sed -i 's/$/\r/' "$D/$PSV_REL"; expect "rules.psv with CRLF line endings" "$D" 1 "$PSV_REL contains a carriage return"
 
 # ---- the table itself ------------------------------------------------------------------------------------------------------------------------------------------------------------------
 good_tree "$D"; edit_psv "$D" '/^M1-18|/d; /^M1-19|/d; /^M1-20|/d'; expect "fewer than 30 rows (29), spec and file equal" "$D" 1 "has 29 row(s), fewer than the floor of 30" "check-charge-table: 29 rows"
-good_tree "$D"; edit_psv "$D" 's/^M1-05|m1|valid|r05|no|\*|charge|m1_own|n$/M1-05|m1|valid|r05|no|*|charge|m1_bogus|n/'; expect "a charge of a unit the database does not seed" "$D" 1 "row M1-05 (line 6 of $PSV_REL): charges unit 'm1_bogus', which is not one of the seeded units (m1_own m1_cache m1_vendor m2_accepted m2_bounced)"
-good_tree "$D"; edit_psv "$D" 's/^M2-01|m2|sent|\*|\*|\*|charge|m2_accepted|n$/M2-01|m2|sent|*|*|*|charge|m1_own|n/'; expect "a seeded unit of the other module" "$D" 1 "row M2-01 (line 26 of $PSV_REL): charges unit 'm1_own', which belongs to module m1, not m2"
-good_tree "$D"; edit_psv "$D" 's/^M1-05|m1|valid|r05|no|\*|charge|m1_own|n$/M1-05|m1|valid|r05|no|*|charge||n/'; expect "a charge row without a unit" "$D" 1 "row M1-05 (line 6 of $PSV_REL): a charge row has no unit"
-good_tree "$D"; edit_psv "$D" 's/^M2-03|m2|failed|\*|\*|\*|free||n$/M2-03|m2|failed|*|*|*|free|m2_bounced|n/'; expect "a free row that carries a unit" "$D" 1 "row M2-03 (line 28 of $PSV_REL): has a unit ('m2_bounced') but is not a charge row"
-good_tree "$D"; edit_psv "$D" 's/^M1-05|m1|valid|r05|no|\*|charge|m1_own|n$/M1-05|m1|valid|r05|no|*|charge|m1_own/'; expect "a row with 8 columns" "$D" 1 "row M1-05 (line 6 of $PSV_REL) has 8 columns, want 9"
+good_tree "$D"; edit_psv "$D" 's/^M1-05|m1|valid|r05|no|\*|\*|charge|m1_own|n$/M1-05|m1|valid|r05|no|*|*|charge|m1_bogus|n/'; expect "a charge of a unit the database does not seed" "$D" 1 "row M1-05 (line 6 of $PSV_REL): charges unit 'm1_bogus', which is not one of the seeded units (m1_own m1_cache m1_vendor m2_accepted m2_bounced)"
+good_tree "$D"; edit_psv "$D" 's/^M2-01|m2|sent|\*|\*|\*|\*|charge|m2_accepted|n$/M2-01|m2|sent|*|*|*|*|charge|m1_own|n/'; expect "a seeded unit of the other module" "$D" 1 "row M2-01 (line 26 of $PSV_REL): charges unit 'm1_own', which belongs to module m1, not m2"
+good_tree "$D"; edit_psv "$D" 's/^M1-05|m1|valid|r05|no|\*|\*|charge|m1_own|n$/M1-05|m1|valid|r05|no|*|*|charge||n/'; expect "a charge row without a unit" "$D" 1 "row M1-05 (line 6 of $PSV_REL): a charge row has no unit"
+good_tree "$D"; edit_psv "$D" 's/^M2-03|m2|failed|\*|\*|\*|\*|free||n$/M2-03|m2|failed|*|*|*|*|free|m2_bounced|n/'; expect "a free row that carries a unit" "$D" 1 "row M2-03 (line 28 of $PSV_REL): has a unit ('m2_bounced') but is not a charge row"
+good_tree "$D"; edit_psv "$D" 's/^M1-05|m1|valid|r05|no|\*|\*|charge|m1_own|n$/M1-05|m1|valid|r05|no|*|charge|m1_own|n/'; expect "a row with 9 columns (the shape before the origin column existed)" "$D" 1 "row M1-05 (line 6 of $PSV_REL) has 9 columns, want 10"
+good_tree "$D"; edit_psv "$D" 's/^M1-05|m1|valid|r05|no|\*|\*|charge|m1_own|n$/M1-05|m1|valid|r05|no|*|*|charge|m1_own/'; expect "a row whose note column is missing (9 columns)" "$D" 1 "row M1-05 (line 6 of $PSV_REL) has 9 columns, want 10"
+good_tree "$D"; edit_psv "$D" 's/^M1-05|m1|valid|r05|no|\*|\*|charge|m1_own|n$/M1-05|m1|valid|r05|no|*|charge|m1_own/'; expect "a row with 8 columns" "$D" 1 "row M1-05 (line 6 of $PSV_REL) has 8 columns, want 10"
+good_tree "$D"; edit_psv "$D" 's/^M1-05|m1|valid|r05|no|\*|\*|charge|m1_own|n$/M1-05|m1|valid|r05|no|*|*|charge|m1_own|n|extra/'; expect "a row with 11 columns" "$D" 1 "row M1-05 (line 6 of $PSV_REL) has 11 columns, want 10"
 good_tree "$D"; edit_psv "$D" 's/^M1-06|/M1-05|/'; expect "a duplicate id" "$D" 1 "row M1-05 (line 7 of $PSV_REL): duplicate id (first on line 6)"
-good_tree "$D"; edit_psv "$D" 's/^M1-05|m1|valid|r05|no|\*|charge|m1_own|n$/M1-05|m1|valid|r05|no|*|refund|m1_own|n/'; expect "an unknown decision" "$D" 1 "row M1-05 (line 6 of $PSV_REL): unknown decision 'refund'"
+good_tree "$D"; edit_psv "$D" 's/^M1-05|m1|valid|r05|no|\*|\*|charge|m1_own|n$/M1-05|m1|valid|r05|no|*|*|refund|m1_own|n/'; expect "an unknown decision" "$D" 1 "row M1-05 (line 6 of $PSV_REL): unknown decision 'refund'"
 good_tree "$D"; edit_psv "$D" '1s/|decision|/|verdict|/'; expect "a wrong header" "$D" 1 "$PSV_REL line 1 is not the header $HEADER"
+good_tree "$D"; edit_psv "$D" '1s/|origin|/|/'; expect "the header of the shape before the origin column existed" "$D" 1 "$PSV_REL line 1 is not the header $HEADER"
+
+# ---- the origin column (the owner's unknown rule: remote is charged, own and undetermined are free, absent is unmapped) -----------------------------------------------------------------------
+good_tree "$D"; edit_psv "$D" 's/^M1-05|m1|valid|r05|no|\*|\*|charge|m1_own|n$/M1-05|m1|valid|r05|no|*|bogus|charge|m1_own|n/'; expect "a bad origin value" "$D" 1 "row M1-05 (line 6 of $PSV_REL): the origin cell 'bogus' must be *, own, remote, undetermined or none"
+good_tree "$D"; edit_psv "$D" 's/^M1-05|m1|valid|r05|no|\*|\*|charge|m1_own|n$/M1-05|m1|valid|r05|no|*|Remote|charge|m1_own|n/'; expect "an origin in the wrong case" "$D" 1 "row M1-05 (line 6 of $PSV_REL): the origin cell 'Remote' must be *, own, remote, undetermined or none"
+good_tree "$D"; edit_psv "$D" 's/^M1-05|m1|valid|r05|no|\*|\*|charge|m1_own|n$/M1-05|m1|valid|r05|no|*||charge|m1_own|n/'; expect "an empty origin cell" "$D" 1 "row M1-05 (line 6 of $PSV_REL): the origin cell '' must be *, own, remote, undetermined or none"
+good_tree "$D"; edit_psv "$D" 's/^M1-22|m1|unknown|e22|no|\*|own|unmapped||n$/M1-22|m1|unknown|e22|no|*|remote |unmapped||n/'; expect "an origin with a trailing space" "$D" 1 "row M1-22 (line 23 of $PSV_REL): the origin cell 'remote ' must be *, own, remote, undetermined or none"
+good_tree "$D"; edit_psv "$D" 's/^M1-22|m1|unknown|e22|no|\*|own|unmapped||n$/M1-22|m1|unknown|e22|no|*|own|remote|unmapped||n/'; expect "an origin row with the origin value written in the decision column (a shifted column)" "$D" 1 "row M1-22 (line 23 of $PSV_REL) has 11 columns, want 10"
 
 # ---- the units come from the migration -----------------------------------------------------------------------------------------------------------------------------------------
 good_tree "$D"; sed -i 's/m1_own/m1_mine/' "$D/$SQL_REL"; expect "the migration renamed a unit: the table still naming it is red (the list is read, not remembered)" "$D" 1 "charges unit 'm1_own', which is not one of the seeded units (m1_mine m1_cache m1_vendor m2_accepted m2_bounced)"
@@ -147,6 +164,11 @@ echo "check-charge-table: RED"; exit 1' expect "a right tree is green" "$D" 0 "c
 good_tree "$D"; printf '%s\n' "$BEGIN" >> "$D/$SPEC_REL"
 run_control "a gate that fails for another reason makes the 'duplicated begin marker' case misbehave (class 10)" '#!/usr/bin/env bash
 echo "check-charge-table: RED — something unrelated"; exit 1' expect "a duplicated begin marker" "$D" 1 "found 2 begin marker(s)"
+# the origin check removed from a copy of the REAL gate: the 'bad origin value' case must then misbehave, so that case is proven to exercise the origin check and nothing else
+good_tree "$D"; edit_psv "$D" 's/^M1-05|m1|valid|r05|no|\*|\*|charge|m1_own|n$/M1-05|m1|valid|r05|no|*|bogus|charge|m1_own|n/'
+no_origin_check="$(sed '/the origin cell/d' "$GATE")"
+if [ "$no_origin_check" = "$(cat "$GATE")" ]; then echo "  FAIL control: the gate has no line naming the origin cell, so the mutant is the gate itself"; bad=$((bad+1)); fi
+run_control "a copy of the gate without its origin check makes the 'bad origin value' case misbehave" "$no_origin_check" expect "a bad origin value" "$D" 1 "row M1-05 (line 6 of $PSV_REL): the origin cell 'bogus' must be *, own, remote, undetermined or none"
 
 echo "selftest: $n cases"
 [ "$n" -ge "$MIN_CASES" ] || { echo "check-charge-table-selftest: RED — only $n cases ran (minimum $MIN_CASES)"; exit 1; }

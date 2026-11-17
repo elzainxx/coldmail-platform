@@ -1,38 +1,42 @@
-id|module|state|reason|cache|skip|decision|unit|note
-M1-01|m1|*|*|yes|*|charge|m1_cache|answered from the cache, full price: the answer is the value (flags.from_cache, M1-G3)
-M1-02|m1|*|external_verified|no|*|charge|m1_vendor|vendor fallback, the premium unit (UNREACHABLE in the shipped build: buildExternal is nil, M1-G3)
-M1-03|m1|valid|accepted|no|*|charge|m1_own|a probed 2xx with no catch-all
-M1-04|m1|valid|mailbox_full|no|*|charge|m1_own|452/552: the mailbox exists
-M1-05|m1|invalid|no_mx|no|*|charge|m1_own|positive proof: no MX and no A/AAAA
-M1-06|m1|invalid|null_mx|no|*|charge|m1_own|
-M1-07|m1|invalid|spam_trap|no|*|charge|m1_own|
-M1-08|m1|invalid|mailbox_not_found|no|*|charge|m1_own|550/551/553 with an address-fault body
-M1-09|m1|invalid|historical_bounce|no|*|charge|m1_own|flywheel gate (off by default)
-M1-10|m1|invalid|invalid_syntax|no|*|charge|m1_own|never a bulk result (counted malformed at enqueue); mapped for completeness
-M1-11|m1|risky|disposable|no|*|charge|m1_own|
-M1-12|m1|risky|provider_no_smtp|no|*|charge|m1_own|a settled answer: the provider is routed to MX-only by policy
-M1-13|m1|risky|catch_all|no|*|charge|m1_own|
-M1-14|m1|risky|non_public_mx|no|*|charge|m1_own|no probe was made, the verdict comes from DNS facts
-M1-15|m1|risky|plausible|no|capacity|free||OUR capacity failure settled as risky/plausible (M1-G5): no node, audit red, warmup cap, rate limit
-M1-16|m1|risky|plausible|no|none|charge|m1_own|no skip token: cheap-layers answer (CAVEAT M1-G6: indistinguishable from SMTP being unwired at boot)
-M1-17|m1|unknown|greylisted|no|*|charge|m1_own|a genuine remote answer (in bulk: retries exhausted); not our own failure, so charged by the locked rule
-M1-18|m1|unknown|dns_error|no|*|unmapped||lookup failure: our resolver or the domain's servers cannot be told apart (M1-G4)
-M1-19|m1|unknown|smtp_timeout|no|*|unmapped||shares its reason between our node failure and a remote timeout (M1-G4)
-M1-20|m1|unknown|smtp_error|no|*|unmapped||shares its reason between our node failure and a remote error (M1-G4)
-M1-21|m1|unknown|connection_failed|no|*|unmapped||shares its reason between our egress/node failure and a remote refusal (M1-G4)
-M1-22|m1|unknown|smtp_blocked|no|*|unmapped||a remote policy rejection that can be OUR IP reputation (M1-G4)
-M1-99|m1|*|*|*|*|unmapped||any other pair, including every reason the pinned module can legally name but never emits
-M2-01|m2|sent|*|*|*|charge|m2_accepted|250 after DATA with a provider message id
-M2-02|m2|bounced|*|*|*|charge|m2_bounced|550/551/553 at RCPT: the work was done, the bad address is the user's list (M2-G4: includes relay policy 550s)
-M2-03|m2|failed|*|*|*|free||pool exhaustion is the ONLY writer of failed (M2-G2): our failure
-M2-04|m2|queued|*|*|*|notfinal||every SMTP failure that is not a hard bounce stays queued, uncapped (M2-G2)
-M2-05|m2|assigned|*|*|*|notfinal||
-M2-06|m2|sending|*|*|*|notfinal||
-M2-99|m2|*|*|*|*|unmapped||a state the pinned module does not define
-M3-01|m3|*|*|*|*|free||module 3 is not metered: entitlements, not credits
-P-01|platform|cancelled|*|*|*|free||cancelled by the user or an admin: work not done
-P-02|platform|expired|*|*|*|free||a scheduled job or entitlement expired: work not done
-P-03|platform|quarantined|*|*|*|free||quarantined by the platform: work not done
-P-04|platform|infrastructure_failure|*|*|*|free||our own failure (module outage, platform crash window)
-P-05|platform|pool_exhausted|*|*|*|free||no sending capacity: our own failure
-P-06|platform|smtp_login_rejected|*|*|*|free||the user's own SMTP rejected the login: nothing reached the outside world
+id|module|state|reason|cache|skip|origin|decision|unit|note
+M1-01|m1|*|*|yes|*|*|charge|m1_cache|answered from the cache, full price: the answer is the value (flags.from_cache, M1-G3)
+M1-02|m1|*|external_verified|no|*|*|charge|m1_vendor|the premium unit; reachable only when the owner switches the ZeroBounce fallback on (it ships disabled); only a vendor ANSWER carries this reason, a vendor non-answer leaves M1's own result standing and is charged by the ordinary rows, never as vendor
+M1-03|m1|valid|accepted|no|*|*|charge|m1_own|a probed 2xx with no catch-all
+M1-04|m1|valid|mailbox_full|no|*|*|charge|m1_own|452/552: the mailbox exists
+M1-05|m1|invalid|no_mx|no|*|*|charge|m1_own|positive proof: no MX and no A/AAAA
+M1-06|m1|invalid|null_mx|no|*|*|charge|m1_own|
+M1-07|m1|invalid|spam_trap|no|*|*|charge|m1_own|
+M1-08|m1|invalid|mailbox_not_found|no|*|*|charge|m1_own|550/551/553 with an address-fault body
+M1-09|m1|invalid|historical_bounce|no|*|*|charge|m1_own|flywheel gate (off by default)
+M1-10|m1|invalid|invalid_syntax|no|*|*|charge|m1_own|a bulk result since A1: M1 logs a malformed row and serves it as invalid/invalid_syntax, and the platform charges it like any settled answer (pre-validating addresses before submit is an owner choice for Phase 4, flagged and not decided here)
+M1-11|m1|risky|disposable|no|*|*|charge|m1_own|
+M1-12|m1|risky|provider_no_smtp|no|*|*|charge|m1_own|a settled answer: the provider is routed to MX-only by policy
+M1-13|m1|risky|catch_all|no|*|*|charge|m1_own|
+M1-14|m1|risky|non_public_mx|no|*|*|charge|m1_own|no probe was made, the verdict comes from DNS facts
+M1-15|m1|risky|plausible|no|capacity|*|free||OUR capacity failure settled as risky/plausible (M1-G5): no node, audit red, warmup cap, rate limit; M1 also marks it failure_origin own
+M1-16|m1|risky|plausible|no|none|*|charge|m1_own|no skip token: a cheap-layers answer
+M1-17|m1|risky|plausible|no|smtp_unwired|*|free||SMTP was not wired at boot (skip token smtp_unwired): our configuration
+M1-18|m1|unknown|greylisted|no|*|remote|charge|m1_own|retries exhausted: the recipient's server kept deferring
+M1-19|m1|unknown|unknown_error|no|*|own|free||the attempt cap: a decrypt or compute error repeated to M1's cap, settled by M1 as unknown/unknown_error with origin own
+M1-20|m1|unknown|*|no|*|remote|charge|m1_own|an unknown caused by the recipient's server
+M1-21|m1|unknown|*|no|*|own|free||an unknown caused by us
+M1-22|m1|unknown|*|no|*|undetermined|free||an unknown that cannot be proven either way
+M1-23|m1|unknown|*|no|*|none|unmapped||an older module that does not name an origin: never charged, reported
+M1-99|m1|*|*|*|*|*|unmapped||any other pair, including every reason the pinned module can legally name but never emits
+M2-01|m2|sent|*|*|*|*|charge|m2_accepted|250 after DATA with a provider message id
+M2-02|m2|bounced|*|*|*|*|charge|m2_bounced|550/551/553 at RCPT: the work was done, the bad address is the user's list (M2-G4: includes relay policy 550s)
+M2-03|m2|failed|attempts_exhausted|*|*|*|free||the attempt cap or max age (B3): our failure
+M2-04|m2|failed|*|*|*|*|free||any other failure, pool exhaustion included, keeps its own reason: our failure
+M2-05|m2|queued|*|*|*|*|notfinal||not final: a retryable failure stays queued until it sends, bounces or reaches the attempt cap
+M2-06|m2|assigned|*|*|*|*|notfinal||
+M2-07|m2|sending|*|*|*|*|notfinal||
+M2-08|m2|cancelled|*|*|*|*|free||cancelled before it was claimed (B4): work not done
+M2-99|m2|*|*|*|*|*|unmapped||a state the pinned module does not define
+M3-01|m3|*|*|*|*|*|free||module 3 is not metered: entitlements, not credits
+P-01|platform|cancelled|*|*|*|*|free||cancelled by the user or an admin: work not done
+P-02|platform|expired|*|*|*|*|free||a scheduled job or entitlement expired: work not done
+P-03|platform|quarantined|*|*|*|*|free||quarantined by the platform: work not done
+P-04|platform|infrastructure_failure|*|*|*|*|free||our own failure (module outage, platform crash window)
+P-05|platform|pool_exhausted|*|*|*|*|free||no sending capacity: our own failure
+P-06|platform|smtp_login_rejected|*|*|*|*|free||the user's own SMTP rejected the login: nothing reached the outside world
+P-07|platform|duplicate|*|*|*|*|free||a repeat of an earlier row's address inside one M1 job: checked once, charged once, on the first row (internal/m1results maps duplicate_of rows to this state)

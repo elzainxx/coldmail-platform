@@ -208,13 +208,14 @@ type entSync struct {
 	Attempts                   int
 	LastAttemptAt              *time.Time
 	LastError                  *string
+	ObservedVersion, M3Version *int64 // platform_0008: the want_version the observation was made at, and module 3's own counter from the read-back
 }
 
 func (e *entEnv) syncOf(user string) entSync {
 	e.t.Helper()
 	var s entSync
-	err := e.admin.QueryRow(testCtx(e.t), `SELECT want_suspended, want_version, converged_version, observed, observed_at, attempts, last_attempt_at, last_error
-		FROM platform.m3_sync WHERE user_id = $1`, user).Scan(&s.WantSuspended, &s.WantVersion, &s.ConvergedVers, &s.Observed, &s.ObservedAt, &s.Attempts, &s.LastAttemptAt, &s.LastError)
+	err := e.admin.QueryRow(testCtx(e.t), `SELECT want_suspended, want_version, converged_version, observed, observed_at, attempts, last_attempt_at, last_error, observed_version, m3_version
+		FROM platform.m3_sync WHERE user_id = $1`, user).Scan(&s.WantSuspended, &s.WantVersion, &s.ConvergedVers, &s.Observed, &s.ObservedAt, &s.Attempts, &s.LastAttemptAt, &s.LastError, &s.ObservedVersion, &s.M3Version)
 	if err != nil {
 		e.t.Fatalf("no delivery row for %s: %v", user, err)
 	}

@@ -30,11 +30,23 @@ type entCall struct {
 	Reason    string
 }
 
-// entFake is a Suspender whose answers the test controls. By default it confirms the wanted state as a change.
+// entFake is a Suspender whose answers the test controls. By default it confirms the wanted state as a change, and its suspension READ answers what a healthy module 3 would: the state its
+// last confirmation left the user in (never suspended at version 0 until one says otherwise), with a counter that rises by one on every confirmation that changed something.
+// `read` replaces that answer (a failure, another state, a gate that holds the read open).
 type entFake struct {
 	mu     sync.Mutex
 	calls  []entCall
 	answer func(ctx context.Context, n int, c entCall) (m3admin.Result, error)
+
+	reads []string // the users whose state was read, in order
+	read  func(ctx context.Context, n int, user string) (m3admin.SuspensionState, error)
+	state map[string]entM3State
+}
+
+// entM3State is what the fake keeps of one user: module 3's own flag and transition counter.
+type entM3State struct {
+	suspended bool
+	version   int64
 }
 
 func (f *entFake) SetSuspended(ctx context.Context, user string, suspended bool, reason string) (m3admin.Result, error) {
@@ -43,10 +55,63 @@ func (f *entFake) SetSuspended(ctx context.Context, user string, suspended bool,
 	f.calls = append(f.calls, c)
 	n, fn := len(f.calls), f.answer
 	f.mu.Unlock()
+	var (
+		res m3admin.Result
+		err error
+	)
 	if fn != nil {
-		return fn(ctx, n, c)
+		res, err = fn(ctx, n, c)
+	} else {
+		res = entEcho(suspended, true)
 	}
-	return entEcho(suspended, true), nil
+	if err == nil && (res.State == m3admin.StateSuspended || res.State == m3admin.StateActive) {
+		// what module 3 says it is in IS what the fake is in from now on (its read answers it), and a change moves the counter
+		f.mu.Lock()
+		if f.state == nil {
+			f.state = map[string]entM3State{}
+		}
+		st := f.state[user]
+		st.suspended = res.State == m3admin.StateSuspended
+		if res.Changed {
+			st.version++
+		}
+		f.state[user] = st
+		f.mu.Unlock()
+	}
+	return res, err
+}
+
+// Suspension is module 3's read route: the default answer is the fake's own state for the user, echoing the id as asked.
+func (f *entFake) Suspension(ctx context.Context, user string) (m3admin.SuspensionState, error) {
+	f.mu.Lock()
+	f.reads = append(f.reads, user)
+	n, fn, st := len(f.reads), f.read, f.state[user]
+	f.mu.Unlock()
+	if fn != nil {
+		return fn(ctx, n, user)
+	}
+	return m3admin.SuspensionState{User: user, Suspended: st.suspended, Version: st.version}, nil
+}
+
+// setRead replaces the read answer; nil restores the default.
+func (f *entFake) setRead(fn func(ctx context.Context, n int, user string) (m3admin.SuspensionState, error)) {
+	f.mu.Lock()
+	f.read = fn
+	f.mu.Unlock()
+}
+
+// readCount is how many times the state was read.
+func (f *entFake) readCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.reads)
+}
+
+// m3State is the fake's own state of a user (what its read answers by default).
+func (f *entFake) m3State(user string) entM3State {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.state[user]
 }
 
 // entEcho is the confirmation a healthy module 3 gives: the state asked for.
@@ -166,6 +231,10 @@ func (e *entEnv) requireConverged(when, user, observed string) entSync {
 	s := e.syncOf(user)
 	if s.ConvergedVers != s.WantVersion || s.Observed != observed || s.ObservedAt == nil || s.Attempts != 0 || s.LastError != nil {
 		e.t.Fatalf("%s: delivery row %+v, want converged at want_version with observed %q, an observation time, no attempts and no error", when, s, observed)
+	}
+	// D5: a convergence is an observation of THIS version that came from a read-back (module 3's own counter is recorded)
+	if s.ObservedVersion == nil || *s.ObservedVersion != s.WantVersion || s.M3Version == nil {
+		e.t.Fatalf("%s: delivery row %+v is converged but its observation is not of this version (observed_version %v, want_version %d) or has no read-back counter (m3_version %v)", when, s, s.ObservedVersion, s.WantVersion, s.M3Version)
 	}
 	return s
 }
@@ -447,13 +516,14 @@ func TestEntReconcile_TheDatabaseRefusesAFalseConvergenceAndTheColumnsOnlyTheTri
 		}
 	}
 
-	// the second wall: converged_version = want_version needs observed = the wanted state
-	refused("converged with observed unknown", app("UPDATE platform.m3_sync SET converged_version = want_version WHERE user_id = $1", u), "23514", "m3_sync_converged_only_when_observed")
-	refused("converged with the OTHER state observed", app("UPDATE platform.m3_sync SET observed = 'active', converged_version = want_version WHERE user_id = $1", u), "23514", "m3_sync_converged_only_when_observed")
+	// the second wall: converged_version = want_version needs observed = the wanted state, observed at THIS version (each statement below names the version, so that it is the observation that is wrong)
+	const only = "m3_sync_converged_only_when_observed_at_version"
+	refused("converged with observed unknown", app("UPDATE platform.m3_sync SET observed_version = want_version, converged_version = want_version WHERE user_id = $1", u), "23514", only)
+	refused("converged with the OTHER state observed", app("UPDATE platform.m3_sync SET observed = 'active', observed_version = want_version, converged_version = want_version WHERE user_id = $1", u), "23514", only)
 	refused("an observation outside the vocabulary", app("UPDATE platform.m3_sync SET observed = 'weird' WHERE user_id = $1", u), "23514", "m3_sync_observed_vocabulary")
-	refused("converged beyond the wanted version", app("UPDATE platform.m3_sync SET observed = 'suspended', converged_version = want_version + 1 WHERE user_id = $1", u), "23514", "m3_sync_converged_not_ahead")
-	// the control: the right observation is accepted
-	if err := app("UPDATE platform.m3_sync SET observed = 'suspended', observed_at = now(), converged_version = want_version WHERE user_id = $1", u); err != nil {
+	refused("converged beyond the wanted version", app("UPDATE platform.m3_sync SET observed = 'suspended', observed_version = want_version, converged_version = want_version + 1 WHERE user_id = $1", u), "23514", "m3_sync_converged_not_ahead")
+	// the control: the right observation, of this version, is accepted
+	if err := app("UPDATE platform.m3_sync SET observed = 'suspended', observed_at = now(), observed_version = want_version, m3_version = 1, converged_version = want_version WHERE user_id = $1", u); err != nil {
 		t.Fatalf("control failed: a convergence with the wanted state observed was refused: %v", err)
 	}
 	if s := e.syncOf(u); s.ConvergedVers != 1 || s.Observed != "suspended" {

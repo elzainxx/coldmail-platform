@@ -538,8 +538,8 @@ func (r *m3lRun) syncString(st entitlements.SyncState) string {
 	if st.LastError != nil {
 		last = r.env.scrub(*st.LastError)
 	}
-	return fmt.Sprintf("exists=%v want_suspended=%v want_version=%d converged_version=%d observed=%s attempts=%d last_error=%q",
-		st.Exists, st.WantSuspended, st.WantVersion, st.ConvergedVersion, st.Observed, st.Attempts, last)
+	return fmt.Sprintf("exists=%v want_suspended=%v want_version=%d converged_version=%d observed=%s observed_version=%s m3_version=%s attempts=%d last_error=%q",
+		st.Exists, st.WantSuspended, st.WantVersion, st.ConvergedVersion, st.Observed, entObsStr(st.ObservedVersion), entObsStr(st.M3Version), st.Attempts, last)
 }
 
 // waitSync waits (bounded) until the SERVICE's reconcile loop has delivered the wanted state to the real module 3 and recorded what module 3 answered: the delivery row is at wantVersion, wants wantSuspended, is

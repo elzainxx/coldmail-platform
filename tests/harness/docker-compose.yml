@@ -132,7 +132,7 @@ services:
       # Module 1 connects as verify_app, a plain LOGIN role that owns nothing (its migration 0016 gives it exactly the grants the code needs; Docs/phase-1-spec.md A2). It used to need a superuser (Phase 0 F3).
       TM_DATABASE_URL: postgres://verify_app:${H_M1_APP_PASSWORD:?}@postgres:5432/postgres
       TM_PEPPER: ${H_M1_PEPPER:?}
-      TM_QUEUE_ADDR_KEY: ${H_M1_QUEUE_KEY:?}      # without it the bulk and job routes answer 503 `unavailable` even to an authenticated caller (module 1: main.go, api.go)
+      TM_QUEUE_ADDR_KEY: ${H_M1_QUEUE_KEY:?}      # without it the bulk and job routes answer 503 `unavailable` even to an authenticated caller (module 1: main.go, api.go); WITH it module 1 starts its bulk drainer in the same process (buildQueue: `go drainer.Run`), so a submitted job is worked with the default dials and no further setting. The live per-item settlement test (m1_bulk_settle_test.go) relies on that; nothing here is tuned for it (module 1's drainer polls every 2 s by default, and a result of the cheap layers settles at once, without retries)
       TM_ENV: development
       TM_LISTEN_ADDR: ":8080"
     healthcheck:
@@ -389,6 +389,8 @@ services:
       HARNESS_MIGRATE_BIN: /h/platform-migrate
       HARNESS_REPO_ROOT: /repo
       HARNESS_MODULES_ROOT: /modules
+      HARNESS_M1_URL: http://m1:8080      # module 1's control plane: the live bulk-settlement test (m1_bulk_settle_test.go) submits a real job to it and drains it with the per-caller key below
+      HARNESS_M1_KEY: ${H_M1_CALLER_KEY:?}      # the key run.sh minted, masked and seeded into verify.api_callers (the probe uses the same one); a Bearer credential, never printed
       HARNESS_M3_URL: http://m3:8080
       HARNESS_M3_TOKEN: ${H_M3_TOKEN:?}
       HARNESS_M3_ADMIN_KEY: ${H_M3_ADMIN_KEY:?}

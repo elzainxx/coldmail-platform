@@ -8,8 +8,10 @@
 //   - Store: the writers (Enable, Disable, ExpireDue) and the readers (Get, Sync). Every rule that can be a
 //     database rule is one (the due check, the disabled admin, the system user, the idempotency key); the store
 //     validates what the database cannot know before it asks, and maps each refusal by constraint name.
-//   - Reconciler: delivers the wanted state to module 3 (suspend or resume through its admin route) and records
-//     what module 3 ITSELF answered. It never records convergence for a state module 3 was not seen to be in.
+//   - Reconciler: delivers the wanted state to module 3 (suspend or resume through its admin route), then READS the
+//     state back from module 3's suspension route and records what module 3 ITSELF said, with the version of the
+//     wanted state it was compared against. It never records convergence for a state module 3 was not seen to be in
+//     at the wanted version (the database refuses it too: m3_sync_converged_only_when_observed_at_version).
 //   - Service (Run): the expiry loop and the reconcile loop, started and stopped with the process.
 //
 // TIME IS THE DATABASE'S. "Due", "in the future" and "expired" are decided by the database's now(); the Go clock is
@@ -68,7 +70,7 @@ const (
 
 	sqlGetEntitlement = `SELECT enabled, enabled_until, changed_by::text, changed_at FROM platform.m3_entitlements WHERE user_id = $1::uuid`
 
-	sqlGetSync = `SELECT want_suspended, want_version, converged_version, observed, observed_at, attempts, last_attempt_at, last_error, updated_at
+	sqlGetSync = `SELECT want_suspended, want_version, converged_version, observed, observed_at, observed_version, m3_version, attempts, last_attempt_at, last_error, updated_at
 		FROM platform.m3_sync WHERE user_id = $1::uuid`
 
 	sqlCountUnconverged = `SELECT count(*) FROM platform.m3_sync WHERE converged_version < want_version`
@@ -156,16 +158,21 @@ type SyncState struct {
 	ConvergedVersion int64
 	Observed         string // "unknown" until module 3 has answered, then "suspended" or "active"
 	ObservedAt       *time.Time
-	Attempts         int
-	LastAttemptAt    *time.Time
-	LastError        *string
-	UpdatedAt        time.Time
+	// ObservedVersion is the want_version Observed was recorded at (what the observation was compared against); nil before the first observation.
+	ObservedVersion *int64
+	// M3Version is module 3's own suspension-transition counter as its read route last answered it; nil before the first read-back. Informational.
+	M3Version     *int64
+	Attempts      int
+	LastAttemptAt *time.Time
+	LastError     *string
+	UpdatedAt     time.Time
 }
 
-// Converged reports whether the wanted state is the state module 3 was last seen in: the same condition the
-// database's CHECK m3_sync_converged_only_when_observed enforces on the columns.
+// Converged reports whether the wanted state is the state module 3 was last seen in, at the wanted version: the
+// same condition the database's CHECK m3_sync_converged_only_when_observed_at_version enforces on the columns
+// (converged_version = want_version, observed_version = want_version and observed equal to the wanted state).
 func (s SyncState) Converged() bool {
-	if !s.Exists || s.ConvergedVersion != s.WantVersion {
+	if !s.Exists || s.ConvergedVersion != s.WantVersion || s.ObservedVersion == nil || *s.ObservedVersion != s.WantVersion {
 		return false
 	}
 	return s.Observed == wantedObservation(s.WantSuspended)
@@ -574,7 +581,7 @@ func (s *Store) Sync(ctx context.Context, userID string) (SyncState, error) {
 	}
 	st := SyncState{UserID: user}
 	err := s.pool.QueryRow(ctx, sqlGetSync, user).Scan(&st.WantSuspended, &st.WantVersion, &st.ConvergedVersion, &st.Observed,
-		&st.ObservedAt, &st.Attempts, &st.LastAttemptAt, &st.LastError, &st.UpdatedAt)
+		&st.ObservedAt, &st.ObservedVersion, &st.M3Version, &st.Attempts, &st.LastAttemptAt, &st.LastError, &st.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SyncState{UserID: user}, nil
 	}

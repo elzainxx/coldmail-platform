@@ -1,0 +1,13 @@
+diff --git a/services/control/internal/dispatch/outcome.go b/services/control/internal/dispatch/outcome.go
+index 8353fed..991438b 100644
+--- a/services/control/internal/dispatch/outcome.go
++++ b/services/control/internal/dispatch/outcome.go
+@@ -369,7 +369,7 @@ func (h *OutcomeHandler) applyClassifiedFailure(ctx context.Context, workerID st
+ 		// RETURNING the resulting state, not the one we asked for: the cancel guard trigger
+ 		// (send_managed_0028) may turn a `queued` into `cancelled` for a job whose campaign was cancelled while
+ 		// this attempt was in flight, and the log line below must say what actually happened.
+-		exhausted := attemptsExhaustedSQL("TRUE", 6, 7)
++		exhausted := attemptsExhaustedSQL("FALSE", 6, 7) /* FAULT: no failure ever counts toward the cap */
+ 		nextSecs := h.backoffSecondsForClass(class, saturatingAttempt(ctx, tx, rep.JobID), cfg)
+ 		var resultState string
+ 		err := tx.QueryRow(ctx,

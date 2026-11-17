@@ -1,0 +1,13 @@
+diff --git a/services/control/internal/platformapi/cancel.go b/services/control/internal/platformapi/cancel.go
+index 98760d2..4b6cc2a 100644
+--- a/services/control/internal/platformapi/cancel.go
++++ b/services/control/internal/platformapi/cancel.go
+@@ -151,7 +151,7 @@ UPDATE send_managed.jobs
+        updated_at = NOW()
+  WHERE id IN (SELECT id FROM send_managed.jobs
+                WHERE campaign_id = $1 AND user_id = $2
+-                 AND state = 'queued'
++                 AND state = 'queued' AND FALSE -- FAULT: the cancel step selects nothing, so queued items stay queued
+                ORDER BY id FOR UPDATE)`
+ 
+ // cancelPositionSQL reads the campaign's position after the two steps: one aggregate, one snapshot, so the

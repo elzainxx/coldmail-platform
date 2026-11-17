@@ -1,0 +1,13 @@
+diff --git a/services/control/internal/platformapi/campaign_report.go b/services/control/internal/platformapi/campaign_report.go
+index a1f3a26..6042ebd 100644
+--- a/services/control/internal/platformapi/campaign_report.go
++++ b/services/control/internal/platformapi/campaign_report.go
+@@ -340,7 +340,7 @@ func (s *Server) campaignItems(ctx context.Context, campaignID, userID string, c
+ 	var nextCursor *string
+ 	if len(items) > pageSize {
+ 		// has-more comes from the extra row; the cursor comes from the last row we are RETURNING.
+-		last := keys[pageSize-1]
++		last := keys[pageSize] // FAULT: the LOOKAHEAD row, not the last row returned
+ 		items = items[:pageSize]
+ 		c := encodeReportCursor(last.createdAt.Format(time.RFC3339Nano), last.id)
+ 		nextCursor = &c

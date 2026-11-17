@@ -1,4 +1,4 @@
-# The platform never records a convergence module 3 was not seen to be in: converged_version = want_version needs observed = the wanted state. The fault turns the CHECK into a tautology; a false convergence is then ACCEPTED by the database.
+# The platform never records a convergence module 3 was not seen to be in: converged_version = want_version needs observed = the wanted state (and, since close-out D5, observed at this version). The fault turns the CHECK into a tautology; a false convergence is then ACCEPTED by the database. Since D5 the CHECK lives in platform_0008 (m3_sync_converged_only_when_observed_at_version replaced the platform_0006 one), so the patch targets that file.
 GATE=m3-converged
 TARGET=platform
 SETUP=

@@ -1,0 +1,10 @@
+# The table gained an `origin` column in the close-out (D1: the owner's unknown rule reads M1's signals.failure_origin). The gate must refuse an origin value that is none of *, own, remote, undetermined
+# or none, or a row of the table would silently never match. The fault writes the invalid value `bogus` into the origin cell of row M1-21 in BOTH the embedded rules.psv and the fenced block of the spec,
+# so the byte-for-byte comparison stays green and only the new origin check can catch it. The control is the real repository, which must be green.
+GATE=charge-origin
+TARGET=platform
+SETUP=
+STEP=check-charge-table on the real repository
+CMD=bash scripts/check-charge-table.sh
+MESSAGE=the origin cell 'bogus' must be *, own, remote, undetermined or none
+MESSAGE=check-charge-table: RED

@@ -9,8 +9,9 @@
 #   1. the spec holds exactly one line `<!-- charge-table:begin -->` and exactly one `<!-- charge-table:end -->`, in that order, with exactly one fenced block between them and nothing else
 #      (blank lines apart); the block is not empty;
 #   2. internal/charge/rules.psv equals that fenced block byte for byte (header line included). RED prints the first differing line number and both lines;
-#   3. rules.psv has at least 30 data rows, each with 9 columns and a unique id, a known decision (charge, free, notfinal, unmapped), and for a CHARGE row a unit that is one of the seeded
-#      units AND belongs to the row's module; a non-charge row carries no unit. The seeded units are read from db/migrations/platform_0002_registry_and_money.up.sql, the
+#   3. rules.psv has at least 30 data rows, each with 10 columns (id|module|state|reason|cache|skip|origin|decision|unit|note) and a unique id, an origin cell that is one of * own remote
+#      undetermined none (the value M1's signals.failure_origin can take, or `none` for "absent"), a known decision (charge, free, notfinal, unmapped), and for a CHARGE row a unit that is
+#      one of the seeded units AND belongs to the row's module; a non-charge row carries no unit. The seeded units are read from db/migrations/platform_0002_registry_and_money.up.sql, the
 #      `INSERT INTO platform.unit_costs` list (at least five must be found: "found 0 units" is the instrument matching nothing).
 # FLOORS (a gate whose subject is empty is red, classes 8 and 18): a missing or empty spec, rules.psv or migration, zero markers, an empty block, fewer than 30 rows, fewer than five units.
 #
@@ -39,7 +40,7 @@ SPEC_REL="Docs/phase-2-spec.md"; PSV_REL="internal/charge/rules.psv"; SQL_REL="d
 SPEC="$ROOT/$SPEC_REL"; PSV="$ROOT/$PSV_REL"; SQL="$ROOT/$SQL_REL"
 BEGIN='<!-- charge-table:begin -->'; END='<!-- charge-table:end -->'
 ROW_FLOOR=30; UNIT_FLOOR=5
-HEADER='id|module|state|reason|cache|skip|decision|unit|note'
+HEADER='id|module|state|reason|cache|skip|origin|decision|unit|note'
 NOT_CHECKED="NOT CHECKED: that the table is right (what each module outcome should cost the customer is derived from module code and read by a person: Docs/history/p2-research/); that the Go matcher implements the rules (the unit tests in internal/charge do, in the go workflow)"
 T="$(mktemp -d)" || exit 2; trap 'rm -rf "$T"' EXIT
 
@@ -160,9 +161,10 @@ done < <(tr -d '\r' < "$PSV" | awk -F'|' -v units="$T/units" -v ulist="$unit_lis
   NR == 1 { if ($0 != header) print "P:" psv " line 1 is not the header " header; next }
   {
     rows++
-    if (NF != 9) { print "P:row " $1 " (line " NR " of " psv ") has " NF " columns, want 9"; next }
-    id = $1; mod = $2; dec = $7; unit = $8
+    if (NF != 10) { print "P:row " $1 " (line " NR " of " psv ") has " NF " columns, want 10"; next }
+    id = $1; mod = $2; org = $7; dec = $8; unit = $9
     if (id in first) print "P:row " id " (line " NR " of " psv "): duplicate id (first on line " first[id] ")"; else first[id] = NR
+    if (org != "*" && org != "own" && org != "remote" && org != "undetermined" && org != "none") print "P:row " id " (line " NR " of " psv "): the origin cell \047" org "\047 must be *, own, remote, undetermined or none"
     if (dec == "charge") {
       charge++
       if (unit == "") print "P:row " id " (line " NR " of " psv "): a charge row has no unit"

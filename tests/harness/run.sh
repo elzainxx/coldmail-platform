@@ -232,12 +232,16 @@ DC run --rm -T harness-tests -test.v -test.count=1 -test.timeout=40m > "$WORK/h-
 sed 's/^/  | /' "$WORK/h-run.log" | tail -60
 # the live module-3 proof logs its numbers (sink counts, bounds, timestamps): print them whole, they are the evidence the tail above can cut off
 echo "  ---- the live module-3 proof: the test's own log lines ----"; grep -E " m3_(live|hostile)(_helpers)?_test.go:[0-9]+: " "$WORK/h-run.log" | sed 's/^/  | /' | head -160
+# the live module-1 proof (close-out D2) logs what its job looked like (the module's own report, the oracle's decisions, the distribution, how many pages were settled): print it whole
+echo "  ---- the live module-1 proof: the test's own log lines ----"; grep -E " m1_bulk_settle_test.go:[0-9]+: " "$WORK/h-run.log" | sed 's/^/  | /' | head -80
 # a failure must name itself: the tail above is only the end of the run, so print every failing test with its context
 [ "$trc" = 0 ] || { echo "  ---- failing tests (with context) ----"; grep -n -B1 -A12 -e '--- FAIL' "$WORK/h-run.log" | sed 's/^/  | /' | head -200; }
 # a compiled test binary prints no `ok <pkg>` line (go test does); the floor gate reads one, so write it from the binary's own exit status
 if [ "$trc" = 0 ]; then t="ok  \t$GO_PKG\t0.000s"; else t="FAIL\t$GO_PKG\t0.000s"; fi
 printf "$t\n" >> "$WORK/h-run.log"; printf "ok  \t$GO_PKG\t0.000s\n" >> "$WORK/h-list.log"
 [ "$trc" = 0 ] || die "the integration tests failed (exit $trc)"
+# the live module-1 test must be among the tests that PASSED in the log the run itself produced (a binary built without it, or a -run that skipped it, would leave the rest green)
+grep -q '^--- PASS: TestM1Live_BulkJobSettlesItemByItem ' "$WORK/h-run.log" || die "TestM1Live_BulkJobSettlesItemByItem (a real module-1 bulk job settled item by item, compared with the module's own report) has no '--- PASS' line in the run log: it did not run, or did not pass"
 bash "$PLATFORM_DIR/scripts/check-test-floors.sh" --floors "$PLATFORM_DIR/tests/floors-harness.txt" --go-run-log "$WORK/h-run.log" --go-list-log "$WORK/h-list.log" || die "the harness test-count floor"
 
 # ── 7. probe ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -424,7 +428,13 @@ cat <<'EOF'
     no login is ever performed), the pooler (Supavisor), PostgREST and the exposed-schema setting (an owner action: Docs/install.md step 5), a hosted project's role grants and extensions.
   - the scratch databases of the integration tests (cloned from nothing: a fresh database, the auth.users FIXTURE, the platform migrated by the superuser) differ from the live database in exactly
     those two ways; what runs as the non-superuser `postgres` on the real auth schema is the live database and the `supabase` workflow.
-  - module BEHAVIOUR on the platform's tables beyond the statements the modules issue against public.users / public.job_items (db/module-statements.txt, executed as each module's role in a rolled-back transaction): no job was run end to end (Phase 3).
+  - module BEHAVIOUR on the platform's tables beyond the statements the modules issue against public.users / public.job_items (db/module-statements.txt, executed as each module's role in a rolled-back transaction): no job was run end to end by the platform's job engine (Phase 3/4). The one exception is module 1's bulk job below, which the test itself
+    submits, drains and settles.
+  - module 1's bulk results settled item by item (close-out D2, TestM1Live_BulkJobSettlesItemByItem): ONE job of 12 rows (three malformed, one address in three spellings, six addresses at domains of ours) read in pages of 5, on a module 1 whose SMTP
+    stage is not wired and whose DNS has no route out. What that proves is the platform's mapping, its keying by the module's own item_id, its idempotence and its per-page settlement against the module's OWN report, with a hand-written oracle. It
+    does NOT prove module 1's verdicts: no row reaches an SMTP answer (valid, mailbox_full, catch_all, greylisted, a 550), the vendor unit (m1_vendor) and a cached answer (m1_cache) never occur, and the failure origin of an unknown is whatever this
+    runner's failed lookups give (the oracle follows it, so a different origin changes the numbers and not the verdict). Not exercised either: a job of more than one page of 1000 results, a job that runs for hours, a module 1 restarted in the middle
+    of a drain, two jobs of one customer at once, and the platform's job engine (the test calls Settle itself, page by page, as the engine will).
   - module behaviour beyond health, readiness and describe (Phase 3); module 1 has NO describe at all (Docs/phase-0-spec.md F1) and runs here as the least-privilege login verify_app (since Phase 1, A2).
   - reachability from another host, a firewall or a cloud security group; TLS termination; the mTLS worker links of modules 1 and 2 (module 3's is exercised by its worker).
   - the loops are exercised by TWO platform instances on one database, and by killing the leader (SIGKILL: the server sees the closed socket at once and frees the session lock), but NOT under a network partition: a leader that is cut off from the

@@ -95,6 +95,8 @@ var chainRelations = map[string][]string{
 	"0006": {"m3_sync"},
 	// platform_0007 adds no relation: two trigger functions and their two triggers (the snapshot price check on job_unit_prices, the terminal-state rule on jobs)
 	"0007": {},
+	// platform_0008 adds no relation: two columns of platform.m3_sync (observed_version, m3_version) and a replacement of its convergence CHECK
+	"0008": {},
 }
 
 // relationsThrough is the sorted union of what the listed versions add.
@@ -135,6 +137,10 @@ func downStepBefore(t *testing.T, c *pgx.Conn, v string) {
 	t.Helper()
 	when := "before down " + v
 	switch v {
+	case "0008":
+		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007", "0008"), when)
+		observedVersionObjects(t, c, true, when)
+		snapshotTerminalObjects(t, c, true, when) // the migration below is whole (entitlementFlowObjects is not asked here: platform_0008 replaced the one CHECK of 0006 it pins)
 	case "0007":
 		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007"), when)
 		snapshotTerminalObjects(t, c, true, when)
@@ -176,6 +182,13 @@ func downStepAfter(t *testing.T, c *pgx.Conn, v string) {
 	t.Helper()
 	when := "after down " + v
 	switch v {
+	case "0008":
+		// the two columns and the new CHECK are gone, the platform_0006 CHECK is back (the entitlement flow is whole again, which entitlementFlowObjects proves), the same stale-looking observation is accepted again; 0007 and below are untouched
+		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007"), when)
+		observedVersionObjects(t, c, false, when)
+		snapshotTerminalObjects(t, c, true, when)
+		entitlementFlowObjects(t, c, true, when)
+		moneyCoreObjects(t, c, true, when)
 	case "0007":
 		// the two functions and the two triggers are gone (jobs_guard, which 0007 never replaced, is still the guard of 0002), the forged price is accepted again and a succeeded job moves back; everything of
 		// 0006 and below is still there
@@ -424,6 +437,58 @@ func entitlementFlowObjects(t *testing.T, c *pgx.Conn, present bool, when string
 	lifecycleEntitlementFlow(t, c, present, when)
 }
 
+// observedVersionObjects is the CONTROL (present) and the ASSERTION (absent) of platform_0008's down: before it the two columns of platform.m3_sync, the replacement CHECK
+// m3_sync_converged_only_when_observed_at_version and platform_app's column grants on the two columns are there, and the platform_0006 CHECK is not; after it the columns, the replacement and the grants are gone
+// and the platform_0006 CHECK is back. The behavioural half (lifecycleObservedVersion) runs the same statement either way: a convergence claimed for an observation that was not made at this version.
+func observedVersionObjects(t *testing.T, c *pgx.Conn, present bool, when string) {
+	t.Helper()
+	expect := lifecycleCounter(t, c, present, when)
+	expect("the column platform.m3_sync.observed_version", 1,
+		"SELECT count(*) FROM pg_attribute WHERE attrelid = 'platform.m3_sync'::regclass AND attname::text = 'observed_version' AND NOT attisdropped")
+	expect("the column platform.m3_sync.m3_version", 1,
+		"SELECT count(*) FROM pg_attribute WHERE attrelid = 'platform.m3_sync'::regclass AND attname::text = 'm3_version' AND NOT attisdropped")
+	expect("the CHECK m3_sync_converged_only_when_observed_at_version", 1,
+		"SELECT count(*) FROM pg_constraint WHERE conrelid = 'platform.m3_sync'::regclass AND contype = 'c' AND conname::text = 'm3_sync_converged_only_when_observed_at_version'")
+	// the platform_0006 CHECK is the opposite: it is there exactly when platform_0008 is not
+	wantOlder := int64(1)
+	if present {
+		wantOlder = 0
+	}
+	if got := ledgerInt64(t, c, "SELECT count(*) FROM pg_constraint WHERE conrelid = 'platform.m3_sync'::regclass AND contype = 'c' AND conname::text = 'm3_sync_converged_only_when_observed'"); got != wantOlder {
+		t.Fatalf("%s: the platform_0006 CHECK m3_sync_converged_only_when_observed: found %d, want %d (platform_0008 replaces it and its down puts it back)", when, got, wantOlder)
+	}
+	if present {
+		if !ledgerBool(t, c, "SELECT has_column_privilege('platform_app', 'platform.m3_sync', 'observed_version', 'UPDATE') AND has_column_privilege('platform_app', 'platform.m3_sync', 'm3_version', 'UPDATE') AND NOT has_column_privilege('platform_app', 'platform.m3_sync', 'want_version', 'UPDATE')") {
+			t.Fatalf("%s: platform_app must hold UPDATE on m3_sync.observed_version and m3_sync.m3_version and not on m3_sync.want_version", when)
+		}
+	}
+	lifecycleObservedVersion(t, c, present, when)
+}
+
+// lifecycleObservedVersion is the behavioural half of observedVersionObjects, in a transaction that is ALWAYS rolled back. With platform_0008 a delivery row whose observation carries no version cannot be
+// converged (23514, m3_sync_converged_only_when_observed_at_version) and the same row with the observation made at this version can; without it the platform_0006 rule accepts the first statement (the right state
+// was observed) and the column does not exist (42703).
+func lifecycleObservedVersion(t *testing.T, c *pgx.Conn, enforced bool, when string) {
+	t.Helper()
+	tx, err := c.Begin(testCtx(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	a := ledgerUserA
+	ledgerSeed(t, tx)
+	ledgerOKRow(t, tx, when+": an m3_enable (the entitlement trigger writes the delivery row: want_version 1, wanted active)", ledgerM3Cols("m3_enable", a))
+	const noVersion = "UPDATE platform.m3_sync SET observed = 'active', converged_version = 1 WHERE user_id = $1"
+	const withVersion = "UPDATE platform.m3_sync SET observed = 'active', observed_version = 1, converged_version = 1 WHERE user_id = $1"
+	if enforced {
+		ledgerExpectRefused(t, tx, when+": converged with the right state observed but no version of the observation", "23514", ledgerWhy{Constraint: "m3_sync_converged_only_when_observed_at_version"}, noVersion, a)
+		ledgerExpectOK(t, tx, when+": converged with the right state observed at this version", withVersion, a)
+		return
+	}
+	ledgerExpectOK(t, tx, when+": the platform_0006 rule accepts the right state observed (it knows no version)", noVersion, a)
+	ledgerExpectRefused(t, tx, when+": the column observed_version does not exist", "42703", ledgerWhy{Message: "observed_version"}, withVersion, a)
+}
+
 // lifecycleEntitlementFlow is the behavioural half of entitlementFlowObjects, in a transaction that is ALWAYS rolled back. With platform_0006 an m3_enable row with an end date creates the
 // entitlement and its delivery row, an m3_expire that is not due is refused (m3_expire_is_due) and platform_app is refused a direct INSERT (42501); without it the date column does not exist
 // (42703), an m3_enable creates no entitlement, an m3_expire for a user with none is accepted, and platform_app writes the entitlements itself again.
@@ -498,7 +563,7 @@ func TestRunnerLifecycle(t *testing.T) {
 
 	// The executable expectation of the migration chain. scripts/check-migrations.sh reads this literal and fails when the
 	// newest migration is not named in it, so a migration cannot be added without extending this test.
-	wantChain := []string{"0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007"}
+	wantChain := []string{"0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008"}
 
 	dir := repoMigrationsDir(t)
 	if onDisk := chainOnDisk(t, dir); !sameStrings(onDisk, wantChain) {
