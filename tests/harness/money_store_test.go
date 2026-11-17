@@ -856,7 +856,7 @@ func TestMoneyStore_SettleM1Unknown(t *testing.T) {
 	for _, reason := range reasons {
 		items = append(items, mnyItem("remote-"+reason, unk(reason, "remote"))) // M1-20: charged
 		wantCharged = append(wantCharged, "remote-"+reason)
-		items = append(items, mnyItem("own-"+reason, unk(reason, "own")))                    // M1-21: free
+		items = append(items, mnyItem("own-"+reason, unk(reason, "own")))                   // M1-21: free
 		items = append(items, mnyItem("undetermined-"+reason, unk(reason, "undetermined"))) // M1-22: free
 	}
 	items = append(items, mnyItem("cap-unknown_error", unk("unknown_error", "own"))) // M1-19: the attempt cap, free
@@ -873,9 +873,9 @@ func TestMoneyStore_SettleM1Unknown(t *testing.T) {
 	items = append(items, mnyItem("garbage-origin", unk("dns_error", "banana"))) // an origin module 1 never emits: M1-99, never charged
 	wantRule["garbage-origin"] = "M1-99"
 
-	nCharged := len(wantCharged)                                        // 1 greylisted + 1 control + 5 remote
-	nFree := 2*len(reasons) + 1 + 2                                     // own and undetermined per reason, the cap, greylisted own and undetermined
-	nUnmapped := len(wantRule)                                          // five reasons without an origin, greylisted without one, the garbage origin
+	nCharged := len(wantCharged)    // 1 greylisted + 1 control + 5 remote
+	nFree := 2*len(reasons) + 1 + 2 // own and undetermined per reason, the cap, greylisted own and undetermined
+	nUnmapped := len(wantRule)      // five reasons without an origin, greylisted without one, the garbage origin
 	sr := e.settle(job, items...)
 	mnyRequireSettle(t, "module 1 unknown outcomes", sr, nCharged, int64(nCharged), 0, nFree, 0, nUnmapped)
 	if sr.ByUnit["m1_own"] != nCharged {
