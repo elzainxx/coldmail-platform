@@ -93,7 +93,7 @@ m2w_stage_5c() {
 # ── stage 6 helpers ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 m2w_evidence() {
   echo "  ---- module 2's real worker: the test's own log lines (the sink's per-recipient counts, timings, snapshots) ----"
-  grep -E " m2_worker(_helpers)?_test.go:[0-9]+: " "$1" | sed 's/^/  | /' | head -400
+  grep -E " m2_worker(_helpers)?_test.go:[0-9]+: |^--- (PASS|FAIL|SKIP): TestM2Worker_" "$1" | sed 's/^/  | /' | head -400
 }
 
 m2w_require_pass() {

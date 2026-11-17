@@ -174,7 +174,7 @@ m1n_stage2() {
   done
   [ "$bad" = 0 ] || die "$bad recipe(s) of the node alone answered other than expected (every answer is printed above): the fixture, the gem's conversation or an expectation of this table is wrong"
   m1n_step M1N-2.5 "what the SMTP fixture saw from the node (session log: the source must be the node, and each recipe makes two RCPTs: the target and the nx- probe)"
-  m1n_fx '/api/smtp/sessions' | tr '}' '\n' | grep -oE '"remote":"[^"]*"|"rcpt":"[^"]*"|"rule":"[^"]*"|"action":"[^"]*"' | paste - - - - | sed 's/\t/  /g' | head -40 | m1n_show
+  m1n_fx '/api/smtp/sessions' | tr '}' '\n' | grep -oE '"remote":"[^"]*"|"rcpt":"[^"]*"|"rule":"[^"]*"|"action":"[^"]*"' | paste - - - - | sed 's/\t/  /g' | sed -n '1,40p' | m1n_show
   m1n_fx '/api/smtp/sessions' | grep -q '"remote":"'"$(m1n_ip 3)"'"' || die "the SMTP fixture saw no session from the node ($(m1n_ip 3)): the sessions did not take the path the guard allows"
   echo "  M1N-2 OK in $((SECONDS - t0)) s: the node's audit is green and it answers every recipe as the table says"
 }
