@@ -1,0 +1,17 @@
+{
+ "error": {
+  "code": "validation_failed",
+  "message": "One or more fields are invalid.",
+  "details": [
+   {
+    "field": "smtp_host",
+    "issue": "malformed"
+   },
+   {
+    "field": "smtp_secret",
+    "issue": "malformed"
+   }
+  ],
+  "request_id": "req_0123456789abcdef0123456789abcdef"
+ }
+}

@@ -1,0 +1,11 @@
+# The special cases module 3 forces on its adapter: one `<ID>|<file>|<one-line why>` per MODULE-FORCED tag in this package's non-test sources (TestForcedSpecialCasesAreRegistered keeps
+# the two in step). The shared body's own are in internal/adapters/sendapi/forced.txt (SA-F1 is the 409 on run, SA-F4 the omit-versus-null single report).
+M3-F1|precheck.go|the module computes max_campaign_size for the quote and never returns it, so the campaign size cap is supplied by the platform or left unchecked and reported as not checked
+M3-F2|feasibility.go|the quote never reads the suspension, another active campaign, the queued jobs or the campaign size cap, so a feasible verdict is not taken as a prediction that run will accept
+M3-F3|precheck.go|run answers 409 with one body for four causes (suspended, another campaign active, campaign size cap, queue depth cap) and the quote predicts two wrongly, so the adapter records refused-cause-unknown and never picks one
+M3-F4|bulk.go|a bulk-add rejected row code is a fixed word for a validation, cap or duplicate refusal but the raw internal reason with error text for an infrastructure failure, so it is mapped to a closed set plus an unrecognised bucket and the text is dropped
+M3-F5|accounts.go|the list handlers answer the array under items while describe.schemas names it results, so the list and events shapes are built from the handlers
+M3-F6|accounts.go|create answers 409 for the account cap and for a suspended user with one code and no details, only a duplicate names smtp_username, so the adapter can only say conflict with the cause not stated
+M3-F7|accounts.go|the test button puts an internal reason slug in from_alignment.error when it decided a verdict and could not store it, so the adapter reduces the key to a boolean and carries no text
+M3-F8|hosts.go|the module accepts any IP address and any alphanumeric name as smtp_host and its worker dials it, so the adapter refuses a host that is not a public address unless built with AllowPrivateSMTPHosts
+M3-F9|accounts.go|the 409 of the test button and of a bulk add is one fixed sentence that does not say why and the route has one possible cause, so it is named unavailable and never suspended

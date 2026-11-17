@@ -1,0 +1,27 @@
+{
+ "recipient_count": 150000,
+ "cost": 0,
+ "currency": "credits",
+ "unit_price_credits": 0,
+ "tier": "shared",
+ "feasible": false,
+ "reasons": [
+  {
+   "code": "exceeds_queue_cap",
+   "limit": 100000,
+   "requested": 150000,
+   "cap_name": "queue_depth_cap"
+  }
+ ],
+ "caps": {
+  "queue_depth_cap": 100000,
+  "daily_send_cap": 1000,
+  "account_count_cap": 20
+ },
+ "capacity": {
+  "eligible_accounts": 2,
+  "daily_capacity_remaining": 900,
+  "effective_concurrency": 3
+ },
+ "warnings": []
+}

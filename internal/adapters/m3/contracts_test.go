@@ -1,0 +1,869 @@
+package m3_test
+
+import (
+	"context"
+	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
+	"reflect"
+	"slices"
+	"sort"
+	"strconv"
+	"strings"
+	"testing"
+
+	"github.com/coldmail-platform/platform/internal/adapters/m3"
+	"github.com/coldmail-platform/platform/internal/adapters/sendapi"
+	"github.com/coldmail-platform/platform/internal/adapters/sendapi/sendapitest"
+	"github.com/coldmail-platform/platform/internal/config"
+	"github.com/coldmail-platform/platform/internal/modclient"
+)
+
+func clientAt(t testing.TB, url, token string) *m3.Client {
+	t.Helper()
+	mc := sendapitest.ModClient(t, modclient.M3, url, token, modclient.Options{})
+	a, err := m3.NewAdapter(mc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := a.For(userA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+func call(f func(ctx context.Context, c *m3.Client, t testing.TB) (any, error)) func(t testing.TB, url, token string) (any, error) {
+	return func(t testing.TB, url, token string) (any, error) {
+		return f(sendapitest.Ctx(t), clientAt(t, url, token), t)
+	}
+}
+
+func del(path, key string) sendapitest.Mutation {
+	return sendapitest.Mutation{Path: path, Op: sendapitest.Delete, WantKey: key}
+}
+
+func set(path string, v any, key string) sendapitest.Mutation {
+	return sendapitest.Mutation{Path: path, Op: sendapitest.Set, Value: v, WantKey: key}
+}
+
+func brokenEnvelope() sendapitest.Mutation { return del("error.code", "") }
+
+// newAcct is an account to add: the secret is made at run time and never printed.
+func newAcct(t testing.TB, n int) m3.NewAccount {
+	t.Helper()
+	name := "sender-" + strconv.Itoa(n) + "@example.test"
+	return m3.NewAccount{SMTPHost: "smtp.example.test", SMTPUsername: name, SMTPSecret: config.Secret(sendapitest.Token(t)), FromAddress: name}
+}
+
+func batch(t testing.TB, n int) []m3.NewAccount {
+	t.Helper()
+	out := make([]m3.NewAccount, n)
+	for i := range out {
+		out[i] = newAcct(t, i+1)
+	}
+	return out
+}
+
+func detailFields(err error) []string {
+	var e *modclient.Error
+	if !errors.As(err, &e) {
+		return nil
+	}
+	var out []string
+	for _, d := range e.Details {
+		out = append(out, d.Field+"/"+d.Issue)
+	}
+	return out
+}
+
+func cases() map[string]sendapitest.Case {
+	run := call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) { return c.Run(ctx, jobItem) })
+	other := "9c1e7a3b-5d2f-4a6c-8b0e-1f3d5a7c9e42"
+	return map[string]sendapitest.Case{
+		// ---- the shared four routes and describe, with module 3's profile
+		"POST /v1/quote | ok": {
+			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) { return c.Quote(ctx, 50) }),
+			Check: func(t testing.TB, v any, err error) {
+				if q := v.(sendapi.Quote); q.Cost != 0 || q.UnitPriceCredits != 0 || q.Tier != "shared" || q.Feasible == nil || !*q.Feasible || len(q.InfeasibleReasons) != 0 {
+					t.Fatalf("quote = %+v", q)
+				}
+			},
+			Mutations: []sendapitest.Mutation{
+				del("cost", "cost"), set("recipient_count", 51, "recipient_count"), del("feasible", "feasible"), set("feasible", "yes", "feasible"), del("reasons", "reasons"),
+				set("unit_price_credits", "0", "unit_price_credits"),
+			},
+		},
+		"POST /v1/run | created": {
+			Do: run,
+			Check: func(t testing.TB, v any, err error) {
+				if r := v.(sendapi.RunResult); !r.Created || r.State != "queued" || r.JobID == "" {
+					t.Fatalf("run = %+v", r)
+				}
+			},
+			Mutations: []sendapitest.Mutation{del("job_id", "job_id"), set("state", "teleported", "state"), set("state", "cancelled", "state"), set("state", nil, "state")},
+		},
+		"POST /v1/run | replay": {
+			Do: run,
+			Check: func(t testing.TB, v any, err error) {
+				if r := v.(sendapi.RunResult); r.Created || r.State != "sent" || r.Class != sendapi.ClassTerminal {
+					t.Fatalf("run = %+v", r)
+				}
+			},
+			Mutations: []sendapitest.Mutation{set("state", "paused", "state")},
+		},
+		"POST /v1/run | error validation_failed": {Do: run, Kind: modclient.Refused, Code: "validation_failed", Mutations: []sendapitest.Mutation{brokenEnvelope()}},
+		"POST /v1/run | error unauthenticated":   {Do: run, Kind: modclient.Refused, Code: "unauthenticated", Mutations: []sendapitest.Mutation{brokenEnvelope()}},
+		"POST /v1/run | error not_found": {
+			Do: run, Kind: modclient.NotFound, Code: "not_found", Mutations: []sendapitest.Mutation{brokenEnvelope()},
+			Check: func(t testing.TB, v any, err error) {
+				if f, ok := sendapi.NotFoundField(err); !ok || f != "job_item_id" {
+					t.Fatalf("NotFoundField = %q %v", f, ok)
+				}
+			},
+		},
+		"POST /v1/run | error conflict": {
+			Do: run, Kind: modclient.Refused, Code: "conflict", Mutations: []sendapitest.Mutation{brokenEnvelope()},
+			Check: func(t testing.TB, v any, err error) {
+				if !errors.Is(err, sendapi.ErrConflictUnexplained) || errors.Is(err, sendapi.ErrBackpressure) || !errors.Is(err, modclient.ErrRefused) || !errors.Is(m3.ExplainConflict(err), m3.ErrConflictUnexplained) {
+					t.Fatalf("module 3's 409 on run: %v", err)
+				}
+			},
+		},
+		"POST /v1/run | error paused":         {Do: run, Kind: modclient.Paused, Code: "paused"},
+		"POST /v1/run | error internal_error": {Do: run, Kind: modclient.Internal, Code: "internal_error"},
+
+		"GET /v1/report | job sent": {
+			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) { return c.ReportJob(ctx, jobItem) }),
+			Check: func(t testing.TB, v any, err error) {
+				it := v.(sendapi.Item)
+				if it.State != "sent" || it.JobItemID != jobItem || it.Reason != nil || it.ErrorClass != nil || it.ProviderMessageID == nil || it.CompletedAt == nil || it.CompletedAt.Nanosecond() == 0 ||
+					it.AccountID == nil || it.AccountUsername == nil || it.SMTPResponse != nil {
+					t.Fatalf("item = %+v", it)
+				}
+			},
+			Mutations: []sendapitest.Mutation{
+				del("attempt_count", "attempt_count"), set("state", "teleported", "state"), set("completed_at", "soon", "completed_at"), del("job_id", "job_id"),
+				set("provider_message_id", 7, "provider_message_id"), set("account_username", 7, "account_username"),
+			},
+		},
+		"GET /v1/report | job queued": {
+			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) { return c.ReportJobByID(ctx, jobID) }),
+			Check: func(t testing.TB, v any, err error) {
+				it := v.(sendapi.Item)
+				if it.State != "queued" || it.Class != sendapi.ClassPending || it.ErrorClass == nil || *it.ErrorClass != "transport_4xx" || it.SMTPResponse == nil || it.ProviderMessageID != nil || it.AccountID != nil || it.CompletedAt != nil {
+					t.Fatalf("item = %+v", it)
+				}
+			},
+			Mutations: []sendapitest.Mutation{set("error_class", 7, "error_class"), set("attempt_count", "1", "attempt_count"), set("smtp_response", 5, "smtp_response")},
+		},
+		"GET /v1/report | job error not_found": {
+			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) { return c.ReportJob(ctx, jobItem) }), Kind: modclient.NotFound, Code: "not_found",
+			Mutations: []sendapitest.Mutation{brokenEnvelope()},
+			Check: func(t testing.TB, v any, err error) {
+				if f, ok := sendapi.NotFoundField(err); !ok || f != "job_id" {
+					t.Fatalf("NotFoundField = %q %v", f, ok)
+				}
+			},
+		},
+		"GET /v1/report | campaign page": {
+			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) {
+				return c.ReportCampaignPage(ctx, campaign, "")
+			}),
+			Check: func(t testing.TB, v any, err error) {
+				p := v.(sendapi.CampaignPage)
+				if len(p.Items) != 3 || p.NextCursor == "" || p.Totals.Total != 5 || p.Totals.Cancelled != 0 || len(p.ByAccount) != 1 || p.Items[0].AccountID == nil || p.Items[1].SMTPResponse == nil ||
+					p.Items[1].FailedAt == nil || p.Items[2].AccountID != nil {
+					t.Fatalf("page = %+v", p)
+				}
+			},
+			Mutations: []sendapitest.Mutation{
+				del("totals", "totals"), del("items.results[0].job_item_id", "items.results[0].job_item_id"), set("items.results[1].state", "teleported", "items.results[1].state"),
+				set("items.next_cursor", 5, "items.next_cursor"), del("items.results[1].smtp_response", "items.results[1].smtp_response"), del("items.results[0].account_id", "items.results[0].account_id"),
+				set("items.results[0].attempt_count", "0", "items.results[0].attempt_count"), set("items.results[1].completed_at", "later", "items.results[1].completed_at"),
+				set("campaign_id", other, "campaign_id"), set("items.page_size", 0, "items.page_size"), set("totals.pending", -1, "totals.pending"), del("totals_by_account", "totals_by_account"),
+				set("totals_by_account[0].sent", "1", "totals_by_account[0].sent"), del("items.results[2].failed_at", "items.results[2].failed_at"),
+			},
+		},
+		"GET /v1/report | campaign last page": {
+			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) {
+				return c.ReportCampaignPage(ctx, campaign, "")
+			}),
+			Check: func(t testing.TB, v any, err error) {
+				p := v.(sendapi.CampaignPage)
+				if len(p.Items) != 2 || p.NextCursor != "" || p.Items[0].Class != sendapi.ClassPending || p.Items[1].Class != sendapi.ClassPending {
+					t.Fatalf("page = %+v", p)
+				}
+			},
+			Mutations: []sendapitest.Mutation{del("items.page_size", "items.page_size"), del("progress", "progress")},
+		},
+		"GET /v1/report | campaign empty": {
+			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) {
+				return c.ReportCampaign(ctx, campaign)
+			}),
+			Check: func(t testing.TB, v any, err error) {
+				if r := v.(sendapi.CampaignReport); !r.NothingKnown() || !r.ItemsMatchTotal() || r.Progress.IsComplete || len(r.ByAccount) != 0 {
+					t.Fatalf("report = %+v", r)
+				}
+			},
+			Mutations: []sendapitest.Mutation{set("totals.total", "0", "totals.total")},
+		},
+		"GET /v1/report | campaign error cursor_malformed": {
+			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) {
+				return c.ReportCampaignPage(ctx, campaign, "abc")
+			}), Kind: modclient.Refused, Code: "validation_failed",
+			Mutations: []sendapitest.Mutation{brokenEnvelope()},
+			Check: func(t testing.TB, v any, err error) {
+				if !errors.Is(err, sendapi.ErrBadCursor) {
+					t.Fatalf("a malformed cursor: %v", err)
+				}
+			},
+		},
+		"GET /v1/report | campaign error cursor_forged": {
+			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) {
+				return c.ReportCampaignPage(ctx, campaign, "abc")
+			}), Kind: modclient.Internal, Code: "internal_error",
+			Check: func(t testing.TB, v any, err error) {
+				if !errors.Is(err, sendapi.ErrBadCursor) {
+					t.Fatalf("a forged cursor: %v", err)
+				}
+			},
+		},
+		"GET /v1/describe | ok": {
+			Do: func(t testing.TB, url, token string) (any, error) {
+				a, err := m3.NewAdapter(sendapitest.ModClient(t, modclient.M3, url, token, modclient.Options{}))
+				if err != nil {
+					t.Fatal(err)
+				}
+				d, err := a.Describe(sendapitest.Ctx(t))
+				if err != nil {
+					return nil, err
+				}
+				return d, nil
+			},
+			Check: func(t testing.TB, v any, err error) {
+				if d := v.(*modclient.Describe); d.Module != "send_byo" || len(d.ErrorCodes) != 9 || d.Pricing.UnitPriceCredits != 0 || !d.Pricing.CostFieldsInert || d.Pricing.Model != "flat_subscription" {
+					t.Fatalf("describe = %+v", d)
+				}
+			},
+			Mutations: []sendapitest.Mutation{del("module", "module"), set("module", "send_managed", "module"), set("api_version", "v2", "api_version"), del("vocabularies", "vocabularies"), del("error_codes", "error_codes")},
+		},
+
+		// ---- the feasibility quote
+		"POST /v1/quote | feasible": {
+			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) { return c.Feasibility(ctx, 5000) }),
+			Check: func(t testing.TB, v any, err error) {
+				f := v.(m3.Feasibility)
+				if !f.Feasible || len(f.Reasons) != 0 || f.Caps != (m3.Caps{QueueDepthCap: 100000, DailySendCap: 1000, AccountCountCap: 20}) || f.Capacity.EligibleAccounts != 2 ||
+					f.Capacity.EstimatedDurationSec == nil || *f.Capacity.EstimatedDurationSec != 8335 || f.Capacity.EstimateBasis != "current_eligible_capacity" ||
+					len(f.Warnings) != 1 || f.Warnings[0].Code != "long_duration" || f.Warnings[0].ThresholdSec != 3600 || f.QueueDepthLimit() != m3.KnownLimit(100000) {
+					t.Fatalf("feasibility = %+v", f)
+				}
+			},
+			Mutations: []sendapitest.Mutation{
+				del("caps", "caps"), del("caps.queue_depth_cap", "caps.queue_depth_cap"), set("caps.daily_send_cap", "1000", "caps.daily_send_cap"), set("caps.queue_depth_cap", -1, "caps.queue_depth_cap"),
+				del("capacity", "capacity"), set("capacity.estimated_duration_sec", "x", "capacity.estimated_duration_sec"), del("capacity.estimate_basis", "capacity.estimate_basis"),
+				set("capacity.eligible_accounts", -2, "capacity.eligible_accounts"), del("warnings", "warnings"), set("warnings[0].threshold_sec", "x", "warnings[0].threshold_sec"),
+				set("feasible", false, "feasible"), set("recipient_count", 5001, "recipient_count"),
+			},
+		},
+		"POST /v1/quote | infeasible": {
+			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) { return c.Feasibility(ctx, 150000) }),
+			Check: func(t testing.TB, v any, err error) {
+				f := v.(m3.Feasibility)
+				if f.Feasible || len(f.Reasons) != 1 || f.Reasons[0].Code != m3.InfeasibleExceedsQueueCap || f.Reasons[0].Limit == nil || *f.Reasons[0].Limit != 100000 || f.Reasons[0].Requested == nil ||
+					*f.Reasons[0].Requested != 150000 || f.Reasons[0].CapName != "queue_depth_cap" || f.Capacity.EstimatedDurationSec != nil || f.Capacity.EstimateBasis != "" || len(f.Warnings) != 0 {
+					t.Fatalf("feasibility = %+v", f)
+				}
+			},
+			Mutations: []sendapitest.Mutation{
+				set("feasible", true, "feasible"), del("reasons[0].code", "reasons[0].code"), set("reasons[0].limit", "x", "reasons[0].limit"), set("reasons[0].limit", -1, "reasons[0].limit"),
+				set("reasons[0].requested", 1.5, "reasons[0].requested"),
+			},
+		},
+
+		// ---- the account routes
+		"GET /v1/send-byo/accounts | page": {
+			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) { return c.ListAccounts(ctx, "") }),
+			Check: func(t testing.TB, v any, err error) {
+				p := v.(m3.AccountPage)
+				if len(p.Items) != 2 || p.NextCursor == "" || p.Items[0].ID != acct1 || p.Items[0].Verification.State != m3.VerificationVerified || p.Items[0].FromAlignment.State != m3.AlignmentAligned ||
+					p.Items[0].FromName == nil || p.Items[1].FromName != nil || !p.Items[1].Paused || p.Items[1].PauseReason != "daily_limit" || p.Items[0].PauseReason != "" || p.Items[1].SMTPPort != 465 || p.Items[0].CreatedAt.IsZero() {
+					t.Fatalf("page = %+v", p)
+				}
+			},
+			Mutations: []sendapitest.Mutation{
+				del("items", "items"), del("items[0].id", "items[0].id"), set("items[1].user_id", other, "items[1].user_id"), set("items[0].created_at", "yesterday", "items[0].created_at"),
+				set("next_cursor", 5, "next_cursor"), del("items[0].status", "items[0].status"), set("items[0].status.paused", "no", "items[0].status.paused"),
+				del("items[0].verification.state", "items[0].verification.state"), set("items[0].smtp_port", "587", "items[0].smtp_port"), set("items[0].id", "not-a-uuid", "items[0].id"),
+				set("items[0].verification.verified_at", "x", "items[0].verification.verified_at"), set("items[0].from_alignment.message", 3, "items[0].from_alignment.message"),
+			},
+		},
+		"GET /v1/send-byo/accounts | last page": {
+			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) { return c.ListAccounts(ctx, "") }),
+			Check: func(t testing.TB, v any, err error) {
+				p := v.(m3.AccountPage)
+				if len(p.Items) != 1 || p.NextCursor != "" || !p.Items[0].Quarantined || p.Items[0].QuarantineReason != "auth_failure" || p.Items[0].QuarantinedAt == nil ||
+					p.Items[0].FromAlignment.State != m3.AlignmentBlocked || p.Items[0].Verification.Code != m3.VerifyAuthFailed || p.Items[0].Verification.State != m3.VerificationFailed {
+					t.Fatalf("page = %+v", p)
+				}
+			},
+			Mutations: []sendapitest.Mutation{
+				del("items[0].status.quarantined", "items[0].status.quarantined"), set("items[0].from_alignment.checked_at", "x", "items[0].from_alignment.checked_at"),
+				set("items[0].status.quarantined_at", "x", "items[0].status.quarantined_at"),
+			},
+		},
+		"GET /v1/send-byo/accounts | empty": {
+			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) { return c.ListAccounts(ctx, "") }),
+			Check: func(t testing.TB, v any, err error) {
+				if p := v.(m3.AccountPage); len(p.Items) != 0 || p.Items == nil || p.NextCursor != "" {
+					t.Fatalf("page = %+v", p)
+				}
+			},
+			Mutations: []sendapitest.Mutation{set("next_cursor", "abc", "next_cursor")},
+		},
+		"GET /v1/send-byo/accounts | error validation_failed": {
+			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) { return c.ListAccounts(ctx, "") }), Kind: modclient.Refused, Code: "validation_failed", Mutations: []sendapitest.Mutation{brokenEnvelope()},
+		},
+		"GET /v1/send-byo/accounts | error cursor_malformed": {
+			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) { return c.ListAccounts(ctx, "abc") }), Kind: modclient.Refused, Code: "validation_failed", Mutations: []sendapitest.Mutation{brokenEnvelope()},
+			Check: func(t testing.TB, v any, err error) {
+				if d := detailFields(err); !slices.Equal(d, []string{"cursor/malformed"}) {
+					t.Fatalf("details = %v", d)
+				}
+			},
+		},
+		"GET /v1/send-byo/accounts/{id} | ok": {
+			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) { return c.GetAccount(ctx, acct1) }),
+			Check: func(t testing.TB, v any, err error) {
+				a := v.(m3.Account)
+				if a.ID != acct1 || a.UserID != userA || !a.HasCredential || a.SMTPHost != "smtp.example.test" || a.Verification.SMTPResponse == nil || a.FromAlignment.Message == nil || a.DailyLimit != 500 || a.UpdatedAt.Before(a.CreatedAt) {
+					t.Fatalf("account = %+v", a)
+				}
+			},
+			Mutations: []sendapitest.Mutation{
+				del("id", "id"), set("user_id", other, "user_id"), set("id", acct2, "id"), del("status", "status"), set("from_name", 5, "from_name"), set("created_at", "x", "created_at"), set("daily_limit", "5", "daily_limit"),
+				set("from_alignment.last_attempt_at", 5, "from_alignment.last_attempt_at"),
+			},
+		},
+		"GET /v1/send-byo/accounts/{id} | error not_found": {
+			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) { return c.GetAccount(ctx, acct1) }), Kind: modclient.NotFound, Code: "not_found", Mutations: []sendapitest.Mutation{brokenEnvelope()},
+		},
+		"POST /v1/send-byo/accounts | created": {
+			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) {
+				return c.CreateAccount(ctx, newAcct(t, 1))
+			}),
+			Check: func(t testing.TB, v any, err error) {
+				a := v.(m3.Account)
+				if a.ID != acct1 || a.UserID != userA || a.Verification.State != m3.VerificationVerified || a.Verification.Code != m3.VerifyNone || a.FromAlignment.State != m3.AlignmentAligned {
+					t.Fatalf("account = %+v", a)
+				}
+			},
+			Mutations: []sendapitest.Mutation{
+				del("id", "id"), set("user_id", other, "user_id"), del("verification", "verification"), set("verification.state", 5, "verification.state"), set("has_credential", "true", "has_credential"),
+				set("created_at", "x", "created_at"),
+			},
+		},
+		"POST /v1/send-byo/accounts | created failed": {
+			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) {
+				return c.CreateAccount(ctx, newAcct(t, 2))
+			}),
+			Check: func(t testing.TB, v any, err error) {
+				a := v.(m3.Account)
+				if a.ID != acct2 || a.FromName != nil || a.Verification.State != m3.VerificationFailed || a.Verification.Code != m3.VerifyAuthFailed || a.FromAlignment.State != m3.AlignmentWarned ||
+					a.FromAlignment.AcknowledgedAt == nil || a.Verification.VerifiedAt != nil || a.Verification.VerifyAt == nil || a.SMTPPort != 465 {
+					t.Fatalf("account = %+v", a)
+				}
+			},
+			Mutations: []sendapitest.Mutation{
+				set("verification.verify_at", "x", "verification.verify_at"), set("from_alignment.acknowledged_at", "x", "from_alignment.acknowledged_at"), set("verification.code", 7, "verification.code"),
+			},
+		},
+		"POST /v1/send-byo/accounts | error validation_failed": {
+			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) {
+				return c.CreateAccount(ctx, newAcct(t, 3))
+			}), Kind: modclient.Refused, Code: "validation_failed",
+			Mutations: []sendapitest.Mutation{brokenEnvelope()},
+			Check: func(t testing.TB, v any, err error) {
+				if d := detailFields(err); !slices.Equal(d, []string{"smtp_host/malformed", "smtp_secret/malformed"}) {
+					t.Fatalf("details = %v", d)
+				}
+			},
+		},
+		"POST /v1/send-byo/accounts | error duplicate": {
+			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) {
+				return c.CreateAccount(ctx, newAcct(t, 4))
+			}), Kind: modclient.Refused, Code: "conflict",
+			Mutations: []sendapitest.Mutation{brokenEnvelope()},
+			Check: func(t testing.TB, v any, err error) {
+				if !errors.Is(err, m3.ErrAccountDuplicate) || errors.Is(err, sendapi.ErrConflictUnexplained) || errors.Is(err, m3.ErrActionUnavailable) {
+					t.Fatalf("a duplicate: %v", err)
+				}
+			},
+		},
+		"POST /v1/send-byo/accounts | error conflict": {
+			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) {
+				return c.CreateAccount(ctx, newAcct(t, 5))
+			}), Kind: modclient.Refused, Code: "conflict",
+			Mutations: []sendapitest.Mutation{brokenEnvelope()},
+			Check: func(t testing.TB, v any, err error) {
+				if errors.Is(err, m3.ErrAccountDuplicate) || !errors.Is(err, sendapi.ErrConflictUnexplained) {
+					t.Fatalf("an unexplained conflict: %v", err)
+				}
+			},
+		},
+		"POST /v1/send-byo/accounts | error unprocessable": {
+			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) {
+				return c.CreateAccount(ctx, newAcct(t, 6))
+			}), Kind: modclient.Refused, Code: "unprocessable",
+			Mutations: []sendapitest.Mutation{brokenEnvelope()},
+			Check: func(t testing.TB, v any, err error) {
+				if d := detailFields(err); !slices.Equal(d, []string{"acknowledge_alignment_warning/required"}) || errors.Is(err, sendapi.ErrConflictUnexplained) {
+					t.Fatalf("an unacknowledged warning: %v %v", d, err)
+				}
+			},
+		},
+		"POST /v1/send-byo/accounts/{id}/test | ok": {
+			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) {
+				return c.TestAccount(ctx, acct1, false)
+			}),
+			Check: func(t testing.TB, v any, err error) {
+				r := v.(m3.TestResult)
+				if r.Verification.State != m3.VerificationVerified || r.Verification.Code != m3.VerifyNone || r.Verification.SMTPResponse == nil || r.Alignment.State != m3.AlignmentAligned || r.Alignment.NotStored || r.Alignment.Message == nil {
+					t.Fatalf("result = %+v", r)
+				}
+			},
+			Mutations: []sendapitest.Mutation{
+				del("verification", "verification"), del("verification.state", "verification.state"), set("from_alignment.state", 5, "from_alignment.state"), del("from_alignment", "from_alignment"),
+				set("verification.smtp_response", 5, "verification.smtp_response"),
+			},
+		},
+		"POST /v1/send-byo/accounts/{id}/test | failed": {
+			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) {
+				return c.TestAccount(ctx, acct1, true)
+			}),
+			Check: func(t testing.TB, v any, err error) {
+				r := v.(m3.TestResult)
+				if r.Verification.State != m3.VerificationFailed || r.Verification.Code != m3.VerifyAuthFailed || r.Alignment.State != m3.AlignmentWarned || !r.Alignment.NotStored {
+					t.Fatalf("result = %+v", r)
+				}
+				if strings.Contains(reflectDump(r), "from_gate_write_error") {
+					t.Fatal("the internal reason slug was carried")
+				}
+			},
+			Mutations: []sendapitest.Mutation{set("from_alignment.error", 5, "from_alignment.error"), set("verification.code", 5, "verification.code")},
+		},
+		"POST /v1/send-byo/accounts/{id}/test | unavailable": {
+			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) {
+				return c.TestAccount(ctx, acct1, false)
+			}),
+			Check: func(t testing.TB, v any, err error) {
+				r := v.(m3.TestResult)
+				if r.Verification.State != m3.VerificationUnavailable || r.Verification.Code != m3.VerifyError || r.Alignment.State != m3.AlignmentIndeterminate || r.Verification.SMTPResponse != nil {
+					t.Fatalf("result = %+v", r)
+				}
+			},
+			Mutations: []sendapitest.Mutation{set("verification.state", 5, "verification.state"), set("from_alignment.code", 5, "from_alignment.code")},
+		},
+		"POST /v1/send-byo/accounts/{id}/test | error rate_limited": {
+			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) {
+				return c.TestAccount(ctx, acct1, false)
+			}), Kind: modclient.RateLimited, Code: "rate_limited",
+			Mutations: []sendapitest.Mutation{brokenEnvelope()},
+		},
+		"POST /v1/send-byo/accounts/{id}/test | error conflict": {
+			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) {
+				return c.TestAccount(ctx, acct1, false)
+			}), Kind: modclient.Refused, Code: "conflict",
+			Mutations: []sendapitest.Mutation{brokenEnvelope()},
+			Check: func(t testing.TB, v any, err error) {
+				if !errors.Is(err, m3.ErrActionUnavailable) || errors.Is(err, sendapi.ErrConflictUnexplained) {
+					t.Fatalf("the test button's 409: %v", err)
+				}
+			},
+		},
+		"POST /v1/send-byo/accounts/{id}/test | error not_found": {
+			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) {
+				return c.TestAccount(ctx, acct1, false)
+			}), Kind: modclient.NotFound, Code: "not_found",
+			Mutations: []sendapitest.Mutation{brokenEnvelope()},
+		},
+		"POST /v1/send-byo/accounts/bulk | ok": {
+			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) {
+				return c.BulkAddAccounts(ctx, batch(t, 5))
+			}),
+			Check: func(t testing.TB, v any, err error) {
+				r := v.(m3.BulkResult)
+				if len(r.Rows) != 5 || r.RequestID == "" {
+					t.Fatalf("result = %+v", r)
+				}
+				if x := r.Rows[0]; !x.Created || x.AccountID != acct1 || x.Verification != m3.VerificationVerified || x.Alignment != m3.AlignmentAligned || x.SMTPResponse == nil || x.AlignmentMessage == nil {
+					t.Fatalf("row 1 = %+v", x)
+				}
+				if x := r.Rows[1]; !x.Created || x.Verification != m3.VerificationFailed || x.VerifyCode != m3.VerifyAuthFailed || x.Alignment != m3.AlignmentWarned {
+					t.Fatalf("row 2 = %+v", x)
+				}
+				if x := r.Rows[2]; x.Created || x.Reason != m3.RejectDuplicate || len(x.Fields) != 1 || x.Fields[0] != (m3.FieldIssue{Field: "smtp_username", Issue: "conflict"}) {
+					t.Fatalf("row 3 = %+v", x)
+				}
+				if x := r.Rows[3]; x.Created || x.Reason != m3.RejectValidation || len(x.Fields) != 1 {
+					t.Fatalf("row 4 = %+v", x)
+				}
+				if x := r.Rows[4]; x.Created || x.Reason != m3.RejectUnrecognised || len(x.Fields) != 0 || x.AccountID != "" {
+					t.Fatalf("row 5 = %+v", x)
+				}
+			},
+			Mutations: []sendapitest.Mutation{
+				del("results", "results"), del("results[0].status", "results[0].status"), set("results[1].status", "maybe", "results[1].status"), del("results[4]", "results"), set("results[2].row", 9, "results[2].row"),
+				set("results[0].account_id", "x", "results[0].account_id"), set("results[0].verification", 5, "results[0].verification"), del("request_id", "request_id"),
+				set("results[3].details[0].field", 5, "results[3].details[0].field"), del("results[0].row", "results[0].row"), set("results[2].status", "created", "results[2].account_id"),
+			},
+		},
+		"POST /v1/send-byo/accounts/bulk | error batch_too_large": {
+			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) {
+				return c.BulkAddAccounts(ctx, batch(t, 2))
+			}), Kind: modclient.Refused, Code: "unprocessable",
+			Mutations: []sendapitest.Mutation{brokenEnvelope()},
+		},
+		"POST /v1/send-byo/accounts/bulk | error conflict": {
+			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) {
+				return c.BulkAddAccounts(ctx, batch(t, 2))
+			}), Kind: modclient.Refused, Code: "conflict",
+			Mutations: []sendapitest.Mutation{brokenEnvelope()},
+			Check: func(t testing.TB, v any, err error) {
+				if !errors.Is(err, m3.ErrActionUnavailable) {
+					t.Fatalf("the bulk add's 409: %v", err)
+				}
+			},
+		},
+		"POST /v1/send-byo/accounts/bulk | error validation_failed": {
+			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) {
+				return c.BulkAddAccounts(ctx, batch(t, 2))
+			}), Kind: modclient.Refused, Code: "validation_failed",
+			Mutations: []sendapitest.Mutation{brokenEnvelope()},
+		},
+		"GET /v1/send-byo/accounts/{id}/events | page": {
+			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) {
+				return c.AccountEvents(ctx, acct1, "")
+			}),
+			Check: func(t testing.TB, v any, err error) {
+				p := v.(m3.EventPage)
+				if len(p.Items) != 2 || p.NextCursor == "" || p.Items[0].From != nil || p.Items[0].To == nil || p.Items[0].Actor != "user" || p.Items[0].Action != "created" || p.Items[0].AccountID != acct1 ||
+					p.Items[1].Reason == nil || *p.Items[1].Reason != "daily limit reached" || p.Items[1].To == nil || p.Items[1].To.PauseReason != "daily_limit" || !p.Items[1].To.Paused || p.Items[1].RequestID != "" {
+					t.Fatalf("page = %+v", p)
+				}
+			},
+			Mutations: []sendapitest.Mutation{
+				del("items[0].actor", "items[0].actor"), set("items[1].user_id", other, "items[1].user_id"), set("items[0].created_at", "x", "items[0].created_at"), set("items[1].to_flags.paused", "x", "items[1].to_flags.paused"),
+				set("next_cursor", 5, "next_cursor"), del("items[1].from_flags", "items[1].from_flags"), set("items[0].id", "", "items[0].id"),
+			},
+		},
+		"GET /v1/send-byo/accounts/{id}/events | empty": {
+			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) {
+				return c.AccountEvents(ctx, acct1, "")
+			}),
+			Check: func(t testing.TB, v any, err error) {
+				if p := v.(m3.EventPage); len(p.Items) != 0 || p.NextCursor != "" {
+					t.Fatalf("page = %+v", p)
+				}
+			},
+			Mutations: []sendapitest.Mutation{set("next_cursor", "abc", "next_cursor")},
+		},
+	}
+}
+
+// Every response of module 3 that the adapter relies on is served from its recorded file by an httptest server and decoded through the adapter's real code (the client, the walk, the
+// accounts, the describe, the feasibility); each recorded body conforms to the Shape its contract names; and every mutation (a required key removed, a key's type changed, a state outside the
+// vocabulary, an unreadable timestamp, another tenant's account, a contradictory verdict) is refused with the key it names. The unmutated body is the control of the mutations, through the
+// same server and call.
+func TestContractsOfModule3(t *testing.T) {
+	sendapitest.Suite{Dir: fixtures, Contracts: m3.Contracts(), Cases: cases()}.Run(t)
+}
+
+// No rot: the files of testdata/contract and the contracts name each other exactly once, and the contracts are the shared ones plus module 3's own. The controls: a stray file, a missing file
+// and a doubly named file are each caught.
+func TestContractFixturesDoNotRot(t *testing.T) {
+	cs := m3.Contracts()
+	if problems := sendapitest.CheckNoRot(fixtures, cs); len(problems) != 0 {
+		t.Fatalf("the fixtures have rotted: %v", problems)
+	}
+	shared := sendapi.Contracts(m3.Profile())
+	if len(shared) == 0 || len(cs) <= len(shared) {
+		t.Fatalf("%d contracts of which %d shared: the subject is empty", len(cs), len(shared))
+	}
+	entries, err := os.ReadDir(fixtures)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != len(cs) {
+		t.Fatalf("%d files and %d contracts", len(entries), len(cs))
+	}
+	copyDir := func(t *testing.T) string {
+		dir := t.TempDir()
+		for _, e := range entries {
+			b, err := os.ReadFile(filepath.Join(fixtures, e.Name()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, e.Name()), b, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return dir
+	}
+	stray := copyDir(t)
+	if err := os.WriteFile(filepath.Join(stray, "stray.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if p := sendapitest.CheckNoRot(stray, cs); len(p) != 1 || !anyHas(p, "stray.json is named by no contract") {
+		t.Fatalf("a stray file: %v", p)
+	}
+	missing := copyDir(t)
+	if err := os.Remove(filepath.Join(missing, "accounts.bulk.ok.json")); err != nil {
+		t.Fatal(err)
+	}
+	if p := sendapitest.CheckNoRot(missing, cs); len(p) != 1 || !anyHas(p, "names the missing file accounts.bulk.ok.json") {
+		t.Fatalf("a missing file: %v", p)
+	}
+	twice := append([]modclient.RouteContract(nil), cs...)
+	twice[len(twice)-1].Fixture = twice[len(twice)-2].Fixture
+	if p := sendapitest.CheckNoRot(fixtures, twice); !anyHas(p, "is named by 2 contracts") {
+		t.Fatalf("a file named twice: %v", p)
+	}
+}
+
+// The contracts name module 3 and nothing else, carry the shared ones unchanged, and the account routes are the ones the adapter has a method for.
+func TestContractsNameModule3AndItsShapes(t *testing.T) {
+	cs := m3.Contracts()
+	byKey := map[string]modclient.RouteContract{}
+	for _, c := range cs {
+		if c.Module != modclient.M3 {
+			t.Fatalf("%s / %s names module %s", c.Route, c.Case, c.Module)
+		}
+		byKey[sendapitest.Key(c)] = c
+	}
+	for _, c := range sendapi.Contracts(m3.Profile()) {
+		got, ok := byKey[sendapitest.Key(c)]
+		if !ok || !reflect.DeepEqual(got, c) {
+			t.Fatalf("the shared contract %q is not carried unchanged", sendapitest.Key(c))
+		}
+	}
+	routes := map[string]bool{}
+	for _, c := range cs {
+		routes[c.Route] = true
+	}
+	for _, r := range []string{m3.RouteQuote, m3.RouteAccountsList, m3.RouteAccountsGet, m3.RouteAccountsCreate, m3.RouteAccountsTest, m3.RouteAccountsBulk, m3.RouteAccountsEvents, sendapi.RouteRun, sendapi.RouteReport, sendapi.RouteDescribe} {
+		if !routes[r] {
+			t.Fatalf("no contract for %s", r)
+		}
+	}
+	// the error contracts all name the nine codes, the same set the profile does
+	for _, c := range cs {
+		if strings.Contains(c.Case, "error") {
+			if !slices.Equal(c.Vocab["error_codes"], m3.Profile().ErrorCodes) {
+				t.Fatalf("%s / %s: error vocabulary %v", c.Route, c.Case, c.Vocab)
+			}
+			if !reflect.DeepEqual(c.Shape, sendapi.ErrorShape()) {
+				t.Fatalf("%s / %s: not the shared error shape", c.Route, c.Case)
+			}
+		}
+	}
+	// the Vocab of one entry is a copy: editing one edits no other
+	a, b := m3.Contracts(), m3.Contracts()
+	for i := range a {
+		for name, v := range a[i].Vocab {
+			if len(v) > 0 {
+				v[0] = "tampered"
+				if b[i].Vocab[name][0] == "tampered" || m3.Contracts()[i].Vocab[name][0] == "tampered" {
+					t.Fatal("two contracts share a vocabulary slice")
+				}
+			}
+		}
+	}
+}
+
+// ---- the closed sets are the switches ---------------------------------------------------------------------------------------
+
+// switchCases reads the string literals of the case clauses of each of the named functions of vocab.go from the source: the adapter's own switches, as written. The empty string (a switch's
+// "no value" case) is not a member of a set.
+func switchCases(t testing.TB, file string, funcs ...string) map[string][]string {
+	t.Helper()
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, file, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string][]string{}
+	for _, d := range f.Decls {
+		fn, ok := d.(*ast.FuncDecl)
+		if !ok || !slices.Contains(funcs, fn.Name.Name) {
+			continue
+		}
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			if cc, ok := n.(*ast.CaseClause); ok {
+				for _, e := range cc.List {
+					if bl, ok := e.(*ast.BasicLit); ok && bl.Kind == token.STRING {
+						if s, _ := strconv.Unquote(bl.Value); s != "" {
+							out[fn.Name.Name] = append(out[fn.Name.Name], s)
+						}
+					}
+				}
+			}
+			return true
+		})
+	}
+	for k := range out {
+		sort.Strings(out[k])
+	}
+	return out
+}
+
+// setDiff compares what a switch handles with a closed set: a value the switch handles that the set does not list, and a value the set lists that the switch does not handle, each named.
+func setDiff(handled, want []string) []string {
+	var problems []string
+	for _, h := range handled {
+		if !slices.Contains(want, h) {
+			problems = append(problems, "the switch handles "+h+", which the vocabulary does not list")
+		}
+	}
+	for _, w := range want {
+		if !slices.Contains(handled, w) {
+			problems = append(problems, "the vocabulary lists "+w+", which the switch does not handle")
+		}
+	}
+	return problems
+}
+
+// The closed sets of the contracts' Vocab are exactly the switches that map from them (none handled that the set does not list, none listed that is not handled), every set a contract names
+// is covered by a switch (or is one of the shared body's, which its own test holds), and one name is one set across every contract that carries it. The controls run the same comparison on a
+// switch with an extra case and one with a case missing.
+func TestVocabIsTheSwitchesAndTheSwitchesAreTheVocab(t *testing.T) {
+	bySwitch := map[string]string{
+		"verificationState": "credential_verification_state", "testVerificationState": "test_verification_state", "alignmentState": "from_verification_state",
+		"testAlignmentState": "test_alignment_state", "verifyCode": "verify_code", "rejectReason": "bulk_reject_code", "quoteReason": "quote_reason_code", "pauseReason": "pause_reason",
+		"quarantineReason": "quarantine_reason", "bulkStatus": "bulk_add_row_status",
+	}
+	var fns []string
+	for fn := range bySwitch {
+		fns = append(fns, fn)
+	}
+	handled := switchCases(t, "vocab.go", fns...)
+	// the vocabularies the contracts name, one set per name
+	vocab := map[string][]string{}
+	for _, c := range m3.Contracts() {
+		for name, v := range c.Vocab {
+			if prev, ok := vocab[name]; ok && !slices.Equal(prev, v) {
+				t.Fatalf("the vocabulary %s is two different sets: %v and %v", name, prev, v)
+			}
+			vocab[name] = v
+		}
+	}
+	sharedNames := []string{"job_state", "error_class", "error_codes", "item_reason"}
+	covered := map[string]bool{}
+	for fn, name := range bySwitch {
+		covered[name] = true
+		want, ok := vocab[name]
+		if !ok || len(want) == 0 {
+			t.Fatalf("no contract names the vocabulary %s of the switch %s: the subject is empty", name, fn)
+		}
+		got := handled[fn]
+		if len(got) == 0 {
+			t.Fatalf("the instrument matched nothing: no case literal found in %s", fn)
+		}
+		if p := setDiff(got, want); len(p) != 0 {
+			t.Fatalf("%s and the vocabulary %s disagree: %v", fn, name, p)
+		}
+		// controls
+		if p := setDiff(append(slices.Clone(got), "brand_new"), want); len(p) != 1 || !strings.Contains(p[0], "the switch handles brand_new") {
+			t.Fatalf("an extra case was not caught for %s: %v", fn, p)
+		}
+		if p := setDiff(got[1:], want); len(p) != 1 || !strings.Contains(p[0], "the switch does not handle") {
+			t.Fatalf("a missing case was not caught for %s: %v", fn, p)
+		}
+	}
+	for name := range vocab {
+		if !covered[name] && !slices.Contains(sharedNames, name) {
+			t.Fatalf("the vocabulary %s is named by a contract and handled by no switch of this package", name)
+		}
+	}
+	// the shared sets are the profile's own
+	p := m3.Profile()
+	for name, want := range map[string][]string{"job_state": p.JobStates, "error_class": p.ErrorClasses, "error_codes": p.ErrorCodes} {
+		if got, ok := vocab[name]; !ok || !slices.Equal(got, want) {
+			t.Fatalf("%s is %v on the contracts, the profile says %v", name, got, want)
+		}
+	}
+}
+
+// A word outside a closed set is never an error and carries no text: the account is listed with the set's Unrecognised word, and the module's own word is nowhere in the result.
+func TestAWordOutsideAClosedSetIsUnrecognisedNotCarried(t *testing.T) {
+	word := "brand_new_state_zzz"
+	mutate := func(name, id, path string, v any) *m3.Account {
+		body, err := sendapitest.Mutate(sendapitest.Read(t, fixtures, name), path, sendapitest.Set, v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := newStack(t, reply(200, string(body)), modclient.Options{})
+		a, err := s.client(t, userA).GetAccount(ctxT(t), id)
+		if err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+		return &a
+	}
+	for _, tc := range []struct {
+		path string
+		got  func(*m3.Account) string
+		want string
+	}{
+		{"verification.state", func(a *m3.Account) string { return string(a.Verification.State) }, string(m3.VerificationUnrecognised)},
+		{"from_alignment.state", func(a *m3.Account) string { return string(a.FromAlignment.State) }, string(m3.AlignmentUnrecognised)},
+		{"verification.code", func(a *m3.Account) string { return string(a.Verification.Code) }, string(m3.VerifyUnrecognised)},
+		{"status.pause_reason", func(a *m3.Account) string { return a.PauseReason }, "unrecognised"},
+	} {
+		fixture, id := "accounts.get.ok.json", acct1
+		if tc.path == "verification.code" {
+			fixture, id = "accounts.create.created_failed.json", acct2
+		}
+		a := mutate(fixture, id, tc.path, word)
+		if got := tc.got(a); got != tc.want {
+			t.Fatalf("%s: %q, want %q", tc.path, got, tc.want)
+		}
+		if strings.Contains(reflectDump(a), word) {
+			t.Fatalf("%s: the module's own word reached the value", tc.path)
+		}
+	}
+	// control: a word inside the set is carried as itself
+	if a := mutate("accounts.get.ok.json", acct1, "verification.state", "failed"); a.Verification.State != m3.VerificationFailed {
+		t.Fatalf("a known word: %q", a.Verification.State)
+	}
+}
+
+func reflectDump(v any) string {
+	var b strings.Builder
+	var walk func(rv reflect.Value)
+	walk = func(rv reflect.Value) {
+		switch rv.Kind() {
+		case reflect.String:
+			b.WriteString(rv.String() + "|")
+		case reflect.Pointer, reflect.Interface:
+			if !rv.IsNil() {
+				walk(rv.Elem())
+			}
+		case reflect.Struct:
+			for i := 0; i < rv.NumField(); i++ {
+				if rv.Type().Field(i).IsExported() {
+					walk(rv.Field(i))
+				}
+			}
+		case reflect.Slice:
+			for i := 0; i < rv.Len(); i++ {
+				walk(rv.Index(i))
+			}
+		}
+	}
+	walk(reflect.ValueOf(v))
+	return b.String()
+}

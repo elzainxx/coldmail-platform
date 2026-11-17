@@ -6,6 +6,7 @@ go|github.com/coldmail-platform/platform/cmd/platform-migrate|8
 go|github.com/coldmail-platform/platform/cmd/platform-probe|5
 go|github.com/coldmail-platform/platform/internal/adapters/m1|63
 go|github.com/coldmail-platform/platform/internal/adapters/m2|16
+go|github.com/coldmail-platform/platform/internal/adapters/m3|34
 go|github.com/coldmail-platform/platform/internal/adapters/sendapi|46
 go|github.com/coldmail-platform/platform/internal/app|17
 go|github.com/coldmail-platform/platform/internal/charge|29

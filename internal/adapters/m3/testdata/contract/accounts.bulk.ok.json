@@ -1,0 +1,50 @@
+{
+ "request_id": "req_0123456789abcdef0123456789abcdef",
+ "results": [
+  {
+   "row": 1,
+   "status": "created",
+   "account_id": "7e8f9a0b-1c2d-4e3f-8a4b-5c6d7e8f9a0b",
+   "verification": "verified",
+   "smtp_response": "235 2.7.0 Authentication successful",
+   "from_alignment_state": "aligned",
+   "from_alignment_message": "The From address matches the sending server."
+  },
+  {
+   "row": 2,
+   "status": "created",
+   "account_id": "7e8f9a0b-1c2d-4e3f-8a4b-5c6d7e8f9a0c",
+   "verification": "failed",
+   "code": "verify_auth_failed",
+   "smtp_response": "535 5.7.8 Username and Password not accepted",
+   "from_alignment_state": "unaligned_warned"
+  },
+  {
+   "row": 3,
+   "status": "rejected",
+   "code": "duplicate_account_for_user",
+   "details": [
+    {
+     "field": "smtp_username",
+     "issue": "conflict"
+    }
+   ]
+  },
+  {
+   "row": 4,
+   "status": "rejected",
+   "code": "validation_failed",
+   "details": [
+    {
+     "field": "smtp_host",
+     "issue": "malformed"
+    }
+   ]
+  },
+  {
+   "row": 5,
+   "status": "rejected",
+   "code": "account_write_error: dial tcp 203.0.113.9:5432: connect: connection refused"
+  }
+ ]
+}

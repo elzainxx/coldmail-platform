@@ -1,0 +1,70 @@
+{
+ "campaign_id": "5a1c9e30-7d2b-4f6a-9b8e-1c3d5e7f9a02",
+ "dispatch_paused": false,
+ "totals": {
+  "total": 5,
+  "sent": 1,
+  "bounced": 1,
+  "failed": 1,
+  "in_flight": 0,
+  "pending": 2,
+  "waiting_for_capacity": 0
+ },
+ "progress": {
+  "terminal": 3,
+  "fraction_complete": 0.6,
+  "is_complete": false
+ },
+ "items": {
+  "results": [
+   {
+    "job_item_id": "a1b2c3d4-0000-4000-8000-000000000001",
+    "state": "sent",
+    "provider_message_id": "<job-1@mail.example.test>",
+    "completed_at": "2026-11-17T12:00:01Z",
+    "attempt_count": 1,
+    "account_id": "7e8f9a0b-1c2d-4e3f-8a4b-5c6d7e8f9a0b",
+    "account_username": "sender-1@example.test",
+    "smtp_response": null,
+    "error_class": null,
+    "failed_at": null
+   },
+   {
+    "job_item_id": "a1b2c3d4-0000-4000-8000-000000000002",
+    "state": "bounced",
+    "provider_message_id": null,
+    "completed_at": null,
+    "attempt_count": 1,
+    "account_id": "7e8f9a0b-1c2d-4e3f-8a4b-5c6d7e8f9a0b",
+    "account_username": "sender-1@example.test",
+    "smtp_response": "550 5.1.1 no such user",
+    "error_class": "bounce_permanent",
+    "failed_at": "2026-11-17T12:00:02Z"
+   },
+   {
+    "job_item_id": "a1b2c3d4-0000-4000-8000-000000000003",
+    "state": "failed",
+    "provider_message_id": null,
+    "completed_at": null,
+    "attempt_count": 1,
+    "account_id": null,
+    "account_username": null,
+    "smtp_response": null,
+    "error_class": null,
+    "failed_at": "2026-11-17T12:00:03Z"
+   }
+  ],
+  "next_cursor": "MjAyNi0xMS0xN1QxMDowMDowMy4wMDAwMDBafGExYjJjM2Q0LTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMw",
+  "page_size": 3
+ },
+ "totals_by_account": [
+  {
+   "account_id": "7e8f9a0b-1c2d-4e3f-8a4b-5c6d7e8f9a0b",
+   "account_username": "sender-1@example.test",
+   "sent": 1,
+   "bounced": 1,
+   "failed": 1,
+   "in_flight": 0
+  }
+ ]
+}

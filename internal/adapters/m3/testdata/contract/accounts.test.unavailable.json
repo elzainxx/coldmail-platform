@@ -1,0 +1,10 @@
+{
+ "verification": {
+  "state": "unavailable",
+  "code": "verify_error"
+ },
+ "from_alignment": {
+  "state": "indeterminate",
+  "code": "from_dns_unavailable"
+ }
+}

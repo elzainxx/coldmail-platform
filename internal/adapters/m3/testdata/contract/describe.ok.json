@@ -1,0 +1,69 @@
+{
+ "module": "send_byo",
+ "api_version": "v1",
+ "capabilities": {
+  "single_send": true,
+  "sequences": false,
+  "reply_to_per_campaign": true,
+  "open_tracking": false,
+  "click_tracking": false,
+  "content_variation": true
+ },
+ "pricing": {
+  "currency": "credits",
+  "model": "flat_subscription",
+  "models": ["flat_per_recipient", "flat_subscription", "free"],
+  "unit_price_credits": 0,
+  "tiers": [
+   {"id": "shared", "unit_price_credits": 0, "description": "Base SMTP sending."},
+   {"id": "dedicated", "unit_price_credits": 0, "description": "User-owned SMTP account."}
+  ],
+  "cost_fields_inert": true
+ },
+ "extension_routes": [
+  {"id": "accounts.create", "method": "POST", "path": "/v1/send-byo/accounts", "auth": "platform_service_token", "scope": "user", "description": "Create an account for the caller's tenant. Verify-on-add is mandatory."},
+  {"id": "accounts.bulk_add", "method": "POST", "path": "/v1/send-byo/accounts/bulk", "auth": "platform_service_token", "scope": "user", "description": "Create N accounts in one request, paced verification."},
+  {"id": "accounts.list", "method": "GET", "path": "/v1/send-byo/accounts", "auth": "platform_service_token", "scope": "user", "description": "List the calling user's own sender accounts."},
+  {"id": "accounts.get", "method": "GET", "path": "/v1/send-byo/accounts/{id}", "auth": "platform_service_token", "scope": "user", "description": "Read one account, scoped to the caller's own tenant."},
+  {"id": "accounts.update", "method": "PATCH", "path": "/v1/send-byo/accounts/{id}", "auth": "platform_service_token", "scope": "user", "description": "Update an account; omitted fields are unchanged."},
+  {"id": "accounts.delete", "method": "DELETE", "path": "/v1/send-byo/accounts/{id}", "auth": "platform_service_token", "scope": "user", "description": "Soft-delete an account."},
+  {"id": "accounts.events", "method": "GET", "path": "/v1/send-byo/accounts/{id}/events", "auth": "platform_service_token", "scope": "user", "description": "The account's own audit trail, scoped to the caller's tenant."},
+  {"id": "accounts.test", "method": "POST", "path": "/v1/send-byo/accounts/{id}/test", "auth": "platform_service_token", "scope": "user", "description": "Connect + STARTTLS + AUTH only; re-runs the From-alignment check."}
+ ],
+ "schemas": {
+  "report": {"type": "object"},
+  "accounts_list_response": {"type": "object", "properties": {"results": {"type": "array"}}}
+ },
+ "vocabularies": {
+  "credential_verification_state": {"source": "db_enum", "values": ["unverified", "verified", "failed"], "fields": ["account_object.verification.state"]},
+  "dmarc_policy": {"source": "db_enum", "values": ["none", "quarantine", "reject"], "fields": ["account_object.from_alignment.dmarc_policy"]},
+  "error_class": {"source": "db_enum", "values": ["bounce_permanent", "transport_4xx", "auth_failure", "throttle", "timeout", "unknown"], "fields": ["report.error_class", "report.items[].error_class"]},
+  "event_actor": {"source": "db_enum", "values": ["dispatcher", "box", "reclaim_loop", "admin", "system", "user"], "fields": ["account_events_response.items[].actor"]},
+  "from_verification_state": {"source": "db_enum", "values": ["unverified", "aligned", "unaligned_warned", "blocked"], "fields": ["account_object.from_alignment.state"]},
+  "job_state": {"source": "db_enum", "values": ["queued", "assigned", "sending", "sent", "failed", "bounced"], "fields": ["report.state", "report.items[].state"]},
+  "pause_reason": {"source": "db_enum", "values": ["daily_limit", "throttle", "manual"], "fields": ["account_object.status.pause_reason"]},
+  "quarantine_reason": {"source": "db_enum", "values": ["auth_failure", "consecutive_failures", "failure_rate", "manual"], "fields": ["account_object.status.quarantine_reason"]},
+  "routing_strategy": {"source": "db_enum", "values": ["random", "round_robin", "one_by_one"], "fields": ["settings_object.routing_strategy"]},
+  "detail_issue": {"source": "module_constant", "values": ["required", "malformed", "out_of_range", "not_found", "conflict"], "fields": ["error.details[].issue"]},
+  "quote_reason_code": {"source": "module_constant", "values": ["dispatch_disabled", "exceeds_queue_cap", "no_eligible_accounts", "all_accounts_unverified", "from_gate_blocked"], "fields": ["quote.reasons[].code"]},
+  "quote_warning_code": {"source": "module_constant", "values": ["long_duration"], "fields": ["quote.warnings[].code"]},
+  "quote_estimate_basis": {"source": "module_constant", "values": ["current_eligible_capacity"], "fields": ["quote.capacity.estimate_basis"]},
+  "bulk_add_row_status": {"source": "module_constant", "values": ["created", "rejected"], "fields": ["accounts_bulk_add_response.results[].status"]},
+  "pricing_model": {"source": "module_constant", "values": ["flat_per_recipient", "flat_subscription", "free"], "fields": ["describe.pricing.model"]}
+ },
+ "error_codes": [
+  {"code": "validation_failed", "http_status": 400},
+  {"code": "unauthenticated", "http_status": 401},
+  {"code": "not_found", "http_status": 404},
+  {"code": "method_not_allowed", "http_status": 405},
+  {"code": "conflict", "http_status": 409},
+  {"code": "unprocessable", "http_status": 422},
+  {"code": "rate_limited", "http_status": 429},
+  {"code": "internal_error", "http_status": 500},
+  {"code": "paused", "http_status": 503}
+ ],
+ "bulk_add": {
+  "warning_code": "credentials_in_plaintext_file",
+  "warning_text": "A fixed sentence about the plaintext file."
+ }
+}

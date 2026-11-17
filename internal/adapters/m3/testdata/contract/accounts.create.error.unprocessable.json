@@ -1,0 +1,13 @@
+{
+ "error": {
+  "code": "unprocessable",
+  "message": "The request is well-formed but cannot be processed.",
+  "details": [
+   {
+    "field": "acknowledge_alignment_warning",
+    "issue": "required"
+   }
+  ],
+  "request_id": "req_0123456789abcdef0123456789abcdef"
+ }
+}
