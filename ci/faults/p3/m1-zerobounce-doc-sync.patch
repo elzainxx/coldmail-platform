@@ -1,0 +1,10 @@
+--- a/Docs/vendor-zerobounce.md
++++ b/Docs/vendor-zerobounce.md
+@@ -93,7 +93,6 @@
+ |---|---|---|---|---|---|---|---|---|
+ | `valid` | `(empty)` | valid | risky | risky | external_verified | cap (60) | A rented "yes". Anti-laundering: never `valid`. | **page**; pair: Ruby, Go, Python/JS/PHP/Java test-address lists |
+ | `valid` | `leading_period_removed` | valid | risky | risky | external_verified | cap | Vendor validated an altered address; still a "yes". | **page**; pair: Ruby, Go |
+-| `valid` | `alias_address` | valid | risky | risky | external_verified | cap | Added 2026-11-17 (owner's ruling): `valid` also has this sub-status. Mapped like every other vendor `valid`: a rented "yes", never M1 `valid`. | **page** (added 2026-11-17); word in: Go, Rust, Ruby, Java |
+ | `valid` | `alternate` | valid | risky | risky | external_verified | cap | Added 2026-11-17 (owner's ruling): `valid` also has this sub-status. Mapped like every other vendor `valid`. | **page** (added 2026-11-17); word in: Go, Rust, Ruby |
+ | `valid` | `accept_all` | valid | risky | risky | external_verified | cap | Added 2026-11-17 (owner's ruling): `valid` also has this sub-status. Mapped like every other vendor `valid`; on a `catch_all` residue it raises M1's own 40 to the cap without adding information (§7.1). | **page** (added 2026-11-17); word in: Go, Rust, Ruby |
+ | `valid` | `gold` | valid | risky | risky | external_verified | cap | Meaning undocumented in the SDKs; mapped by its status class only (a "yes"). **Not on the live page; pair in one SDK only.** | **SDK-only pair**; pair: Go; sets: Go, Rust, Ruby |

@@ -1,0 +1,8 @@
+# Phase 3, part A2: module 1 runs the shared norm/v1 vector file (its byte-identical copy under control-plane/internal/hash/testdata) through its real Hasher.Normalize; a difference between the file and the implementation fails module 1's own CI. The fault changes ONE expectation of the copy (the all-upper-case address is "normalised" to itself); TestNormVectors_SharedFile_EveryVectorThroughNormalize must go red naming the vector and both strings. The control is the pinned module, whose copy equals its implementation. No database, no network.
+GATE=m1-norm-vectors
+TARGET=module:coldmail-verify
+SETUP=
+STEP=go test TestNormVectors_SharedFile_EveryVectorThroughNormalize (module 1's Normalize over the shared file)
+CMD=cd control-plane && GOTOOLCHAIN=local go test -count=1 -v -run '^TestNormVectors_SharedFile_EveryVectorThroughNormalize$' ./internal/hash/
+MESSAGE=--- FAIL: TestNormVectors_SharedFile_EveryVectorThroughNormalize
+MESSAGE=ascii-upper-all: normalized differs

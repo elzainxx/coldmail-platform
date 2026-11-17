@@ -1,0 +1,9 @@
+# Phase 3, part A1: Docs/vendor-zerobounce.md is the owner-facing table of the vendor mapping and the code's table must equal it row for row. The fault deletes the doc row of the added pair valid/alias_address; TestZB_MapTable_DocInSync must go red naming the missing row and the row counts. The control is the pinned module, whose doc and code agree. No database, no network.
+GATE=m1-zerobounce-doc-sync
+TARGET=module:coldmail-verify
+SETUP=
+STEP=go test TestZB_MapTable_DocInSync (the vendor doc and the code table agree)
+CMD=cd control-plane && GOTOOLCHAIN=local go test -count=1 -v -run '^TestZB_MapTable_DocInSync$' ./internal/external/
+MESSAGE=--- FAIL: TestZB_MapTable_DocInSync
+MESSAGE=no doc row for valid/"alias_address" with adapter result valid
+MESSAGE=the doc's mapping table has 25 rows, the code's table has 26

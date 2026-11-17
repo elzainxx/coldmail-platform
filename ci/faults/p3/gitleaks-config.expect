@@ -1,0 +1,8 @@
+# Phase 3 changed this gate: the secret scanner's configuration now accepts at most FOUR allowlist blocks (the fourth is the one decided exception of Phase 3, a selftest fixture in published history). The fault appends a fifth, narrow-looking block (one rule, one commit, no regex), which is exactly the quiet drift the limit exists to stop; the gate must name the count and the limit. The control is the real configuration, which must be green.
+GATE=gitleaks-config
+TARGET=platform
+SETUP=
+STEP=check-gitleaks-config on the real repository
+CMD=bash scripts/check-gitleaks-config.sh
+MESSAGE=5 [[allowlists]] blocks (at most 4 are accepted
+MESSAGE=check-gitleaks-config: RED

@@ -1,0 +1,11 @@
+--- a/.gitleaks.toml
++++ b/.gitleaks.toml
+@@ -50,3 +50,8 @@
+ description = "invented credential-shaped values in the m2worker stage selftest fixture (commit 8accb18): not secrets"
+ targetRules = ["generic-api-key"]
+ commits = ["8accb189b1c1a9146445c8bf4b9705befb80c854"]
++
++[[allowlists]]
++description = "a fifth exception, which the gate must refuse"
++targetRules = ["generic-api-key"]
++commits = ["355299a6c605a2ca0601bf58afb0e0468d7fccb0"]

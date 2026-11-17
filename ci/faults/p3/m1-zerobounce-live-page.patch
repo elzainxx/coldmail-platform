@@ -1,0 +1,11 @@
+--- a/control-plane/internal/external/zerobounce_map.go
++++ b/control-plane/internal/external/zerobounce_map.go
+@@ -99,7 +99,7 @@
+ 	{zbStatusDoNotMail, "toxic", vocab.StatusRisky},
+ 	{zbStatusDoNotMail, "global_suppression", vocab.StatusRisky}, // ambiguous (suppressed because it bounced, or because it complained?)
+ 	{zbStatusDoNotMail, "possible_trap", vocab.StatusRisky},      // "possible": not proof
+-	{zbStatusDoNotMail, "mx_forward", vocab.StatusRisky},         // on the live page (owner, 2026-11-17); a "don't want", never a "won't deliver"
++	{zbStatusDoNotMail, "mx_forward", vocab.StatusInvalid},        // on the live page (owner, 2026-11-17); a "don't want", never a "won't deliver"
+ }
+ 
+ type zbKey struct{ status, sub string }

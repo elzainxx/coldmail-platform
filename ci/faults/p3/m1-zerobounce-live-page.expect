@@ -1,0 +1,9 @@
+# Phase 3, part A1 (ZeroBounce mapping per the live status-codes page): the module's table maps the added pair do_not_mail/mx_forward to risky, never to invalid (a "do not mail" address is a don't-want, not a won't-deliver; OQ-7). The fault maps that one row to invalid; the module's own tests must go red naming the pair, for the reason (mapped invalid), in the cross-product test, the OQ-7 test and the doc-in-sync test. The control is the pinned module, whose same tests pass. No database, no network.
+GATE=m1-zerobounce-live-page
+TARGET=module:coldmail-verify
+SETUP=
+STEP=go test the ZeroBounce mapping tests (every row of the table, the OQ-7 rule, the doc in sync)
+CMD=cd control-plane && GOTOOLCHAIN=local go test -count=1 -v -run '^(TestZB_MapTable_CrossProduct|TestZB_MapTable_DoNotMailIsNeverInvalid_OQ7|TestZB_MapTable_DocInSync)$' ./internal/external/
+MESSAGE=--- FAIL: TestZB_MapTable_DoNotMailIsNeverInvalid_OQ7
+MESSAGE=do_not_mail/mx_forward maps to invalid
+MESSAGE=--- FAIL: TestZB_MapTable_CrossProduct

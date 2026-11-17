@@ -1,0 +1,11 @@
+--- a/control-plane/internal/hash/testdata/norm-vectors.json
++++ b/control-plane/internal/hash/testdata/norm-vectors.json
+@@ -5,7 +5,7 @@
+   "fields": "name: unique kebab-case id. input: the address as JSON text; input_b64: instead of input, the same input as base64 when it is not valid UTF-8 (exactly one of the two is present). malformed: true when module 1's Normalize refuses the input (ErrUnparseable: such a row is never sent to a module). normalized: the string module 1 hashes, present only when malformed is false. group: present only when malformed is false; vectors with the same group MUST normalise to the same string and vectors of different groups to different strings. why: what the vector pins. Both module 1's own test and the platform's test (internal/norm, tests/harness) read this file; a change to it is a change to a FROZEN scheme.",
+   "vectors": [
+     {"name": "ascii-plain", "input": "jane.doe@example.com", "malformed": false, "normalized": "jane.doe@example.com", "group": "jane", "why": "the baseline: already in norm/v1 form"},
+-    {"name": "ascii-upper-all", "input": "JANE.DOE@EXAMPLE.COM", "malformed": false, "normalized": "jane.doe@example.com", "group": "jane", "why": "both sides are lower-cased"},
++    {"name": "ascii-upper-all", "input": "JANE.DOE@EXAMPLE.COM", "malformed": false, "normalized": "JANE.DOE@EXAMPLE.COM", "group": "jane", "why": "both sides are lower-cased"},
+     {"name": "ascii-title-case", "input": "Jane.Doe@Example.COM", "malformed": false, "normalized": "jane.doe@example.com", "group": "jane", "why": "the golden example of module 1's own tests: mixed case on both sides"},
+     {"name": "ascii-upper-local-only", "input": "JANE.DOE@example.com", "malformed": false, "normalized": "jane.doe@example.com", "group": "jane", "why": "the local part is lower-cased by itself"},
+     {"name": "ascii-upper-domain-only", "input": "jane.doe@EXAMPLE.COM", "malformed": false, "normalized": "jane.doe@example.com", "group": "jane", "why": "the domain is lower-cased by itself"},
