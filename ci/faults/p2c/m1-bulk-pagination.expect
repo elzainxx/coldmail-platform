@@ -1,0 +1,8 @@
+# Close-out (M2-G5, inherited by module 1's bulk results): the job-results listing builds next_cursor from the last row it SERVED, never from the look-ahead row it read to learn that another page exists. The fault anchors the cursor on the look-ahead row again: the next page starts strictly after it, so that row is skipped, one per page boundary. The test walks the listing at ten page sizes, with page boundaries inside runs of duplicate rows, and requires every ordinal exactly once. Only the in-memory variant runs (-run .../^mem$); the Postgres listing is the same contract over SQL and is not proven here. The unpatched control walks clean.
+GATE=m1-bulk-pagination
+TARGET=module:coldmail-verify
+SETUP=
+STEP=go test TestListJobResults_EveryOrdinalExactlyOnceAcrossPages/mem (every ordinal exactly once across pages, in-memory store)
+CMD=cd control-plane && GOTOOLCHAIN=local go test -count=1 -v -run '^TestListJobResults_EveryOrdinalExactlyOnceAcrossPages$/^mem$' ./internal/store/
+MESSAGE=--- FAIL: TestListJobResults_EveryOrdinalExactlyOnceAcrossPages/mem
+MESSAGE=limit 2: ordinal 2 returned 0 times, want exactly once

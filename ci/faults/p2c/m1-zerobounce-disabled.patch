@@ -1,0 +1,11 @@
+--- a/control-plane/internal/config/config.go
++++ b/control-plane/internal/config/config.go
+@@ -351,7 +351,7 @@
+ // (Fallback==off) is the panic button that forces this false regardless of the DPA flag. This is the
+ // code-level guard that makes accidental pre-DPA egress hard; buildExternal also requires the key.
+ func (c Config) ExternalFallbackEnabled() bool {
+-	return c.KillSwitch.Fallback == FallbackEnabled && c.ExternalDPAConfirmed
++	return c.ExternalDPAConfirmed
+ }
+ 
+ // SMTPClientDeadline returns the brain-side SMTP client deadline (§6.5), or 0 when the dial is

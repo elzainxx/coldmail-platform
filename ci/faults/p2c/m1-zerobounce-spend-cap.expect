@@ -1,0 +1,9 @@
+# Close-out (ZeroBounce ruling): the hard per-vendor daily spend cap refuses call N+1 (and a cap of 0, the default, refuses every call). It is the first check in external.Decide. The fault removes the check, so the cap never trips. The test is the pure decision function: an enforced cap of 0 allows nothing, N calls are allowed and the next one is refused with the vendor-cap reason, and the lower of the vendor cap and the owner's daily cap wins. No database, no stand-in server. (TestZB_Stage_DailySpendCap_NPlusOneRefused reaches the same line through the whole stage but needs the zbstub process.) The unpatched control passes.
+GATE=m1-zerobounce-spend-cap
+TARGET=module:coldmail-verify
+SETUP=
+STEP=go test TestZB_Decide_VendorDailyCap (the daily spend cap refuses call N+1)
+CMD=cd control-plane && GOTOOLCHAIN=local go test -count=1 -v -run '^TestZB_Decide_VendorDailyCap$' ./internal/external/
+MESSAGE=--- FAIL: TestZB_Decide_VendorDailyCap
+MESSAGE=an enforced cap of 0 must allow NO calls
+MESSAGE=spent 5 of 5: the next call must be refused

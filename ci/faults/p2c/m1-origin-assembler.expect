@@ -1,0 +1,8 @@
+# Close-out M1-G4 (failure origin): verdict.Assemble is the ONE place signals.failure_origin is written, and it must write it on EVERY unknown (the platform bills on it; a missing key is read as undetermined, i.e. free). The fault stops writing the key for one reason (greylisted): the sweep over the whole reason vocabulary must find the unknown that carries no key. In-memory, no database. The unpatched control passes.
+GATE=m1-origin-assembler
+TARGET=module:coldmail-verify
+SETUP=
+STEP=go test TestAssemble_EveryUnknownReasonCarriesAFailureOrigin (the sweep over every reason in the vocabulary)
+CMD=cd control-plane && GOTOOLCHAIN=local go test -count=1 -v -run '^TestAssemble_EveryUnknownReasonCarriesAFailureOrigin$' ./internal/verdict/
+MESSAGE=--- FAIL: TestAssemble_EveryUnknownReasonCarriesAFailureOrigin
+MESSAGE=signals has no string failure_origin

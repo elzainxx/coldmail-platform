@@ -1,0 +1,11 @@
+--- a/control-plane/internal/verdict/assemble.go
++++ b/control-plane/internal/verdict/assemble.go
+@@ -77,7 +77,7 @@
+ 	// failure_origin (Docs/failure-origin.md): written HERE and only here, so that every `unknown` this assembler ever builds carries
+ 	// it by construction — a new code path that mints an unknown cannot forget the key. It is an additive signals key (Door 1) and
+ 	// changes no status, reason, confidence, recommendation, caching decision or retry.
+-	if origin, ok := failureorigin.Of(c.Status, c.Reason, c.Cause, signals); ok {
++	if origin, ok := failureorigin.Of(c.Status, c.Reason, c.Cause, signals); ok && c.Reason != vocab.ReasonGreylisted {
+ 		signals[vocab.SignalFailureOrigin] = string(origin)
+ 	}
+ 

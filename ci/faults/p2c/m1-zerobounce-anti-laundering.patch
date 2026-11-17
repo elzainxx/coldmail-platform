@@ -1,0 +1,11 @@
+--- a/control-plane/internal/external/external.go
++++ b/control-plane/internal/external/external.go
+@@ -201,7 +201,7 @@
+ 	switch vr.Result {
+ 	case vocab.StatusValid:
+ 		// §3.4 THE anti-laundering rule: a vendor "valid" is NEVER SMTP-grade valid. risky, capped.
+-		return Resolution{Status: vocab.StatusRisky, Reason: vocab.ReasonExternalVerified, Confidence: conf}
++		return Resolution{Status: vocab.StatusValid, Reason: vocab.ReasonExternalVerified, Confidence: conf}
+ 	case vocab.StatusInvalid:
+ 		// OQ-P6-3: accept invalid only where independent non-existence is structurally plausible.
+ 		if class == ResidueRetryExhausted || class == ResidueGaveUpRateLimited {

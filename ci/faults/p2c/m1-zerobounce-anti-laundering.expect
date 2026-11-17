@@ -1,0 +1,10 @@
+# Close-out (ZeroBounce ruling): a vendor `valid` is NEVER SMTP-grade `valid`: external.Resolve turns it into risky/external_verified at the capped confidence (anti-laundering, the one place a rented verdict becomes a system verdict). The fault resolves a vendor valid to status valid. Two pure tests see it: the generic one over the four residue classes, and the ZeroBounce table walked through Resolve (every answered row on every class). Both run here; neither needs a database or the stand-in server. (The stage-level test TestZB_Stage_EveryAnsweredRow_AntiLaundering reaches the same Resolve line but needs the zbstub process.) The unpatched control passes.
+GATE=m1-zerobounce-anti-laundering
+TARGET=module:coldmail-verify
+SETUP=
+STEP=go test TestResolve_VendorValid_IsNeverValid + TestZB_MapTable_ThroughResolve_AntiLaundering_AndAsymmetry (a vendor valid never resolves to valid)
+CMD=cd control-plane && GOTOOLCHAIN=local go test -count=1 -v -run '^(TestResolve_VendorValid_IsNeverValid|TestZB_MapTable_ThroughResolve_AntiLaundering_AndAsymmetry)$' ./internal/external/
+MESSAGE=--- FAIL: TestResolve_VendorValid_IsNeverValid
+MESSAGE=was laundered into status:valid
+MESSAGE=--- FAIL: TestZB_MapTable_ThroughResolve_AntiLaundering_AndAsymmetry
+MESSAGE=ANTI-LAUNDERING BROKEN: valid/"" on catch_all resolved to status:valid

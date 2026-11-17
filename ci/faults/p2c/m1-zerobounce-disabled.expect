@@ -1,0 +1,9 @@
+# Close-out (ZeroBounce ruling): the module ships DISABLED and sends nothing until every independent gate is affirmative (the kill-switch rung ON, the DPA confirmed, the key present, a cap chosen); buildExternal returns nil (the layer fully off) otherwise. The fault removes the rung gate from config.ExternalFallbackEnabled, so with the rung off (the default, or the global-fallback-kill) a confirmed DPA and a key still build the vendor stage. The wiring test builds the stage from an environment map and removes one gate at a time. No database, no network. The unpatched control passes.
+GATE=m1-zerobounce-disabled
+TARGET=module:coldmail-verify
+SETUP=
+STEP=go test TestBuildExternal_EveryGateIsIndependent (a stage with its rung off is never built)
+CMD=cd control-plane && GOTOOLCHAIN=local go test -count=1 -v -run '^TestBuildExternal_EveryGateIsIndependent$' ./cmd/control-plane/
+MESSAGE=--- FAIL: TestBuildExternal_EveryGateIsIndependent
+MESSAGE=the kill-switch rung is OFF (global-fallback-kill): the stage was built
+MESSAGE=the rung was never turned on: the stage was built

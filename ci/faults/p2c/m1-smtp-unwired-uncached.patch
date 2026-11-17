@@ -1,0 +1,11 @@
+--- a/control-plane/internal/orchestrator/smtp_stage.go
++++ b/control-plane/internal/orchestrator/smtp_stage.go
+@@ -98,7 +98,7 @@
+ 		// verdict stands — but it used to stand with NO token, indistinguishable from a genuine cheap-layers answer (M1-G6). Say so:
+ 		// smtp_skipped_reason="smtp_unwired", PROVISIONAL (our own degraded state is not an answer: never cached). compute() keeps the
+ 		// queue class QSettled for this token — nothing in this process will ever change it, so it must settle, not wait.
+-		return smtpStageOutcome{SkipReason: reasonSMTPUnwired, Provisional: true}
++		return smtpStageOutcome{SkipReason: reasonSMTPUnwired, Provisional: false}
+ 	}
+ 
+ 	// §4.4 eligibility gate + Door-5 routing: only nodes that are active ∧ green ∧ port25_open ∧

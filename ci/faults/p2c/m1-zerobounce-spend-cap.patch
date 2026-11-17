@@ -1,0 +1,11 @@
+--- a/control-plane/internal/external/breaker.go
++++ b/control-plane/internal/external/breaker.go
+@@ -108,7 +108,7 @@
+ func Decide(b Budget, p BreakerParams, f SpendFacts, now time.Time) Decision {
+ 	// The hard per-vendor daily cap comes first: it is the one ceiling where 0 means "no spend at all",
+ 	// and a closed door needs no further reading of the facts.
+-	if b.VendorDailyCapEnforced && f.SpentDay >= b.VendorDailyCap {
++	if false && b.VendorDailyCapEnforced && f.SpentDay >= b.VendorDailyCap {
+ 		return Decision{Allow: false, State: Open, Reason: TripVendorCap}
+ 	}
+ 	// Condition 1 — budget exhaustion (§5.3.1). Any window cap reached => open until the window rolls.

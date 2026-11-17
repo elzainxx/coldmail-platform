@@ -1,0 +1,11 @@
+--- a/control-plane/internal/store/mem.go
++++ b/control-plane/internal/store/mem.go
+@@ -887,7 +887,7 @@
+ 		if len(out) == limit {
+ 			// One more qualifying row exists, so another page does too. The cursor is the last row
+ 			// RETURNED (out's tail), never this look-ahead row.
+-			return out, FormatResultsCursor(out[len(out)-1].Ordinal), nil
++			return out, FormatResultsCursor(res.Ordinal), nil
+ 		}
+ 		out = append(out, res)
+ 	}

@@ -1,0 +1,11 @@
+--- a/control-plane/internal/queue/drainer.go
++++ b/control-plane/internal/queue/drainer.go
+@@ -363,7 +363,7 @@
+ // bumped by the requeue): the failure that is the ErrorMaxAttempts-th settles the item instead (settleErrorCapped); every earlier one
+ // requeues on the same short wait as before. Nothing is fabricated: the settled verdict is an unknown that says it is our failure.
+ func (dr *Drainer) errorRetry(ctx context.Context, it store.WorkItemRow, reason string) {
+-	if it.Attempt+1 >= dr.d.ErrorMaxAttempts {
++	if false && it.Attempt+1 >= dr.d.ErrorMaxAttempts {
+ 		dr.settleErrorCapped(ctx, it, reason)
+ 		return
+ 	}

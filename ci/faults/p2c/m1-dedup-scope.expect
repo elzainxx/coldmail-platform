@@ -1,0 +1,8 @@
+# Close-out (bulk item identity, A2): the idempotency scope of a work item is the JOB, not the whole table. Tenant B submitting an address tenant A verified yesterday must get a work item and a result of its own; the old global scope (0009's global UNIQUE) made B's enqueue a "duplicate" that created nothing. The fault drops the job id from the in-memory store's dedup key, restoring the global scope in the fake. Only the in-memory variant runs (-run .../^mem$): the Postgres variant of the same test, and the migration that replaced the global unique index, need a database and are not proven here. The unpatched control passes.
+GATE=m1-dedup-scope
+TARGET=module:coldmail-verify
+SETUP=
+STEP=go test TestEnqueueScope_ASettledJobNeverBlocksAnotherTenantsJob/mem (another tenant gets a result for an address verified yesterday, in-memory store)
+CMD=cd control-plane && GOTOOLCHAIN=local go test -count=1 -v -run '^TestEnqueueScope_ASettledJobNeverBlocksAnotherTenantsJob$/^mem$' ./internal/store/
+MESSAGE=--- FAIL: TestEnqueueScope_ASettledJobNeverBlocksAnotherTenantsJob/mem
+MESSAGE=tenant B's enqueue of an address tenant A already verified yielded no work item

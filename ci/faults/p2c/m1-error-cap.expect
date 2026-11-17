@@ -1,0 +1,8 @@
+# Close-out M1-G7: an item the queue drainer cannot compute (policy-resolve, decrypt or compute error) used to be requeued forever without counting. Each such error is now one counted attempt and the ErrorMaxAttempts-th settles the item (dead, unknown/unknown_error, failure_origin=own, error_capped) instead of requeueing. The fault ignores the cap (the settle branch of errorRetry is unreachable), so the item stays waiting_retry at the cap. The test drives the real drainer over the in-memory store for all three failing stages at caps 1, 3 and 5. No database. The unpatched control passes every subtest.
+GATE=m1-error-cap
+TARGET=module:coldmail-verify
+SETUP=
+STEP=go test TestDrainer_ErrorCap_SettlesExactlyAtTheCap (the drainer settles at exactly the cap)
+CMD=cd control-plane && GOTOOLCHAIN=local go test -count=1 -v -run '^TestDrainer_ErrorCap_SettlesExactlyAtTheCap$' ./internal/queue/
+MESSAGE=--- FAIL: TestDrainer_ErrorCap_SettlesExactlyAtTheCap
+MESSAGE=the 1-th failure must SETTLE the item (dead), got status=waiting_retry attempt=1

@@ -1,0 +1,8 @@
+# Close-out M1-G6: an SMTP stage that is not wired in this process yields a degraded cheap-only answer (risky/plausible with smtp_skipped_reason=smtp_unwired) that is PROVISIONAL and NEVER cached: our own degraded state is not an answer, and a cached one would outlive the fault. The fault returns the unwired outcome as not provisional, so it is cached. The test runs the three ways the stage can be unwired through the real orchestrator over the in-memory store, and requires an empty cache and no cache hit on the second request. No database. The unpatched control passes.
+GATE=m1-smtp-unwired-uncached
+TARGET=module:coldmail-verify
+SETUP=
+STEP=go test TestSMTPUnwired_TheTokenIsPresent_TheVerdictIsUnchanged_AndNothingIsCached (an unwired residue is never cached)
+CMD=cd control-plane && GOTOOLCHAIN=local go test -count=1 -v -run '^TestSMTPUnwired_TheTokenIsPresent_TheVerdictIsUnchanged_AndNothingIsCached$' ./internal/orchestrator/
+MESSAGE=--- FAIL: TestSMTPUnwired_TheTokenIsPresent_TheVerdictIsUnchanged_AndNothingIsCached
+MESSAGE=an unwired residue must NOT be cached, cache len = 1

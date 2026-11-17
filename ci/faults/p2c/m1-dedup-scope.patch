@@ -1,0 +1,11 @@
+--- a/control-plane/internal/store/mem.go
++++ b/control-plane/internal/store/mem.go
+@@ -499,7 +499,7 @@
+ func (m *MemStore) EnqueueWorkItem(_ context.Context, item WorkItemRow) (string, bool, error) {
+ 	m.mu.Lock()
+ 	defer m.mu.Unlock()
+-	key := item.JobID + "\x00" + hex.EncodeToString(item.IdempotencyKey)
++	key := hex.EncodeToString(item.IdempotencyKey)
+ 	if existing, ok := m.idemKeys[key]; ok {
+ 		return existing, true, nil // dedup (§5.5)
+ 	}

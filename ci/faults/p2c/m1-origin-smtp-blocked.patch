@@ -1,0 +1,11 @@
+--- a/control-plane/internal/failureorigin/failureorigin.go
++++ b/control-plane/internal/failureorigin/failureorigin.go
+@@ -140,7 +140,7 @@
+ // mailbox.
+ func OriginFor(reason vocab.Reason, cause Cause) vocab.FailureOrigin {
+ 	if reason == vocab.ReasonSMTPBlocked {
+-		return vocab.OriginOwn
++		return vocab.OriginRemote
+ 	}
+ 	for _, r := range table {
+ 		if r.Reason == reason && r.Cause == cause {

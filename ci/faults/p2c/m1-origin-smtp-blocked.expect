@@ -1,0 +1,8 @@
+# Close-out M1-G4 (failure origin): `unknown/smtp_blocked` is ALWAYS `own`: a policy or reputation block is a statement about OUR IP, so the platform never bills it. The rule is the reason-level rule that precedes the table in failureorigin.OriginFor. The fault answers `remote` for that reason: a customer would be charged for our blocked IP. The owner-rulings test pins smtp_blocked -> own and must say so; pure function, no database, no network. The unpatched control passes.
+GATE=m1-origin-smtp-blocked
+TARGET=module:coldmail-verify
+SETUP=
+STEP=go test TestOriginFor_OwnerRulings (smtp_blocked is always own, never remote)
+CMD=cd control-plane && GOTOOLCHAIN=local go test -count=1 -v -run '^TestOriginFor_OwnerRulings$' ./internal/failureorigin/
+MESSAGE=--- FAIL: TestOriginFor_OwnerRulings
+MESSAGE=smtp_blocked is ALWAYS own (a policy or reputation block is about OUR IP): OriginFor(smtp_blocked, smtp_reply) = remote, want own

@@ -1,0 +1,8 @@
+# Close-out (ZeroBounce ruling): the global-fallback-kill (ExternalDeps.GloballyDisabled) stops ALL vendor egress, whatever the policy and the breaker say; it is the panic button for a billing runaway or a privacy incident. The fault drops the check from runExternal, so a residue is sent to the vendor with the kill pulled. The stage test runs the real orchestrator over the in-memory store with the controllable mock vendor and counts its calls: with the kill on the count must be 0. No database, no stand-in server. (TestZB_Stage_KillSwitch_StopsAllCalls reaches the same line but needs the zbstub process.) The unpatched control passes.
+GATE=m1-zerobounce-kill-switch
+TARGET=module:coldmail-verify
+SETUP=
+STEP=go test TestExternal_OptOut_And_GlobalKill (the global kill stops every vendor call)
+CMD=cd control-plane && GOTOOLCHAIN=local go test -count=1 -v -run '^TestExternal_OptOut_And_GlobalKill$' ./internal/orchestrator/
+MESSAGE=--- FAIL: TestExternal_OptOut_And_GlobalKill
+MESSAGE=GLOBAL KILL BREACH: 1 vendor call(s) with the global-fallback-kill on
