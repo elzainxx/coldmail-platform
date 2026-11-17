@@ -1,9 +1,9 @@
 --- a/.gitleaks.toml
 +++ b/.gitleaks.toml
-@@ -40,3 +40,9 @@
- description = "the placeholder SMTP-sink password quoted in the Phase 2 spec text (commit 7b05c78): not a secret"
+@@ -50,3 +50,9 @@
+ description = "invented credential-shaped values in the m2worker stage selftest fixture (commit 8accb18): not secrets"
  targetRules = ["generic-api-key"]
- commits = ["7b05c78367ed7c7799628c07d8ed5342eb5a3bdf"]
+ commits = ["8accb189b1c1a9146445c8bf4b9705befb80c854"]
 +
 +[[allowlists]]
 +description = "a regex exception that would hide anything matching it"
