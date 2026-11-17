@@ -4,7 +4,7 @@
 #   m1n_mint         makes the CA and the api.ipify.org certificate with openssl (the leaf verifies against the CA for that host name; the CA key is gone afterwards), writes exactly two lines to the env file,
 #                    masks the node token BEFORE it is written, never prints it, writes two resolv.conf files with a nameserver and nothing that turns the node's audit red; refuses a prefix that is not three octets
 #   m1n_secret_leak  green on clean logs; red, naming the CREDENTIAL (never printing its value), when any of the six credentials is in a log of the stack; red when a credential is empty (a scan with nothing to look for)
-#   consistency      M1N_TESTS is exactly the set of TestM1Node_ functions in m1_node_test.go (a test added without the list, or a listed test that does not exist, is red); every recipe domain the Go tests and
+#   consistency      M1N_TESTS is exactly the set of TestM1Node_ functions in the m1_node*_test.go files (a test added without the list, or a listed test that does not exist, is red); every recipe domain the Go tests and
 #                    the direct-node table use is in fixture.json; the exposure check names the stack's three services; the compose file defines exactly the four services the scripts start
 # NOT covered here (they need a Linux host with Docker): m1n_stage1..4, m1n_exposure, node-probe.rb on a node (its syntax is checked with `ruby -c` when this host has Ruby, and said so when it has not).
 set -u
@@ -82,15 +82,15 @@ out="$(leak_run empty "" M1_PEPPER)"; rc=$?
 verdict "m1n_secret_leak: an empty credential is refused (a scan with nothing to look for)" 1 "M1_PEPPER is empty" "$out" "$rc"
 
 # ── consistency of the files ──
-src="$HARNESS/m1_node_test.go"
-in_go="$(grep -o '^func TestM1Node_[A-Za-z0-9_]*' "$src" | sed 's/^func //' | sort | tr '\n' ' ')"
+srcs=("$HARNESS"/m1_node*_test.go)   # every file of the module-1 node tests: the tests, their helpers and the end-to-end tests of B9-B11
+in_go="$(grep -ho '^func TestM1Node_[A-Za-z0-9_]*' "${srcs[@]}" | sed 's/^func //' | sort | tr '\n' ' ')"
 in_sh="$( ( WORK=/x; . "$T/env.sh"; HERE="$HARNESS"; PLATFORM_DIR=/x; . "$HERE/m1node/m1node.sh"; printf '%s\n' "${M1N_TESTS[@]}" ) | sort | tr '\n' ' ')"
-verdict "M1N_TESTS is exactly the set of TestM1Node_ functions of m1_node_test.go" 0 "same" "$([ -n "$in_go" ] && [ "$in_go" = "$in_sh" ] && echo same || printf 'go: %s\nsh: %s' "$in_go" "$in_sh")" 0
+verdict "M1N_TESTS is exactly the set of TestM1Node_ functions of the m1_node*_test.go files" 0 "same" "$([ -n "$in_go" ] && [ "$in_go" = "$in_sh" ] && echo same || printf 'go: %s\nsh: %s' "$in_go" "$in_sh")" 0
 # the control: a list with one more name, or one fewer, is not the same set
 verdict "a list with an extra name is not the same set (the control)" 1 "differ" "$([ "$in_go" = "$in_sh TestM1Node_Extra " ] && echo same || echo differ)" 1
 fx="$HARNESS/m1node/fixture.json"
 miss=""
-for d in $(grep -ohE '[a-z0-9-]+\.fixture\.test' "$src" "$HARNESS/m1_node_helpers_test.go" | sort -u); do [ "$d" = nomx.fixture.test ] && continue; grep -qF "\"$d\"" "$fx" || miss="$miss $d"; done
+for d in $(grep -ohE '[a-z0-9-]+\.fixture\.test' "${srcs[@]}" | sort -u); do [ "$d" = nomx.fixture.test ] && continue; grep -qF "\"$d\"" "$fx" || miss="$miss $d"; done
 verdict "every fixture domain the Go tests name is in fixture.json (nomx excepted, below)" 0 "none missing" "$([ -z "$miss" ] && echo "none missing" || echo "missing:$miss")" 0
 verdict "nomx.fixture.test is NOT in fixture.json: it is the NXDOMAIN recipe, and a name that exists would be NODATA or an answer" 0 "absent" "$(grep -qF nomx "$fx" && echo present || echo absent)" 0
 miss=""

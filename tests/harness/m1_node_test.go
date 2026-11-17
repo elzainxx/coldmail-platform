@@ -191,7 +191,11 @@ func TestM1Node_BulkRecipeTable(t *testing.T) {
 		t.Logf("  %2d %-32s %-26s %s", i, r.id, r.local+"@"+r.domain, row.short())
 	}
 	dup := rows[dupID]
-	t.Logf("  %2d %-32s %-26s %s duplicate_of=%v", len(recipes), "duplicate_of_valid", strings.ToUpper(recipes[0].local+"@"+recipes[0].domain), dup.short(), dup.DuplicateOf)
+	dupOf := "none"
+	if dup.DuplicateOf != nil {
+		dupOf = fmt.Sprint(*dup.DuplicateOf) // the ordinal, not the pointer
+	}
+	t.Logf("  %2d %-32s %-26s %s duplicate_of=%s", len(recipes), "duplicate_of_valid", strings.ToUpper(recipes[0].local+"@"+recipes[0].domain), dup.short(), dupOf)
 
 	var bad []string
 	for i, r := range recipes {

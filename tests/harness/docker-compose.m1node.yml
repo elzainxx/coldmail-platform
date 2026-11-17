@@ -148,6 +148,7 @@ services:
       HARNESS_M1NODE_NODE_IP: "${H_FX_PREFIX:?}.3"
       HARNESS_M1NODE_SMTP_IP: "${H_FX_PREFIX:?}.2"
       HARNESS_ADMIN_DATABASE_URL: postgres://supabase_admin:${H_PG_SUPERPASS:?}@postgres:5432/postgres
+      HARNESS_PLATFORM_APP_PASSWORD: ${H_PLATFORM_APP_PASSWORD:?}   # the end-to-end tests (m1_node_e2e_test.go) run the platform's money core and tenant resolver as the platform_app login, like the service
     volumes:
       - ${H_WORK:?}/out:/h:ro
       - ${H_PLATFORM_DIR:?}:/repo:ro

@@ -30,6 +30,10 @@ M1N_TESTS=(
   TestM1Node_ControlDNSFamily
   TestM1Node_ControlListsFamily
   TestM1Node_ExpectationsBite
+  TestM1Node_E2EBulkSettleThroughAdapter
+  TestM1Node_E2EPaginationBoundaries
+  TestM1Node_E2ECrossTenant
+  TestM1Node_E2EChecksBite
 )
 M1N_NODE_TOKEN=""
 M1N_T0=$SECONDS
