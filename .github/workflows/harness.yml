@@ -31,6 +31,8 @@ on:
       - 'internal/**'
       - 'cmd/**'
       - 'tests/**'
+      - '!tests/license-canonical.txt'
+      - '!tests/personal-details/**'
       - 'tools/modules.lock'
       - 'tools/fetch-modules.sh'
       - 'tools/fetch-modules-lock-selftest.sh'
@@ -49,6 +51,8 @@ on:
       - 'internal/**'
       - 'cmd/**'
       - 'tests/**'
+      - '!tests/license-canonical.txt'
+      - '!tests/personal-details/**'
       - 'tools/modules.lock'
       - 'tools/fetch-modules.sh'
       - 'tools/fetch-modules-lock-selftest.sh'
@@ -62,6 +66,15 @@ on:
       - 'Dockerfile*'
       - '.github/workflows/harness.yml'
   workflow_dispatch:
+    inputs:
+      scope:
+        description: 'What to run. full = every stage (the default, and what every other trigger runs); m1node = module 1 real verifier node; m2worker = Postgres + migrations + module 2 + its real worker + the controllable sink + only the TestM2Worker tests'
+        type: choice
+        options:
+          - full
+          - m1node
+          - m2worker
+        default: full
   schedule:
     - cron: '41 5 * * 1'
 
@@ -129,4 +142,5 @@ jobs:
         env:
           H_MODULES_ROOT: ${{ github.workspace }}
           H_WORK: ${{ runner.temp }}/harness
+          H_SCOPE: ${{ inputs.scope || 'full' }}      # only a dispatch carries the input; every other trigger runs the full harness
         run: bash coldmail-platform/tests/harness/run.sh

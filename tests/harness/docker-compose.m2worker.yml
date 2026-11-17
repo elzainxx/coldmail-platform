@@ -1,0 +1,58 @@
+# Module 2's REAL WORKER in the platform harness (Phase 3, chunk B8): a compose override file that run.sh merges after docker-compose.yml (`-f docker-compose.yml -f docker-compose.m2worker.yml --profile m2worker`)
+# ONLY when the stage is on: under H_SCOPE=m2worker, or in the full run once `m2worker` is named in FULL_INCLUDES (run.sh). In the normal full run this file is not read at all, so module 2's Control starts exactly as it did
+# before and nothing here exists. The service below also carries `profiles: [m2worker]`, so that even a merge without the profile flag could not start it by accident (a service named on the command line starts regardless).
+# Everything here is additive: a service of its own, one environment line on `m2` and the environment the test container needs. Nothing of module 2 is modified: the worker image is built from the
+# PINNED module-2 checkout with the module's own Dockerfile (services/worker/Dockerfile), exactly as the `m2` control is (docker-compose.yml).
+#
+# What the stage does with it (tests/harness/m2worker/stage.sh, called by run.sh):
+#   - mints, at run time and with module 2's own provision-worker, the worker's id, its token (and the token's bcrypt hash) and the operator key (and its hash); masks them before first use; never prints them
+#   - checks the mTLS material module 2's own tools (gen-certs.sh, gen-secrets.sh, own-secrets.sh: stage 2 of run.sh) left behind: file owner and mode per container uid, the Control certificate's names
+#   - inserts the worker's send_managed.boxes row BEFORE the worker starts (a worker that is rejected at register exits after about 30 attempts), then starts it and waits for a heartbeat newer than the insert
+# The worker's SMTP target is the controllable sink `smtp-ctl` (docker-compose.yml, source tests/harness/sink); the test points a module-2 account at the sink's PRIVATE address (the worker skips certificate
+# validation only for private ranges; the sink's certificate is self-signed).
+#
+# No `image:` is added (scripts/check-image-pins.sh reads every `image:` as a registry reference); the Dockerfile's own base image is pinned by digest. No port is published (the exposure check lists m2-worker).
+# The variables below are minted by run.sh into the env file (H_M2_ADMIN_KEY, H_M2_ADMIN_KEY_HASH, H_M2_WORKER_ID, H_M2_WORKER_TOKEN); H_M2_TOKEN is the service token that already exists.
+
+services:
+  # The operator surface of module 2 (/v1/admin/*: pools, accounts, config, health) is NOT mounted unless ADMIN_API_KEY_HASHES is set (module 2 config.go, main.go): a credential DISTINCT from the
+  # service token. This is the one line of `m2` that differs from the stack of the earlier phases.
+  m2:
+    environment:
+      ADMIN_API_KEY_HASHES: ${H_M2_ADMIN_KEY_HASH:?}
+
+  # Module 2's worker: a Node client of the Control's mTLS stream (port 8444). It dials the host `m2` and verifies the Control's certificate for the name `control` (the certificate's names are
+  # DNS:control, DNS:localhost, IP:127.0.0.1: gen-certs.sh), the same split module 3's worker uses. It holds no database and no KMS key: it mounts only its own certificate, its key and the CA.
+  # restart "no": a worker that cannot register exits (module 2 worker index.js), and a silently restarted worker would hide that.
+  m2-worker:
+    profiles: [m2worker]
+    build: { context: "${H_MODULES_ROOT:?}/coldmail-send-managed", dockerfile: services/worker/Dockerfile }
+    environment:
+      CONTROL_HOST: m2
+      CONTROL_STREAM_PORT: "8444"
+      CONTROL_SERVER_NAME: control          # the Control certificate's name (SAN DNS:control); the dial uses the host m2 and this name separately
+      WORKER_ID: ${H_M2_WORKER_ID:?}        # a uuid: send_managed.boxes.id (the row stage 5c inserts)
+      WORKER_TOKEN: ${H_M2_WORKER_TOKEN:?}  # the registration token: its bcrypt hash is in send_managed.boxes.token_hash
+      WORKER_HEARTBEAT_INTERVAL_SEC: "10"
+      WORKER_SMTP_TIMEOUT_MS: "30000"
+      MTLS_CLIENT_CERT: /secrets/mtls/worker.crt
+      MTLS_CLIENT_KEY: /secrets/mtls/worker.key
+      MTLS_CA_CERT: /secrets/mtls/ca.crt
+    volumes:
+      # worker.key is owned by uid 10002 (the container's user), mode 600: tools/own-secrets.sh did that in stage 2 and proved it; stage 5c re-reads owner and mode before the worker starts
+      - ${H_MODULES_ROOT:?}/coldmail-send-managed/secrets/dev/certs/worker.crt:/secrets/mtls/worker.crt:ro
+      - ${H_MODULES_ROOT:?}/coldmail-send-managed/secrets/dev/certs/worker.key:/secrets/mtls/worker.key:ro
+      - ${H_MODULES_ROOT:?}/coldmail-send-managed/secrets/dev/certs/ca.crt:/secrets/mtls/ca.crt:ro
+    depends_on: { m2: { condition: service_healthy } }
+    networks: [private]
+    restart: "no"
+
+  # The test container: module 2's address, its two credentials (service token for the platform surface, operator key for pools / accounts / config), the worker's id (the test checks its row and
+  # heartbeat). HARNESS_CTL_URL (the controllable sink's control API), HARNESS_SINK_PASSWORD (reused as the account's SMTP secret: the sink accepts any credential, nothing new to mask) and
+  # HARNESS_ADMIN_DATABASE_URL already exist in docker-compose.yml.
+  harness-tests:
+    environment:
+      HARNESS_M2_URL: http://m2:8080
+      HARNESS_M2_TOKEN: ${H_M2_TOKEN:?}
+      HARNESS_M2_ADMIN_KEY: ${H_M2_ADMIN_KEY:?}
+      HARNESS_M2_WORKER_ID: ${H_M2_WORKER_ID:?}

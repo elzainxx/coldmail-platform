@@ -4,8 +4,8 @@
 go|github.com/coldmail-platform/platform/cmd/platform-migrate|8
 go|github.com/coldmail-platform/platform/cmd/platform-probe|5
 go|github.com/coldmail-platform/platform/internal/app|17
-go|github.com/coldmail-platform/platform/internal/charge|28
-go|github.com/coldmail-platform/platform/internal/config|26
+go|github.com/coldmail-platform/platform/internal/charge|29
+go|github.com/coldmail-platform/platform/internal/config|30
 go|github.com/coldmail-platform/platform/internal/dsnscrub|8
 go|github.com/coldmail-platform/platform/internal/entitlements|60
 go|github.com/coldmail-platform/platform/internal/httpapi|16
@@ -13,7 +13,11 @@ go|github.com/coldmail-platform/platform/internal/logging|6
 go|github.com/coldmail-platform/platform/internal/m1results|29
 go|github.com/coldmail-platform/platform/internal/m3admin|38
 go|github.com/coldmail-platform/platform/internal/migrate|47
+go|github.com/coldmail-platform/platform/internal/modclient|38
 go|github.com/coldmail-platform/platform/internal/money|23
+go|github.com/coldmail-platform/platform/internal/norm|10
 go|github.com/coldmail-platform/platform/internal/probe|40
 go|github.com/coldmail-platform/platform/internal/server|10
+go|github.com/coldmail-platform/platform/internal/tenant|13
+go|github.com/coldmail-platform/platform/tests/harness/fx|14
 go|github.com/coldmail-platform/platform/tests/harness/sink|20

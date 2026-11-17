@@ -1,0 +1,156 @@
+# The module-1 NODE stack (Phase 3, chunk B7): module 1's REAL verifier node, a fixture for the Internet it talks to, and a second control plane wired to that node. Merged over
+# docker-compose.yml by run.sh ONLY under H_SCOPE=m1node (or in the full run once `m1node` is named in FULL_INCLUDES): the file is DORMANT otherwise, nothing of it is built or started. It ADDS
+# services and one network and changes NOTHING that docker-compose.yml defines, so the module-1 control plane `m1` of the other stages keeps its configuration (no SMTP stage); run.sh's m1node
+# stages (tests/harness/m1node/m1node.sh) start these services by name.
+#
+# THE SECOND NETWORK. The node refuses to open an SMTP session to any non-public address (module 1's ADR-0021 destination guard, verifier-node/.../probe_guard.rb: every IANA special
+# purpose block, 100.64.0.0/10 included), and a Docker bridge hands out private addresses, so on the harness's `private` network every fixture domain would answer risky/non_public_mx.
+# The guard has no allow list (its only escape, PROBE_ALLOW_NON_PUBLIC=1, turns the node's audit RED by design: it is NEVER set here). So the fixtures live on a second
+# `internal: true` network whose /24 the guard calls public: the one after the carrier-grade NAT block, written as the three-octet prefix H_FX_PREFIX (default 100.128.0; run.sh derives
+# every address from it, so no literal address is committed). Evidence: probe_guard.rb:48 ends the CGNAT block at 100.127.255.255 and no other entry of V4_RANGES (lines 45-61)
+# covers the half of 100/8 above it (100.128/9); probe_guard_spec.rb:38 lists the first address after the CGNAT block among the ones that must be let through.
+#
+# Addresses: the fixture is S.2 and the node S.3 (both static, in the lower half of the /24); everything else (module 1's second control plane, one-off containers) is handed out from the
+# upper half by `ip_range`, so a dynamic address can never take a static one.
+#
+# NO service here publishes a port (the exposure check reads this file's services too). The fixture runs as the host user (it reads the per-run TLS key, mode 600), read-only, with every
+# capability dropped; its ports 53 and 443 are bound by a non-root user through the namespaced sysctl net.ipv4.ip_unprivileged_port_start=0, not through a capability.
+networks:
+  fixtures:
+    internal: true      # no route to the outside; the node, the fixture and module 1's second control plane reach each other and nothing else
+    ipam:
+      config:
+        - subnet: "${H_FX_PREFIX:?}.0/24"
+          ip_range: "${H_FX_PREFIX:?}.128/25"
+
+services:
+  # ── the fixture: DNS, the "what is my IP" endpoint, the recipient's SMTP host, the control API (tests/harness/fx, stdlib Go) ───────────────────────────────────────────────
+  # On BOTH networks: the node and module 1 reach DNS, HTTPS and SMTP on the fixture network; the harness tests reach the control API (:8025) on `private`; and the DNS role forwards the
+  # dotless names that belong to Docker (the control plane's database host `postgres`) to Docker's embedded resolver, which answers them for the networks this container is on.
+  fx:
+    build: { context: "${H_PLATFORM_DIR:?}/tests/harness/fx", dockerfile: Dockerfile }
+    user: "${H_HOST_UID:?}:${H_HOST_GID:?}"
+    environment:
+      FX_CONFIG: /fx/fixture.json
+      FX_SELF_IP: "${H_FX_PREFIX:?}.2"
+      FX_NODE_IP: "${H_FX_PREFIX:?}.3"
+      FX_TLS_CERT: /fx/tls/ipify.crt
+      FX_TLS_KEY: /fx/tls/ipify.key
+      FX_DNS_UPSTREAM: "127.0.0.11:53"
+    volumes:
+      - ${H_PLATFORM_DIR:?}/tests/harness/m1node/fixture.json:/fx/fixture.json:ro
+      - ${H_WORK:?}/m1fx/tls:/fx/tls:ro
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: "0"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8025/readyz || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    networks:
+      private: {}
+      fixtures:
+        ipv4_address: "${H_FX_PREFIX:?}.2"
+
+  # ── module 1's REAL verifier node (truemail-rack with the fork's wrapper), built from the pinned checkout with module 1's OWN Dockerfile, unmodified ─────────────────────────────────────────
+  # The three things its host audit needs are the fixture's: the HTTPS answer (trusted through SSL_CERT_FILE = the run's CA), the A record of VERIFIER_DOMAIN (= this address) and a PTR for it
+  # (= VERIFIER_DOMAIN), all through a resolv.conf that run.sh writes and mounts (Docker rewrites its own, and a GitHub runner's carries a `search` line that would turn the audit red: the
+  # node's resolver hygiene check refuses a search line, a `domain` line, ndots above 1 and a dotted hostname; this container keeps its 12-character id as hostname and sets no domainname).
+  # DNS= points the gem's own resolver at the fixture too. SMTP_PORT=2525 is the fixture's (the node's port is one global setting; no low port, no capability). The guard stays ON.
+  verifier-node:
+    build: { context: "${H_MODULES_ROOT:?}/coldmail-verify/verifier-node/truemail-rack", dockerfile: Dockerfile }
+    environment:
+      VERIFIER_EMAIL: verifier@verifier.fixture.test
+      VERIFIER_DOMAIN: verifier.fixture.test
+      ACCESS_TOKENS: ${H_M1_NODE_TOKEN:?}
+      DNS: "${H_FX_PREFIX:?}.2"
+      SMTP_PORT: "2525"
+      LOG_STDOUT: "true"
+      RACK_ENV: production
+      SSL_CERT_FILE: /fx/ca.pem
+    volumes:
+      - ${H_WORK:?}/m1fx/node-resolv.conf:/etc/resolv.conf:ro
+      - ${H_WORK:?}/m1fx/ca.pem:/fx/ca.pem:ro
+    healthcheck:
+      test: ["CMD", "ruby", "-rnet/http", "-e", "exit(Net::HTTP.get_response(URI('http://127.0.0.1:3000/healthcheck')).is_a?(Net::HTTPSuccess) ? 0 : 1)"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+      start_period: 5s
+    depends_on: { fx: { condition: service_healthy } }
+    networks:
+      fixtures:
+        ipv4_address: "${H_FX_PREFIX:?}.3"
+
+  # ── module 1's control plane WIRED to the node: `m1` again (same build, same database, same caller keys) with the SMTP stage on ───────────────────────────────────────────────────────
+  # A separate service, not an override of `m1`, so that the existing stages keep their module 1 untouched (no node, the harness network's own DNS): run.sh stops `m1` before it starts
+  # this one, so exactly one control plane drains the queue. Keep the environment in step with `m1` in docker-compose.yml. Its resolv.conf is the fixture's (a silent zone then settles in
+  # 2 s: timeout:2 attempts:1) and the fixture forwards `postgres` to Docker. Module 1 fetches the node's /v1/config ONCE at boot: the node must be healthy first (depends_on), and a
+  # restart of this service resets the node row to provisioning (promotion is SQL, after the final start: run.sh does it).
+  m1n:
+    build: { context: "${H_MODULES_ROOT:?}/coldmail-verify", dockerfile: "${H_PLATFORM_DIR:?}/tests/harness/m1/Dockerfile" }
+    environment:
+      TM_DATABASE_URL: postgres://verify_app:${H_M1_APP_PASSWORD:?}@postgres:5432/postgres
+      TM_PEPPER: ${H_M1_PEPPER:?}
+      TM_QUEUE_ADDR_KEY: ${H_M1_QUEUE_KEY:?}
+      TM_ENV: development
+      TM_LISTEN_ADDR: ":8080"
+      # the SMTP stage and its one node (TM_NODE_ENABLED must be exactly "true"; the egress IP must EQUAL the audit's current_host_ip, here the node's own address)
+      TM_SMTP_MODE: enabled
+      TM_NODE_ID: harness-node-1
+      TM_NODE_BASE_URL: "http://${H_FX_PREFIX:?}.3:3000"
+      TM_NODE_ENABLED: "true"
+      TM_NODE_PUBLIC_EGRESS_IP: "${H_FX_PREFIX:?}.3"
+      TM_NODE_TOKENS: harness-node-1=${H_M1_NODE_TOKEN:?}
+      # the dials of the harness profile (tests/harness/m1node/FIRST-RUN.md says why each): no warm-up cap; ONE audit at boot and no loop (a later fetch error after a first audit would
+      # quarantine the node); an audit that does not go stale during the run; a client deadline above the node's own session timeouts; a transient settles at its first attempt; a capacity
+      # wait ends in 90 s; the cache is on
+      TM_WARMUP_DAILY_CAP: "0"
+      TM_WATCHER_CADENCE_SECONDS: "0"
+      TM_AUDIT_MAX_AGE_SECONDS: "86400"
+      TM_SMTP_CLIENT_DEADLINE_MS: "30000"
+      TM_QUEUE_MAX_ATTEMPTS: "1"
+      TM_QUEUE_MAX_RETRY_AGE_SECONDS: "90"
+      TM_QUEUE_RATE_WAIT_SECONDS: "5"
+      TM_QUEUE_DRAIN_IDLE_POLL_SECONDS: "1"
+      TM_CACHE_TTL_SECONDS: "3600"
+    volumes:
+      - ${H_WORK:?}/m1fx/cp-resolv.conf:/etc/resolv.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/readyz >/dev/null || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    depends_on:
+      postgres: { condition: service_healthy }
+      fx: { condition: service_healthy }
+      verifier-node: { condition: service_healthy }
+    networks:
+      private: {}
+      fixtures: {}
+
+  # ── the integration tests of this stack (tests/harness/m1_node_test.go), run INSIDE the networks like harness-tests ────────────────────────────────────────────────────────────────────
+  # harness-tests itself is not touched (it points at the unwired `m1`); this twin runs the tests behind the build tag m1node against the wired control plane and the fixture's control API. The superuser URL is for the one
+  # control that flips a row of module 1's disposable/spam-trap lists.
+  m1node-tests:
+    profiles: [tests]
+    image: alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
+    entrypoint: ["/h/harness-m1node.test"]      # a binary of its own, compiled with the build tag m1node (run.sh never compiles that tag into harness.test)
+    working_dir: /repo
+    environment:
+      HARNESS_M1_URL: http://m1n:8080
+      HARNESS_M1_KEY: ${H_M1_CALLER_KEY:?}
+      HARNESS_M1NODE_FX_URL: http://fx:8025
+      HARNESS_M1NODE_NODE_ID: harness-node-1
+      HARNESS_M1NODE_NODE_IP: "${H_FX_PREFIX:?}.3"
+      HARNESS_M1NODE_SMTP_IP: "${H_FX_PREFIX:?}.2"
+      HARNESS_ADMIN_DATABASE_URL: postgres://supabase_admin:${H_PG_SUPERPASS:?}@postgres:5432/postgres
+    volumes:
+      - ${H_WORK:?}/out:/h:ro
+      - ${H_PLATFORM_DIR:?}:/repo:ro
+    depends_on: { postgres: { condition: service_healthy } }
+    networks: [private]
+    restart: "no"

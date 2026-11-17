@@ -13,6 +13,8 @@
 #   check-install-doc    Docs/install.md names only what exists and CI runs the install step it documents (the selftest and the real run, both here)
 #   check-gitleaks-config the secret scanner configuration (.gitleaks.toml) holds only decided, narrow exceptions: one rule each, a path under audit-scratch or one commit that exists (the selftest and the real run, both here)
 #   check-charge-table   internal/charge/rules.psv equals the fenced charge table in Docs/phase-2-spec.md byte for byte and charges only seeded units (the selftest and the real run, both here)
+#   check-license       LICENSE is the one paragraph in tests/license-canonical.txt byte for byte, NOTICE opens with the same two sentences, README carries the notice line, and neither LICENSE nor NOTICE says "confidential" (the selftest and the real run on this tree, both here; the three module checkouts are checked by platform-check, all five repositories by the parent's modules-lock)
+#   check-personal-details no tracked text file names a Windows home path, a drive-letter path or an IPv4 address outside the allowed classes without an allowlist entry that says why (tests/personal-details/<repo>.allow; the selftest and the real run on this tree, both here)
 #   check-verified-heads a status row may call a head done / CLOSED only when the required workflows (the heavy ones included) ran green on that exact SHA and the row cites the run (the selftest and the real run, both here; the real run asks the Actions API with the job token)
 #   fetch-modules        tools/fetch-modules.sh refuses a bad lock and its anonymous route (a module whose deploy-key variable is empty) clones, checks out the pin and goes red for the reason it names (tools/fetch-modules-lock-selftest.sh; the harness workflow runs it too; local repositories, no network, no key)
 #   run-leg              the fault-proof leg runner (ci/faults/run-leg.sh) passes only a good fault and fails, for the named reason, on every bad one
@@ -20,11 +22,12 @@
 # NOT covered by this file: the secret scan (gitleaks.yml), the docs/citation checks (platform-check.yml), the Go/web builds (go.yml, web.yml)
 # and the real-Postgres + real-module harness (harness.yml).
 #
-# WHEN IT RUNS (the trigger economy of the public-release pass): on every push and pull request EXCEPT one that touches nothing but Docs/history/ (preserved raw research and audit logs,
-# which no gate reads). Prose is deliberately NOT skipped: this workflow reads documents on purpose (check-install-doc reads Docs/install.md, check-charge-table reads Docs/phase-2-spec.md,
-# check-fault-patches applies patches to both, and check-verified-heads reads the status tables of the documents listed in tests/verified-heads-docs.txt), so a documentation change must still run it. `paths-ignore` (not a
-# `paths` list) keeps a new gate input from ever being skipped. A push of a `v*` or `phase-*` tag always runs it (GitHub does not evaluate path filters for a tag push), so tagging a head puts a run
-# of this workflow on that exact SHA. A newer run on the same ref cancels the older one.
+# WHEN IT RUNS (the trigger economy of the public-release pass): on EVERY push and pull request, with no path filter. Prose is deliberately NOT skipped: this workflow reads documents on purpose
+# (check-install-doc reads Docs/install.md, check-charge-table reads Docs/phase-2-spec.md, check-fault-patches applies patches to both, check-verified-heads reads the status tables of the documents listed in
+# tests/verified-heads-docs.txt, check-license reads LICENSE, NOTICE, README.md and tests/license-canonical.txt), so a documentation change must still run it. Docs/history/ is no longer ignored (it was, while
+# no gate read it): check-personal-details reads EVERY tracked text file, Docs/history included, so a push that touches only Docs/history/ can add a Windows path or an address and must run the gates.
+# No `paths` list and no `paths-ignore`: a new gate input can then never be skipped. A push of a `v*` or `phase-*` tag always runs it, so tagging a head puts a run of this workflow on that exact SHA.
+# A newer run on the same ref cancels the older one.
 name: gates
 on:
   push:
@@ -33,11 +36,7 @@ on:
     tags:
       - 'v*'
       - 'phase-*'
-    paths-ignore:
-      - 'Docs/history/**'
   pull_request:
-    paths-ignore:
-      - 'Docs/history/**'
   workflow_dispatch:
 
 permissions:
@@ -64,7 +63,7 @@ jobs:
         run: |
           set -u
           rc=0
-          for t in scripts/check-test-floors-selftest.sh scripts/check-image-pins-selftest.sh scripts/check-migrations-selftest.sh scripts/check-gitleaksignore-selftest.sh scripts/check-fault-patches-selftest.sh ci/faults/run-leg-selftest.sh scripts/check-public-schema-selftest.sh scripts/check-module-reads-selftest.sh scripts/check-balance-invariant-selftest.sh scripts/check-user-lists-selftest.sh scripts/check-install-doc-selftest.sh scripts/check-gitleaks-config-selftest.sh scripts/check-charge-table-selftest.sh scripts/check-verified-heads-selftest.sh tools/fetch-modules-lock-selftest.sh; do
+          for t in scripts/check-test-floors-selftest.sh scripts/check-image-pins-selftest.sh scripts/check-migrations-selftest.sh scripts/check-gitleaksignore-selftest.sh scripts/check-fault-patches-selftest.sh ci/faults/run-leg-selftest.sh scripts/check-public-schema-selftest.sh scripts/check-module-reads-selftest.sh scripts/check-balance-invariant-selftest.sh scripts/check-user-lists-selftest.sh scripts/check-install-doc-selftest.sh scripts/check-gitleaks-config-selftest.sh scripts/check-charge-table-selftest.sh scripts/check-verified-heads-selftest.sh scripts/check-license-selftest.sh scripts/check-personal-details-selftest.sh tests/harness/m2worker/stage-selftest.sh tests/harness/m1node/stage-selftest.sh tools/fetch-modules-lock-selftest.sh; do
             echo "::group::$t"; bash "$t" || { echo "SELFTEST FAILED: $t"; rc=1; }; echo "::endgroup::"
           done
           exit $rc
@@ -92,6 +91,12 @@ jobs:
 
       - name: check-fault-patches on the real repository (every ci/faults fault parses; every platform patch still applies)
         run: bash scripts/check-fault-patches.sh --min-faults 1
+
+      - name: check-license on the real repository (LICENSE is the canonical paragraph, NOTICE and README say the same, nothing is called confidential)
+        run: bash scripts/check-license.sh --root .
+
+      - name: check-personal-details on the real repository (no Windows home path, drive-letter path or unallowed IPv4 address in a tracked file)
+        run: bash scripts/check-personal-details.sh --root . --allow tests/personal-details/coldmail-platform.allow
 
       # Reads the Actions API for the head SHAs the documents call verified (green / done / CLOSED): GH_TOKEN is this job's own read-only token, never a secret of the repository.
       # A wired gate whose script is absent is red (bash cannot open it), never skipped: a gate that did not run must not read as green.
