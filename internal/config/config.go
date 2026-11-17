@@ -10,7 +10,8 @@
 // Phase 0 reads process-wiring values only (address, credentials, timeouts of the HTTP server). Phase 2
 // adds the process wiring of module 3's entitlement flow (where module 3's control is, the credential for
 // its admin route, and how often the two loops run); the entitlement rules themselves live in the
-// database. Tunables that govern product behaviour belong in the database's config table when it exists,
+// database. Phase 3 adds the module client's dials, the module 1 key secret and four optional dials (where
+// modules 1 and 2 are, and the service tokens of modules 2 and 3) that the adapters read. Tunables that govern product behaviour belong in the database's config table when it exists,
 // not here.
 package config
 
@@ -57,6 +58,13 @@ const (
 	// The secret every user's module 1 caller key is derived from (internal/tenant, Phase 3 B2).
 	VarM1KeySecret = "PLATFORM_M1_KEY_SECRET"
 
+	// Where the three modules are and the credentials of the platform's own calls to them (the adapters internal/adapters/m1, m2 and m3, Phase 3 B3 to B5). All four are optional: an adapter
+	// whose dial is empty refuses with a typed error, the service still starts. Module 1 has no service token: it is called with each user's derived caller key (VarM1KeySecret).
+	VarM1URL          = "PLATFORM_M1_URL"
+	VarM2URL          = "PLATFORM_M2_URL"
+	VarM2ServiceToken = "PLATFORM_M2_SERVICE_TOKEN"
+	VarM3ServiceToken = "PLATFORM_M3_SERVICE_TOKEN"
+
 	// Which instance this is, when more than one platform instance runs (Phase 2 close-out D9): the name of the session that holds the leader lock of the loops.
 	VarInstanceID = "PLATFORM_INSTANCE_ID"
 )
@@ -97,9 +105,10 @@ const (
 	// ResolveInstanceID) and Config.InstanceID stays empty for it.
 	instanceIDDefault = "(hostname)"
 
-	// m1KeySecretUnset is the documented default of VarM1KeySecret. It stands for "not configured" and is NOT a secret: the dial has no usable default (a built-in key would be a key everybody knows),
-	// so unset leaves Config.M1KeySecret empty, the platform still starts, and internal/tenant refuses to derive a module 1 key (ErrNoM1KeySecret) until it is set.
-	m1KeySecretUnset = "(unset)"
+	// unsetMarker is the documented default of every optional dial that has no usable default: VarM1KeySecret, VarM1URL, VarM2URL, VarM2ServiceToken and VarM3ServiceToken. It stands for "not
+	// configured" and is NOT a value (a built-in key or address would be one everybody knows): unset leaves the Config field empty, the platform still starts, and the consumer refuses with a typed
+	// error until it is set (internal/tenant: ErrNoM1KeySecret; the adapters: their FromConfig).
+	unsetMarker = "(unset)"
 )
 
 // Var describes one environment variable. Vars() is the single source of truth for every dial.
@@ -148,8 +157,16 @@ func Vars() []Var {
 			Doc: fmt.Sprintf("Extra attempts a request to a module gets after a failure, 0 for none. Only a request marked idempotent (a read, or a write the module deduplicates by the platform's own key) is ever retried, and only after the module was unreachable, timed out or answered 429; a refusal, a not found, a module fault (500) or an answer that breaks the contract is never retried, and neither is a write that is not idempotent. Integer, 0 to %d.", maxModuleRetries)},
 		{Name: VarModuleRetryBackoffMS, Default: "250",
 			Doc: fmt.Sprintf("Milliseconds before the first retry of a request to a module; each further retry waits twice as long as the one before, up to 30 seconds, with no random jitter. A 429 that names a Retry-After waits the larger of the two (never more than the request timeout). 0 retries at once. Integer, 0 to %d.", maxModuleBackoffMS)},
-		{Name: VarM1KeySecret, Default: m1KeySecretUnset, Secret: true,
+		{Name: VarM1KeySecret, Default: unsetMarker, Secret: true,
 			Doc: fmt.Sprintf("The secret each user's module 1 caller key is derived from: the key is the unpadded base64url of the HMAC-SHA256, under this secret, of the fixed text m1-caller, a vertical bar and the user's id; module 1 keeps only the SHA-256 of each key. At least %d bytes (64 random hexadecimal characters are plenty). The default (unset) means no module 1 key can be derived and no tenant scope built; the service still starts. Changing it changes every user's key. Never printed or logged.", MinM1KeySecretBytes)},
+		{Name: VarM1URL, Default: unsetMarker,
+			Doc: "Base URL of module 1's control plane (http or https, with a host and no credentials, query or fragment), for example http://m1:8080. Module 1 is called with each user's derived caller key (see PLATFORM_M1_KEY_SECRET), not with a service token. The default (unset) means no module 1 call can be made and its adapter refuses with a typed error; the service still starts. Consumed by `internal/adapters/m1.FromConfig`."},
+		{Name: VarM2URL, Default: unsetMarker,
+			Doc: "Base URL of module 2's platform API (http or https, with a host and no credentials, query or fragment), for example http://m2:8080. The default (unset) means no module 2 call can be made and its adapter refuses with a typed error; the service still starts. Consumed by `internal/adapters/m2.FromConfig`."},
+		{Name: VarM2ServiceToken, Default: unsetMarker, Secret: true,
+			Doc: "Module 2's service token (its Domain A bearer), sent on every platform call to module 2. Printable ASCII with no spaces. The default (unset) means no module 2 call can be made and its adapter refuses with a typed error; the service still starts. Consumed by `internal/adapters/m2.FromConfig`. Never printed or logged."},
+		{Name: VarM3ServiceToken, Default: unsetMarker, Secret: true,
+			Doc: "Module 3's Domain A service token, sent as the bearer on the platform's user-facing calls to module 3. NOT the operator key PLATFORM_M3_ADMIN_TOKEN, which stays a different credential. Printable ASCII with no spaces. The default (unset) means no user-facing module 3 call can be made and its adapter refuses with a typed error; the service still starts. Consumed by `internal/adapters/m3.FromConfig`. Never printed or logged."},
 		{Name: VarInstanceID, Default: instanceIDDefault,
 			Doc: fmt.Sprintf("Name of this platform instance, 1 to %d printable ASCII characters. With more than one instance running, only the one holding the leader lock runs the expiry and reconcile loops; the name is the application_name of the database session that holds it (pg_stat_activity) and appears in the loop log lines. Each instance needs its own. The default (hostname) means this machine's host name.", maxInstanceIDBytes)},
 	}
@@ -180,6 +197,11 @@ type Config struct {
 	ModuleRetryBackoff time.Duration // the first wait between attempts; it doubles (internal/modclient FromConfig)
 
 	M1KeySecret Secret // the secret every user's module 1 caller key is derived from; "" means not configured (internal/tenant NewResolver, DeriveM1Key)
+
+	M1URL          string // base URL of module 1's control plane; "" means not configured (internal/adapters/m1 FromConfig)
+	M2URL          string // base URL of module 2's platform API; "" means not configured (internal/adapters/m2 FromConfig)
+	M2ServiceToken Secret // module 2's service token (Domain A bearer); "" means not configured (internal/adapters/m2 FromConfig)
+	M3ServiceToken Secret // module 3's Domain A service token, not the admin token M3AdminToken; "" means not configured (internal/adapters/m3 FromConfig)
 
 	InstanceID string // this instance's name; "" means the default, the host name, which the service resolves (internal/entitlements ResolveInstanceID)
 }
@@ -267,7 +289,7 @@ func Load(getenv func(string) string) (Config, error) {
 				c.ReadHeaderTimeout = time.Duration(n) * time.Second
 			}
 		case VarM3URL:
-			if !validM3URL(raw) {
+			if !validModuleURL(raw) {
 				fail(v.Name, "must be an http or https URL with a host and no credentials, for example http://m3:8080")
 				continue
 			}
@@ -311,12 +333,44 @@ func Load(getenv func(string) string) (Config, error) {
 				c.ModuleRetryBackoff = time.Duration(n) * time.Millisecond
 			}
 		case VarM1KeySecret:
-			if raw != v.Default { // the default stands for "not configured", which leaves the field empty (see m1KeySecretUnset)
+			if raw != v.Default { // the default stands for "not configured", which leaves the field empty (see unsetMarker)
 				if len(raw) < MinM1KeySecretBytes {
 					fail(v.Name, fmt.Sprintf("must be at least %d bytes", MinM1KeySecretBytes))
 					continue
 				}
 				c.M1KeySecret = Secret(raw)
+			}
+		case VarM1URL:
+			if raw != v.Default { // the default stands for "not configured", which leaves the field empty (see unsetMarker)
+				if !validModuleURL(raw) {
+					fail(v.Name, "must be an http or https URL with a host and no credentials, for example http://m1:8080")
+					continue
+				}
+				c.M1URL = raw
+			}
+		case VarM2URL:
+			if raw != v.Default {
+				if !validModuleURL(raw) {
+					fail(v.Name, "must be an http or https URL with a host and no credentials, for example http://m2:8080")
+					continue
+				}
+				c.M2URL = raw
+			}
+		case VarM2ServiceToken:
+			if raw != v.Default {
+				if !validBearerToken(raw) {
+					fail(v.Name, "must be printable ASCII with no spaces (it is sent as a bearer token)")
+					continue
+				}
+				c.M2ServiceToken = Secret(raw)
+			}
+		case VarM3ServiceToken:
+			if raw != v.Default {
+				if !validBearerToken(raw) {
+					fail(v.Name, "must be printable ASCII with no spaces (it is sent as a bearer token)")
+					continue
+				}
+				c.M3ServiceToken = Secret(raw)
 			}
 		case VarInstanceID:
 			if raw != v.Default { // the default stands for the host name, which Load does not read (see instanceIDDefault)
@@ -347,10 +401,11 @@ func validListenAddr(s string) bool {
 	return err == nil && n >= 0 && n <= 65535
 }
 
-// validM3URL accepts an absolute http or https URL with a host, no credentials, no query and no fragment
-// (the base URL the module-3 client appends its routes to). A URL with credentials is refused rather than
-// accepted: this variable is not a secret, so a credential in it would be printed.
-func validM3URL(s string) bool {
+// validModuleURL accepts an absolute http or https URL with a host, no credentials, no query and no fragment
+// (the base URL a module client appends its routes to: PLATFORM_M1_URL, PLATFORM_M2_URL and PLATFORM_M3_URL
+// share this one rule). A URL with credentials is refused rather than accepted: these variables are not
+// secrets, so a credential in one would be printed.
+func validModuleURL(s string) bool {
 	u, err := url.Parse(s)
 	if err != nil || u.Opaque != "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
 		return false
@@ -387,12 +442,21 @@ func validBearerToken(s string) bool {
 	return s != ""
 }
 
-// m1KeySecretState is what a Config says about the module 1 key secret: the redaction marker when it is set, "(unset)" when it is not. Either way, never the value.
-func (c Config) m1KeySecretState() string {
-	if c.M1KeySecret == "" {
-		return m1KeySecretUnset
+// secretState is what a Config says about an optional secret (the module 1 key secret, the module 2 and 3 service tokens): the redaction marker when it is set, "(unset)" when it is not.
+// Either way, never the value.
+func secretState(s Secret) string {
+	if s == "" {
+		return unsetMarker
 	}
-	return c.M1KeySecret.String()
+	return s.String()
+}
+
+// urlState is what a Config says about an optional base URL: the URL when it is set (it carries no credentials, see validModuleURL), "(unset)" when it is not.
+func urlState(u string) string {
+	if u == "" {
+		return unsetMarker
+	}
+	return u
 }
 
 // attrs is the one place Config is rendered; String, GoString and LogValue all derive from it, so they
@@ -416,7 +480,11 @@ func (c Config) attrs() []slog.Attr {
 		slog.Duration("module_timeout", c.ModuleTimeout),
 		slog.Int("module_retries", c.ModuleRetries),
 		slog.Duration("module_retry_backoff", c.ModuleRetryBackoff),
-		slog.String("m1_key_secret", c.m1KeySecretState()),
+		slog.String("m1_key_secret", secretState(c.M1KeySecret)),
+		slog.String("m1_url", urlState(c.M1URL)),
+		slog.String("m2_url", urlState(c.M2URL)),
+		slog.String("m2_service_token", secretState(c.M2ServiceToken)),
+		slog.String("m3_service_token", secretState(c.M3ServiceToken)),
 		slog.String("instance_id", c.InstanceID),
 	}
 }

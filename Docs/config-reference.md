@@ -28,6 +28,10 @@ start-up with exit status 2, and the message names the variable and the reason, 
 | `PLATFORM_MODULE_RETRIES` | `2` | no | no | Extra attempts a request to a module gets after a failure, 0 for none. Only a request marked idempotent (a read, or a write the module deduplicates by the platform's own key) is ever retried, and only after the module was unreachable, timed out or answered 429; a refusal, a not found, a module fault (500) or an answer that breaks the contract is never retried, and neither is a write that is not idempotent. Integer, 0 to 10. |
 | `PLATFORM_MODULE_RETRY_BACKOFF_MS` | `250` | no | no | Milliseconds before the first retry of a request to a module; each further retry waits twice as long as the one before, up to 30 seconds, with no random jitter. A 429 that names a Retry-After waits the larger of the two (never more than the request timeout). 0 retries at once. Integer, 0 to 30000. |
 | `PLATFORM_M1_KEY_SECRET` | `(unset)` | no | yes | The secret each user's module 1 caller key is derived from: the key is the unpadded base64url of the HMAC-SHA256, under this secret, of the fixed text m1-caller, a vertical bar and the user's id; module 1 keeps only the SHA-256 of each key. At least 32 bytes (64 random hexadecimal characters are plenty). The default (unset) means no module 1 key can be derived and no tenant scope built; the service still starts. Changing it changes every user's key. Never printed or logged. |
+| `PLATFORM_M1_URL` | `(unset)` | no | no | Base URL of module 1's control plane (http or https, with a host and no credentials, query or fragment), for example http://m1:8080. Module 1 is called with each user's derived caller key (see PLATFORM_M1_KEY_SECRET), not with a service token. The default (unset) means no module 1 call can be made and its adapter refuses with a typed error; the service still starts. Consumed by `internal/adapters/m1.FromConfig`. |
+| `PLATFORM_M2_URL` | `(unset)` | no | no | Base URL of module 2's platform API (http or https, with a host and no credentials, query or fragment), for example http://m2:8080. The default (unset) means no module 2 call can be made and its adapter refuses with a typed error; the service still starts. Consumed by `internal/adapters/m2.FromConfig`. |
+| `PLATFORM_M2_SERVICE_TOKEN` | `(unset)` | no | yes | Module 2's service token (its Domain A bearer), sent on every platform call to module 2. Printable ASCII with no spaces. The default (unset) means no module 2 call can be made and its adapter refuses with a typed error; the service still starts. Consumed by `internal/adapters/m2.FromConfig`. Never printed or logged. |
+| `PLATFORM_M3_SERVICE_TOKEN` | `(unset)` | no | yes | Module 3's Domain A service token, sent as the bearer on the platform's user-facing calls to module 3. NOT the operator key PLATFORM_M3_ADMIN_TOKEN, which stays a different credential. Printable ASCII with no spaces. The default (unset) means no user-facing module 3 call can be made and its adapter refuses with a typed error; the service still starts. Consumed by `internal/adapters/m3.FromConfig`. Never printed or logged. |
 | `PLATFORM_INSTANCE_ID` | `(hostname)` | no | no | Name of this platform instance, 1 to 63 printable ASCII characters. With more than one instance running, only the one holding the leader lock runs the expiry and reconcile loops; the name is the application_name of the database session that holds it (pg_stat_activity) and appears in the loop log lines. Each instance needs its own. The default (hostname) means this machine's host name. |
 
 Column notes. Default `(none)` means the variable has no default. Secret means the value is never written
@@ -65,6 +69,10 @@ credentials apart (`ADMIN_API_KEY_HASHES` against `PLATFORM_TOKEN_HASHES`), and 
 only to the admin route. A wrong key makes module 3 answer 401: the reconcile loop reports a configuration
 fault and slows down, and every user's state stays "not converged" until the key is fixed. Nothing in this
 file or in a log carries the token.
+
+**`PLATFORM_M3_SERVICE_TOKEN` is the other credential, module 3's Domain A service token, and the two stay different on purpose:** module 3 answers 401 to each of them on the other's routes, and the
+token that carries the platform's user-facing calls must never be able to suspend or resume a user, which is what the operator key can do. The service token is optional (unset means no user-facing
+module 3 call can be made and `internal/adapters/m3.FromConfig` refuses with a typed error); the operator key is required.
 
 ## How long a money operation waits
 
@@ -120,6 +128,18 @@ database (module 1's runtime login, like the platform's `platform_app`, can only
 can submit jobs that nobody can read. **`PLATFORM_M1_KEY_SECRET`** is optional so that a deployment that makes no module 1 call starts without it; without it no key is derived and no tenant scope
 is built (the resolver answers `ErrNoM1KeySecret`). Changing the secret changes every user's key and leaves the old rows valid: provision the new rows first, and expire the old ones in module 1's
 database once nothing uses them.
+
+## Where the modules are and which credential each call carries
+
+Four optional variables tell the module adapters where their module is and what the platform sends it. **`PLATFORM_M1_URL`** and **`PLATFORM_M2_URL`** are base URLs with the same rule as
+`PLATFORM_M3_URL`: an absolute http or https URL with a host, and no credentials, no query and no fragment (a URL with a user name or a query is refused at start-up, and the message names the
+variable and never the value). **`PLATFORM_M2_SERVICE_TOKEN`** and **`PLATFORM_M3_SERVICE_TOKEN`** are the Domain A bearer credentials of modules 2 and 3: printable ASCII with no spaces (a stray
+newline or a pasted non-ASCII character stops the process at start-up, not at the first request), kept in the `Secret` type, and shown in the printed configuration only as `[redacted]`
+(or `(unset)` when not set). Module 1 has no service token: it is called with each user's own derived caller key (`PLATFORM_M1_KEY_SECRET`, above), so it has a URL and no token.
+
+All four are optional, so that a deployment that makes no call to a module starts without them. A module whose URL or token is not set is not reached by default: its adapter answers with a typed
+error, never a made-up verdict. The consumers are `internal/adapters/m1.FromConfig` (`PLATFORM_M1_URL`), `internal/adapters/m2.FromConfig` (`PLATFORM_M2_URL` and `PLATFORM_M2_SERVICE_TOKEN`) and
+`internal/adapters/m3.FromConfig` (`PLATFORM_M3_SERVICE_TOKEN`, with `PLATFORM_M3_URL`). The M3 service token is a different credential from `PLATFORM_M3_ADMIN_TOKEN` (see above).
 
 ## What the service does with the database at start-up
 

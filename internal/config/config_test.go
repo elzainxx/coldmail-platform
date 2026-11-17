@@ -82,10 +82,20 @@ func TestVars_AreWellFormed(t *testing.T) {
 	if v, ok := byName[VarM1KeySecret]; !ok || !v.Secret || v.Required || v.Default != "(unset)" {
 		t.Errorf("%s must be declared Secret, not Required, with the default (unset), got %+v", VarM1KeySecret, v)
 	}
+	// The four optional module dials: the two base URLs are not secrets, the two service tokens are, and none of the four is required (unset means "not configured", the documented marker).
+	for _, c := range []struct {
+		name   string
+		secret bool
+	}{{VarM1URL, false}, {VarM2URL, false}, {VarM2ServiceToken, true}, {VarM3ServiceToken, true}} {
+		if v, ok := byName[c.name]; !ok || v.Secret != c.secret || v.Required || v.Default != "(unset)" {
+			t.Errorf("%s must be declared optional, with the default (unset) and Secret=%v, got %+v", c.name, c.secret, v)
+		}
+	}
 	// Every other variable is a non-secret dial: a new secret must be added to the list above on purpose.
+	knownSecrets := map[string]bool{VarDatabaseURL: true, VarM3AdminToken: true, VarM1KeySecret: true, VarM2ServiceToken: true, VarM3ServiceToken: true}
 	for _, v := range vars {
-		if v.Secret && v.Name != VarDatabaseURL && v.Name != VarM3AdminToken && v.Name != VarM1KeySecret {
-			t.Errorf("%s is Secret but is not one of the three known secrets: extend this test deliberately", v.Name)
+		if v.Secret && !knownSecrets[v.Name] {
+			t.Errorf("%s is Secret but is not one of the five known secrets: extend this test deliberately", v.Name)
 		}
 	}
 
@@ -120,6 +130,11 @@ func TestLoad_DefaultsAreTheDocumentedOnes(t *testing.T) {
 
 		"PLATFORM_M1_KEY_SECRET": "(unset)",
 
+		"PLATFORM_M1_URL":           "(unset)",
+		"PLATFORM_M2_URL":           "(unset)",
+		"PLATFORM_M2_SERVICE_TOKEN": "(unset)",
+		"PLATFORM_M3_SERVICE_TOKEN": "(unset)",
+
 		"PLATFORM_INSTANCE_ID": "(hostname)",
 	}
 	got := map[string]string{}
@@ -150,6 +165,10 @@ func TestLoad_DefaultsAreTheDocumentedOnes(t *testing.T) {
 	}
 	if cfg.ModuleTimeout != 15*time.Second || cfg.ModuleRetries != 2 || cfg.ModuleRetryBackoff != 250*time.Millisecond {
 		t.Fatalf("the module client defaults did not reach the Config: %v", cfg)
+	}
+	// The optional dials' default is "not configured": an empty field, never the marker text itself.
+	if cfg.M1URL != "" || cfg.M2URL != "" || cfg.M2ServiceToken != "" || cfg.M3ServiceToken != "" || cfg.M1KeySecret != "" || cfg.InstanceID != "" {
+		t.Fatalf("an optional dial's default did not load as empty: %v", cfg)
 	}
 
 	// Paired control: a blank value means "unset", so an environment that spells every default out loud
@@ -282,6 +301,11 @@ var alternatives = map[string]string{
 
 	VarM1KeySecret: strings.Repeat("alt-", 9), // 36 bytes
 
+	VarM1URL:          "http://m1.internal:8081",
+	VarM2URL:          "https://m2.internal:9444/api",
+	VarM2ServiceToken: "alt-m2-service-token",
+	VarM3ServiceToken: "alt-m3-service-token",
+
 	VarInstanceID: "platform-2",
 }
 
@@ -405,6 +429,21 @@ func TestLoad_InvalidValuesNameTheVariableAndNeverEchoTheValue(t *testing.T) {
 		{VarM3AdminToken, "two words-XYZ123", "printable ASCII"},
 		{VarM3AdminToken, "café-key-XYZ123", "printable ASCII"},
 		{VarM3AdminToken, "inner\ttab-XYZ123", "printable ASCII"},
+		// The four optional module dials: the same URL rule as module 3's and the same bearer rule as its operator key, each naming its own variable.
+		{VarM1URL, "ftp://m1-XYZ123:8080", "http or https URL"},
+		{VarM1URL, "m1-XYZ123:8080", "http or https URL"},
+		{VarM1URL, "http://user-XYZ123:pw-XYZ123@m1:8080", "no credentials"},
+		{VarM1URL, "http://m1-XYZ123:8080?key=1", "http or https URL"},
+		{VarM2URL, "https://", "http or https URL"}, // a scheme and no host
+		{VarM2URL, "http://m2-XYZ123:8080/#frag", "http or https URL"},
+		{VarM2URL, "http://user-XYZ123:pw-XYZ123@m2:8080", "no credentials"},
+		{VarM2URL, "m2-XYZ123:8080", "http or https URL"},
+		{VarM2ServiceToken, "two words-XYZ123", "printable ASCII"},
+		{VarM2ServiceToken, "café-token-XYZ123", "printable ASCII"},
+		{VarM2ServiceToken, "inner\ntoken-XYZ123", "printable ASCII"},
+		{VarM3ServiceToken, "two words-XYZ123", "printable ASCII"},
+		{VarM3ServiceToken, "café-token-XYZ123", "printable ASCII"},
+		{VarM3ServiceToken, "inner\ttab-XYZ123", "printable ASCII"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name+"="+tc.value, func(t *testing.T) {
@@ -513,6 +552,52 @@ func TestLoad_M3URLShapes(t *testing.T) {
 		}
 	}
 	if len(accepted) < 5 || len(rejected) < 11 {
+		t.Fatal("the shape tables shrank: the check would pass over fewer cases than it was written for")
+	}
+}
+
+// TestLoad_ModuleURLShapesOfTheOptionalDials runs the module 3 URL table against the two optional base URLs: one rule for the three variables. The control is the module 3 table itself (the
+// accepted twins load for module 3 too), and a URL that is refused for one variable is refused for the others with that variable named, not another.
+func TestLoad_ModuleURLShapesOfTheOptionalDials(t *testing.T) {
+	accepted := []string{"http://m:8080", "https://m.internal", "http://10.0.0.5:8080/base", "HTTP://M:8080", "http://[::1]:8080", "  http://m:8080  "}
+	rejected := map[string]string{ // value -> the shape it breaks (its twin is in `accepted`)
+		"ftp://m:8080":          "scheme",
+		"//m:8080":              "no scheme",
+		"m:8080":                "no scheme, a bare host:port",
+		"http:///path":          "no host",
+		"http://u:p@m:8080":     "credentials",
+		"http://u@m:8080":       "a user name",
+		"http://m:8080?a=b":     "a query",
+		"http://m:8080?":        "an empty query",
+		"http://m:8080#x":       "a fragment",
+		"http://m :8080":        "a space in the host",
+		"mailto:ops@example.io": "an opaque URL",
+	}
+	for _, name := range []string{VarM1URL, VarM2URL, VarM3URL} {
+		for _, v := range accepted {
+			cfg, err := Load(envOf(with(base(), name, v)))
+			if err != nil {
+				t.Errorf("%s=%q was refused: %v", name, v, err)
+				continue
+			}
+			got := map[string]string{VarM1URL: cfg.M1URL, VarM2URL: cfg.M2URL, VarM3URL: cfg.M3URL}[name]
+			if got != strings.TrimSpace(v) {
+				t.Errorf("%s=%q loaded as %q, want the trimmed value", name, v, got)
+			}
+		}
+		for v, why := range rejected {
+			_, err := Load(envOf(with(base(), name, v)))
+			var ce *Error
+			if !errors.As(err, &ce) || len(ce.Problems) != 1 || ce.Problems[0].Name != name {
+				t.Errorf("%s=%q (%s) loaded, or was refused for another variable: %v", name, v, why, err)
+				continue
+			}
+			if !strings.Contains(ce.Problems[0].Reason, "http or https URL") {
+				t.Errorf("%s=%q (%s): the reason is %q, want it to say what a URL here is", name, v, why, ce.Problems[0].Reason)
+			}
+		}
+	}
+	if len(accepted) < 6 || len(rejected) < 11 {
 		t.Fatal("the shape tables shrank: the check would pass over fewer cases than it was written for")
 	}
 }
@@ -765,6 +850,13 @@ func TestConfig_LogValueShowsTheNonSecretsAndRedactsTheSecret(t *testing.T) {
 	}
 	if line.Config["m3_admin_token"] != "[redacted]" || line.Config["m3_url"] != goodM3URL {
 		t.Errorf("m3_admin_token = %v, m3_url = %v, want the redaction marker and the URL", line.Config["m3_admin_token"], line.Config["m3_url"])
+	}
+
+	// The optional module dials say "(unset)" when they are not configured (and never an empty string that could be mistaken for a value that was lost).
+	for _, key := range []string{"m1_key_secret", "m1_url", "m2_url", "m2_service_token", "m3_service_token"} {
+		if line.Config[key] != "(unset)" {
+			t.Errorf("%s = %v, want (unset) for a dial that was not configured", key, line.Config[key])
+		}
 	}
 
 	// Every Config field is rendered: a field added without a log attribute (or the reverse) is caught.
