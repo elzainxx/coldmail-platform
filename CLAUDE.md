@@ -66,7 +66,7 @@ The platform is the product users and the admin touch. The three modules do the 
 | `db/module-reads.txt`, `db/module-statements.txt` | what modules 2 and 3 require of `public.users` / `public.job_items`, derived from their code (columns; the exact statements), and the drift gate that fails when a pinned module starts referencing something not listed |
 | `ci/faults/<phase>/` | fault proofs: a `.patch` and a `.expect` per gate, run by the `fault-proofs` workflow (`ci/faults/README.md`); `ci/faults-archive/` holds the Phase 0 diffs (a record) |
 | `tests/supabase/` | the Supabase-shaped migration job: every migration as the non-superuser `postgres` of a digest-pinned `supabase/postgres`, blockers compared with committed lists |
-| `tools/` | `fetch-modules.sh` (clone + `--lock`), `modules.lock`, `check-modules-lock.sh`, `platform-check.sh` (docs citations) |
+| `tools/` | `fetch-modules.sh` (clone + `--lock`; a module's deploy key when its variable is set, an anonymous https clone when it is empty; paired control `fetch-modules-lock-selftest.sh`), `modules.lock`, `check-modules-lock.sh`, `platform-check.sh` (docs citations) |
 | `Docs/` | the build plan, the diagram, the phase specs, the config / migrator / probe references. **`Docs/go.mod` is deliberate**: `Docs/` holds preserved raw Go sources that must stay out of the root module, so CI runs `gofmt -l cmd internal tests`, never `gofmt -l .` |
 | repository root `*.md` | the cross-module record: contract, comparison report, deferrals and false greens, verification runs |
 
@@ -76,7 +76,7 @@ The platform is the product users and the admin touch. The three modules do the 
 |---|---|
 | `go` | gofmt clean, build, vet (plain and `-tags harness`), unit tests, the per-package floor |
 | `web` | `npm ci` from the lockfile, type-check, build, the built CSS contains the Tailwind utilities, tests, the test-count floor |
-| `gates` | every gate's selftest, then `check-migrations` and `check-image-pins` on the real repository |
+| `gates` | every gate's selftest, then each gate on the real repository (`check-migrations`, `check-image-pins`, `check-gitleaksignore`, `check-user-lists`, `check-install-doc`, `check-charge-table`, `check-gitleaks-config`, `check-fault-patches`, and last `check-verified-heads`, which asks the GitHub API with the job's own read-only token) |
 | `db-tests` | the harness's database-only integration tests (grants, roles, ledger, constraints, balance invariant, module shapes, schema locks, migration lifecycle) against a real Postgres, in minutes (`tests/harness/run-db-tests.sh`); the full `harness` runs them too, plus the module-dependent ones |
 | `supabase` | every migration, as the non-superuser `postgres` of the pinned `supabase/postgres` image: BASELINE (no provisioning) and FIXED (the proposed role-provisioning step) |
 | `fault-proofs` | dispatch-only: one matrix leg per `ci/faults/<phase>/*.expect`; a leg passes only if its gate is green unpatched and red, at the named step with the named message, patched |
@@ -84,8 +84,17 @@ The platform is the product users and the admin touch. The three modules do the 
 | `gitleaks` | the full-history secret scan, with the scanner proven before it is trusted on every run |
 | `platform-check` | every JSON file parses, every internal link resolves, every cross-repo citation resolves, every cited commit exists |
 
+**When a workflow runs** (the trigger economy; every workflow is on a newer-run-cancels-older `concurrency` group per ref, except the dispatch-only `fault-proofs`, which is never cancelled):
+`gitleaks` on every push and pull request, no path filter. `gates` on every push and pull request except one that touches only `Docs/history/` (prose is NOT skipped: the gates read documents on purpose). `platform-check`
+on a change to any `*.md` / `*.json`, `tools/` or its own file (it reads documents), plus its weekly schedule. `go` and `web` when what they read changes (`go`: Go files, `go.mod`/`go.sum`, `db/migrations/`, the four
+documents its unit tests read, the floor gate and its file; `web`: `web/`, `tests/floors-web.txt`, the floor gate). The heavy workflows `harness`, `db-tests` and `supabase` on dispatch, on a push to `main` or a pull request that
+touches `db/`, `internal/`, `cmd/`, `tests/`, `tools/modules.lock`, `go.mod`/`go.sum`, `Dockerfile*` or what that workflow itself runs (the exact set is in each workflow's header), on a `v*` or `phase-*` tag push, and (`harness`,
+`supabase`, `platform-check`) on their weekly schedule: **a documentation-only push starts none of them**, so a documentation-only head has no heavy run of its own (a run proves the head it ran for: to prove a head, push a `phase-*` tag at it, which runs every workflow except `fault-proofs` on that exact SHA because GitHub does not evaluate path filters for a tag push, or dispatch the ones you need).
+A pull request from a fork skips the jobs that read `DEPLOY_KEY_COLDMAIL_*` (`harness`, `supabase`, `platform-check`, `fault-proofs`); a skipped job reads as passing, so such a pull request is judged by the other workflows.
+Every `uses:` is pinned to a full commit SHA with the tag in a trailing comment; no workflow uses `pull_request_target` or a self-hosted runner.
+
 To run the harness by hand you need Docker, Go, Node, openssl and the three module checkouts at the pinned commits:
-`bash tools/fetch-modules.sh --lock tools/modules.lock <dir>` (needs the three `DEPLOY_KEY_COLDMAIL_*` environment variables — read-only deploy keys) then `H_MODULES_ROOT=<dir> bash tests/harness/run.sh`.
+`bash tools/fetch-modules.sh --lock tools/modules.lock <dir>` (a module whose `DEPLOY_KEY_COLDMAIL_*` environment variable is set — VERIFY, SEND_MANAGED, SEND_BYO, read-only deploy keys — is cloned over SSH with that key; one whose variable is empty or unset is cloned anonymously over https, which works once the module repositories are public) then `H_MODULES_ROOT=<dir> bash tests/harness/run.sh`.
 Docker is currently down on the owner's machine: **only the runner counts.**
 
 ## Re-pinning the modules

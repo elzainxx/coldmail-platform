@@ -18,6 +18,8 @@ case "$ADMIN" in postgres://*/postgres|postgresql://*/postgres) ;; *) echo "run-
 case "$MIG" in postgres://*/postgres|postgresql://*/postgres) ;; *) echo "run-db-tests: H_PG_MIGRATOR_DSN must be a postgres:// URL ending in /postgres (got a different shape)"; exit 2;; esac
 LIVE="${ADMIN%/postgres}/$DB"; LIVEMIG="${MIG%/postgres}/$DB"; HOSTURL="$ADMIN"
 APP_PW="$(openssl rand -hex 16)"
+# the password minted above is masked in the (public) Actions log BEFORE anything uses it: a failing test can print a DSN that carries it (pgx's malformed-DSN error embeds the password)
+[ "${GITHUB_ACTIONS:-}" = true ] && echo "::add-mask::$APP_PW"
 cleanup() { rc=$?; psql "$ADMIN" -X -q -c "DROP DATABASE IF EXISTS $DB WITH (FORCE)" >/dev/null 2>&1; rm -rf "$WORK"; exit $rc; }
 trap cleanup EXIT
 step() { echo; echo "##[step] $*"; }

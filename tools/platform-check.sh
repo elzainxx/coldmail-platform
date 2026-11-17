@@ -8,8 +8,9 @@
 #   3. every cross-repo citation (../coldmail-*/path) resolves in <layout-root>          needs the three module repositories
 #   4. every commit sha cited in a `backtick` resolves to a commit in one of the four    needs the three module repositories
 #
-# --checks selects a subset (default: all four). The CI workflow runs ALL FOUR on every push: 3 and 4 need the three private module repositories beside this one,
-# which tools/fetch-modules.sh clones over SSH with read-only per-repository deploy keys (and goes RED if any key is missing, wrong or revoked — there is no skip path).
+# --checks selects a subset (default: all four). The CI workflow runs ALL FOUR on every push that touches what it reads (documents, JSON, tools/): 3 and 4 need the three module repositories beside
+# this one, which tools/fetch-modules.sh clones over SSH with read-only per-repository deploy keys when supplied, or anonymously over https when a key's variable is empty (and goes RED if a key is
+# wrong or revoked, or an anonymous clone fails — there is no skip path).
 # Check 3 and check 4 each refuse to run (red) when a module repository is absent from the layout. Checks not selected are NAMED in the output — never silently green.
 #
 # Check 4 is strict: a backticked 7–40 hex string that resolves to no commit in any of the four repositories is RED unless tools/non-commit-hex.txt lists it with the

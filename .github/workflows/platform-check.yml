@@ -5,17 +5,46 @@
 #   3. every cross-repo citation (../coldmail-*/path) resolves in the three module repositories
 #   4. every cited commit SHA resolves to a commit in one of the four repositories (non-commit hex ids are listed, with reasons, in tools/non-commit-hex.txt)
 #
-# Checks 3 and 4 need the three PRIVATE module repositories beside this one. A workflow's default token cannot read a sibling repository and a personal access token
-# would carry the owner's whole account, so tools/fetch-modules.sh clones each module over SSH with its OWN read-only DEPLOY KEY (one key per repository, created with
+# Checks 3 and 4 need the three module repositories beside this one. A workflow's default token cannot read a PRIVATE sibling repository and a personal access token
+# would carry the owner's whole account, so tools/fetch-modules.sh clones each module over SSH with its OWN read-only DEPLOY KEY when one is supplied (one key per repository, created with
 # `gh repo deploy-key add`, no --allow-write; the private half is an Actions secret here: DEPLOY_KEY_COLDMAIL_VERIFY, DEPLOY_KEY_COLDMAIL_SEND_MANAGED, DEPLOY_KEY_COLDMAIL_SEND_BYO).
+# Once the module repositories are public a key is no longer needed: for a module whose key variable is EMPTY the script clones https://github.com/<owner>/<repo>.git anonymously instead (a real
+# clone, held to the same non-shallow assertions; it never reads or prints a key). A key that IS supplied is used exactly as before.
 #
-# There is NO skip path: no `if:` around the fetch, no warning-and-continue. A missing, empty, malformed, unknown, revoked or wrong-repository key turns the job red. A check
-# that silently did not run is a false green. The controls below prove each of those ways of being wrong — and a missing module, a broken citation, an unlisted unresolved
-# SHA and a stale list entry — really does go red. The weekly schedule exists so a key revoked or expired while nobody pushes shows up as a red run, not as silence.
+# There is NO skip path: no `if:` around the fetch, no warning-and-continue. A malformed, unknown, revoked or wrong-repository key turns the job red (a supplied key that does not work is NEVER
+# replaced by the anonymous route), and so does an empty key whose anonymous clone fails (the repository is still private, or gone). A check that silently did not run is a false green. The
+# controls below prove each of those ways of being wrong — and a missing module, a broken citation, an unlisted unresolved SHA and a stale list entry — really does go red. The weekly schedule
+# exists so a key revoked or expired while nobody pushes shows up as a red run, not as silence.
+#
+# WHEN IT RUNS (the trigger economy of the public-release pass): this workflow READS DOCUMENTS ON PURPOSE (checks 2-4 read every tracked *.md, check 1 every tracked *.json), so a push or pull
+# request that touches a markdown or JSON file, anything under tools/ (this script, fetch-modules.sh, the non-commit-hex list, the pins) or this file runs it; a push that touches only code,
+# SQL, scripts or web/ does not (none of those is read). Docs/history markdown IS read by checks 3 and 4, so it is not excluded here (it is excluded from the `gates` workflow, which does not
+# read it). Dispatch, the weekly schedule and a push of a `v*` or `phase-*` tag (GitHub does not evaluate path filters for a tag push: tagging a head puts a run of this workflow on that exact SHA)
+# always run it. A newer run on the same ref cancels the older one (the weekly scheduled run shares the default branch's group, so a push to main
+# while it runs supersedes it).
+#
+# FORK PULL REQUESTS: the job reads secrets.DEPLOY_KEY_COLDMAIL_*, so it is skipped for a pull request from a fork (GitHub withholds secrets from a fork's run anyway; the guard also keeps a fork's
+# code from running beside them). A job skipped by `if:` reports as SKIPPED, which branch protection counts as passing: if this check is ever made a REQUIRED status check, a fork pull request
+# is merged on the strength of the other workflows (gates, gitleaks, go, web) and a re-run of this one from a branch of this repository, not on this job.
 name: platform-check
 on:
   push:
+    branches:
+      - '**'
+    tags:
+      - 'v*'
+      - 'phase-*'
+    paths:
+      - '**/*.md'
+      - '**/*.json'
+      - 'tools/**'
+      - '.github/workflows/platform-check.yml'
   pull_request:
+    paths:
+      - '**/*.md'
+      - '**/*.json'
+      - 'tools/**'
+      - '.github/workflows/platform-check.yml'
   workflow_dispatch:
   schedule:
     - cron: '17 5 * * 1'
@@ -23,15 +52,20 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check:
     runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     env:
       DEPLOY_KEY_COLDMAIL_VERIFY: ${{ secrets.DEPLOY_KEY_COLDMAIL_VERIFY }}
       DEPLOY_KEY_COLDMAIL_SEND_MANAGED: ${{ secrets.DEPLOY_KEY_COLDMAIL_SEND_MANAGED }}
       DEPLOY_KEY_COLDMAIL_SEND_BYO: ${{ secrets.DEPLOY_KEY_COLDMAIL_SEND_BYO }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           path: coldmail-platform
           fetch-depth: 0
@@ -55,31 +89,43 @@ jobs:
           [ "$rc" -ne 0 ] && grep -q "zz-control-does-not-exist.md" "$RUNNER_TEMP/c2.log" || { echo "CONTROL FAILED: check 2 did not go red on a broken link (rc=$rc)"; exit 1; }
           echo "controls hold: check 1 red on bad JSON, check 2 red on a broken link"
 
-      - name: Fetch the three module repositories over SSH with their read-only deploy keys (red if any key is missing, wrong or revoked)
+      - name: Fetch the three module repositories (each over SSH with its read-only deploy key, or anonymously over https when that key is empty; red if a key is wrong or revoked, or an anonymous clone fails)
         run: bash coldmail-platform/tools/fetch-modules.sh "$GITHUB_WORKSPACE"
 
-      - name: Controls — the fetch goes red on a missing key, a malformed key, an unknown (revoked) key, another repository's key, and a key it cannot prove read-only
+      - name: Controls — the fetch goes red on a missing key with no anonymous route, a malformed key, an unknown (revoked) key, another repository's key, and a key it cannot prove read-only
         run: |
           set -u +e   # every case below EXPECTS a non-zero exit; the runner starts bash with -e
           F="$GITHUB_WORKSPACE/coldmail-platform/tools/fetch-modules.sh"; D="$RUNNER_TEMP/fetch-control"
           # a perfectly well-formed ed25519 key that GitHub has never seen: exactly what a revoked or never-registered key looks like to GitHub
           ssh-keygen -q -t ed25519 -N '' -C unknown-to-github -f "$RUNNER_TEMP/unknown-key"; UNKNOWN="$(cat "$RUNNER_TEMP/unknown-key")"
+          # a key generated at run time is masked line by line BEFORE first use (a multi-line value is masked per line); the BEGIN / END lines are not worth masking and are skipped
+          while IFS= read -r kl; do case "$kl" in ''|-----*) ;; *) echo "::add-mask::$kl";; esac; done <<< "$UNKNOWN"
           expect_red() {   # <case name> <repo that must be named in a FAIL line> <substring that FAIL line must carry> -- then VAR=value overrides for the fetch
             name="$1"; repo="$2"; sub="$3"; shift 4; rm -rf "$D"
             out="$(env "$@" bash "$F" "$D" 2>&1)"; rc=$?
+            # key material is checked for BEFORE anything is printed, and is never printed itself: neither the PEM header nor any body line of the key this step generated may appear in the output
+            if printf '%s\n' "$out" | grep -q "PRIVATE KEY"; then echo "CONTROL FAILED [$name]: key material appeared in the output (not printed)"; exit 1; fi
+            while IFS= read -r kl; do case "$kl" in ''|-----*) ;; *) case "$out" in *"$kl"*) echo "CONTROL FAILED [$name]: key material appeared in the output (not printed)"; exit 1;; esac;; esac; done <<< "$UNKNOWN"
             printf '%s\n' "$out" | sed 's/^/    | /'
             [ "$rc" -ne 0 ] || { echo "CONTROL FAILED [$name]: the fetch exited 0"; exit 1; }
             printf '%s\n' "$out" | grep -q "FAIL: $repo: .*$sub" || { echo "CONTROL FAILED [$name]: no FAIL line for $repo carrying '$sub'"; exit 1; }
-            printf '%s\n' "$out" | grep -q "PRIVATE KEY" && { echo "CONTROL FAILED [$name]: key material appeared in the output"; exit 1; }
             echo "  control holds: $name -> red, naming $repo"
           }
-          expect_red "missing key"                 coldmail-send-managed "is missing or empty"        -- DEPLOY_KEY_COLDMAIL_SEND_MANAGED=
+          # an EMPTY key now means "clone anonymously", so the control for it closes the anonymous route (a closed local port) and must see that route fail; a SUPPLIED key that is bad is still red and is never replaced by it
+          expect_red "missing key, anonymous route closed" coldmail-send-managed "could not clone anonymously" -- DEPLOY_KEY_COLDMAIL_SEND_MANAGED= FETCH_ANON_BASE=https://127.0.0.1:1
           expect_red "malformed key"               coldmail-send-byo     "not a usable private key"   -- "DEPLOY_KEY_COLDMAIL_SEND_BYO=this is not a key"
           expect_red "unknown or revoked key"      coldmail-send-byo     "could not clone over SSH"   -- "DEPLOY_KEY_COLDMAIL_SEND_BYO=$UNKNOWN"
-          expect_red "another repository's key"    coldmail-send-managed "could not clone over SSH"   -- "DEPLOY_KEY_COLDMAIL_SEND_MANAGED=$DEPLOY_KEY_COLDMAIL_VERIFY"
-          # the read-only assertion must go red on every answer except GitHub's "marked as read only": point its write probe at a closed local port, so the answer is "connection refused"
-          expect_red "read-only not confirmed"     coldmail-verify       "could not confirm the deploy key is read-only" -- FETCH_PROBE_URL=ssh://git@127.0.0.1:1/x.git
-          rm -rf "$D"; echo "controls hold: five ways of a bad key are each red"
+          # the next two controls need a REAL deploy key of this repository's secrets; if the owner removes the secrets once the modules are public, the fetch above runs on the anonymous route and these two
+          # cannot be exercised: that is said out loud (NOT RUN), never silently skipped
+          if [ -n "${DEPLOY_KEY_COLDMAIL_VERIFY:-}" ]; then
+            expect_red "another repository's key"  coldmail-send-managed "could not clone over SSH"   -- "DEPLOY_KEY_COLDMAIL_SEND_MANAGED=$DEPLOY_KEY_COLDMAIL_VERIFY"
+            # the read-only assertion must go red on every answer except GitHub's "marked as read only": point its write probe at a closed local port, so the answer is "connection refused"
+            expect_red "read-only not confirmed"   coldmail-verify       "could not confirm the deploy key is read-only" -- FETCH_PROBE_URL=ssh://git@127.0.0.1:1/x.git
+            echo "controls hold: five ways of a bad or absent key are each red"
+          else
+            echo "controls hold: three ways of a bad or absent key are each red. NOT RUN: 'another repository's key' and 'read-only not confirmed' (they need a real deploy key; DEPLOY_KEY_COLDMAIL_VERIFY is empty, so this run used the anonymous route)"
+          fi
+          rm -rf "$D"
 
       - name: Checks 3 and 4 — cross-repo citations resolve; cited commit SHAs exist (against fresh full clones)
         run: bash coldmail-platform/tools/platform-check.sh "$GITHUB_WORKSPACE" --checks 3,4

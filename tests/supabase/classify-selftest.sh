@@ -17,7 +17,7 @@
 set -u -o pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLS="$HERE/classify.sh"
-MIN_CASES=105
+MIN_CASES=106
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 FX="$TMP/fx"; mkdir -p "$FX"
 
@@ -654,8 +654,19 @@ has health-retries "$NONCOMMENT" '--health-retries 60'; has health-start "$NONCO
 l_st="$(grep -n '^    strategy:' "$WF" | head -1 | cut -d: -f1)"; l_sv="$(grep -n '^    services:' "$WF" | head -1 | cut -d: -f1)"
 eq strategy-and-services-in-the-same-job "$([ -n "$l_st" ] && [ -n "$l_sv" ] && echo yes || echo no)" yes; finish
 
-begin "supabase.yml: no if: anywhere (a step or a job) and no continue-on-error: matrix legs run independently, so the workflow is red when either leg is"
-eq no-if "$(grep -cE '^ *(- +)?if:' "$WF" || true)" 0; hasnot no-continue-on-error "$NONCOMMENT" 'continue-on-error'; hasnot no-always "$NONCOMMENT" 'always()'; finish
+begin "supabase.yml: no step-level if: and no continue-on-error: matrix legs run independently, so the workflow is red when either leg is; the ONE if: in the file is the job's fork-pull-request guard (exact text, job level), which skips both legs together and only for a pull request from a fork"
+GUARD="    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository"
+eq no-step-if "$(grep -cE '^ {5,}(- +)?if:' "$WF" || true)" 0                                          # any if: indented deeper than a job key: a step's, or a leg's
+eq one-if "$(grep -cE '^ *(- +)?if:' "$WF" || true)" 1
+eq the-if-is-the-fork-guard "$(grep -E '^ *(- +)?if:' "$WF" | tr -d '\r')" "$GUARD"                    # exact text AND exact indentation (four spaces = a job key)
+hasnot no-pull-request-target "$NONCOMMENT" 'pull_request_target'; hasnot no-self-hosted "$NONCOMMENT" 'self-hosted'
+hasnot no-continue-on-error "$NONCOMMENT" 'continue-on-error'; hasnot no-always "$NONCOMMENT" 'always()'; finish
+
+begin "supabase.yml: the guard assertions above can fail (scratch copies): a step-level if:, a second if: and a weakened guard are each seen"
+MUT="$TMP/supabase-mutated.yml"
+sed 's/^      - name: Toolchain/      - if: always()\n        name: Toolchain/' "$WF" > "$MUT"; eq mutant-step-if-seen "$(grep -cE '^ {5,}(- +)?if:' "$MUT" || true)" 1
+sed "s/ || github.event.pull_request.head.repo.full_name == github.repository/ || true/" "$WF" > "$MUT"; eq mutant-weak-guard-seen "$([ "$(grep -E '^ *(- +)?if:' "$MUT" | tr -d '\r')" = "$GUARD" ] && echo same || echo different)" different
+sed 's/^    timeout-minutes: 40/    timeout-minutes: 40\n    if: always()/' "$WF" > "$MUT"; eq mutant-second-if-seen "$(grep -cE '^ *(- +)?if:' "$MUT" || true)" 2; finish
 
 begin "supabase.yml: the clone design is gone — no CREATE DATABASE, createdb, TEMPLATE, rolcreatedb or template1 in what the workflow does — and every DSN is the database postgres"
 for w in 'CREATE DATABASE' 'createdb' 'TEMPLATE' 'rolcreatedb' 'template1'; do eq "no $w" "$(printf '%s\n' "$NONCOMMENT" | grep -ci -- "$w" || true)" 0; done

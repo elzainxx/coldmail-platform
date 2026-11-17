@@ -7,22 +7,66 @@
 # tests DECLARED (`go test -list`), meet the floor in tests/floors-go.txt, none were skipped or failed, and that the SET of packages with tests
 # equals the set in the floors file — so a vanished package, or a new package nobody gave a floor, is red.
 # No module/build cache: a green must not be earned from a stale artifact (class 13).
+#
+# WHEN IT RUNS (the trigger economy of the public-release pass): on a push or pull request that touches something this job reads, and on dispatch. Path set = what the job
+# really reads: every Go file (the module is cmd/, internal/ and tests/; `**/*.go` also catches a Go directory added later), go.mod / go.sum, the files the unit tests read
+# from outside their package (internal/charge reads db/migrations and Docs/phase-2-spec.md; the three reference tests read Docs/config-reference.md, Docs/migrator-reference.md and
+# Docs/probe-reference.md), the floor gate and its floors file (tests/**), and this file. A commit that touches only other prose (Docs/history, the cross-module records, the README) starts nothing here.
+# A push of a `v*` or `phase-*` tag always runs it (GitHub does not evaluate path filters for a tag push), so tagging a head puts a run of this workflow on that exact SHA.
+# A newer run on the same ref cancels the older one (the newer run covers the older commit's changes).
 name: go
 on:
   push:
+    branches:
+      - '**'
+    tags:
+      - 'v*'
+      - 'phase-*'
+    paths:
+      - '**/*.go'
+      - 'go.mod'
+      - 'go.sum'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'tests/**'
+      - 'db/migrations/**'
+      - 'Docs/config-reference.md'
+      - 'Docs/migrator-reference.md'
+      - 'Docs/probe-reference.md'
+      - 'Docs/phase-2-spec.md'
+      - 'scripts/check-test-floors.sh'
+      - '.github/workflows/go.yml'
   pull_request:
+    paths:
+      - '**/*.go'
+      - 'go.mod'
+      - 'go.sum'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'tests/**'
+      - 'db/migrations/**'
+      - 'Docs/config-reference.md'
+      - 'Docs/migrator-reference.md'
+      - 'Docs/probe-reference.md'
+      - 'Docs/phase-2-spec.md'
+      - 'scripts/check-test-floors.sh'
+      - '.github/workflows/go.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   go:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache: false

@@ -14,6 +14,11 @@
 # scripts/check-fault-patches.sh (workflow `gates`, every push) keeps a patch from rotting unseen between dispatches: it checks that each platform patch still applies.
 # Legs need only a service Postgres (the digest the harness pins) and Go. A leg whose subject is module source fetches the three modules at the pins of tools/modules.lock
 # with the read-only deploy keys, exactly as the harness does; there is no skip path (a missing key turns that leg red).
+#
+# TRIGGERS AND CONCURRENCY (the public-release pass): dispatch-only, and it STAYS dispatch-only: no push, pull_request or schedule trigger, no path filter. It deliberately has NO `concurrency:` block: a leg
+# is a long, expensive proof whose whole value is that it ran to its verdict, so a second dispatch (or anything else) must never cancel one mid-run; two dispatches simply run side by side.
+# (The per-leg modules are fetched exactly as in the harness: tools/fetch-modules.sh clones with each deploy key when supplied and anonymously when its variable is empty. ci/faults/run-leg.sh itself still
+# demands the three keys, or FAULT_MODULES_DIR, for a leg whose subject is module source, and says so by name when they are missing.)
 name: fault-proofs
 on:
   workflow_dispatch:
@@ -44,7 +49,7 @@ jobs:
       gates: ${{ steps.list.outputs.gates }}
       count: ${{ steps.list.outputs.count }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: List the legs (red if there are none, or fewer than min_legs)
         id: list
@@ -81,6 +86,9 @@ jobs:
   leg:
     needs: plan
     name: leg ${{ matrix.gate }}
+    # The job reads secrets.DEPLOY_KEY_COLDMAIL_*, so it never runs for a pull request from a fork. The workflow is dispatch-only, so this is always true today; it is here so that a pull_request trigger
+    # added later cannot hand a fork a job that sits beside the keys. (`summary` below reads a skipped matrix as a failure, so a skip could not read as green either.)
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -104,11 +112,11 @@ jobs:
       DEPLOY_KEY_COLDMAIL_SEND_MANAGED: ${{ secrets.DEPLOY_KEY_COLDMAIL_SEND_MANAGED }}
       DEPLOY_KEY_COLDMAIL_SEND_BYO: ${{ secrets.DEPLOY_KEY_COLDMAIL_SEND_BYO }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache: false

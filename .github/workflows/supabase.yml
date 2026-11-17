@@ -21,13 +21,42 @@
 # RLS defaults, the extensions of the hosted service, a real project's role grants (they differ by project age), the runtime behaviour of any module (migrations only), and the
 # modules' per-file transaction (psql runs each statement in autocommit, so one failure does not abort the rest of its file). It does not change a single migration.
 #
-# The modules are private repositories: tools/fetch-modules.sh clones each with its own READ-ONLY deploy key, at the commits tools/modules.lock pins. There is no skip
-# path: a missing or wrong key turns a leg red. The weekly schedule exists so a revoked key, or a moved image, shows up as a red run and not as silence.
+# tools/fetch-modules.sh clones each module with its own READ-ONLY deploy key when the key is supplied, and anonymously over https when the key's variable is empty (the module
+# repositories are public once published), at the commits tools/modules.lock pins. There is no skip path: a wrong or revoked key, or an empty key whose anonymous clone fails (the repository
+# is still private), turns a leg red. The weekly schedule exists so a revoked key, or a moved image, shows up as a red run and not as silence.
 # The password `ci` is a throwaway for a database that exists only for the duration of the job; it protects nothing.
+#
+# WHEN IT RUNS (the trigger economy of the public-release pass; two legs of up to 40 minutes each): on dispatch, on the weekly schedule, on a push of a version or phase tag (`v*`, `phase-*`; GitHub does not
+# evaluate path filters for a tag push), and on a push to main or a pull request that touches something this job reads: db/ (the platform's migrations and the install step), tests/supabase/ (the
+# runner, the classifier, the committed blocker lists), tools/modules.lock and tools/fetch-modules.sh (which module commits are migrated, and how they are fetched), and this file. It builds no Go
+# and runs no platform test, so internal/, cmd/, the harness tests and go.mod are not in its set. A documentation-only push starts nothing here. A newer run on the same ref cancels the older one;
+# the weekly scheduled run shares the default branch's group with a push to main, so a push that lands while it runs supersedes it (the newer run migrates the newer head).
+#
+# FORK PULL REQUESTS: the job reads secrets.DEPLOY_KEY_COLDMAIL_*, so it is skipped for a pull request from a fork (GitHub withholds secrets from a fork's run anyway, and a fork's code must not run
+# beside them). This is the ONE `if:` in the file and tests/supabase/classify-selftest.sh pins its exact text and its place (the job, not a step or a leg): it skips BOTH legs together, and only for a fork pull
+# request, so no leg can read as green by skipping. A job skipped by `if:` reports as SKIPPED, which branch protection counts as passing: if these checks are ever made REQUIRED, a fork pull request is not
+# proven by them.
 name: supabase
 on:
   push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+      - 'phase-*'
+    paths:
+      - 'db/**'
+      - 'tests/supabase/**'
+      - 'tools/modules.lock'
+      - 'tools/fetch-modules.sh'
+      - '.github/workflows/supabase.yml'
   pull_request:
+    paths:
+      - 'db/**'
+      - 'tests/supabase/**'
+      - 'tools/modules.lock'
+      - 'tools/fetch-modules.sh'
+      - '.github/workflows/supabase.yml'
   workflow_dispatch:
   schedule:
     - cron: '53 5 * * 1'
@@ -35,11 +64,16 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   supabase-migrations:
     name: supabase-migrations (${{ matrix.label }})
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     strategy:
       fail-fast: false
       matrix:
@@ -69,7 +103,7 @@ jobs:
           --health-retries 60
           --health-start-period 30s
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           path: coldmail-platform
           fetch-depth: 0

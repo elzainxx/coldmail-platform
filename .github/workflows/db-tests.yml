@@ -3,14 +3,44 @@
 # a Postgres service and Go, so a database mistake is seen in minutes. It is admissible evidence on its own (real Postgres, real binary, a runner). What it does NOT do: run the tests that
 # need the modules (TestLive_StackCoexists, TestModulesLive_*, TestM3Live_*, TestM1Live_*; the full harness runs those), or enforce the per-package test-count floors (the full harness enforces them).
 # tests/harness/run-db-tests.sh is the whole job; the fault-proofs legs call the same script with a narrow -run regexp.
+#
+# WHEN IT RUNS (the trigger economy of the public-release pass): on dispatch, on a push of a version or phase tag (`v*`, `phase-*`; GitHub does not evaluate path filters for a tag push), and on a push to
+# main or a pull request that touches something this job reads: db/ (the migrations and the install step it applies, module-reads files), internal/ and cmd/ (cmd/platform-migrate is built and the packages
+# under test), tests/ (the harness tests, the fixtures, the script; tests/supabase is not read but sits beside them), go.mod / go.sum, and this file. It reads no module repository and no Dockerfile, so tools/modules.lock and Dockerfile* are not in its set.
+# A documentation-only push starts nothing here. It has no secrets and no fork guard (it reads none). A newer run on the same ref cancels the older one.
 name: db-tests
 on:
   push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+      - 'phase-*'
+    paths:
+      - 'db/**'
+      - 'internal/**'
+      - 'cmd/**'
+      - 'tests/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/db-tests.yml'
   pull_request:
+    paths:
+      - 'db/**'
+      - 'internal/**'
+      - 'cmd/**'
+      - 'tests/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/db-tests.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   db-tests:
@@ -30,9 +60,9 @@ jobs:
           --health-retries 60
           --health-start-period 30s
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache: false

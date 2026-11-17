@@ -1,13 +1,37 @@
 # Web: type-check, build, tests, a check that Tailwind actually generated CSS, and the test-count floor — on a GitHub runner.
 # `npm ci` from the committed lockfile, no npm cache (a green must not be earned from a stale artifact).
+#
+# WHEN IT RUNS (the trigger economy of the public-release pass): on a push or pull request that touches web/, the test-count floor it enforces (tests/floors-web.txt and
+# scripts/check-test-floors.sh), or this file; and on dispatch. Nothing outside web/ is read by the type-check, the build, the CSS check or the tests. A push of a `v*` or `phase-*` tag always
+# runs it (GitHub does not evaluate path filters for a tag push), so tagging a head puts a run of this workflow on that exact SHA. A newer run on the same ref
+# cancels the older one.
 name: web
 on:
   push:
+    branches:
+      - '**'
+    tags:
+      - 'v*'
+      - 'phase-*'
+    paths:
+      - 'web/**'
+      - 'tests/floors-web.txt'
+      - 'scripts/check-test-floors.sh'
+      - '.github/workflows/web.yml'
   pull_request:
+    paths:
+      - 'web/**'
+      - 'tests/floors-web.txt'
+      - 'scripts/check-test-floors.sh'
+      - '.github/workflows/web.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   web:
@@ -16,9 +40,9 @@ jobs:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: web/.node-version
 

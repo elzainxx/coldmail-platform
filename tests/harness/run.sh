@@ -95,6 +95,8 @@ M1_KEY="$(openssl rand -hex 32)"; M1_KEY_SHA="$(printf '%s' "$M1_KEY" | sha256su
 for v in "$M2_TOKEN" "$M3_TOKEN" "$M1_KEY" "$M3_WORKER_TOKEN" "$M3_ADMIN_KEY" "$SINK_PASS"; do mask "$v"; done
 PG_PASS="$(openssl rand -hex 16)"; PL_PASS="$(openssl rand -hex 16)"; M2_PASS="$(openssl rand -hex 16)"; M3_PASS="$(openssl rand -hex 16)"; M1_PEPPER="$(openssl rand -hex 32)"; M1_QUEUE_KEY="$(openssl rand -hex 32)"; M1_APP_PASS="$(openssl rand -hex 16)"
 for v in "$PG_PASS" "$PL_PASS" "$M2_PASS" "$M3_PASS" "$M1_PEPPER" "$M1_QUEUE_KEY" "$M1_APP_PASS"; do mask "$v"; done
+# the bcrypt hashes of the tokens above are not credentials (a hash of 32 random bytes), but a failed INSERT or a service log could print one into a public log: mask them too
+for v in "$M2_HASH" "$M3_HASH" "$M3_WORKER_HASH" "$M3_ADMIN_HASH" "$M3_WORKER2_HASH" "$M3_WORKER3_HASH"; do mask "$v"; done
 esc() { printf '%s' "$1" | sed 's/\$/$$/g'; }       # bcrypt hashes contain '$', which compose would interpolate
 ( umask 077; cat > "$WORK/harness.env" <<EOF
 H_PLATFORM_DIR=$PLATFORM_DIR

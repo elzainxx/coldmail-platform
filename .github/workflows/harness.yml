@@ -2,15 +2,65 @@
 # itself, all on a Docker network that is internal and publishes no port. Then the integration tests, the end-to-end probe (platform -> each module's health, readiness
 # and describe, with the service token), the exposure check and the outage check. See tests/harness/run.sh for the stages and for the list of what it does NOT check.
 #
-# The modules are private repositories: tools/fetch-modules.sh clones each with its own READ-ONLY deploy key (the same three keys platform-check uses). There is no skip
-# path: a missing, wrong or revoked key turns this job red (platform-check proves each of those ways). A weekly schedule exists so a key revoked while nobody pushes shows
-# up as a red run and not as silence.
+# tools/fetch-modules.sh clones each module with its own READ-ONLY deploy key when the key is supplied (the same three keys platform-check uses), and anonymously over https when the
+# key's variable is empty (the module repositories are public once published; the script's selftest, run below, proves that route against local repositories). There is no skip path: a
+# wrong or revoked key, or an empty key whose anonymous clone fails (the repository is still private), turns this job red (platform-check proves each of those ways). A weekly schedule
+# exists so a key revoked while nobody pushes shows up as a red run and not as silence.
 #
 # Docker is down on the owner's machine: this workflow, on a GitHub runner, is the only admissible evidence that the harness works.
+#
+# WHEN IT RUNS (the trigger economy of the public-release pass; this is a ~20 minute job): on dispatch, on the weekly schedule, on a push of a version or phase tag (`v*`, `phase-*`; GitHub
+# does not evaluate path filters for a tag push), and on a push to main or a pull request that touches something the harness reads: db/ (migrations, install step, module-reads files), internal/ and cmd/ (the
+# platform it builds), tests/ (this harness, its compose file and the supabase tests), tools/modules.lock and the fetch script with its selftest (the pins and how they are fetched), go.mod / go.sum, the root
+# Dockerfile (the platform image), the scripts run.sh calls (check-module-reads, check-public-schema + its listing query, check-test-floors, check-balance-invariant), and this file. A documentation-only
+# push starts nothing here. A newer run on the same ref cancels the older one; the weekly scheduled run shares the default branch's group with a push to main, so a push that lands while it runs
+# supersedes it (the newer run tests the newer head; a cancelled schedule run is not a missed week, the next one still comes). A run for a tag has its own group (the tag ref).
+#
+# FORK PULL REQUESTS: the job reads secrets.DEPLOY_KEY_COLDMAIL_*, so it is skipped for a pull request from a fork (GitHub withholds secrets from a fork's run anyway, and a fork's code must not run
+# beside them). A job skipped by `if:` reports as SKIPPED, which branch protection counts as passing: if this check is ever made a REQUIRED status check, a fork pull request is not proven by it.
 name: harness
 on:
   push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+      - 'phase-*'
+    paths:
+      - 'db/**'
+      - 'internal/**'
+      - 'cmd/**'
+      - 'tests/**'
+      - 'tools/modules.lock'
+      - 'tools/fetch-modules.sh'
+      - 'tools/fetch-modules-lock-selftest.sh'
+      - 'scripts/check-module-reads.sh'
+      - 'scripts/check-public-schema.sh'
+      - 'scripts/public-schema-listing.sql'
+      - 'scripts/check-test-floors.sh'
+      - 'scripts/check-balance-invariant.sh'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Dockerfile*'
+      - '.github/workflows/harness.yml'
   pull_request:
+    paths:
+      - 'db/**'
+      - 'internal/**'
+      - 'cmd/**'
+      - 'tests/**'
+      - 'tools/modules.lock'
+      - 'tools/fetch-modules.sh'
+      - 'tools/fetch-modules-lock-selftest.sh'
+      - 'scripts/check-module-reads.sh'
+      - 'scripts/check-public-schema.sh'
+      - 'scripts/public-schema-listing.sql'
+      - 'scripts/check-test-floors.sh'
+      - 'scripts/check-balance-invariant.sh'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Dockerfile*'
+      - '.github/workflows/harness.yml'
   workflow_dispatch:
   schedule:
     - cron: '41 5 * * 1'
@@ -18,21 +68,26 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   harness:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     env:
       DEPLOY_KEY_COLDMAIL_VERIFY: ${{ secrets.DEPLOY_KEY_COLDMAIL_VERIFY }}
       DEPLOY_KEY_COLDMAIL_SEND_MANAGED: ${{ secrets.DEPLOY_KEY_COLDMAIL_SEND_MANAGED }}
       DEPLOY_KEY_COLDMAIL_SEND_BYO: ${{ secrets.DEPLOY_KEY_COLDMAIL_SEND_BYO }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           path: coldmail-platform
           fetch-depth: 0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: coldmail-platform/go.mod
           cache: false

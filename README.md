@@ -1,5 +1,7 @@
 # coldmail-platform
 
+Source visible for transparency; no license is granted. See [`NOTICE`](NOTICE).
+
 The **coldmail platform**: the product shell that users and the admin touch, plus the cross-module record that the three modules were built against.
 It is the first real caller of the module contract. Operating rules: [`CLAUDE.md`](CLAUDE.md). Roadmap and locked decisions: [`Docs/coldmail-platform-build-plan.md`](Docs/coldmail-platform-build-plan.md).
 Phase 0 (groundwork) is specified in [`Docs/phase-0-spec.md`](Docs/phase-0-spec.md).
@@ -9,9 +11,11 @@ migrations in `db/migrations/`, and a real-infrastructure harness in `tests/harn
 real services beside the platform and one real Postgres.
 
 **CI** (`.github/workflows/`, all on a GitHub runner — the only admissible evidence): `go`, `web`, `gates`, `harness`, `gitleaks` (full-history secret scan) and `platform-check`
-(`tools/platform-check.sh`: every JSON file parses, every internal link resolves, every cross-repo citation resolves, every cited commit SHA exists). The last needs the three private
-modules, which `tools/fetch-modules.sh` clones over SSH with one **read-only deploy key per module repository** (secrets `DEPLOY_KEY_COLDMAIL_VERIFY`,
-`DEPLOY_KEY_COLDMAIL_SEND_MANAGED`, `DEPLOY_KEY_COLDMAIL_SEND_BYO` on this repository); a missing, wrong or revoked key turns the job red — it never skips. Hex strings that look like
+(`tools/platform-check.sh`: every JSON file parses, every internal link resolves, every cross-repo citation resolves, every cited commit SHA exists). The last needs the three
+module repositories, which `tools/fetch-modules.sh` clones over SSH with one **read-only deploy key per module repository** when the key is supplied (secrets `DEPLOY_KEY_COLDMAIL_VERIFY`,
+`DEPLOY_KEY_COLDMAIL_SEND_MANAGED`, `DEPLOY_KEY_COLDMAIL_SEND_BYO` on this repository) and **anonymously over https** when a key's variable is empty (the module repositories are public, so
+anyone's clone can run the harness); a wrong or revoked key, or an anonymous clone that fails, turns the job red — it never skips. The heavy workflows (`harness`, `db-tests`, `supabase`) start
+only on dispatch, their weekly schedule, a version or phase tag, and a push or pull request that touches what they read; a documentation-only push starts none of them. Hex strings that look like
 commits but are not (agent ids, a commit of the private parent) are listed with reasons in `tools/non-commit-hex.txt`.
 
 The three modules live as sibling directories under `coldmail/`, each its own independent git
