@@ -83,7 +83,17 @@ No licence file was added. Each repository carries `NOTICE`: *"Source visible fo
 
 ## Flip log
 
-*(filled in as each repository is flipped: time, `gh repo view` confirmation, the fork-approval setting, and the first run on a GitHub-hosted runner)*
+Each repository: default token permissions set (read-only), flipped with `gh repo edit … --visibility public --accept-visibility-change-consequences`, confirmed with `gh repo view` (`PUBLIC`), then the fork-pull-request approval policy set to `all_external_contributors` (read back), then `gitleaks.yml` dispatched to prove the free hosted runners work.
+
+| Order | Repository | Flipped (UTC, 2026-11-17) | Fork-PR approval | First run on a GitHub-hosted runner |
+|---|---|---|---|---|
+| 1 | `coldmail-verify` | 17:39:36 | all external contributors | [gitleaks 44139447501](https://github.com/elzainxx/coldmail-verify/actions/runs/44139447501) success at `4adc316` |
+| 2 | `coldmail-send-managed` | 17:40:43 | all external contributors | [gitleaks 44139624801](https://github.com/elzainxx/coldmail-send-managed/actions/runs/44139624801) success at `ff8c302` |
+| 3 | `coldmail-send-byo` | 17:40:48 | all external contributors | [gitleaks 44139642359](https://github.com/elzainxx/coldmail-send-byo/actions/runs/44139642359) success at `c70f4b6` |
+| 4 | `coldmail-platform` | 17:41:01 | all external contributors | [gitleaks 44139681598](https://github.com/elzainxx/coldmail-platform/actions/runs/44139681598) success at `279f5ad` |
+| 5 | `coldmail` (parent) | 17:41:07 | all external contributors | [gitleaks 44139695337](https://github.com/elzainxx/coldmail/actions/runs/44139695337) success at `f09df58` |
+
+The billing refusal ended with the flip (the push runs of these same commits, made minutes earlier while the repositories were still private, were refused; the dispatches after the flip ran). One deviation from the requested order: the fork-pull-request approval policy cannot be set while a repository is private (the API answers 422), so it was set immediately after each flip; and the workflow edits of the forward fixes were made before the flip, together with the pins and permissions, because they touch the same files.
 
 ## Owner cleanup after the flip
 
