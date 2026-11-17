@@ -17,3 +17,6 @@ a47dd609|agent id: module-comparison verification agent (never returned, unanswe
 # The platform's two constant advisory-lock keys (decimal numbers that read as hex to the checker): the migrator's lock and the loop leader's lock (Docs/install.md names them in a SQL query).
 7100000001|the migrator's advisory-lock key (internal/migrate)
 7200000002|the loop leader's advisory-lock key (internal/entitlements, LeaderLockKey)
+# The public-release audit (Docs/public-release-audit.md): a placeholder AWS account id found in a research file, and a commit of the PARENT repository (outside the four-repository layout, like 1a6536b above).
+000000000000|a placeholder AWS account id (twelve zeros), quoted by the public-release audit
+f09df58|commit of the parent repository (outside the four-repository layout): its public-release forward fix, cited by the audit
