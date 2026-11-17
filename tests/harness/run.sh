@@ -12,7 +12,7 @@
 #   8  exposure  no service publishes a port; the network is internal (two independent instruments)
 #   9  outage    the platform's /readyz follows the database: 200, then 503 with Postgres stopped, then 200 again
 #   5b worker    module 3's three workers (each with its own token and box row), the SMTP sink (Mailpit) and the controllable sink (smtp-ctl: it rejects, defers and delays on command): module 3 really sends, on several lanes, to a sink that can be hostile
-#   5c m2-worker module 2's REAL worker (Phase 3, B8; DORMANT in `full`, see FULL_INCLUDES): its credentials minted in stage 2 with module 2's own tools, its box row seeded before it starts, a heartbeat awaited; module 2 really sends (sent, bounced, failed/attempts_exhausted, cancelled) to the controllable sink (tests/harness/m2worker/stage.sh)
+#   5c m2-worker module 2's REAL worker (Phase 3, B8; part of `full` since FULL_INCLUDES names it, and the only stage of its scope otherwise): its credentials minted in stage 2 with module 2's own tools, its box row seeded before it starts, a heartbeat awaited; module 2 really sends (sent, bounced, failed/attempts_exhausted, cancelled) to the controllable sink (tests/harness/m2worker/stage.sh)
 #   scope        H_SCOPE=m2worker runs stages 1-4b, then only module 2's Control, its worker, the sink, the TestM2Worker tests and the exposure check (m2w_scope_run); H_SCOPE=full (the default) runs everything except the dormant stages
 #   9b m3-outage module 3 stopped while an entitlement expires: the platform retries, claims no convergence it did not see, converges when module 3 is back
 #   9c leader    TWO platform instances on one database: exactly one holds the leader lock and runs the loops (the other runs none); dated entitlements expire exactly once; the leader is killed, the other takes over; the killed one comes back as the standby
@@ -30,10 +30,10 @@ case "$SCOPE" in
   m2worker) BUILD_ONLY="migrate-platform migrate-m1 migrate-m2 migrate-m3 m2 m2-worker smtp-ctl";;
   m1node) BUILD_ONLY="migrate-platform migrate-m1 migrate-m2 migrate-m3 m1n fx verifier-node";;   # stage 4 runs every migration chain; module 1's own control plane is `m1n` in this scope (docker-compose.m1node.yml)
 esac
-# FULL_INCLUDES: the optional stages the `full` run ALSO runs, once a runner has proven each in its own scope. EMPTY today: a stage of a scope is DORMANT in `full` (it does not compile into the test binary, add a compose
-# file, start a container, mint a credential or print a line), so the full harness is exactly what it was before the stage existed. THE ONE PLACE TO FLIP: name the stage here (FULL_INCLUDES="m2worker m1node"); a stage
+# FULL_INCLUDES: the optional stages the `full` run ALSO runs, once a runner has proven each in its own scope. It was EMPTY until the first scoped runs were green: a stage of a scope is DORMANT in `full` (it does not compile into the test binary, add a compose
+# file, start a container, mint a credential or print a line), so the full harness is exactly what it was before the stage existed. (Both stages have since been proven and included, see the value below.) THE ONE PLACE TO FLIP: name the stage here (FULL_INCLUDES="m2worker m1node"); a stage
 # that adds tests also needs tests/floors-harness.txt raised by its test count at the same time (they then compile into the full binary). Known names: m2worker (tests/harness/m2worker/stage.sh), m1node (tests/harness/m1node).
-FULL_INCLUDES=""
+FULL_INCLUDES="m2worker m1node"   # both proven in their own scope on the runner at aeb29ed: m1node run 44183527048 (9 TestM1Node tests), m2worker run 44183533432 (5 TestM2Worker tests)
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PLATFORM_DIR="$(cd "$HERE/../.." && pwd)"
 MODULES_ROOT="${H_MODULES_ROOT:-$(cd "$PLATFORM_DIR/.." && pwd)}"
