@@ -81,6 +81,10 @@ type Options struct {
 	MaxBodyBytes int64
 	// Sleep waits between attempts and returns the context's error if it ends first; nil means a real timer. It exists so a test can observe the waits without sleeping.
 	Sleep func(ctx context.Context, d time.Duration) error
+	// Observe, when non-nil, is called with every response the client receives (success and error alike; a transport failure produces none), once per attempt, after the body was
+	// read and before it is judged. It runs synchronously in the caller's goroutine and a panic in it is swallowed. It is for tests (the live contract drift gate): the default
+	// options and FromConfig leave it nil, and a nil Observe costs nothing. See Observation.
+	Observe func(Observation)
 }
 
 // DefaultOptions are the documented defaults of the three dials (Docs/config-reference.md). A test pins them equal to what config.Load yields for an empty environment.
@@ -248,6 +252,7 @@ type prepared struct {
 	expect     []int
 	idempotent bool
 	anonymous  bool
+	path       string
 }
 
 func (p *prepared) expects(status int) bool {
@@ -309,7 +314,7 @@ func (c *Client) prepare(req Request) (*prepared, *Error) {
 	if req.Timeout < 0 || req.Timeout > MaxRequestTimeout {
 		return nil, c.invalid(req.Route, "the per-request timeout must be positive and at most MaxRequestTimeout")
 	}
-	p := &prepared{route: req.Route, method: req.Method, timeout: c.opts.Timeout, idempotent: req.Idempotent, anonymous: req.Anonymous}
+	p := &prepared{route: req.Route, method: req.Method, path: req.Path, timeout: c.opts.Timeout, idempotent: req.Idempotent, anonymous: req.Anonymous}
 	if req.Timeout > 0 {
 		p.timeout = req.Timeout
 	}
@@ -359,6 +364,7 @@ type rawResponse struct {
 	status   int
 	header   http.Header
 	body     []byte
+	head     []byte // the first MaxBodyBytes bytes of an oversize body (body is nil then); only an observer reads it
 	oversize bool
 }
 
@@ -381,6 +387,7 @@ func (c *Client) do(ctx context.Context, req Request, judge judgeFunc) (*Respons
 		var resp *Response
 		raw, e := c.roundTrip(ctx, p)
 		if e == nil {
+			c.observe(p, raw)
 			resp, e = judge(p, raw)
 		}
 		if e == nil {
@@ -485,6 +492,7 @@ func (c *Client) roundTrip(ctx context.Context, p *prepared) (*rawResponse, *Err
 	raw := &rawResponse{status: resp.StatusCode, header: resp.Header.Clone()}
 	if int64(len(b)) > c.opts.MaxBodyBytes {
 		raw.oversize = true
+		raw.head = b[:c.opts.MaxBodyBytes]
 	} else {
 		raw.body = b
 	}

@@ -21,6 +21,6 @@
 // WHAT IT CANNOT SEE. The gate compares the responses the harness actually obtained: it cannot see response bodies for inputs the harness never sends, fields the module adds
 // in states the harness never reaches, or anything the module does only in production. Coverage.Print says so, with the counts, every time.
 //
-// THE SHAPE SHIM. modclient.Shape has no exported accessors, and the comparison needs two facts Decode does not give back (where a MapOf is, which keys are optional); shapeview.go
-// reads them with reflection and fails loudly (ErrShapeUnreadable) when modclient's internals change. An exported read-only walk on Shape would remove the shim.
+// THE SHAPE WALK. The comparison needs two facts Decode does not give back (where a MapOf is, which keys are optional); it reads them through the read-only walk of
+// modclient.Shape (Kind, Nullable, Fields, Elem) and fails loudly (ErrShapeUnreadable) on a kind of Shape it was not taught.
 package contractcheck

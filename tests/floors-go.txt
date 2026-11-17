@@ -10,14 +10,14 @@ go|github.com/coldmail-platform/platform/internal/adapters/sendapi|46
 go|github.com/coldmail-platform/platform/internal/app|17
 go|github.com/coldmail-platform/platform/internal/charge|29
 go|github.com/coldmail-platform/platform/internal/config|37
-go|github.com/coldmail-platform/platform/internal/contractcheck|141
+go|github.com/coldmail-platform/platform/internal/contractcheck|177
 go|github.com/coldmail-platform/platform/internal/dsnscrub|8
 go|github.com/coldmail-platform/platform/internal/entitlements|60
 go|github.com/coldmail-platform/platform/internal/httpapi|16
 go|github.com/coldmail-platform/platform/internal/logging|6
 go|github.com/coldmail-platform/platform/internal/m3admin|38
 go|github.com/coldmail-platform/platform/internal/migrate|47
-go|github.com/coldmail-platform/platform/internal/modclient|38
+go|github.com/coldmail-platform/platform/internal/modclient|59
 go|github.com/coldmail-platform/platform/internal/money|23
 go|github.com/coldmail-platform/platform/internal/norm|10
 go|github.com/coldmail-platform/platform/internal/probe|40

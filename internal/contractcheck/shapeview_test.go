@@ -2,7 +2,6 @@ package contractcheck
 
 import (
 	"errors"
-	"reflect"
 	"testing"
 
 	"github.com/coldmail-platform/platform/internal/modclient"
@@ -82,27 +81,23 @@ func TestViewOfWalksNestedObjectsArraysAndMaps(t *testing.T) {
 	}
 }
 
-func TestViewOfFailsLoudlyWhenTheInternalsAreNotWhatItReads(t *testing.T) {
-	// A struct without the fields (what Shape would look like after a rename): a defined error, never a guess.
-	_, err := viewValue(reflect.ValueOf(struct{ Other int }{}), 0)
-	if !errors.Is(err, ErrShapeUnreadable) {
-		t.Fatalf("a Shape without the expected fields must be ErrShapeUnreadable, got %v", err)
-	}
-	// A kind value the table never learned.
-	type fake struct {
-		kind     uint8
-		nullable bool
-		fields   []modclient.Field
-		elem     *modclient.Shape
-	}
-	_, err = viewValue(reflect.ValueOf(fake{kind: 200}), 0)
-	if !errors.Is(err, ErrShapeUnreadable) {
+func TestViewOfFailsLoudlyOnAKindOfShapeItWasNotTaughtAndKnowsEveryKindModclientNames(t *testing.T) {
+	if _, err := skindOf(modclient.ShapeKind(200)); !errors.Is(err, ErrShapeUnreadable) {
 		t.Fatalf("an unknown kind must be ErrShapeUnreadable, got %v", err)
 	}
-	// The paired control: the same fake with a kind the table knows reads fine.
-	known, _ := readKind(modclient.Str)
-	if _, err := viewValue(reflect.ValueOf(fake{kind: uint8(known)}), 0); err != nil {
-		t.Fatalf("a fake with the string kind must read: %v", err)
+	// The paired control, and the guard against a new kind being added to modclient and forgotten here: every kind that has a name must be handled.
+	n := 0
+	for k := modclient.ShapeUnchecked; k < modclient.ShapeKind(64); k++ {
+		if k.String() == "unknown" {
+			continue
+		}
+		n++
+		if _, err := skindOf(k); err != nil {
+			t.Fatalf("modclient names the kind %s and this package does not handle it: %v", k, err)
+		}
+	}
+	if n < 9 {
+		t.Fatalf("only %d named kinds: the instrument matched nothing", n)
 	}
 }
 

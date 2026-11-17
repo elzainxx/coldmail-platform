@@ -37,6 +37,14 @@ type CoverageReport struct {
 	Never []Exercised
 	// Undeclared are the live calls no contract declares: a dependency on the module that nothing pins.
 	Undeclared []Exercised
+	// Allowed are contracts no live call exercised that the harness has said, with a reason, it cannot elicit. They are not in Never, and they are always printed.
+	Allowed []AllowedGap
+}
+
+// AllowedGap is a contract the harness is allowed not to exercise, and why.
+type AllowedGap struct {
+	Contract Exercised
+	Reason   string
 }
 
 // Coverage matches the declared contracts against what the harness called.
@@ -87,6 +95,12 @@ func (r CoverageReport) Print(w io.Writer) {
 	} else {
 		fmt.Fprintf(w, "contract drift gate: %d of %d contracts compared with a live response; %d never exercised; %d live calls with no contract (%d distinct live calls)\n",
 			r.Covered, r.Contracts, len(r.Never), len(r.Undeclared), r.Calls)
+		if len(r.Allowed) > 0 {
+			fmt.Fprintf(w, "%d more contracts are allowed to stay unexercised, each with the reason it cannot be elicited in the harness:\n", len(r.Allowed))
+		}
+	}
+	for _, a := range r.Allowed {
+		fmt.Fprintf(w, "ALLOWED UNEXERCISED: %s: %s\n", a.Contract, a.Reason)
 	}
 	for _, e := range r.Never {
 		fmt.Fprintf(w, "NOT COMPARED: %s (declared, never called live)\n", e)
