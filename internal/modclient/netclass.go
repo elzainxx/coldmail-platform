@@ -13,8 +13,8 @@ import (
 	"syscall"
 )
 
-// A third copy of the transport classifier (internal/probe and internal/m1results each carry theirs): the two older packages are not changed by this chunk. It never returns
-// err.Error(): the text of a *url.Error carries the full URL and the text of other errors carries addresses and paths.
+// A second copy of the transport classifier (internal/probe carries its own and is not changed by this chunk; internal/m1results carried a third and was replaced by
+// internal/adapters/m1, which classifies through this one). It never returns err.Error(): the text of a *url.Error carries the full URL and the text of other errors carries addresses and paths.
 
 // transportFailure is what a transport error means for the caller.
 type transportFailure struct {

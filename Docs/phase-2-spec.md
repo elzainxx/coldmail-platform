@@ -85,7 +85,7 @@ P-03|platform|quarantined|*|*|*|*|free||quarantined by the platform: work not do
 P-04|platform|infrastructure_failure|*|*|*|*|free||our own failure (module outage, platform crash window)
 P-05|platform|pool_exhausted|*|*|*|*|free||no sending capacity: our own failure
 P-06|platform|smtp_login_rejected|*|*|*|*|free||the user's own SMTP rejected the login: nothing reached the outside world
-P-07|platform|duplicate|*|*|*|*|free||a repeat of an earlier row's address inside one M1 job: checked once, charged once, on the first row (internal/m1results maps duplicate_of rows to this state)
+P-07|platform|duplicate|*|*|*|*|free||a repeat of an earlier row's address inside one M1 job: checked once, charged once, on the first row (internal/adapters/m1 maps duplicate_of rows to this state)
 P-08|platform|malformed|*|*|*|*|free||an address that fails norm/v1 (internal/norm): counted and skipped before any module call, never sent and never charged (module 1's own invalid_syntax row M1-10 stays for completeness)
 ```
 <!-- charge-table:end -->

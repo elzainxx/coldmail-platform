@@ -12,8 +12,9 @@ import (
 	"testing"
 	"time"
 
+	m1results "github.com/coldmail-platform/platform/internal/adapters/m1"
 	"github.com/coldmail-platform/platform/internal/config"
-	"github.com/coldmail-platform/platform/internal/m1results"
+	"github.com/coldmail-platform/platform/internal/modclient"
 	"github.com/coldmail-platform/platform/internal/money"
 )
 
@@ -21,7 +22,7 @@ import (
 // the queue) is settled by the platform item by item, and the settlement is compared with the module's own report.
 //
 // What is real: module 1 (submit, drain, results, its own dedup and its own failure origin), the platform's money store over a real Postgres (grant, reserve at
-// the dearest frozen price, one Settle per page, release) and the real internal/m1results client. What is not: the platform's job engine (Phase 4) and module
+// the dearest frozen price, one Settle per page, release) and the real internal/adapters/m1 adapter. What is not: the platform's job engine (Phase 4) and module
 // 1's SMTP stage (no node in the stack, no DNS to the outside: the harness network is internal). The platform's money lives in a scratch database of its own
 // (like every money test) so that a failed run leaves nothing in the live ledger; module 1 is the live one.
 //
@@ -94,11 +95,11 @@ func m1bOrdinals(role m1bRole) []int {
 	return out
 }
 
-func m1bClient(t *testing.T) *m1results.Client {
+func m1bClient(t *testing.T) *m1results.Adapter {
 	t.Helper()
 	base := m3lBaseURL(t, m1bEnvURL)
 	key := strings.TrimSpace(requireEnv(t, m1bEnvKey))
-	c, err := m1results.New(base, config.Secret(key), nil)
+	c, err := m1results.New(base, config.Secret(key), nil, modclient.Options{Timeout: 30 * time.Second})
 	if err != nil {
 		t.Fatalf("cannot build the module 1 client from %s / %s: %v", m1bEnvURL, m1bEnvKey, err) // New's errors never carry the URL or the key
 	}
@@ -291,9 +292,9 @@ func (e *mnyEnv) m1bLedger(job string) []m1bCharge {
 // m1bReport re-reads the whole results list of a COMPLETE job through the client, independently of the settle loop (its own page size, its own walk), and
 // returns the module's report. It fails the test unless the job is complete and the report is every input row exactly once, in order, each with the label it
 // was submitted with: that is what the platform relies on when it keys a charge by item_id.
-func m1bReport(t *testing.T, ctx context.Context, m1 *m1results.Client, jobID string, total int) []m1results.Row {
+func m1bReport(t *testing.T, ctx context.Context, m1 *m1results.Adapter, jobID string, total int) []m1results.Row {
 	t.Helper()
-	js, err := m1.Job(ctx, jobID)
+	js, err := m1.Status(ctx, jobID)
 	if err != nil {
 		t.Fatalf("cannot read module 1's job status: %v", err)
 	}
@@ -388,7 +389,7 @@ func TestM1Live_BulkJobSettlesItemByItem(t *testing.T) {
 	t.Logf("money: granted %d credits; reserved %d for %d row(s) at %d per unit (%s, the dearest of the frozen snapshot %v)", m1bGrant, rsv.Reserved, total, rsv.UnitCost, rsv.Unit, rsv.Prices)
 
 	// ---- module 1: submit ----
-	m1Job, counts, err := m1.Submit(ctx, items)
+	m1Job, counts, err := m1.SubmitRaw(ctx, items)
 	if err != nil {
 		t.Fatalf("submitting the bulk job to module 1 failed: %v\n(a 400 here means module 1 does not take the `items` shape: is the pinned module 1 at the commit that has A1, the per-item identity?)", err)
 	}
@@ -407,7 +408,7 @@ func TestM1Live_BulkJobSettlesItemByItem(t *testing.T) {
 			return err
 		}
 		pending := -1
-		if js, jerr := m1.Job(drainCtx, m1Job); jerr == nil {
+		if js, jerr := m1.Status(drainCtx, m1Job); jerr == nil {
 			pending = js.Counts.Pending
 		}
 		res, err := e.store.Settle(drainCtx, money.SettleReq{JobID: job, Items: settle})
@@ -420,7 +421,7 @@ func TestM1Live_BulkJobSettlesItemByItem(t *testing.T) {
 	if err != nil {
 		diag := "module 1's job status could not be read"
 		fresh, cancelFresh := context.WithTimeout(context.Background(), 20*time.Second)
-		if js, jerr := m1.Job(fresh, m1Job); jerr == nil {
+		if js, jerr := m1.Status(fresh, m1Job); jerr == nil {
 			diag = fmt.Sprintf("module 1 now says: status %q, complete %t, total %d, settled %d, pending %d", js.Status, js.Complete, js.Counts.Total, js.Counts.Settled, js.Counts.Pending)
 		}
 		cancelFresh()

@@ -1,0 +1,13 @@
+M1-F1|status.go|a job route called with a non-uuid id answers 500 (a store error), not 404, so the adapter validates the id shape before any request
+M1-F2|submit.go|the bulk submission is not idempotent, so it is never retried and every unconfirmed outcome is reported as "an orphan job is possible"
+M1-F3|vocab.go|module 1 has no describe, vocabulary or policy route, so the adapter holds its closed vocabularies as constants and refuses a value outside them
+M1-F4|drain.go|a running job's results are a moving target (a row that settles behind an issued cursor is never revisited), so a complete job is walked again from the start
+M1-F5|results.go|every repeat of an address is answered with the first row's full verdict and marked only by duplicate_of, so the adapter maps it to the free platform duplicate outcome
+M1-F6|results.go|a bulk result's meta.from_cache is always false, so the cache signal is read from flags.from_cache
+M1-F7|results.go|failure_origin and smtp_skipped_reason live in the open signals bag and are absent when they do not apply, so absence is a normal answer and presence is checked against the closed vocabulary
+M1-F8|submit.go|the 202 is the only place module 1 reports its duplicate and malformed counts, so Submit checks them against the plan's prediction there
+M1-F9|plan.go|one bad item_id rejects the whole job with a 400 and labels must be unique, non-blank, at most 200 bytes and without control characters, so the adapter checks every label first
+M1-F10|plan.go|more than 100,000 rows is a 413 answered only after the whole body was read (and an operator can lower the cap), so the adapter refuses the ceiling locally
+M1-F11|plan.go|a body over 64 MiB is answered 400 body malformed, not 413, so the adapter measures the body it would send and refuses locally
+M1-F12|results.go|a results limit outside 1..1000 is silently replaced by 100 with no error, so the adapter refuses what the module would silently change
+M1-F13|status.go|the job status word is the stored one passed through (four words, two written), and only the complete boolean is authoritative, so the adapter accepts the four words and keys on the boolean

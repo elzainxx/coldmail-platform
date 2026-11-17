@@ -1,0 +1,1 @@
+{"error":{"code":"validation_failed","message":"One or more fields are invalid.","details":[{"field":"items[1].item_id","issue":"duplicate"}],"request_id":"00000000-0000-7000-8000-0000000000b1"}}

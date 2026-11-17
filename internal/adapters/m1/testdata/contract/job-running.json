@@ -1,0 +1,8 @@
+{
+  "job_id": "00000000-0000-7000-8000-00000000000a",
+  "status": "running",
+  "complete": false,
+  "caller_ref": "",
+  "counts": {"total": 3, "settled": 1, "pending": 2},
+  "processing_paused": false
+}

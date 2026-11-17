@@ -1,0 +1,368 @@
+package m1
+
+import (
+	"errors"
+	"reflect"
+	"strconv"
+	"strings"
+	"testing"
+
+	"github.com/coldmail-platform/platform/internal/charge"
+	"github.com/coldmail-platform/platform/internal/modclient"
+	"github.com/coldmail-platform/platform/internal/money"
+)
+
+// TestResults_ReadsTheRecordedPage: the recorded page of results-page.json (a first answer, an unknown with its origin, a repeat of row 0, a degraded answer with its skip token and
+// origin, a malformed row) decodes to exactly the fields the platform acts on, in order, with the cursor; every key it does not read (email, meta, raw, confidence, ...) is ignored.
+// Paired control: the recorded last page decodes to NO rows and "" (not an error), and two different elements decode to different Rows, so the decoder is not returning a
+// constant; duplicate_of 0 is a pointer to 0, never an absent key.
+func TestResults_ReadsTheRecordedPage(t *testing.T) {
+	body := fixture(t, "results-page.json")
+	f := newFakeM1(t, func(call) (int, string) { return 200, body })
+	a := f.adapter(t)
+	rows, next, err := a.Results(testCtx(t), testJob, "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Row{
+		{Ordinal: 0, ItemID: "row-0", Status: "valid", Reason: "accepted"},
+		{Ordinal: 1, ItemID: "row-1", Status: "unknown", Reason: "dns_error", FailureOrigin: "remote"},
+		{Ordinal: 2, ItemID: "row-2", DuplicateOf: ptr(0), Status: "valid", Reason: "accepted"},
+		{Ordinal: 3, ItemID: "row-3", Status: "risky", Reason: "plausible", SkipReason: "smtp_unwired", FailureOrigin: "own"},
+		{Ordinal: 4, ItemID: "row-4", Status: "invalid", Reason: "invalid_syntax"},
+	}
+	if !reflect.DeepEqual(rows, want) || next != "4" {
+		t.Fatalf("Results returned %+v next %q, want %+v next %q", rows, next, want, "4")
+	}
+	if rows[2].DuplicateOf == nil || *rows[2].DuplicateOf != 0 {
+		t.Fatal("duplicate_of: 0 is a real value (the first row of the job); it must decode to a pointer to 0, never to absent")
+	}
+	if rows[4].DuplicateOf != nil {
+		t.Fatal("a malformed row is never a duplicate, and carries no duplicate_of")
+	}
+	if reflect.DeepEqual(rows[0], rows[4]) {
+		t.Fatal("control: two different elements decoded to the same Row: the decoder returns something that does not depend on its input")
+	}
+
+	empty := fixture(t, "results-empty.json")
+	g := newFakeM1(t, func(call) (int, string) { return 200, empty })
+	rows, next, err = g.adapter(t).Results(testCtx(t), testJob, "4", 0)
+	if err != nil || len(rows) != 0 || next != "" {
+		t.Fatalf("control: the recorded empty last page gave %+v %q %v", rows, next, err)
+	}
+}
+
+// TestResults_ReadsOriginSkipTokenAndCache: the three provenance fields the charge table reads come out of their nested places (flags.from_cache, signals.smtp_skipped_reason,
+// signals.failure_origin), and the cache signal is flags.from_cache and NOT meta.from_cache (an element whose meta says true and whose flags say false is not cached: M1-F6).
+// Control: the same element without them decodes to empty values.
+func TestResults_ReadsOriginSkipTokenAndCache(t *testing.T) {
+	read := func(body string) Row {
+		t.Helper()
+		f := serve(t, 200, page(testJob, "", body))
+		rows, _, err := f.adapter(t).Results(testCtx(t), testJob, "", 0)
+		if err != nil || len(rows) != 1 {
+			t.Fatalf("%d row(s), %v for %s", len(rows), err, body)
+		}
+		return rows[0]
+	}
+	got := read(`{"status":"unknown","reason":"dns_error","domain":"gone.example","flags":{"from_cache":true},` +
+		`"signals":{"smtp_skipped_reason":"smtp_unwired","failure_origin":"remote","error_capped":true,"retry_after_hint_s":30},"item_id":"row-7","ordinal":7}`)
+	want := Row{Ordinal: 7, ItemID: "row-7", Status: "unknown", Reason: "dns_error", FromCache: true, SkipReason: "smtp_unwired", FailureOrigin: "remote"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("decoded %+v, want %+v", got, want)
+	}
+	// the other cache key: meta.from_cache says true, flags.from_cache says false, and the row is NOT cached
+	metaOnly := read(`{"status":"valid","reason":"accepted","flags":{"from_cache":false},"signals":{},"meta":{"from_cache":true},"item_id":"row-8","ordinal":8}`)
+	if metaOnly.FromCache {
+		t.Fatal("meta.from_cache was read as the cache signal: a bulk result's meta is skeletal and always false, flags.from_cache is the signal")
+	}
+	ctl := read(element("unknown", "dns_error", "row-7", 7, ""))
+	if ctl.FromCache || ctl.SkipReason != "" || ctl.FailureOrigin != "" {
+		t.Fatalf("control: an element with no provenance decoded to %+v: the three fields must read as empty when the module sends nothing", ctl)
+	}
+}
+
+// TestResults_StrictOnEveryKeyTheAdapterReads: an element with a missing, null or mistyped key, a value outside its closed vocabulary, a negative ordinal, a blank item_id or a
+// duplicate_of that is not an EARLIER row is a Contract error that names the key, and the page returns no rows. (The cases of the old internal/m1results Row.UnmarshalJSON, now
+// asked of the adapter's real path; the keys it did not read, the vocabularies and item_id are new.) Each case is paired with the control that the same element, repaired, is
+// accepted.
+func TestResults_StrictOnEveryKeyTheAdapterReads(t *testing.T) {
+	const good = `{"status":"valid","reason":"accepted","item_id":"a","ordinal":4,"flags":{"from_cache":false},"signals":{}}`
+	f := serve(t, 200, page(testJob, "", good))
+	if rows, _, err := f.adapter(t).Results(testCtx(t), testJob, "", 0); err != nil || len(rows) != 1 {
+		t.Fatalf("control: the repaired element is refused: %v", err)
+	}
+	cases := []struct{ name, elem, key string }{
+		{"no status", `{"reason":"accepted","item_id":"a","ordinal":4,"flags":{"from_cache":false},"signals":{}}`, "results[0].status"},
+		{"an empty status", `{"status":"","reason":"accepted","item_id":"a","ordinal":4,"flags":{"from_cache":false},"signals":{}}`, "results[0].status"},
+		{"a blank status", `{"status":"  ","reason":"accepted","item_id":"a","ordinal":4,"flags":{"from_cache":false},"signals":{}}`, "results[0].status"},
+		{"a null status", `{"status":null,"reason":"accepted","item_id":"a","ordinal":4,"flags":{"from_cache":false},"signals":{}}`, "results[0].status"},
+		{"a status outside the four", `{"status":"maybe","reason":"accepted","item_id":"a","ordinal":4,"flags":{"from_cache":false},"signals":{}}`, "results[0].status"},
+		{"a status of the wrong type", `{"status":7,"reason":"accepted","item_id":"a","ordinal":4,"flags":{"from_cache":false},"signals":{}}`, "results[0].status"},
+		{"no reason", `{"status":"valid","item_id":"a","ordinal":4,"flags":{"from_cache":false},"signals":{}}`, "results[0].reason"},
+		{"a reason outside the vocabulary", `{"status":"valid","reason":"vibes","item_id":"a","ordinal":4,"flags":{"from_cache":false},"signals":{}}`, "results[0].reason"},
+		{"no ordinal", `{"status":"valid","reason":"accepted","item_id":"a","flags":{"from_cache":false},"signals":{}}`, "results[0].ordinal"},
+		{"a null ordinal", `{"status":"valid","reason":"accepted","item_id":"a","ordinal":null,"flags":{"from_cache":false},"signals":{}}`, "results[0].ordinal"},
+		{"a negative ordinal", `{"status":"valid","reason":"accepted","item_id":"a","ordinal":-1,"flags":{"from_cache":false},"signals":{}}`, "results[0].ordinal"},
+		{"an ordinal of the wrong type", `{"status":"valid","reason":"accepted","item_id":"a","ordinal":"4","flags":{"from_cache":false},"signals":{}}`, "results[0].ordinal"},
+		{"an ordinal that is not an integer", `{"status":"valid","reason":"accepted","item_id":"a","ordinal":4.5,"flags":{"from_cache":false},"signals":{}}`, "results[0].ordinal"},
+		{"a duplicate of itself", `{"status":"valid","reason":"accepted","item_id":"a","ordinal":4,"duplicate_of":4,"flags":{"from_cache":false},"signals":{}}`, "results[0].duplicate_of"},
+		{"a duplicate of a later row", `{"status":"valid","reason":"accepted","item_id":"a","ordinal":4,"duplicate_of":9,"flags":{"from_cache":false},"signals":{}}`, "results[0].duplicate_of"},
+		{"a duplicate of a negative row", `{"status":"valid","reason":"accepted","item_id":"a","ordinal":4,"duplicate_of":-2,"flags":{"from_cache":false},"signals":{}}`, "results[0].duplicate_of"},
+		{"no item_id", `{"status":"valid","reason":"accepted","ordinal":4,"flags":{"from_cache":false},"signals":{}}`, "results[0].item_id"},
+		{"a blank item_id", `{"status":"valid","reason":"accepted","item_id":"  ","ordinal":4,"flags":{"from_cache":false},"signals":{}}`, "results[0].item_id"},
+		{"no flags", `{"status":"valid","reason":"accepted","item_id":"a","ordinal":4,"signals":{}}`, "results[0].flags"},
+		{"flags without from_cache", `{"status":"valid","reason":"accepted","item_id":"a","ordinal":4,"flags":{},"signals":{}}`, "results[0].flags.from_cache"},
+		{"from_cache of the wrong type", `{"status":"valid","reason":"accepted","item_id":"a","ordinal":4,"flags":{"from_cache":"no"},"signals":{}}`, "results[0].flags.from_cache"},
+		{"no signals", `{"status":"valid","reason":"accepted","item_id":"a","ordinal":4,"flags":{"from_cache":false}}`, "results[0].signals"},
+		{"a failure origin outside the three", `{"status":"unknown","reason":"dns_error","item_id":"a","ordinal":4,"flags":{"from_cache":false},"signals":{"failure_origin":"theirs"}}`, "results[0].signals.failure_origin"},
+		{"a failure origin of the wrong type", `{"status":"unknown","reason":"dns_error","item_id":"a","ordinal":4,"flags":{"from_cache":false},"signals":{"failure_origin":1}}`, "results[0].signals.failure_origin"},
+		{"a skip token outside the six", `{"status":"risky","reason":"plausible","item_id":"a","ordinal":4,"flags":{"from_cache":false},"signals":{"smtp_skipped_reason":"lazy"}}`, "results[0].signals.smtp_skipped_reason"},
+		{"an element that is not an object", `[1,2]`, "results[0]"},
+	}
+	for _, c := range cases {
+		g := serve(t, 200, page(testJob, "", c.elem))
+		rows, next, err := g.adapter(t).Results(testCtx(t), testJob, "", 0)
+		kind, key := kindAndKey(err)
+		if err == nil || kind != modclient.Contract || key != c.key {
+			t.Errorf("%s: got kind %v key %q (%v), want a Contract error naming %q", c.name, kind, key, err, c.key)
+		}
+		if rows != nil || next != "" {
+			t.Errorf("%s: the refused page returned %d row(s) and cursor %q beside the error", c.name, len(rows), next)
+		}
+	}
+}
+
+// TestResults_ErrorsCarryNoValueFromTheElement: a refused element's error text is built from fixed words, ordinals and key names only. An element whose item_id, domain and
+// reason hold an address (a module that echoes what it was given) puts none of it in the error. Control: leaks() sees an address in a string that holds one.
+func TestResults_ErrorsCarryNoValueFromTheElement(t *testing.T) {
+	bad := `{"status":"valid","reason":"` + testAddr + `","domain":"leak-check.example","item_id":"` + testAddr + `","ordinal":4,"email":"` + testAddr + `","flags":{"from_cache":false},"signals":{}}`
+	f := serve(t, 200, page(testJob, "", bad))
+	_, _, err := f.adapter(t).Results(testCtx(t), testJob, "", 0)
+	if modclient.KindOf(err) != modclient.Contract {
+		t.Fatalf("an element with a reason outside the vocabulary was not refused as a contract error: %v", err)
+	}
+	if leaks(err.Error(), testAddr, "leak-check.example") {
+		t.Fatalf("the error text carries a value taken from the element: %q", err)
+	}
+	if !leaks("refused: "+testAddr, testAddr) {
+		t.Fatal("control: leaks() did not see an address in a string that holds one: the check above proves nothing")
+	}
+}
+
+// TestResults_APageWithOneBadElementReturnsNothing: a page of three rows whose MIDDLE row is off contract fails whole (partial results are never returned as complete). Control:
+// the same page with the middle row repaired returns all three.
+func TestResults_APageWithOneBadElementReturnsNothing(t *testing.T) {
+	bad := element("valid", "not-a-reason", "row-1", 1, "")
+	f := serve(t, 200, page(testJob, "", row(0), bad, row(2)))
+	rows, next, err := f.adapter(t).Results(testCtx(t), testJob, "", 0)
+	if kind, key := kindAndKey(err); kind != modclient.Contract || key != "results[1].reason" || rows != nil || next != "" {
+		t.Fatalf("got %d row(s), cursor %q, kind %v key %q (%v), want nothing and a Contract error naming results[1].reason", len(rows), next, kind, key, err)
+	}
+	g := serve(t, 200, page(testJob, "", row(0), row(1), row(2)))
+	if rows, _, err := g.adapter(t).Results(testCtx(t), testJob, "", 0); err != nil || len(rows) != 3 {
+		t.Fatalf("control: %d row(s), %v", len(rows), err)
+	}
+}
+
+// TestResults_APageAboutAnotherJobIsRefused: the page names a job other than the one asked for. Control: the right job id is accepted (in either letter case).
+func TestResults_APageAboutAnotherJobIsRefused(t *testing.T) {
+	other := "00000000-0000-7000-8000-0000000000ff"
+	f := serve(t, 200, page(other, "", row(0)))
+	if _, _, err := f.adapter(t).Results(testCtx(t), testJob, "", 0); modclient.KindOf(err) != modclient.Contract {
+		t.Fatalf("got %v, want a Contract error", err)
+	} else if _, key := kindAndKey(err); key != "job_id" {
+		t.Fatalf("the error names %q, want job_id", key)
+	}
+	g := serve(t, 200, page(strings.ToUpper(testJob), "", row(0)))
+	if _, _, err := g.adapter(t).Results(testCtx(t), testJob, "", 0); err != nil {
+		t.Fatalf("control: the same job in upper case was refused: %v", err)
+	}
+}
+
+// TestResults_CursorAndLimitTravelAndAreChecked: the cursor goes back unchanged and the limit as given; 0 sends no limit (module 1's default); a limit outside 0..1000 is refused
+// BEFORE any request, because module 1 would silently answer with its default (M1-F12). Control: 1 and 1000 are sent.
+func TestResults_CursorAndLimitTravelAndAreChecked(t *testing.T) {
+	f := newFakeM1(t, func(call) (int, string) { return 200, page(testJob, "") })
+	a := f.adapter(t)
+	if _, _, err := a.Results(testCtx(t), testJob, "op aque/cur+sor=", 7); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := a.Results(testCtx(t), testJob, "", 0); err != nil {
+		t.Fatal(err)
+	}
+	calls := f.seen()
+	if p := calls[0].params(); p.Get("cursor") != "op aque/cur+sor=" || p.Get("limit") != "7" {
+		t.Fatalf("the first request carried %v", p)
+	}
+	if calls[1].Query != "" {
+		t.Fatalf("a first page with no limit must send no query, sent %q", calls[1].Query)
+	}
+	before := f.count()
+	for _, bad := range []int{-1, 1001, 100000} {
+		_, _, err := a.Results(testCtx(t), testJob, "", bad)
+		if modclient.KindOf(err) != modclient.Invalid {
+			t.Errorf("limit %d: got %v, want an Invalid error", bad, err)
+		}
+	}
+	if f.count() != before {
+		t.Fatalf("a refused argument still made %d request(s)", f.count()-before)
+	}
+	for _, ok := range []int{1, 1000} {
+		if _, _, err := a.Results(testCtx(t), testJob, "", ok); err != nil {
+			t.Errorf("control: limit %d was refused: %v", ok, err)
+		}
+	}
+}
+
+// TestResults_AForeignCursorIsRefusedByTheModule: a cursor module 1 did not issue is its 400 validation_failed on the field cursor; the adapter reports it as a Refused error naming
+// the route, the status, the code and the detail, and the error text does not repeat the cursor. Control: the cursor the stand-in did issue works.
+func TestResults_AForeignCursorIsRefusedByTheModule(t *testing.T) {
+	l := newListing(3, 0, 1, 2)
+	f := newFakeM1(t, l.handle)
+	a := f.adapter(t)
+	_, _, err := a.Results(testCtx(t), testJob, "garbage-"+testAddr, 2)
+	e := asModclient(err)
+	if e == nil || e.Kind != modclient.Refused || e.Status != 400 || e.Code != "validation_failed" || e.Route != "m1.results" ||
+		!reflect.DeepEqual(e.Details, []modclient.Detail{{Field: "cursor", Issue: "malformed"}}) {
+		t.Fatalf("got %v, want a Refused error 400 validation_failed naming the field cursor on m1.results", err)
+	}
+	if leaks(err.Error(), testAddr, "garbage") {
+		t.Fatalf("the error repeats the cursor: %q", err)
+	}
+	if _, _, err := a.Results(testCtx(t), testJob, "c0", 2); err != nil {
+		t.Fatalf("control: the cursor the module issued was refused: %v", err)
+	}
+}
+
+// ---- ToSettleItems ----
+
+// TestToSettleItems_ItemRefIsTheItemIDNeverTheOrdinal: the money.SettleItem's item_ref is the module's item_id. The labels here are deliberately not the ordinals, and the control
+// shows that an ordinal-keyed item would differ from every one of them.
+func TestToSettleItems_ItemRefIsTheItemIDNeverTheOrdinal(t *testing.T) {
+	rows := []Row{
+		{Ordinal: 0, ItemID: "acct-77/row-9", Status: "valid", Reason: "accepted"},
+		{Ordinal: 1, ItemID: "7", Status: "invalid", Reason: "no_mx"},
+		{Ordinal: 2, ItemID: "0", Status: "risky", Reason: "disposable"},
+	}
+	items, err := ToSettleItems(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != len(rows) {
+		t.Fatalf("%d item(s) for %d row(s)", len(items), len(rows))
+	}
+	for i, it := range items {
+		if it.ItemRef != rows[i].ItemID {
+			t.Errorf("row %d: item_ref %q, want the item_id %q", i, it.ItemRef, rows[i].ItemID)
+		}
+		if it.ItemRef == strconv.Itoa(rows[i].Ordinal) {
+			t.Errorf("row %d: the item_ref %q is the ordinal: a position is not a key", i, it.ItemRef)
+		}
+		if it.Outcome.Module != "m1" || it.Outcome.State != rows[i].Status || it.Outcome.Reason != rows[i].Reason {
+			t.Errorf("row %d: outcome %+v is not module 1's own words (%s/%s)", i, it.Outcome, rows[i].Status, rows[i].Reason)
+		}
+	}
+	// control: rows whose item_id IS their ordinal's spelling would be indistinguishable from an ordinal key, which is why the rows above are not
+	same, err := ToSettleItems([]Row{{Ordinal: 5, ItemID: "5", Status: "valid", Reason: "accepted"}})
+	if err != nil || same[0].ItemRef != "5" {
+		t.Fatalf("control: %v %+v", err, same)
+	}
+}
+
+// TestToSettleItems_ADuplicateIsThePlatformDuplicateOutcome: a row with duplicate_of is platform/duplicate whatever verdict it carries (the first row of the address carries the
+// charge), and it is the pointer's PRESENCE that decides, not its value: duplicate_of 0 is a duplicate of row 0. Control: the same verdict with no duplicate_of is module 1's own
+// outcome.
+func TestToSettleItems_ADuplicateIsThePlatformDuplicateOutcome(t *testing.T) {
+	first := Row{Ordinal: 0, ItemID: "row-0", Status: "valid", Reason: "accepted"}
+	repeat := Row{Ordinal: 2, ItemID: "row-2", DuplicateOf: ptr(0), Status: "valid", Reason: "accepted", FromCache: true, SkipReason: "x", FailureOrigin: "remote"}
+	items, err := ToSettleItems([]Row{first, repeat})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (charge.Outcome{Module: "platform", State: "duplicate"}); items[1].Outcome != want {
+		t.Fatalf("the repeat's outcome is %+v, want exactly %+v (no reason, no cache flag, no origin: it is the platform's own class)", items[1].Outcome, want)
+	}
+	if want := (charge.Outcome{Module: "m1", State: "valid", Reason: "accepted"}); items[0].Outcome != want {
+		t.Fatalf("control: the first row's outcome is %+v, want module 1's own %+v", items[0].Outcome, want)
+	}
+	if items[1].ItemRef != "row-2" {
+		t.Fatalf("the repeat keeps its own item_id as item_ref, got %q", items[1].ItemRef)
+	}
+}
+
+// TestToSettleItems_AnUnknownRowCarriesItsOrigin: the failure origin, the SMTP skip token and the cache flag travel into the outcome unchanged, for every value, so that
+// money.Settle can decide on them. Control: two rows that differ only in the origin give outcomes that differ only in the origin.
+func TestToSettleItems_AnUnknownRowCarriesItsOrigin(t *testing.T) {
+	for _, origin := range []string{"own", "remote", "undetermined", ""} {
+		items, err := ToSettleItems([]Row{{Ordinal: 3, ItemID: "row-3", Status: "unknown", Reason: "dns_error", FailureOrigin: origin}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := charge.Outcome{Module: "m1", State: "unknown", Reason: "dns_error", FailureOrigin: origin}
+		if items[0].Outcome != want {
+			t.Errorf("origin %q: outcome %+v, want %+v", origin, items[0].Outcome, want)
+		}
+	}
+	items, err := ToSettleItems([]Row{{Ordinal: 1, ItemID: "x", Status: "risky", Reason: "plausible", FromCache: true, SkipReason: "smtp_unwired", FailureOrigin: "own"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (charge.Outcome{Module: "m1", State: "risky", Reason: "plausible", FromCache: true, SkipReason: "smtp_unwired", FailureOrigin: "own"}); items[0].Outcome != want {
+		t.Fatalf("outcome %+v, want %+v", items[0].Outcome, want)
+	}
+	a, _ := ToSettleItems([]Row{{ItemID: "x", Status: "unknown", Reason: "dns_error", FailureOrigin: "own"}})
+	b, _ := ToSettleItems([]Row{{ItemID: "x", Status: "unknown", Reason: "dns_error", FailureOrigin: "remote"}})
+	if a[0].Outcome == b[0].Outcome {
+		t.Fatal("control: rows that differ only in the failure origin gave the same outcome: the origin is dropped on the way")
+	}
+}
+
+// TestToSettleItems_NoItemIDIsAnError: a result with no item_id (empty, blank) is a Contract error (cause ErrNoItemID) naming the ordinal; and a page that holds one such row is
+// refused whole and returns nothing (a page that cannot be keyed completely is not settled in part). Control: the same page with the label present is accepted in full. A decoded
+// element with no item_id never gets this far: Results refuses it first, naming results[i].item_id (TestResults_StrictOnEveryKeyTheAdapterReads).
+func TestToSettleItems_NoItemIDIsAnError(t *testing.T) {
+	for _, id := range []string{"", " ", "\t"} {
+		page := []Row{
+			{Ordinal: 3, ItemID: "row-3", Status: "valid", Reason: "accepted"},
+			{Ordinal: 4, ItemID: id, Status: "valid", Reason: "accepted"},
+		}
+		items, err := ToSettleItems(page)
+		if !errors.Is(err, ErrNoItemID) || modclient.KindOf(err) != modclient.Contract {
+			t.Fatalf("item_id %q: got %v, want a Contract error with cause ErrNoItemID", id, err)
+		}
+		if !strings.Contains(err.Error(), "ordinal 4") {
+			t.Errorf("item_id %q: the error does not name the ordinal: %v", id, err)
+		}
+		if items != nil {
+			t.Errorf("item_id %q: %d item(s) were returned beside the error: a page is settled whole or not at all", id, len(items))
+		}
+	}
+	ok := Row{Ordinal: 4, ItemID: "row-4", Status: "valid", Reason: "accepted"}
+	if items, err := ToSettleItems([]Row{{Ordinal: 3, ItemID: "row-3", Status: "valid", Reason: "accepted"}, ok}); err != nil || len(items) != 2 {
+		t.Fatalf("control: the same page with its labels present: %d item(s), %v", len(items), err)
+	}
+}
+
+// TestToSettleItems_ProducesWhatMoneySettleAccepts: the items are the shape money.Settle takes (compile-time: money.SettleItem) and their item_refs are unique for rows with unique
+// item_ids, which money's validation requires. Control: two rows with one item_id give two items with one item_ref, which is the thing money.Settle refuses (ErrBadItem): the
+// mapping does not hide it by renaming.
+func TestToSettleItems_ProducesWhatMoneySettleAccepts(t *testing.T) {
+	mustItems := func(rows []Row) []money.SettleItem {
+		t.Helper()
+		items, err := ToSettleItems(rows)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return items
+	}
+	var _ []money.SettleItem = mustItems([]Row{{ItemID: "a", Status: "valid", Reason: "accepted"}})
+	items := mustItems([]Row{{Ordinal: 0, ItemID: "a", Status: "valid", Reason: "accepted"}, {Ordinal: 1, ItemID: "b", Status: "valid", Reason: "accepted"}})
+	if items[0].ItemRef == items[1].ItemRef {
+		t.Fatal("two rows with two item_ids gave one item_ref")
+	}
+	clash := mustItems([]Row{{Ordinal: 0, ItemID: "a", Status: "valid", Reason: "accepted"}, {Ordinal: 1, ItemID: "a", Status: "valid", Reason: "accepted"}})
+	if clash[0].ItemRef != clash[1].ItemRef {
+		t.Fatal("control: two rows with one item_id were given different item_refs: the mapping invents keys")
+	}
+}

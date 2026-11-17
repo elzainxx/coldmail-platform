@@ -1,0 +1,52 @@
+{
+  "job_id": "00000000-0000-7000-8000-00000000000a",
+  "results": [
+    {
+      "api_version": "v1", "status": "valid", "reason": "accepted", "confidence": 90, "recommendation": "send",
+      "email": "", "domain": "acme.example", "flags": {"from_cache": false}, "signals": {"smtp_code": "250"},
+      "meta": {"request_id": "", "checked_at": "", "latency_ms": 0, "policy": "cold-email", "policy_version": 1,
+               "verifier_ip": null, "node_id": null, "engine_version": null, "config_fingerprint": null, "from_cache": false},
+      "raw": null,
+      "item_id": "row-0",
+      "ordinal": 0
+    },
+    {
+      "api_version": "v1", "status": "unknown", "reason": "dns_error", "confidence": 10, "recommendation": "review",
+      "email": "", "domain": "gone.example", "flags": {"from_cache": false}, "signals": {"failure_origin": "remote", "retry_after_hint_s": 300},
+      "meta": {"request_id": "", "checked_at": "", "latency_ms": 0, "policy": "cold-email", "policy_version": 1,
+               "verifier_ip": null, "node_id": null, "engine_version": null, "config_fingerprint": null, "from_cache": false},
+      "raw": null,
+      "item_id": "row-1",
+      "ordinal": 1
+    },
+    {
+      "api_version": "v1", "status": "valid", "reason": "accepted", "confidence": 90, "recommendation": "send",
+      "email": "", "domain": "acme.example", "flags": {"from_cache": false}, "signals": {"smtp_code": "250"},
+      "meta": {"request_id": "", "checked_at": "", "latency_ms": 0, "policy": "cold-email", "policy_version": 1,
+               "verifier_ip": null, "node_id": null, "engine_version": null, "config_fingerprint": null, "from_cache": false},
+      "raw": null,
+      "item_id": "row-2",
+      "ordinal": 2,
+      "duplicate_of": 0
+    },
+    {
+      "api_version": "v1", "status": "risky", "reason": "plausible", "confidence": 40, "recommendation": "review",
+      "email": "", "domain": "slow.example", "flags": {"from_cache": false}, "signals": {"smtp_skipped_reason": "smtp_unwired", "failure_origin": "own"},
+      "meta": {"request_id": "", "checked_at": "", "latency_ms": 0, "policy": "cold-email", "policy_version": 1,
+               "verifier_ip": null, "node_id": null, "engine_version": null, "config_fingerprint": null, "from_cache": false},
+      "raw": null,
+      "item_id": "row-3",
+      "ordinal": 3
+    },
+    {
+      "api_version": "v1", "status": "invalid", "reason": "invalid_syntax", "confidence": 99, "recommendation": "skip",
+      "email": "", "domain": "", "flags": {"from_cache": false}, "signals": {"syntax_valid": false},
+      "meta": {"request_id": "", "checked_at": "", "latency_ms": 0, "policy": "cold-email", "policy_version": 1,
+               "verifier_ip": null, "node_id": null, "engine_version": null, "config_fingerprint": null, "from_cache": false},
+      "raw": null,
+      "item_id": "row-4",
+      "ordinal": 4
+    }
+  ],
+  "next_cursor": "4"
+}

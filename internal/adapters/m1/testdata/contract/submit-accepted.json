@@ -1,0 +1,8 @@
+{
+  "job_id": "00000000-0000-7000-8000-00000000000a",
+  "status": "accepted",
+  "counts": {"total": 3, "enqueued": 2, "duplicate": 1, "malformed": 0},
+  "malformed_rows": [],
+  "malformed_rows_truncated": false,
+  "processing_paused": false
+}

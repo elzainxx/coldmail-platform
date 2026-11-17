@@ -48,8 +48,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	m1results "github.com/coldmail-platform/platform/internal/adapters/m1"
 	"github.com/coldmail-platform/platform/internal/config"
-	"github.com/coldmail-platform/platform/internal/m1results"
+	"github.com/coldmail-platform/platform/internal/modclient"
 	"github.com/coldmail-platform/platform/internal/norm"
 )
 
@@ -653,7 +654,7 @@ func TestM1Live_NormAgreement(t *testing.T) {
 	}
 	t.Logf("NOTE module 1 accepted the job: total %d, enqueued %d, duplicate %d, malformed %d (%d vector(s) with bytes that are not UTF-8 were not sent: NOT CHECKED here)", create.Counts.Total, create.Counts.Enqueued, create.Counts.Duplicate, create.Counts.Malformed, skipped)
 
-	c, err := m1results.New(base, key, nil)
+	c, err := m1results.New(base, key, nil, modclient.Options{Timeout: 30 * time.Second})
 	if err != nil {
 		t.Fatalf("cannot build the module 1 client: %v", err)
 	}

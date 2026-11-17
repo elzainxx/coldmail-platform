@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/coldmail-platform/platform/internal/m1results"
+	m1results "github.com/coldmail-platform/platform/internal/adapters/m1"
 )
 
 // Phase 3, chunk B7: module 1 with its REAL verifier node. The control plane under test is `m1n` (module 1 built from the pinned source, its SMTP stage wired to the real node, the

@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/coldmail-platform/platform/internal/m1results"
+	m1results "github.com/coldmail-platform/platform/internal/adapters/m1"
 )
 
 // The helpers of the module-1 node tests (m1_node_test.go). Behind the build tag m1node: the plain `-tags harness` build, the db-tests and the full harness never compile them.
@@ -41,7 +41,7 @@ const (
 type m1nEnv struct {
 	t      *testing.T
 	ctx    context.Context
-	m1     *m1results.Client // the platform's own live client: Submit and Job (and Drain, for the cross-check of the table)
+	m1     *m1results.Adapter // the platform's own live client: Submit and Job (and Drain, for the cross-check of the table)
 	base   string
 	key    string
 	hc     *http.Client
@@ -253,7 +253,7 @@ func (e *m1nEnv) rawResults(jobID string) []m1nRow {
 // runJob submits the rows as ONE bulk job, waits until module 1 says it is complete, and returns the 202's counts and the rows by item_id.
 func (e *m1nEnv) runJob(items []m1results.Item) (string, m1results.SubmitCounts, map[string]m1nRow) {
 	e.t.Helper()
-	jobID, counts, err := e.m1.Submit(e.ctx, items)
+	jobID, counts, err := e.m1.SubmitRaw(e.ctx, items)
 	if err != nil {
 		e.t.Fatalf("submitting the bulk job to module 1 failed: %v", err)
 	}
@@ -261,7 +261,7 @@ func (e *m1nEnv) runJob(items []m1results.Item) (string, m1results.SubmitCounts,
 	defer cancel()
 	var js m1results.JobStatus
 	for {
-		js, err = e.m1.Job(ctx, jobID)
+		js, err = e.m1.Status(ctx, jobID)
 		if err != nil {
 			e.t.Fatalf("reading the job %s failed: %v", jobID, err)
 		}

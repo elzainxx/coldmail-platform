@@ -1,0 +1,37 @@
+{
+  "api_version": "v1",
+  "status": "valid",
+  "reason": "accepted",
+  "confidence": 90,
+  "recommendation": "send",
+  "email": "ada@acme.example",
+  "domain": "acme.example",
+  "flags": {
+    "from_cache": false,
+    "has_typo": false,
+    "is_disposable": false,
+    "is_free_provider": false,
+    "is_role": false,
+    "is_spam_trap": false
+  },
+  "signals": {
+    "catchall_conclusion": "not_catchall",
+    "mx_found": true,
+    "mx_provider": "self",
+    "null_mx": false,
+    "syntax_valid": true
+  },
+  "meta": {
+    "request_id": "00000000-0000-7000-8000-0000000000a1",
+    "checked_at": "2026-01-01T00:00:00Z",
+    "latency_ms": 412,
+    "policy": "cold-email",
+    "policy_version": 1,
+    "verifier_ip": null,
+    "node_id": "node-1",
+    "engine_version": null,
+    "config_fingerprint": "cfg_sha256:0123456789abcdef",
+    "from_cache": false
+  },
+  "raw": null
+}
