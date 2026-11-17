@@ -95,6 +95,20 @@ Each repository: default token permissions set (read-only), flipped with `gh rep
 
 The billing refusal ended with the flip (the push runs of these same commits, made minutes earlier while the repositories were still private, were refused; the dispatches after the flip ran). One deviation from the requested order: the fork-pull-request approval policy cannot be set while a repository is private (the API answers 422), so it was set immediately after each flip; and the workflow edits of the forward fixes were made before the flip, together with the pins and permissions, because they touch the same files.
 
+## CI trigger economy and its proof (platform; the modules keep their one heavy workflow with the ignore lists described above)
+
+Design: `gitleaks` runs on every push and pull request; `gates`, `platform-check`, `go` and `web` run on pushes and pull requests with path filters (documentation no gate reads is ignored); the heavy workflows `harness`, `db-tests` and `supabase` run on `workflow_dispatch`, on tag pushes (`v*`, `phase-*`), on the weekly schedule where they had one, and on a push to `main` or a pull request that touches `db/`, `internal/`, `cmd/`, `tests/`, `tools/modules.lock`, the fetch script and its selftest, `go.mod`/`go.sum` or `Dockerfile*` (each workflow lists its own set); `concurrency` with `cancel-in-progress` on every workflow except `fault-proofs` (dispatch-only, never cancelled).
+
+Proof runs (all on GitHub-hosted runners, platform repository):
+
+| Push | What it changed | Workflows that started | What did NOT start |
+|---|---|---|---|
+| `5716216` (documentation only: this audit document) | `Docs/public-release-audit.md` | `gates`, `platform-check`, `gitleaks` | `go`, `web`, `harness`, `db-tests`, `supabase` |
+| `426c9ce` (a code push: `tools/modules.lock` and the selftest it ships with) | the three module pins | `harness`, `supabase`, `gates`, `gitleaks`, `platform-check` | `go`, `web`, `db-tests` (their path sets do not name the lock) |
+| `4ecc704` (a code push: `tests/harness/`) | one harness test file | `harness`, `db-tests`, `go`, `gates`, `gitleaks` | `supabase`, `web`, `platform-check` |
+
+`cancel-in-progress` was observed: pushing `4ecc704` while `1da61b8`'s `harness` and `db-tests` were still running cancelled both (runs 44144423176 and 44144423306, conclusion `cancelled`) and started the new ones. The first hosted runs also found two real reds that the trigger work did not cause and that are fixed forward: the new anonymous-clone selftest of `tools/fetch-modules.sh` built three fixture repositories whose first commits had identical ids on a fast runner, and `platform-check`'s control "another repository's key is refused" cannot be red once the module repositories are public (GitHub serves a public repository to any authenticated SSH identity); and `gofmt` found one file (`go` workflow). New gate: `scripts/check-verified-heads.sh` (86-case selftest) refuses a "done" or `CLOSED` row of the build plan or the close-out spec unless it cites the head and the run and the heavy workflows ran green on that exact SHA; its first real run, against the live API, parsed 37 claims over 7 heads and 24 runs and passed.
+
 ## Owner cleanup after the flip
 
 - The three `DEPLOY_KEY_COLDMAIL_*` Actions secrets and the three read-only deploy keys on the module repositories are no longer needed (the platform's workflows now clone the public modules anonymously when a key is absent); they were left in place as instructed.
