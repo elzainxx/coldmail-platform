@@ -24,6 +24,10 @@ start-up with exit status 2, and the message names the variable and the reason, 
 | `PLATFORM_M3_REVERIFY_INTERVAL_SEC` | `300` | no | no | Seconds after which a user already in the wanted state is checked against module 3 again (the same suspend or resume is sent once more; a changed answer means module 3 had drifted). Integer, 10 to 86400. |
 | `PLATFORM_M3_REQUEST_TIMEOUT_SEC` | `10` | no | no | Seconds one request to module 3's admin route may take before it counts as failed and is retried later. Integer, 1 to 120. |
 | `PLATFORM_MONEY_LOCK_TIMEOUT_MS` | `10000` | no | no | Milliseconds a money operation (grant, adjustment, reserve, settle, release) waits for another operation on the same user's credits of the same module before it gives up with a lock-timeout error and writes nothing. Integer, 100 to 600000. |
+| `PLATFORM_MODULE_TIMEOUT_MS` | `15000` | no | no | Milliseconds one request to a module (module 1, 2 or 3) may take, counted per attempt and including the time to read the response body, before it counts as a timeout. A request that sets its own timeout (module 3's account creation and bulk add run for tens of seconds) overrides it. Integer, 500 to 300000. |
+| `PLATFORM_MODULE_RETRIES` | `2` | no | no | Extra attempts a request to a module gets after a failure, 0 for none. Only a request marked idempotent (a read, or a write the module deduplicates by the platform's own key) is ever retried, and only after the module was unreachable, timed out or answered 429; a refusal, a not found, a module fault (500) or an answer that breaks the contract is never retried, and neither is a write that is not idempotent. Integer, 0 to 10. |
+| `PLATFORM_MODULE_RETRY_BACKOFF_MS` | `250` | no | no | Milliseconds before the first retry of a request to a module; each further retry waits twice as long as the one before, up to 30 seconds, with no random jitter. A 429 that names a Retry-After waits the larger of the two (never more than the request timeout). 0 retries at once. Integer, 0 to 30000. |
+| `PLATFORM_M1_KEY_SECRET` | `(unset)` | no | yes | The secret each user's module 1 caller key is derived from: the key is the unpadded base64url of the HMAC-SHA256, under this secret, of the fixed text m1-caller, a vertical bar and the user's id; module 1 keeps only the SHA-256 of each key. At least 32 bytes (64 random hexadecimal characters are plenty). The default (unset) means no module 1 key can be derived and no tenant scope built; the service still starts. Changing it changes every user's key. Never printed or logged. |
 | `PLATFORM_INSTANCE_ID` | `(hostname)` | no | no | Name of this platform instance, 1 to 63 printable ASCII characters. With more than one instance running, only the one holding the leader lock runs the expiry and reconcile loops; the name is the application_name of the database session that holds it (pg_stat_activity) and appears in the loop log lines. Each instance needs its own. The default (hostname) means this machine's host name. |
 
 Column notes. Default `(none)` means the variable has no default. Secret means the value is never written
@@ -81,6 +85,41 @@ ends. The leader's lock session carries the name as its `application_name`, so `
 start-up like every other variable (a longer or non-ASCII one stops the process with exit status 2, naming the variable and not echoing the value), and an instance started without a name takes the
 host name. How the election works, how to see the leader and what it does not promise: [`install.md`](install.md), "Running more than one instance". The lock needs a connection string that keeps one
 backend for the whole session (direct or session-mode, never a transaction-mode pooler), the same condition as the migrator's.
+
+## How a call to a module is bounded and retried
+
+Every request the platform makes to module 1, 2 or 3 goes through one client (`internal/modclient`), and three variables bound it: **`PLATFORM_MODULE_TIMEOUT_MS`** is how long one
+attempt may take, from the first byte sent to the last byte of the response body read (a module that sends its headers and then stalls is a timeout too); **`PLATFORM_MODULE_RETRIES`** is the number of
+extra attempts and **`PLATFORM_MODULE_RETRY_BACKOFF_MS`** the first wait between attempts (each wait is twice the one before, capped at 30 seconds, with no random jitter, so a run can be
+reproduced). They reach the client as `modclient.FromConfig(cfg)`.
+
+A retry is rare on purpose. It happens only when the request was marked idempotent by the code that built it (a read, or a write the module deduplicates by the platform's own key, such as module 2
+and 3's `run`) **and** the failure was one of three kinds: the module could not be reached (connection refused, DNS failure, a reset connection, a 502 or 504, a 503 with the code `unavailable`), the attempt
+timed out, or the module answered 429. A 429 that carries a `Retry-After` waits the larger of that and the backoff, never more than the request timeout. Everything else comes back at once, whatever the
+dials say: a refusal (400, 401, 403, 409, 410, 413, 422), a not found, `paused` (a 503 that means an operator stopped the module: wait, do not page and do not hammer), a 500 (a fault of the module, not of the
+connection), an answer that breaks the contract (not JSON, a missing key, a status the route does not use, a body over the size limit), and every write that is not idempotent (module 1's bulk submission is the
+one that matters: a second attempt would create a second job). The caller's context ends the whole call, including a wait between attempts. A call that fails returns an error and never a value: no default,
+no zero verdict and no "probably fine" is ever produced for a module that did not answer.
+
+The three values are validated at start-up like every other variable. A request may carry its own timeout instead of the dial (module 3's account creation and its bulk add run for tens of seconds
+and the adapter says so per route); the retry count and the backoff are always the dials'.
+
+## How a user's module 1 key is made
+
+Modules 2 and 3 take the platform user's id as `user_id` on every call. Module 1 has no such parameter: its tenant is the owner recorded on the **caller key** that submits a job, and every job read
+is limited to that owner. So the platform gives each user one module 1 key and writes the one row that lets module 1 recognise it (`internal/tenant`):
+
+```
+key    = base64url-without-padding( HMAC-SHA256( PLATFORM_M1_KEY_SECRET, "m1-caller|" + user id ) )     43 characters
+digest = SHA-256( the key as text )                                                                     what module 1 stores
+```
+
+The user id is the platform user's id in lower case; the digest is of the key's text, which is what module 1's front door computes from the bearer it is shown. Nothing is stored on the platform's
+side: the key is recomputed on every call. The row (`caller_id`, the digest, `not_before`, `user_id`) is written by `ProvisionM1Caller`, once per user, as the **privileged** identity of module 1's
+database (module 1's runtime login, like the platform's `platform_app`, can only read that table). It is idempotent, and it refuses a user id that is empty or malformed because a key with no owner
+can submit jobs that nobody can read. **`PLATFORM_M1_KEY_SECRET`** is optional so that a deployment that makes no module 1 call starts without it; without it no key is derived and no tenant scope
+is built (the resolver answers `ErrNoM1KeySecret`). Changing the secret changes every user's key and leaves the old rows valid: provision the new rows first, and expire the old ones in module 1's
+database once nothing uses them.
 
 ## What the service does with the database at start-up
 

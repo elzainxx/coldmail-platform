@@ -78,10 +78,14 @@ func TestVars_AreWellFormed(t *testing.T) {
 	if v, ok := byName[VarM3URL]; !ok || v.Secret || !v.Required {
 		t.Errorf("%s must be declared Required and not Secret, got %+v", VarM3URL, v)
 	}
+	// The module 1 key secret is the third secret, and the only one that is optional: unset means "not configured" (its default is the documented marker, never a usable value).
+	if v, ok := byName[VarM1KeySecret]; !ok || !v.Secret || v.Required || v.Default != "(unset)" {
+		t.Errorf("%s must be declared Secret, not Required, with the default (unset), got %+v", VarM1KeySecret, v)
+	}
 	// Every other variable is a non-secret dial: a new secret must be added to the list above on purpose.
 	for _, v := range vars {
-		if v.Secret && v.Name != VarDatabaseURL && v.Name != VarM3AdminToken {
-			t.Errorf("%s is Secret but is not one of the two known secrets: extend this test deliberately", v.Name)
+		if v.Secret && v.Name != VarDatabaseURL && v.Name != VarM3AdminToken && v.Name != VarM1KeySecret {
+			t.Errorf("%s is Secret but is not one of the three known secrets: extend this test deliberately", v.Name)
 		}
 	}
 
@@ -110,6 +114,12 @@ func TestLoad_DefaultsAreTheDocumentedOnes(t *testing.T) {
 
 		"PLATFORM_MONEY_LOCK_TIMEOUT_MS": "10000",
 
+		"PLATFORM_MODULE_TIMEOUT_MS":       "15000",
+		"PLATFORM_MODULE_RETRIES":          "2",
+		"PLATFORM_MODULE_RETRY_BACKOFF_MS": "250",
+
+		"PLATFORM_M1_KEY_SECRET": "(unset)",
+
 		"PLATFORM_INSTANCE_ID": "(hostname)",
 	}
 	got := map[string]string{}
@@ -137,6 +147,9 @@ func TestLoad_DefaultsAreTheDocumentedOnes(t *testing.T) {
 	}
 	if cfg.MoneyLockTimeout != 10*time.Second {
 		t.Fatalf("the money lock timeout default did not reach the Config: %v", cfg)
+	}
+	if cfg.ModuleTimeout != 15*time.Second || cfg.ModuleRetries != 2 || cfg.ModuleRetryBackoff != 250*time.Millisecond {
+		t.Fatalf("the module client defaults did not reach the Config: %v", cfg)
 	}
 
 	// Paired control: a blank value means "unset", so an environment that spells every default out loud
@@ -263,6 +276,12 @@ var alternatives = map[string]string{
 
 	VarMoneyLockTimeoutMS: "2500",
 
+	VarModuleTimeoutMS:      "4000",
+	VarModuleRetries:        "5",
+	VarModuleRetryBackoffMS: "600",
+
+	VarM1KeySecret: strings.Repeat("alt-", 9), // 36 bytes
+
 	VarInstanceID: "platform-2",
 }
 
@@ -369,6 +388,20 @@ func TestLoad_InvalidValuesNameTheVariableAndNeverEchoTheValue(t *testing.T) {
 		{VarMoneyLockTimeoutMS, "99", "between 100 and 600000"},
 		{VarMoneyLockTimeoutMS, "600001", "between 100 and 600000"},
 		{VarMoneyLockTimeoutMS, "99999999999999999999", "integer"},
+		{VarModuleTimeoutMS, "soon-XYZ123", "integer"},
+		{VarModuleTimeoutMS, "1.5", "integer"},
+		{VarModuleTimeoutMS, "499", "between 500 and 300000"},
+		{VarModuleTimeoutMS, "0", "between 500 and 300000"},
+		{VarModuleTimeoutMS, "-1", "between 500 and 300000"},
+		{VarModuleTimeoutMS, "300001", "between 500 and 300000"},
+		{VarModuleRetries, "often-XYZ123", "integer"},
+		{VarModuleRetries, "1.5", "integer"},
+		{VarModuleRetries, "-1", "between 0 and 10"},
+		{VarModuleRetries, "11", "between 0 and 10"},
+		{VarModuleRetryBackoffMS, "slowly-XYZ123", "integer"},
+		{VarModuleRetryBackoffMS, "0.5", "integer"},
+		{VarModuleRetryBackoffMS, "-1", "between 0 and 30000"},
+		{VarModuleRetryBackoffMS, "30001", "between 0 and 30000"},
 		{VarM3AdminToken, "two words-XYZ123", "printable ASCII"},
 		{VarM3AdminToken, "café-key-XYZ123", "printable ASCII"},
 		{VarM3AdminToken, "inner\ttab-XYZ123", "printable ASCII"},
@@ -422,6 +455,15 @@ func TestLoad_AcceptsTheEdgesOfEveryRange(t *testing.T) {
 	}
 	if top, err := Load(envOf(with(base(), VarMoneyLockTimeoutMS, "600000"))); err != nil || top.MoneyLockTimeout != 10*time.Minute {
 		t.Fatalf("the upper edge of the money lock timeout was refused or loaded wrongly: %v (%v)", top, err)
+	}
+	// The module client dials: the lower edge of each (0 retries, an immediate retry) and the upper edge of each, with the twin just outside refused in the table above.
+	if low, err := Load(envOf(with(with(with(base(), VarModuleTimeoutMS, "500"), VarModuleRetries, "0"), VarModuleRetryBackoffMS, "0"))); err != nil ||
+		low.ModuleTimeout != 500*time.Millisecond || low.ModuleRetries != 0 || low.ModuleRetryBackoff != 0 {
+		t.Fatalf("the lower edges of the module client dials were refused or loaded wrongly: %v (%v)", low, err)
+	}
+	if top, err := Load(envOf(with(with(with(base(), VarModuleTimeoutMS, "300000"), VarModuleRetries, "10"), VarModuleRetryBackoffMS, "30000"))); err != nil ||
+		top.ModuleTimeout != 5*time.Minute || top.ModuleRetries != 10 || top.ModuleRetryBackoff != 30*time.Second {
+		t.Fatalf("the upper edges of the module client dials were refused or loaded wrongly: %v (%v)", top, err)
 	}
 	if cfg.HTTPAddr != "127.0.0.1:0" || cfg.LogLevel != "warn" || cfg.ShutdownTimeout != time.Hour ||
 		cfg.ReadyzTimeout != time.Millisecond || cfg.ReadHeaderTimeout != time.Second {

@@ -49,9 +49,21 @@ const (
 	// The money store (internal/money): how long one operation waits for another on the same credits (Phase 2 close-out D8).
 	VarMoneyLockTimeoutMS = "PLATFORM_MONEY_LOCK_TIMEOUT_MS"
 
+	// The calls to the three modules (internal/modclient, Phase 3 B1): how long one request may take, how many extra attempts an idempotent request gets, and the first wait between attempts.
+	VarModuleTimeoutMS      = "PLATFORM_MODULE_TIMEOUT_MS"
+	VarModuleRetries        = "PLATFORM_MODULE_RETRIES"
+	VarModuleRetryBackoffMS = "PLATFORM_MODULE_RETRY_BACKOFF_MS"
+
+	// The secret every user's module 1 caller key is derived from (internal/tenant, Phase 3 B2).
+	VarM1KeySecret = "PLATFORM_M1_KEY_SECRET"
+
 	// Which instance this is, when more than one platform instance runs (Phase 2 close-out D9): the name of the session that holds the leader lock of the loops.
 	VarInstanceID = "PLATFORM_INSTANCE_ID"
 )
+
+// MinM1KeySecretBytes is the shortest PLATFORM_M1_KEY_SECRET accepted (and the shortest internal/tenant derives a key from). 32 bytes is the size of the HMAC-SHA256 output the key is made of:
+// a shorter secret would make every user's key easier to find than the key it protects is long.
+const MinM1KeySecretBytes = 32
 
 // Upper bounds on the integer dials. They are sanity guards, not tuning: they keep a typo (an extra digit,
 // a value in the wrong unit) from becoming a one-day shutdown, and keep the multiplication into a
@@ -70,6 +82,13 @@ const (
 	minMoneyLockMS = 100
 	maxMoneyLockMS = 600000
 
+	// The module client's dials. A request below half a second would fail a healthy module that is merely busy (every request costs a bcrypt verify and a database round trip); above five minutes a
+	// stalled module is no better than no timeout. More than ten extra attempts, or a first wait above thirty seconds, is a retry storm against a module that is already struggling.
+	minModuleTimeoutMS = 500
+	maxModuleTimeoutMS = 300000
+	maxModuleRetries   = 10
+	maxModuleBackoffMS = 30000
+
 	// The name of an instance is the application_name of a database session. PostgreSQL cuts that setting at 63 bytes and replaces every byte that is not printable ASCII, so a longer or
 	// wider name would be shown differently from what the operator wrote; it is refused instead.
 	maxInstanceIDBytes = 63
@@ -77,6 +96,10 @@ const (
 	// instanceIDDefault is the documented default of VarInstanceID. It stands for "the host name": Load reads nothing but getenv, so the host name is resolved by the service (internal/entitlements
 	// ResolveInstanceID) and Config.InstanceID stays empty for it.
 	instanceIDDefault = "(hostname)"
+
+	// m1KeySecretUnset is the documented default of VarM1KeySecret. It stands for "not configured" and is NOT a secret: the dial has no usable default (a built-in key would be a key everybody knows),
+	// so unset leaves Config.M1KeySecret empty, the platform still starts, and internal/tenant refuses to derive a module 1 key (ErrNoM1KeySecret) until it is set.
+	m1KeySecretUnset = "(unset)"
 )
 
 // Var describes one environment variable. Vars() is the single source of truth for every dial.
@@ -119,6 +142,14 @@ func Vars() []Var {
 			Doc: fmt.Sprintf("Seconds one request to module 3's admin route may take before it counts as failed and is retried later. Integer, 1 to %d.", maxM3RequestSec)},
 		{Name: VarMoneyLockTimeoutMS, Default: "10000",
 			Doc: fmt.Sprintf("Milliseconds a money operation (grant, adjustment, reserve, settle, release) waits for another operation on the same user's credits of the same module before it gives up with a lock-timeout error and writes nothing. Integer, %d to %d.", minMoneyLockMS, maxMoneyLockMS)},
+		{Name: VarModuleTimeoutMS, Default: "15000",
+			Doc: fmt.Sprintf("Milliseconds one request to a module (module 1, 2 or 3) may take, counted per attempt and including the time to read the response body, before it counts as a timeout. A request that sets its own timeout (module 3's account creation and bulk add run for tens of seconds) overrides it. Integer, %d to %d.", minModuleTimeoutMS, maxModuleTimeoutMS)},
+		{Name: VarModuleRetries, Default: "2",
+			Doc: fmt.Sprintf("Extra attempts a request to a module gets after a failure, 0 for none. Only a request marked idempotent (a read, or a write the module deduplicates by the platform's own key) is ever retried, and only after the module was unreachable, timed out or answered 429; a refusal, a not found, a module fault (500) or an answer that breaks the contract is never retried, and neither is a write that is not idempotent. Integer, 0 to %d.", maxModuleRetries)},
+		{Name: VarModuleRetryBackoffMS, Default: "250",
+			Doc: fmt.Sprintf("Milliseconds before the first retry of a request to a module; each further retry waits twice as long as the one before, up to 30 seconds, with no random jitter. A 429 that names a Retry-After waits the larger of the two (never more than the request timeout). 0 retries at once. Integer, 0 to %d.", maxModuleBackoffMS)},
+		{Name: VarM1KeySecret, Default: m1KeySecretUnset, Secret: true,
+			Doc: fmt.Sprintf("The secret each user's module 1 caller key is derived from: the key is the unpadded base64url of the HMAC-SHA256, under this secret, of the fixed text m1-caller, a vertical bar and the user's id; module 1 keeps only the SHA-256 of each key. At least %d bytes (64 random hexadecimal characters are plenty). The default (unset) means no module 1 key can be derived and no tenant scope built; the service still starts. Changing it changes every user's key. Never printed or logged.", MinM1KeySecretBytes)},
 		{Name: VarInstanceID, Default: instanceIDDefault,
 			Doc: fmt.Sprintf("Name of this platform instance, 1 to %d printable ASCII characters. With more than one instance running, only the one holding the leader lock runs the expiry and reconcile loops; the name is the application_name of the database session that holds it (pg_stat_activity) and appears in the loop log lines. Each instance needs its own. The default (hostname) means this machine's host name.", maxInstanceIDBytes)},
 	}
@@ -143,6 +174,12 @@ type Config struct {
 	M3RequestTimeout          time.Duration
 
 	MoneyLockTimeout time.Duration // how long a money operation waits for the lock of a balance (internal/money WithLockTimeout)
+
+	ModuleTimeout      time.Duration // how long one request to a module may take, per attempt (internal/modclient FromConfig)
+	ModuleRetries      int           // extra attempts of an idempotent request to a module (internal/modclient FromConfig)
+	ModuleRetryBackoff time.Duration // the first wait between attempts; it doubles (internal/modclient FromConfig)
+
+	M1KeySecret Secret // the secret every user's module 1 caller key is derived from; "" means not configured (internal/tenant NewResolver, DeriveM1Key)
 
 	InstanceID string // this instance's name; "" means the default, the host name, which the service resolves (internal/entitlements ResolveInstanceID)
 }
@@ -261,6 +298,26 @@ func Load(getenv func(string) string) (Config, error) {
 			if n, ok := intIn(v.Name, raw, minMoneyLockMS, maxMoneyLockMS); ok {
 				c.MoneyLockTimeout = time.Duration(n) * time.Millisecond
 			}
+		case VarModuleTimeoutMS:
+			if n, ok := intIn(v.Name, raw, minModuleTimeoutMS, maxModuleTimeoutMS); ok {
+				c.ModuleTimeout = time.Duration(n) * time.Millisecond
+			}
+		case VarModuleRetries:
+			if n, ok := intIn(v.Name, raw, 0, maxModuleRetries); ok {
+				c.ModuleRetries = n
+			}
+		case VarModuleRetryBackoffMS:
+			if n, ok := intIn(v.Name, raw, 0, maxModuleBackoffMS); ok {
+				c.ModuleRetryBackoff = time.Duration(n) * time.Millisecond
+			}
+		case VarM1KeySecret:
+			if raw != v.Default { // the default stands for "not configured", which leaves the field empty (see m1KeySecretUnset)
+				if len(raw) < MinM1KeySecretBytes {
+					fail(v.Name, fmt.Sprintf("must be at least %d bytes", MinM1KeySecretBytes))
+					continue
+				}
+				c.M1KeySecret = Secret(raw)
+			}
 		case VarInstanceID:
 			if raw != v.Default { // the default stands for the host name, which Load does not read (see instanceIDDefault)
 				if !validInstanceID(raw) {
@@ -330,6 +387,14 @@ func validBearerToken(s string) bool {
 	return s != ""
 }
 
+// m1KeySecretState is what a Config says about the module 1 key secret: the redaction marker when it is set, "(unset)" when it is not. Either way, never the value.
+func (c Config) m1KeySecretState() string {
+	if c.M1KeySecret == "" {
+		return m1KeySecretUnset
+	}
+	return c.M1KeySecret.String()
+}
+
 // attrs is the one place Config is rendered; String, GoString and LogValue all derive from it, so they
 // cannot disagree about what is shown. The database URL appears only as the redaction marker.
 func (c Config) attrs() []slog.Attr {
@@ -348,6 +413,10 @@ func (c Config) attrs() []slog.Attr {
 		slog.Duration("m3_reverify_interval", c.M3ReverifyInterval),
 		slog.Duration("m3_request_timeout", c.M3RequestTimeout),
 		slog.Duration("money_lock_timeout", c.MoneyLockTimeout),
+		slog.Duration("module_timeout", c.ModuleTimeout),
+		slog.Int("module_retries", c.ModuleRetries),
+		slog.Duration("module_retry_backoff", c.ModuleRetryBackoff),
+		slog.String("m1_key_secret", c.m1KeySecretState()),
 		slog.String("instance_id", c.InstanceID),
 	}
 }
