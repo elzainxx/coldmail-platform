@@ -6,3 +6,4 @@
 # To add a phase's exit-evidence document: add its path below (its table must follow the same two shapes), and run the gate once on the runner.
 Docs/coldmail-platform-build-plan.md
 Docs/phase-2-closeout-spec.md
+Docs/phase-3-spec.md
