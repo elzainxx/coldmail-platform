@@ -1,5 +1,5 @@
 # Module 2 — sender (shared SMTP pool)  
-repo: D:/Mnfi/Codmailling 2
+repo: Codmailling 2
 
 ## 1. PLATFORM-FACING ROUTES
 All four platform routes are registered in `services/brain/internal/platformapi/server.go:56-60` on a dedicated `http.ServeMux`, each wrapped in `s.requireAuth(...)`:

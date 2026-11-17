@@ -229,7 +229,7 @@ The moves are recorded per module in `Docs/history/MOVED-DOCS.md` (M2) and the c
   was deleted. A GitHub-token-shaped secret planted in an allowlisted log is still caught by the scan, and a generic-key secret planted elsewhere too (controls recorded in
   `Docs/history/audit-scratch/README.md`).
 
-**Mistakes of mine in this pass, kept visible.** (1) I sized every folder under `D:\Mnfi` with `du` — including unrelated projects — and had to stop it. (2) I moved 48 cited
+**Mistakes of mine in this pass, kept visible.** (1) I sized every folder under the workstation's projects folder with `du` — including unrelated projects — and had to stop it. (2) I moved 48 cited
 files into `Docs/history/` and committed with `git add -A`, and 21 of them (the CI run logs) were silently ignored by the platform's own `*.log` rule; counting tracked files
 against the manifest before deleting any original caught it. (3) The 297 `generic-api-key` findings in those logs were request ids, not secrets — but I only said so after
 reading all of them, and my first "they all match one shape" check was wrong (two shapes were missing), which is why the check was kept honest instead of widened until it passed.

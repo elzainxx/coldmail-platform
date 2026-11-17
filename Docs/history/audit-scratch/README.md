@@ -15,8 +15,11 @@ Each directory has a `MANIFEST.tsv` (bytes, relative path, **why it is cited**).
 it contains a 7-character SHA that a tracked `.md` cites **and** that is a real commit in one of the repositories (so `go.sum` pseudo-versions and image digests do not
 count). The rule errs towards keeping: some `pristine*` source copies are kept only because a doc names the *real* file of the same name.
 
-Nothing in this directory is read by any gate. The platform runner (`tools/platform-check.sh` in the parent checkout) re-checks the hashes in `verification-runs.md`
-against the repositories, not these files.
+The citation gates do not read these files: the platform runner (`tools/platform-check.sh` in the parent checkout) re-checks the hashes in `verification-runs.md`
+against the repositories, not these files. One gate does: `scripts/check-personal-details.sh` reads every tracked text file, this directory included, and fails on a Windows home path,
+a drive-letter path or an IPv4 address that is not allowed (the allowlist is `tests/personal-details/coldmail-platform.allow`). On 2026-11-17 the few workstation paths in these files and
+in `../scratch/` and `../p1-inventory/` were replaced by generic forms (`<repository root>`, a folder name) in a forward commit; the original text stays in git history, and the byte
+counts in `MANIFEST.tsv` are those of the files as they were first kept.
 
 ## Secret scanning and the one allowlist
 

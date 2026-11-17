@@ -106,6 +106,8 @@ CMD=if [ -f .plant-secret ]; then printf 'api_key = "%s"\n' "$(openssl rand -hex
 
 The control side has no marker, so nothing is planted and the scanner must pass; the fault side plants it and the scanner must fail with its message. Check the scanner's own rule before relying on the shape of the string.
 
+The same holds for a fault whose subject is a Windows home path or an IP address (`p3/personal-details`): `check-personal-details` reads every tracked file, the patch and the `.expect` included, so a stored literal would make the real repository red. The leg plants the document at run time from fragments (`printf '%s:%sUsers…' C '\' …`), and its `MESSAGE` lines name the class and the file:line, never the planted text.
+
 ## Adding a fault
 
 1. Make the gate fail by hand in a scratch checkout of the repository (or of the module) and save it: `git diff --binary > ci/faults/<phase>/<gate>.patch`. Patch only what the gate reads; keep it small enough that it will still apply after unrelated edits.

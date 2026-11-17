@@ -1,0 +1,4 @@
+--- /dev/null
++++ b/.plant-personal-details
+@@ -0,0 +1 @@
++The personal-details fault leg (ci/faults/p3/personal-details.expect) plants a Windows home path and an address in Docs/zz-planted.md at run time when this file exists. Nothing personal is stored.

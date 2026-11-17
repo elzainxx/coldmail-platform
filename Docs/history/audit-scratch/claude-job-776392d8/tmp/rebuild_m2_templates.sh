@@ -4,12 +4,12 @@
 # (up-and-set-password) for the three templates. send_managed_migtest gets no migration
 # (the migration-lifecycle suite applies the chain itself).
 set -uo pipefail
-cd "D:/Mnfi/coldmail/coldmail-send-managed"
+cd "<repository root>/coldmail-send-managed"
 
 DC="docker compose"
 SUPER="${POSTGRES_SUPERPASS:-devsuperpass}"
-export MIGRATIONS_DIR="/d/Mnfi/coldmail/coldmail-send-managed/db/migrations"
-export PREFLIGHT_SQL="/d/Mnfi/coldmail/coldmail-send-managed/db/preflight/check_platform_tables.sql"
+export MIGRATIONS_DIR="<repository root>/coldmail-send-managed/db/migrations"
+export PREFLIGHT_SQL="<repository root>/coldmail-send-managed/db/preflight/check_platform_tables.sql"
 export SEND_MANAGED_MODULE_PASSWORD="${SEND_MANAGED_MODULE_PASSWORD:-devmodulepass}"
 
 SEED_USERS="CREATE TABLE IF NOT EXISTS public.users(id uuid primary key default gen_random_uuid(), email text, is_active boolean default true, created_at timestamptz default now())"

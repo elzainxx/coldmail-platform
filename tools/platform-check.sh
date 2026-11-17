@@ -14,7 +14,7 @@
 # Check 3 and check 4 each refuse to run (red) when a module repository is absent from the layout. Checks not selected are NAMED in the output — never silently green.
 #
 # Check 4 is strict: a backticked 7–40 hex string that resolves to no commit in any of the four repositories is RED unless tools/non-commit-hex.txt lists it with the
-# reason it is not a commit (an agent id, a commit of the private parent repository, …); and a listed entry that no document cites any more is RED too (a stale list
+# reason it is not a commit (an agent id, a commit of the parent repository, …); and a listed entry that no document cites any more is RED too (a stale list
 # hides the next real miss).
 #
 # History: this is a RE-IMPLEMENTATION of four of the five checks of the original runner (cprun.sh, which no longer exists). It is NOT byte-for-byte the

@@ -54,7 +54,7 @@ M1-06|m1|invalid|null_mx|no|*|*|charge|m1_own|
 M1-07|m1|invalid|spam_trap|no|*|*|charge|m1_own|
 M1-08|m1|invalid|mailbox_not_found|no|*|*|charge|m1_own|550/551/553 with an address-fault body
 M1-09|m1|invalid|historical_bounce|no|*|*|charge|m1_own|flywheel gate (off by default)
-M1-10|m1|invalid|invalid_syntax|no|*|*|charge|m1_own|a bulk result since A1: M1 logs a malformed row and serves it as invalid/invalid_syntax, and the platform charges it like any settled answer (pre-validating addresses before submit is an owner choice for Phase 4, flagged and not decided here)
+M1-10|m1|invalid|invalid_syntax|no|*|*|charge|m1_own|a bulk result since A1: M1 logs a malformed row and serves it as invalid/invalid_syntax, and the platform charges it like any settled answer (the platform no longer sends an address that fails norm/v1, row P-08; what still reaches this row is an address that module 1's syntax layer refuses after normalising it: a local part over 64 bytes, a domain over 255 bytes or a domain with no dot)
 M1-11|m1|risky|disposable|no|*|*|charge|m1_own|
 M1-12|m1|risky|provider_no_smtp|no|*|*|charge|m1_own|a settled answer: the provider is routed to MX-only by policy
 M1-13|m1|risky|catch_all|no|*|*|charge|m1_own|
@@ -86,6 +86,7 @@ P-04|platform|infrastructure_failure|*|*|*|*|free||our own failure (module outag
 P-05|platform|pool_exhausted|*|*|*|*|free||no sending capacity: our own failure
 P-06|platform|smtp_login_rejected|*|*|*|*|free||the user's own SMTP rejected the login: nothing reached the outside world
 P-07|platform|duplicate|*|*|*|*|free||a repeat of an earlier row's address inside one M1 job: checked once, charged once, on the first row (internal/m1results maps duplicate_of rows to this state)
+P-08|platform|malformed|*|*|*|*|free||an address that fails norm/v1 (internal/norm): counted and skipped before any module call, never sent and never charged (module 1's own invalid_syntax row M1-10 stays for completeness)
 ```
 <!-- charge-table:end -->
 
@@ -96,7 +97,7 @@ P-07|platform|duplicate|*|*|*|*|free||a repeat of an earlier row's address insid
 - **M1-G4** **CLOSED by the close-out (D1).** `unknown/dns_error|smtp_timeout|smtp_error|connection_failed|smtp_blocked` could not be split into *our failure* and *a genuine answer*, so rows M1-18..22 were unmapped. M1 now says who caused an unknown (`signals.failure_origin = own|remote|undetermined`, item A3) and the table reads it in its `origin` column: `remote` is charged as `m1_own`, `own` and `undetermined` are free, and an unknown with no origin (an older module) is unmapped (M1-23), never charged. The ruling is the owner's, verbatim: *"An unknown caused by the recipient's server is charged; one caused by us, or that can't be proven either way, is free."*
 - **M1-G5** our capacity failures settle as `risky/plausible` with a skip token, **not** `unknown`: charged by a naive filter on `unknown`; row M1-15 catches the four tokens (M1 now also marks them `failure_origin` own). **M1-G6** `risky/plausible` without a token could not show that SMTP was unwired at boot (it was charged). *Close-out: A4 adds the skip token `smtp_unwired`; the row M1-17 frees it and M1-16 (no token) still charges.* **M1-G7** some failures never settled at all (decrypt/compute errors requeued forever; no terminal state). *Close-out: A5 gives them an attempt cap; M1 settles the item as `unknown/unknown_error` with origin own, free (M1-19).*
 - **M2-G1/G2** the report had no reason or error class and a generic failure stayed `queued` **with no retry cap**: a permanently failing item was never terminal, so it was never charged and the platform needed its own staleness policy (P4). *Close-out: B2 adds the reason, B3 the attempt cap and max age: `failed` / `attempts_exhausted`, free (M2-03); every other `failed` item, pool exhaustion included, is free (M2-04); `queued`, `assigned` and `sending` stay not final (M2-05..M2-07).* **M2-G3** M2 had **no cancel route**: a platform-cancelled job left M2 items queued and they might still send (P4). *Close-out: B4 adds the terminal state `cancelled` for every item not yet claimed; free (M2-08).* **M2-G5** the campaign report's pagination skips one item per page boundary (settle per item, or campaigns ≤ the page size). *Close-out: B1.*
-- The not-charged classes of the build plan are rows P-01..P-06, M2-03/M2-04/M2-08 (failed, cancelled), M1-15/M1-17 (our capacity, our configuration) and M1-19/M1-21/M1-22 (an unknown caused by us or not provable), plus P-07 (a repeat inside one job). "M1 `unknown` from our own failure" is separable since A3.
+- The not-charged classes of the build plan are rows P-01..P-06, M2-03/M2-04/M2-08 (failed, cancelled), M1-15/M1-17 (our capacity, our configuration) and M1-19/M1-21/M1-22 (an unknown caused by us or not provable), plus P-07 (a repeat inside one job) and P-08 (an address that fails norm/v1: rejected before module 1, counted, never sent, never charged). "M1 `unknown` from our own failure" is separable since A3.
 
 ### Design (what is built and why)
 

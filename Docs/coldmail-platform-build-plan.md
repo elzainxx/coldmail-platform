@@ -33,6 +33,7 @@ Ordering principle: the most irreversible parts and the contract test come first
 - First users: a few hand-picked customers
 - Full platform built directly (no throwaway spike). The contract risk is contained by **P3 coming before any user-facing screen**.
 - M1 is assumed to have its port-25 host, so it launches fully capable
+- Repositories are public (owner decision 2026-11-17): source visible for transparency, all rights reserved; nothing real (secret, host, address, personal path) may be committed.
 
 ### Money
 - **Per-module credits.** Each user has a separate balance for M1 and for M2. **Never transferable** between modules.
@@ -50,7 +51,7 @@ Ordering principle: the most irreversible parts and the contract test come first
 - **One append-only ledger** for everything: grants, reserves, charges, releases, and M3 enable/disable events, every row tagged with its module.
 - **Reserve at confirm, settle on report, release the remainder.** The **cost per unit is frozen at reserve** and settlement uses it, never the current table.
 - **Charge for an answer, or a message that reached the outside world. Never charge for our own failure or for work that wasn't done.**
-  - Not charged: our infrastructure failures, pool exhaustion, cancelled, expired, quarantined, M1 `unknown` from our own failure or that cannot be proven either way (see the unknown rule below), a user's own SMTP rejecting the login
+  - Not charged: our infrastructure failures, pool exhaustion, cancelled, expired, quarantined, M1 `unknown` from our own failure or that cannot be proven either way (see the unknown rule below), a user's own SMTP rejecting the login, a **malformed address** (one that fails module 1's frozen `norm/v1`: the platform's own normaliser, `internal/norm`, rejects it **before any module is called**, counts and skips it, so it is never sent and never charged; charge-table row P-08, the owner's Phase 3 ruling; module 1's own `invalid_syntax` row M1-10 stays for what its syntax layer refuses after normalising)
   - The rare crash-window duplicate is charged once — billing is per job item, not per delivery
   - **The unknown rule (the owner's, ruled in the Phase 2 close-out):** *"An unknown caused by the recipient's server is charged; one caused by us, or that can't be proven either way, is free."* The platform reads module 1's `signals.failure_origin` (`own` | `remote` | `undetermined`, on every `unknown`) and the table decides: `remote` is charged as `m1_own`; `own` and `undetermined` are free; an `unknown` that names no origin (an older module) is **unmapped** (never charged, reported); a greylisted `unknown` follows its origin; module 1's `smtp_unwired` skip token (SMTP not wired at boot) is free; an item that reached module 1's attempt cap (settled `unknown/unknown_error`, origin `own`) is free. Module 1's vendor answers (ZeroBounce, shipped disabled) are charged as `m1_vendor`; a vendor non-answer leaves module 1's own result standing and is never a vendor charge. Module 2's `failed` (including `attempts_exhausted`) and `cancelled` are free. A repeat of an address inside one module-1 job (`duplicate_of`) is checked once and charged once, on the first row. The table itself is data (`internal/charge/rules.psv`, mirrored in [`phase-2-spec.md`](phase-2-spec.md), gate `check-charge-table`).
 - A job whose balance doesn't cover the whole list is **blocked at start**, with the shortfall shown.
@@ -74,7 +75,7 @@ Ordering principle: the most irreversible parts and the contract test come first
 - **Plan A+:** one plumbing layer (auth, error envelope, health, vocabularies, `describe`) plus a **thin adapter per module**. M1 keeps `/verify` and bulk as its domain verbs.
 - **The platform fits the module tables as built.** `public.users` and `public.job_items` take exactly the shapes the modules already read. Design from the modules' **code**, not their docs. This closes OD-8.
 - **Polling, as built:** `report` every 1–2 seconds.
-- Platform → module auth: the service token over the private network. Modules are never public.
+- Platform → module auth: the service token over the private network. Modules are never public (the running services are never exposed; the repositories themselves are public, see Scope).
 - The deferred decision on whether M1 adopts quote/run/report/describe (Tier 4) is **made in P3, with evidence**.
 
 ### Jobs

@@ -1,6 +1,6 @@
 # coldmail-platform
 
-Source visible for transparency; no license is granted. See [`NOTICE`](NOTICE).
+Source visible for transparency only; all rights reserved (see LICENSE and NOTICE).
 
 The **coldmail platform**: the product shell that users and the admin touch, plus the cross-module record that the three modules were built against.
 It is the first real caller of the module contract. Operating rules: [`CLAUDE.md`](CLAUDE.md). Roadmap and locked decisions: [`Docs/coldmail-platform-build-plan.md`](Docs/coldmail-platform-build-plan.md).
@@ -16,7 +16,7 @@ module repositories, which `tools/fetch-modules.sh` clones over SSH with one **r
 `DEPLOY_KEY_COLDMAIL_SEND_MANAGED`, `DEPLOY_KEY_COLDMAIL_SEND_BYO` on this repository) and **anonymously over https** when a key's variable is empty (the module repositories are public, so
 anyone's clone can run the harness); a wrong or revoked key, or an anonymous clone that fails, turns the job red — it never skips. The heavy workflows (`harness`, `db-tests`, `supabase`) start
 only on dispatch, their weekly schedule, a version or phase tag, and a push or pull request that touches what they read; a documentation-only push starts none of them. Hex strings that look like
-commits but are not (agent ids, a commit of the private parent) are listed with reasons in `tools/non-commit-hex.txt`.
+commits but are not (agent ids, a commit of the parent repository) are listed with reasons in `tools/non-commit-hex.txt`.
 
 The three modules live as sibling directories under `coldmail/`, each its own independent git
 repository with its own history, its own `CLAUDE.md` / `PROJECT_RULES.md`, and its own CI gates:

@@ -1,5 +1,5 @@
 # Module 1 — email validator (Truemail Verification System)  
-repo: D:/Mnfi/Codmailling
+repo: Codmailling
 
 ## 1. Platform-facing routes
 Router registration (control-plane/internal/api/api.go:114-125, stdlib http.NewServeMux, Go 1.22+ pattern routing):

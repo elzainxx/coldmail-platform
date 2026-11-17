@@ -1,7 +1,7 @@
 # M2 / M3 requirements on the platform tables `public.users` and `public.job_items`
 
 Derived from CODE (Go, SQL migrations, shell harness), not from docs. Heads read:
-M2 = `coldmail-send-managed` @ 02a71fc, M3 = `coldmail-send-byo` @ d6ac497 (both under `D:\Mnfi\coldmail-parent\`).
+M2 = `coldmail-send-managed` @ 02a71fc, M3 = `coldmail-send-byo` @ d6ac497 (both checked out beside this repository).
 Paths below are relative to the module root; `M2:` / `M3:` prefix says which repo. Read-only research; nothing was modified.
 
 Roles (verified in code):

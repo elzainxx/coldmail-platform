@@ -1,0 +1,11 @@
+# What scripts/check-personal-details.sh may find in the tracked tree of coldmail-platform without going red: path-glob|literal|reason.
+# Everything not listed here and not in an allowed class (documentation, private, loopback and other special-use ranges) is RED. The reason is mandatory; an entry that matches nothing is RED.
+# The format and the rules are in the header of the gate. This file is scanned by the gate like any other file of the tree, so the last entry covers the allowlists themselves.
+.github/workflows/db-tests.yml|17.12.0.000|the supabase/postgres image tag (a version of the image, not an address)
+.github/workflows/supabase.yml|17.12.0.000|the supabase/postgres image tag (a version of the image, not an address)
+Docs/phase-1-spec.md|17.12.0.000|the supabase/postgres image tag quoted in the spec (a version, not an address)
+Docs/phase-2-spec.md|17.12.0.000|the supabase/postgres image tag quoted in the spec (a version, not an address)
+tests/harness/docker-compose.yml|17.12.0.000|the supabase/postgres image tag (a version of the image, not an address)
+tests/supabase/classify-selftest.sh|17.12.0.000|the supabase/postgres image tag in a fixture line the selftest classifies (a version, not an address)
+internal/norm/norm_test.go|1.2.3.4|placeholder IP-literal e-mail domains in the table of inputs the normaliser must reject (a fixture, no host); a fixture changed to the documentation range 192.0.2.0/24 makes this entry stale: delete it then
+tests/personal-details/*.allow|*|the allowlists of the five repositories name the addresses they allow; each is justified in the file that lists it (these entries are the instrument's data, not addresses of ours)

@@ -1,0 +1,32 @@
+# What scripts/check-personal-details.sh may find in the tracked tree of coldmail-verify (module 1) without going red: path-glob|literal|reason.
+# Everything not listed here and not in an allowed class (documentation, private, loopback and other special-use ranges) is RED. The reason is mandatory; an entry that matches nothing is RED.
+# The format and the rules are in the header of the gate (coldmail-platform/scripts/check-personal-details.sh). Built on 2026-11-17 from `git archive HEAD` of module 1 at its pinned head; the list may
+# shrink when module 1 removes fixtures (an entry whose address is gone is RED, so the list is trimmed in the same change). The residential address the owner's machine had on 2026-07-17 is
+# deliberately NOT listed: it is redacted from module 1's current files, and the gate goes red if it ever returns.
+# Every entry is a range edge a test probes, a placeholder fixture address, a documented public service, or a version number.
+Docs/adr/ADR-0021-smtp-probe-destination-guard.md|*|the ADR names the addresses just outside each blocked range (the boundary cases the probe guard tests use), not hosts
+Docs/history/phase-2-smtp-mocks-spec.md|1.2.3.4|placeholder address of the SMTP mock's example fixtures, not a host
+Docs/history/phase-2-smtp-mocks-spec.md|1.2.3.5|placeholder address next to the one above, in the same example fixtures
+control-plane/internal/flywheel/classifier.go|125.1.10.7|an example address in a comment: an address that contains the digits 5.1.1 must not be read as an SMTP status code
+control-plane/internal/flywheel/classifier_test.go|125.1.10.7|the same example as test data for the status-code classifier
+control-plane/internal/layers/layers_test.go|1.2.3.4|placeholder resolver answer in a unit test
+control-plane/internal/orchestrator/orchestrator_test.go|1.2.3.4|placeholder resolver answer in a unit test
+control-plane/internal/orchestrator/probe_refused_test.go|93.184.216.34|the published address of example.com used as a fixture MX answer (a documented public service)
+control-plane/internal/orchestrator/smtp_stage_test.go|1.2.3.4|placeholder MX address in the SMTP stage unit tests
+control-plane/internal/orchestrator/smtp_unwired_test.go|1.2.3.4|placeholder MX address in a unit test
+control-plane/internal/smtp/classify_test.go|1.2.3.4|placeholder address in a unit test
+control-plane/internal/smtp/score_test.go|1.2.3.4|placeholder address in a unit test
+scripts/check-probe-guard.sh|*|the script probes the guard with the edges of every special-use range it blocks (range edges, not hosts)
+verifier-node/egress/verifier_egress.nft|*|the packet-filter ruleset names the special-use ranges the verifier node may not reach (range edges, not hosts)
+**/Gemfile.lock|*|gem version numbers, not addresses
+verifier-node/truemail-rack/CHANGELOG.md|*|the vendored upstream changelog: version numbers, not addresses
+verifier-node/truemail-rack/README.md|213.180.204.89|the vendored upstream README's sample response (a public address in a documented sample)
+verifier-node/truemail-rack/README.md|8.8.8.8|Google Public DNS in the vendored upstream README's example resolver setting (a documented public service)
+verifier-node/truemail-rack/README.md|8.8.4.4|Google Public DNS (secondary) in the vendored upstream README's example resolver setting (a documented public service)
+verifier-node/truemail-rack/app/truemail_server/wrapper/probe_guard.rb|*|the guard's table of blocked special-use ranges (range edges, not hosts)
+verifier-node/truemail-rack/spec/requests/wrapper_spec.rb|1.2.3.4|placeholder address in a request spec
+verifier-node/truemail-rack/spec/requests/wrapper_spec.rb|8.8.8.8|Google Public DNS as a resolver value in a request spec (a documented public service)
+verifier-node/truemail-rack/spec/requests/wrapper_spec.rb|93.184.216.34|the published address of example.com used as a fixture MX answer (a documented public service)
+verifier-node/truemail-rack/spec/support/schemas/controllers/validator/show.json|*|the vendored upstream response schema fixture: example resolver addresses
+verifier-node/truemail-rack/spec/truemail_server/wrapper/probe_guard_spec.rb|*|the guard spec probes each blocked range with its edge addresses and a few public addresses that must pass
+verifier-node/truemail-rack/spec/truemail_server/wrapper/resolver_hygiene_spec.rb|1.1.1.1|Cloudflare's public resolver as the input of a resolv.conf parsing test (a documented public service)

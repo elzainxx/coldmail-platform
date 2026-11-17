@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
 MSYS_NO_PATHCONV=1 exec docker run --rm \
-  -v "D:/Mnfi/coldmail/coldmail-send-byo:/w" \
+  -v "<repository root>/coldmail-send-byo:/w" \
   -w /w alpine:3 /w/tools/provision-worker/bin/provision-worker-linux "$@"

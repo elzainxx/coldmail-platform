@@ -114,6 +114,7 @@ var rowCases = []rowCase{
 	{"P-05", Outcome{Module: "platform", State: "pool_exhausted"}, fre("P-05")},
 	{"P-06", Outcome{Module: "platform", State: "smtp_login_rejected"}, fre("P-06")},
 	{"P-07", Outcome{Module: "platform", State: "duplicate"}, fre("P-07")},
+	{"P-08", Outcome{Module: "platform", State: "malformed"}, fre("P-08")},
 }
 
 // TestDecide_Rows drives one subtest per row of the embedded table; each row's input and expected decision are written out in rowCases, so a table edit that changes what a
@@ -607,6 +608,53 @@ func TestDecide_EveryLegalM1PairIsRuled(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// TestDecide_PlatformMalformed: an address that fails norm/v1 (internal/norm) is rejected before any module is called, never sent and never charged: the platform state `malformed` is free (P-08).
+// Nothing else on the outcome can make it charge, and the state is the platform's alone: module 1's own refusal of an address is a different row (M1-10, invalid/invalid_syntax, charged), and
+// no other module has the state. The controls: a wrong-case or padded spelling matches no row, and the neighbouring platform state `duplicate` is its own row.
+func TestDecide_PlatformMalformed(t *testing.T) {
+	for _, o := range []Outcome{
+		{Module: "platform", State: "malformed"},
+		{Module: "platform", State: "malformed", Reason: "invalid_syntax", FromCache: true, SkipReason: "audit_red", FailureOrigin: "remote"}, // nothing else on the outcome can make it charge
+	} {
+		got := Decide(o)
+		if !sameDecision(got, fre("P-08")) {
+			t.Errorf("Decide(%+v) = {%s}, want free by P-08", o, describe(got))
+		}
+		if got.Kind == Charge || got.Unit != "" {
+			t.Errorf("Decide(%+v) charged a malformed address: {%s}", o, describe(got))
+		}
+	}
+	for _, c := range []struct {
+		name string
+		in   Outcome
+		want Decision
+	}{
+		{"module 1's own refusal of an address is still its own row, charged", m1("invalid", "invalid_syntax"), chg("M1-10", "m1_own")},
+		{"module 1 has no malformed state", m1("malformed", ""), unm("M1-99")},
+		{"module 2 has no malformed state", m2("malformed", ""), unm("M2-99")},
+		{"module 3 is free whatever it says", Outcome{Module: "m3", State: "malformed"}, fre("M3-01")},
+		{"a wrong-case spelling matches no row", Outcome{Module: "platform", State: "Malformed"}, unm(noRule)},
+		{"a padded spelling matches no row", Outcome{Module: "platform", State: "malformed "}, unm(noRule)},
+		{"the neighbouring platform state is its own row", Outcome{Module: "platform", State: "duplicate"}, fre("P-07")},
+	} {
+		if got := Decide(c.in); !sameDecision(got, c.want) {
+			t.Errorf("%s: Decide(%+v) = {%s}, want {%s}", c.name, c.in, describe(got), describe(c.want))
+		}
+	}
+	rows := 0
+	for _, r := range Rules() {
+		if r.State == "malformed" {
+			rows++
+			if r.ID != "P-08" || r.Module != "platform" || r.Kind != Free || r.Unit != "" {
+				t.Errorf("row %s names the state malformed as %s/%s %s with unit %q, want P-08 as platform free", r.ID, r.Module, r.State, r.Kind, r.Unit)
+			}
+		}
+	}
+	if rows != 1 {
+		t.Errorf("%d rows name the state malformed, want exactly one (P-08)", rows)
 	}
 }
 
@@ -1247,7 +1295,7 @@ func TestRulesAndUnits_ReturnCopies(t *testing.T) {
 	r := Rules()
 	r[0].Unit, r[0].Kind = "m2_bounced", Free
 	r[len(r)-1].ID = "ZZ-99"
-	if again := Rules(); again[0].Unit != "m1_cache" || again[0].Kind != Charge || again[len(again)-1].ID != "P-07" {
+	if again := Rules(); again[0].Unit != "m1_cache" || again[0].Kind != Charge || again[len(again)-1].ID != "P-08" {
 		t.Errorf("mutating the slice Rules() returned changed the table: %+v ... %+v", again[0], again[len(again)-1])
 	}
 	if got := Decide(m1("valid", "accepted")); !sameDecision(got, chg("M1-03", "m1_own")) {

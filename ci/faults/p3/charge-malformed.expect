@@ -1,0 +1,12 @@
+# Phase 3, part A2: an address that fails norm/v1 is rejected before any module is called and is FREE (charge-table row P-08). The unit test of the row and of the state must catch a table that decides
+# anything else even when the gate cannot: the fault edits P-08 from free to unmapped in BOTH the embedded rules.psv and the fenced block of the spec, so check-charge-table stays green (an unmapped row is
+# well formed and carries no unit), and TestDecide_Rows/P-08 and TestDecide_PlatformMalformed must go red. (The literal fault "P-08 charges" cannot be made: the table refuses a platform row that charges, in the
+# parser and in the gate, because the platform has no unit; that refusal is itself covered by TestParse_RefusesMalformedTables and the gate's selftest, case "a seeded unit of the other module".) CMD runs the gate first, so a leg whose gate went red
+# would never reach the Go test and would fail for the wrong reason. The control is the real tree, which must be green on both. The leg needs Go only; no database.
+GATE=charge-malformed
+TARGET=platform
+SETUP=
+STEP=check-charge-table, then go test -run TestDecide ./internal/charge/ (one case per row of the table, and the malformed state)
+CMD=bash scripts/check-charge-table.sh && GOTOOLCHAIN=local go test -count=1 -v -run 'TestDecide' ./internal/charge/
+MESSAGE=--- FAIL: TestDecide_Rows/P-08
+MESSAGE=--- FAIL: TestDecide_PlatformMalformed

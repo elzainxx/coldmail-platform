@@ -1,0 +1,13 @@
+# What scripts/check-personal-details.sh may find in the tracked tree of coldmail-send-byo without going red: path-glob|literal|reason.
+# Everything not listed here and not in an allowed class (documentation, private, loopback and other special-use ranges) is RED. The reason is mandatory; an entry that matches nothing is RED.
+# The format and the rules are in the header of the gate (coldmail-platform/scripts/check-personal-details.sh). Every entry below is a documented public service (a resolver, a mail provider's
+# published range) or text that only looks like a path.
+Docs/history/phase-4-from-gate.md|8.8.8.8|Google Public DNS, the resolver the From-gate record names (a documented public service)
+Docs/history/phase-4-from-gate.md|142.250.27.109|smtp.gmail.com as it resolved on the day of the record: a public mail provider address quoted as evidence
+Docs/history/phase-4-from-gate.md|142.251.168.109|smtp.gmail.com as it resolved on another day of the record: a public mail provider address quoted as evidence
+Docs/history/phase-4-from-gate.md|74.125.0.0|the start of the mail provider's published SPF range (ip4:74.125.0.0/16 of its _spf record), quoted as evidence
+Docs/history/phase-4-from-gate.md|209.85.128.0|the start of the mail provider's published SPF range (ip4:209.85.128.0/17 of its _spf record), quoted as evidence
+deploy/dns-test/*|1.1.1.1|Cloudflare's public resolver, the catch-all upstream of the DNS test fixture (a documented public service)
+deploy/dns-test/*|8.8.8.8|Google Public DNS, the catch-all upstream of the DNS test fixture (a documented public service)
+services/control/internal/fromgate/evaluate_realdns_test.go|74.125.0.0|the SPF range the real-DNS canary test checks the mail provider still publishes (a documented public range)
+services/control/internal/fromgate/spf.go|a:/ptr|the SPF mechanism names a, ptr and exists in a comment (a:/ptr:/exists:), not a drive path

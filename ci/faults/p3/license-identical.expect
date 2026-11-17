@@ -1,0 +1,10 @@
+# Every repository carries the one LICENSE paragraph of tests/license-canonical.txt, byte for byte. The fault changes ONE word of the platform's own LICENSE ("visible" becomes "hidden"):
+# check-license must go red, name the file and the first differing line, and print both texts (so the changed word is visible in the log). The control is the real repository, which must be green.
+GATE=license-identical
+TARGET=platform
+SETUP=
+STEP=check-license on the real repository
+CMD=bash scripts/check-license.sh --root .
+MESSAGE=.: LICENSE differs from tests/license-canonical.txt: first difference at line 1
+MESSAGE=LICENSE  : Copyright (c) 2026 Zain. All rights reserved. The source is hidden for transparency only.
+MESSAGE=check-license: RED

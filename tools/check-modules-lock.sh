@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # check-modules-lock.sh <parent-dir> [<lock-file>] — compare tools/modules.lock with the commits the PARENT repository pins as submodules (its gitlinks).
-# Run it when re-pinning. There is no CI for this yet: the parent was private and had no job that could read the module repositories (all five repositories have been public since 2026-11-17, so one can now) (Docs/phase-0-spec.md, F9),
+# Run it when re-pinning. The parent repository's `modules-lock` workflow also runs it on every push (it could not while the repositories were private and the parent had no job that could read them: Docs/phase-0-spec.md, F9; all five repositories have been public since 2026-11-17),
 # so the comparison is manual, and this script exists so that "manual" is one command whose red names the module that disagrees.
 # NOT CHECKED: that either side is the commit you MEANT to pin, or that it is green — only that the two agree.
 set -u

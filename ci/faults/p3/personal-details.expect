@@ -1,0 +1,12 @@
+# No tracked file names a Windows home path, a drive-letter path or an address outside the allowed classes. The patch adds only a harmless marker file: a fault that IS a personal path or an address
+# cannot be stored (the gate reads this very patch and the tree, and would be red on the real repository), so CMD writes the planted document at run time, from fragments, only when the marker exists.
+# The control side has no marker, plants nothing and must be green; the fault side plants a Windows home path on line 3 and a public address on line 4 of Docs/zz-planted.md: the gate must go red naming both
+# with file and line. The MESSAGE lines name the class, not the planted text (the planted text is never written out whole anywhere in the repository).
+GATE=personal-details
+TARGET=platform
+SETUP=
+STEP=check-personal-details on the real repository
+CMD=if [ -f .plant-personal-details ]; then printf 'Build log\n\nrun from %s:%sUsers%ssomeone%swork\nhost %s.%s.%s.%s\n' C '\' '\' '\' 93 184 216 34 > Docs/zz-planted.md; fi; bash scripts/check-personal-details.sh --root . --allow tests/personal-details/coldmail-platform.allow
+MESSAGE=Docs/zz-planted.md:3: Windows home path
+MESSAGE=Docs/zz-planted.md:4: IPv4 address
+MESSAGE=check-personal-details: RED

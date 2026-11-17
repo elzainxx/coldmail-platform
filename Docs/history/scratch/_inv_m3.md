@@ -1,5 +1,5 @@
 # Module 3 — BYO-SMTP sender (Go "Brain" orchestrator, fork of module 2)  
-repo: D:/Mnfi/Codmailling 3
+repo: Codmailling 3
 
 ## 1. Platform-facing routes
 Two Go packages expose HTTP: `internal/platformapi` (Domain A, platform-facing — primary focus) and `internal/adminapi` (Domain B, operator — see category 8). Mounting is in `services/brain/internal/httpapi/health.go:32-54`: `/v1/quote`, `/v1/run`, `/v1/report`, `/v1/describe` are registered as literal paths plus one prefix `/v1/byosmtp/` — all delegate to `platformapi.Server.Handler()`.

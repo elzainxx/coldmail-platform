@@ -7,9 +7,9 @@ RECOMMENDATION for a separate fix pass.
 
 | Tag | Repo path | Identity (from code) | Language / shape |
 |---|---|---|---|
-| **M1** | `D:/Mnfi/Codmailling` | Truemail Verification System — email validator | Go control-plane + Ruby verifier-node |
-| **M2** | `D:/Mnfi/Codmailling 2` | Sender module — shared SMTP pool | Go "Brain" + Node.js sender boxes |
-| **M3** | `D:/Mnfi/Codmailling 3` | BYOSMTP sender — user-owned SMTP | Go "Brain" + Node.js sender boxes |
+| **M1** | `Codmailling` | Truemail Verification System — email validator | Go control-plane + Ruby verifier-node |
+| **M2** | `Codmailling 2` | Sender module — shared SMTP pool | Go "Brain" + Node.js sender boxes |
+| **M3** | `Codmailling 3` | BYOSMTP sender — user-owned SMTP | Go "Brain" + Node.js sender boxes |
 
 **The boundary under audit** is PLATFORM ↔ MODULE. The Brain↔box and control-plane↔verifier-node splits
 INSIDE each module are coordinator-worker, not service boundaries, and were audited only for whether each
@@ -329,7 +329,7 @@ implement the uniform contract, that is the structural divergence the audit exis
 
 ### VERDICT: CONFIRMED. M1 implements no part of the quote/run/report/describe verb set.
 
-Exhaustive search across every `.go`, `.rb`, and `.sql` file in `D:/Mnfi/Codmailling` for
+Exhaustive search across every `.go`, `.rb`, and `.sql` file in `Codmailling` for
 `v1/quote|v1/run|v1/report|v1/describe|handleQuote|handleRun|handleReport|handleDescribe`:
 **zero hits.** The only textual match anywhere in the tree is an unrelated `regexp.QuoteMeta` call in
 `smtp_stage.go`. Zero hits in M1's `Docs/` either — so this is not a code-lags-docs situation; the verb set

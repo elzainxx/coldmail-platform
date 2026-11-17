@@ -1,6 +1,6 @@
 # M1 (coldmail-verify) — public-schema inventory, runtime privilege matrix, schema-sensitive code
 
-Source: `D:\Mnfi\coldmail-parent\coldmail-verify` at `11903d1`, working tree clean, read-only. Everything below is read from the
+Source: the `coldmail-verify` checkout at `11903d1`, working tree clean, read-only. Everything below is read from the
 code (file:line). Anything that is PostgreSQL behaviour rather than something this repo proves is tagged **[PG]**.
 Paths are relative to `coldmail-verify/control-plane/` unless prefixed `ci:` (= `.github/workflows/ci.yml`), `scripts/`, `Docs/`.
 Abbreviations: S/I/U/D = SELECT/INSERT/UPDATE/DELETE. `PG` = `internal/store/postgres.go`, `PF` = `internal/store/postgres_flywheel.go`,

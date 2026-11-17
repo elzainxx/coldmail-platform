@@ -1,0 +1,11 @@
+--- a/internal/norm/norm.go
++++ b/internal/norm/norm.go
+@@ -177,7 +177,7 @@
+ 	}
+ 
+ 	// 4. LOCAL: NFC, lower-case, NFC again.
+-	local = xnorm.NFC.String(strings.ToLower(xnorm.NFC.String(local)))
++	local = xnorm.NFC.String(xnorm.NFC.String(local))
+ 
+ 	// 5. RECOMPOSE
+ 	return local + "@" + domain, nil

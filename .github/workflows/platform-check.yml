@@ -4,6 +4,9 @@
 #   2. every relative markdown link resolves to a file
 #   3. every cross-repo citation (../coldmail-*/path) resolves in the three module repositories
 #   4. every cited commit SHA resolves to a commit in one of the four repositories (non-commit hex ids are listed, with reasons, in tools/non-commit-hex.txt)
+#   5. (the platform's own gates, run on the three fresh module clones) each module's LICENSE is the canonical paragraph, its NOTICE and README say the same and nothing is called confidential
+#      (scripts/check-license.sh), and no tracked file of a module names a Windows home path, a drive-letter path or an IPv4 address that tests/personal-details/<module>.allow does not justify
+#      (scripts/check-personal-details.sh). The platform tree itself is checked by the `gates` workflow; the parent and all five by the parent's `modules-lock` workflow.
 #
 # Checks 3 and 4 need the three module repositories beside this one. A workflow's default token cannot read a PRIVATE sibling repository and a personal access token
 # would carry the owner's whole account, so tools/fetch-modules.sh clones each module over SSH with its OWN read-only DEPLOY KEY when one is supplied (one key per repository, created with
@@ -17,9 +20,10 @@
 # exists so a key revoked or expired while nobody pushes shows up as a red run, not as silence.
 #
 # WHEN IT RUNS (the trigger economy of the public-release pass): this workflow READS DOCUMENTS ON PURPOSE (checks 2-4 read every tracked *.md, check 1 every tracked *.json), so a push or pull
-# request that touches a markdown or JSON file, anything under tools/ (this script, fetch-modules.sh, the non-commit-hex list, the pins) or this file runs it; a push that touches only code,
-# SQL, scripts or web/ does not (none of those is read). Docs/history markdown IS read by checks 3 and 4, so it is not excluded here (it is excluded from the `gates` workflow, which does not
-# read it). Dispatch, the weekly schedule and a push of a `v*` or `phase-*` tag (GitHub does not evaluate path filters for a tag push: tagging a head puts a run of this workflow on that exact SHA)
+# request that touches a markdown or JSON file, anything under tools/ (this script, fetch-modules.sh, the non-commit-hex list, the pins), LICENSE, NOTICE, the two gates of check 5 and the files they read
+# (scripts/check-license*.sh, scripts/check-personal-details*.sh, tests/license-canonical.txt, tests/personal-details/) or this file runs it; a push that touches only other code, SQL, scripts or web/ does not
+# (none of those is read). Docs/history markdown IS read by checks 3 and 4, so it is not excluded here. A change inside a MODULE repository does not start this workflow (it runs in the platform); the
+# weekly schedule, a dispatch and a tag push are what re-check the module clones. Dispatch, the weekly schedule and a push of a `v*` or `phase-*` tag (GitHub does not evaluate path filters for a tag push: tagging a head puts a run of this workflow on that exact SHA)
 # always run it. A newer run on the same ref cancels the older one (the weekly scheduled run shares the default branch's group, so a push to main
 # while it runs supersedes it).
 #
@@ -38,12 +42,24 @@ on:
       - '**/*.md'
       - '**/*.json'
       - 'tools/**'
+      - 'LICENSE'
+      - 'NOTICE'
+      - 'scripts/check-license*.sh'
+      - 'scripts/check-personal-details*.sh'
+      - 'tests/license-canonical.txt'
+      - 'tests/personal-details/**'
       - '.github/workflows/platform-check.yml'
   pull_request:
     paths:
       - '**/*.md'
       - '**/*.json'
       - 'tools/**'
+      - 'LICENSE'
+      - 'NOTICE'
+      - 'scripts/check-license*.sh'
+      - 'scripts/check-personal-details*.sh'
+      - 'tests/license-canonical.txt'
+      - 'tests/personal-details/**'
       - '.github/workflows/platform-check.yml'
   workflow_dispatch:
   schedule:
@@ -155,3 +171,34 @@ jobs:
           expect_red "check 3: a module repository absent from the layout" 3 "the layout has no coldmail-send-byo"
           expect_red "check 4: a module repository absent from the layout" 4 "the layout has no coldmail-send-byo"
           rm -rf "$S"; echo "controls hold: checks 3 and 4 are red on a broken citation, an unlisted SHA, a stale entry and a missing module"
+
+      # Check 5: the platform's licence and personal-details gates, on the three fresh module clones. Both print what they did not check. All three modules are run before the step ends (a red one does
+      # not hide the next), and the step is red if any was.
+      - name: Check 5 — the LICENSE of each module is the canonical paragraph; no module names a Windows path or an unallowed address
+        run: |
+          set -u
+          rc=0
+          W="$GITHUB_WORKSPACE"
+          bash coldmail-platform/scripts/check-license.sh --root "$W/coldmail-verify" --root "$W/coldmail-send-managed" --root "$W/coldmail-send-byo" || rc=1
+          for m in coldmail-verify coldmail-send-managed coldmail-send-byo; do
+            bash coldmail-platform/scripts/check-personal-details.sh --root "$W/$m" --allow "coldmail-platform/tests/personal-details/$m.allow" || rc=1
+          done
+          exit "$rc"
+
+      - name: Controls 5 — the two gates go red on a changed LICENSE and on a planted Windows path, in a scratch copy of a module clone
+        run: |
+          set -u +e   # the gates are EXPECTED to exit non-zero here; the runner starts bash with -e
+          S="$RUNNER_TEMP/control5"; rm -rf "$S"; mkdir -p "$S"; cp -r "$GITHUB_WORKSPACE/coldmail-send-byo" "$S/scratch-module"
+          LIC() { bash coldmail-platform/scripts/check-license.sh --root "$S/scratch-module" 2>&1; }
+          PD() { bash coldmail-platform/scripts/check-personal-details.sh --root "$S/scratch-module" --allow coldmail-platform/tests/personal-details/coldmail-send-byo.allow 2>&1; }
+          # sanity: the unmodified scratch copy is green, so the reds below are caused by the planted fault and nothing else
+          out="$(LIC)"; rc=$?; [ "$rc" -eq 0 ] || { printf '%s\n' "$out"; echo "CONTROL FAILED: the unmodified scratch copy is not green for check-license (rc=$rc)"; exit 1; }
+          out="$(PD)"; rc=$?; [ "$rc" -eq 0 ] || { printf '%s\n' "$out"; echo "CONTROL FAILED: the unmodified scratch copy is not green for check-personal-details (rc=$rc)"; exit 1; }
+          sed -i 's/visible/hidden/' "$S/scratch-module/LICENSE"
+          out="$(LIC)"; rc=$?; printf '%s\n' "$out" | sed 's/^/    | /'
+          [ "$rc" -ne 0 ] && printf '%s\n' "$out" | grep -q "LICENSE differs from tests/license-canonical.txt" || { echo "CONTROL FAILED: check-license did not go red on a changed word of LICENSE (rc=$rc)"; exit 1; }
+          # the planted path is assembled here, never written out whole: this file is itself read by check-personal-details
+          printf '\nBuild log: %s:%sUsers%ssomeone%swork\n' C '\' '\' '\' >> "$S/scratch-module/README.md"
+          out="$(PD)"; rc=$?; printf '%s\n' "$out" | sed 's/^/    | /'
+          [ "$rc" -ne 0 ] && printf '%s\n' "$out" | grep -qE 'README\.md:[0-9]+: Windows home path' || { echo "CONTROL FAILED: check-personal-details did not go red on a planted Windows home path (rc=$rc)"; exit 1; }
+          rm -rf "$S"; echo "controls hold: check-license is red on a changed LICENSE word and check-personal-details on a planted Windows home path"

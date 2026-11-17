@@ -1,0 +1,4 @@
+# What scripts/check-personal-details.sh may find in the tracked tree of coldmail-send-managed without going red: path-glob|literal|reason.
+# Everything not listed here and not in an allowed class (documentation, private, loopback and other special-use ranges) is RED. The reason is mandatory; an entry that matches nothing is RED.
+# The format and the rules are in the header of the gate (coldmail-platform/scripts/check-personal-details.sh). No entry is needed today: this repository holds no address outside the allowed classes
+# and no Windows path.

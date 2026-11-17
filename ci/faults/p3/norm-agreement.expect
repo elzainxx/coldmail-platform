@@ -1,0 +1,11 @@
+# Phase 3, part A2: the platform's normaliser (internal/norm) must reproduce module 1's norm/v1 on every vector of the shared file (internal/norm/testdata/norm-vectors.json), whose expectations were
+# produced by module 1's real function. The fault deletes the lower-casing of the local part from step 4 of the algorithm (the line that reads NFC, ToLower, NFC): the function then returns JANE.DOE@example.com
+# for an upper-case address, and TestNorm_Vectors must go red naming the vector and both strings. The control is the real tree, whose TestNorm tests (vectors, groups, the mutant controls, the
+# reasons, the hostile corpus) must all pass. The leg needs Go only (the workflow sets it up); no database, no module.
+GATE=norm-agreement
+TARGET=platform
+SETUP=
+STEP=go test -run TestNorm ./internal/norm/ (every vector of the shared file through the platform's normaliser)
+CMD=GOTOOLCHAIN=local go test -count=1 -v -run 'TestNorm' ./internal/norm/
+MESSAGE=--- FAIL: TestNorm_Vectors/ascii-upper-all
+MESSAGE=ascii-upper-all: the function returned "JANE.DOE@example.com", the file says "jane.doe@example.com"
