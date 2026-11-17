@@ -40,7 +40,11 @@ func TestAssertLiveFailsOncePerDifferenceNamingRouteCasePathAndKind(t *testing.T
 		t.Fatalf("want one failure per difference (KeyMissing, ShapeViolation, KeyAdded, VocabNew), got %d:\n%s", len(tb.errs), tb.allText())
 	}
 	text := strings.Join(tb.errs, "\n")
-	for _, want := range []string{"GET /v1/jobs/{id}", "case=done", "path=counts.done", "kind=KeyMissing", "kind=ShapeViolation", "path=added", "kind=KeyAdded", "path=state", "kind=VocabNew"} {
+	wants := []string{"GET /v1/jobs/{id}", "case=done", "path=counts.done", "path=added", "path=state"}
+	for _, kind := range []Kind{KeyMissing, ShapeViolation, KeyAdded, VocabNew} {
+		wants = append(wants, "kind="+string(kind))
+	}
+	for _, want := range wants {
 		if !strings.Contains(text, want) {
 			t.Fatalf("the failures must say %q:\n%s", want, text)
 		}

@@ -50,3 +50,13 @@ commits = ["7b05c78367ed7c7799628c07d8ed5342eb5a3bdf"]
 description = "invented credential-shaped values in the m2worker stage selftest fixture (commit 8accb18): not secrets"
 targetRules = ["generic-api-key"]
 commits = ["8accb189b1c1a9146445c8bf4b9705befb80c854"]
+
+# The FIFTH exception (Phase 3): ONE rule, ONE commit, a test assertion.
+# Commit 56eb8ab26d7ac8edfbeb5dcb1afe09919ce10053 added internal/contractcheck/assert_test.go, whose line 43 lists the expected failure kinds of the drift checker ("kind=KeyMissing", "kind=ShapeViolation", ...) in one
+# string slice: ordinary identifiers of the package, flagged by `generic-api-key` only because the line mixes quoted words with "key" in them and has some entropy. It is the only finding of that commit (read in
+# full on 2026-11-18, `gitleaks detect` over bec9b8c..70df561 reports exactly this one). The next commit builds the list from a helper so the line no longer exists; this commit is in published history and cannot be
+# rewritten (no history rewrites).
+[[allowlists]]
+description = "failure-kind identifiers of the drift checker's assertion test (commit 56eb8ab): not secrets"
+targetRules = ["generic-api-key"]
+commits = ["56eb8ab26d7ac8edfbeb5dcb1afe09919ce10053"]
