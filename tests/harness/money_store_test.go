@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -655,6 +656,12 @@ var mnySeededPrices = map[string]int{"m1_own": 1, "m1_cache": 1, "m1_vendor": 2,
 // mnyConcreteOutcome builds an Outcome that the table row r decides: a wildcard cell takes a value no earlier row names.
 func mnyConcreteOutcome(r charge.Rule) charge.Outcome {
 	o := charge.Outcome{Module: r.Module, State: r.State, Reason: r.Reason, FromCache: r.Cache == "yes"}
+	switch r.Origin {
+	case "*", "none":
+		o.FailureOrigin = ""
+	default:
+		o.FailureOrigin = r.Origin
+	}
 	if o.State == "*" {
 		o.State = "x-state"
 	}
@@ -825,9 +832,11 @@ func TestMoneyStore_SettleNotChargedClasses(t *testing.T) {
 	e.requireViewsEmpty("at the end")
 }
 
-// TestMoneyStore_SettleM1Unknown: module 1's `unknown` outcomes. A genuine remote answer (greylisted) is charged at m1_own; the five reasons that cannot tell our failure from an answer (dns_error,
-// smtp_timeout, smtp_error, connection_failed, smtp_blocked) are UNMAPPED: returned to the caller with their rule ids M1-18..22, never charged, never guessed, and returned again by a second call.
-// It fails if an ambiguous reason is charged or dropped without being reported, or if greylisted stops being charged.
+// TestMoneyStore_SettleM1Unknown: module 1's `unknown` outcomes under the owner's rule ("an unknown caused by the recipient's server is charged; one caused by us, or that can't be proven either way,
+// is free"), read from signals.failure_origin: remote is charged at m1_own (M1-18 for a greylisted that exhausted its retries, M1-20 for every other reason), own is free (M1-19 the attempt cap,
+// M1-21), undetermined is free (M1-22), an unknown that names NO origin (an older module) is unmapped (M1-23), and an origin string module 1 never emits matches no origin row and falls to the
+// catch-all (M1-99): both are returned to the caller with their rule id, never charged, never guessed, and returned again by a second call.
+// It fails if an origin is charged or dropped against the rule, or if a missing or unknown origin is charged or dropped without being reported.
 func TestMoneyStore_SettleM1Unknown(t *testing.T) {
 	e := newMnyEnv(t)
 	e.fund(mnyUserA, "m1", 100)
@@ -835,20 +844,42 @@ func TestMoneyStore_SettleM1Unknown(t *testing.T) {
 	e.reserve(job, 10)
 	e.setStatus(job, "running")
 
+	unk := func(reason, origin string) charge.Outcome {
+		return charge.Outcome{Module: "m1", State: "unknown", Reason: reason, FailureOrigin: origin}
+	}
+	reasons := []string{"dns_error", "smtp_timeout", "smtp_error", "connection_failed", "smtp_blocked"}
 	items := []money.SettleItem{
-		mnyItem("greylisted", charge.Outcome{Module: "m1", State: "unknown", Reason: "greylisted"}),
-		mnyItem("control-ok", mnyM1Accepted),
+		mnyItem("greylisted-remote", unk("greylisted", "remote")), // M1-18: charged
+		mnyItem("control-ok", mnyM1Accepted),                      // the control: an ordinary settled answer is charged
 	}
+	wantCharged := []string{"control-ok", "greylisted-remote"}
+	for _, reason := range reasons {
+		items = append(items, mnyItem("remote-"+reason, unk(reason, "remote"))) // M1-20: charged
+		wantCharged = append(wantCharged, "remote-"+reason)
+		items = append(items, mnyItem("own-"+reason, unk(reason, "own")))                    // M1-21: free
+		items = append(items, mnyItem("undetermined-"+reason, unk(reason, "undetermined"))) // M1-22: free
+	}
+	items = append(items, mnyItem("cap-unknown_error", unk("unknown_error", "own"))) // M1-19: the attempt cap, free
+	items = append(items, mnyItem("greylisted-own", unk("greylisted", "own")))       // follows its origin: free
+	items = append(items, mnyItem("greylisted-undetermined", unk("greylisted", "undetermined")))
 	wantRule := map[string]string{}
-	for i, reason := range []string{"dns_error", "smtp_timeout", "smtp_error", "connection_failed", "smtp_blocked"} {
-		ref := "ambiguous-" + reason
-		items = append(items, mnyItem(ref, charge.Outcome{Module: "m1", State: "unknown", Reason: reason}))
-		wantRule[ref] = fmt.Sprintf("M1-%d", 18+i)
+	for _, reason := range reasons {
+		ref := "no-origin-" + reason
+		items = append(items, mnyItem(ref, unk(reason, ""))) // M1-23: unmapped
+		wantRule[ref] = "M1-23"
 	}
+	items = append(items, mnyItem("greylisted-no-origin", unk("greylisted", "")))
+	wantRule["greylisted-no-origin"] = "M1-23"
+	items = append(items, mnyItem("garbage-origin", unk("dns_error", "banana"))) // an origin module 1 never emits: M1-99, never charged
+	wantRule["garbage-origin"] = "M1-99"
+
+	nCharged := len(wantCharged)                                        // 1 greylisted + 1 control + 5 remote
+	nFree := 2*len(reasons) + 1 + 2                                     // own and undetermined per reason, the cap, greylisted own and undetermined
+	nUnmapped := len(wantRule)                                          // five reasons without an origin, greylisted without one, the garbage origin
 	sr := e.settle(job, items...)
-	mnyRequireSettle(t, "module 1 unknown outcomes", sr, 2, 2, 0, 0, 0, 5)
-	if sr.ByUnit["m1_own"] != 2 {
-		t.Fatalf("ByUnit = %v, want greylisted and the control charged at m1_own", sr.ByUnit)
+	mnyRequireSettle(t, "module 1 unknown outcomes", sr, nCharged, int64(nCharged), 0, nFree, 0, nUnmapped)
+	if sr.ByUnit["m1_own"] != nCharged {
+		t.Fatalf("ByUnit = %v, want %d charged at m1_own (the remote answers and the control)", sr.ByUnit, nCharged)
 	}
 	for _, u := range sr.Unmapped {
 		if want, ok := wantRule[u.ItemRef]; !ok || u.Rule != want || strings.TrimSpace(u.Note) == "" {
@@ -857,14 +888,15 @@ func TestMoneyStore_SettleM1Unknown(t *testing.T) {
 		delete(wantRule, u.ItemRef)
 	}
 	if len(wantRule) != 0 {
-		t.Fatalf("these ambiguous items were not reported as unmapped: %v", wantRule)
+		t.Fatalf("these items were not reported as unmapped: %v", wantRule)
 	}
-	if got := e.rows("SELECT item_ref FROM platform.ledger WHERE job_id = $1 AND kind = 'charge' ORDER BY item_ref", job); strings.Join(got, ",") != "control-ok,greylisted" {
-		t.Fatalf("the charged items are %v, want exactly greylisted and control-ok", got)
+	sort.Strings(wantCharged)
+	if got := e.rows("SELECT item_ref FROM platform.ledger WHERE job_id = $1 AND kind = 'charge' ORDER BY item_ref", job); strings.Join(got, ",") != strings.Join(wantCharged, ",") {
+		t.Fatalf("the charged items are %v, want exactly %v (remote answers and the control: nothing caused by us, nothing unprovable, nothing without an origin)", got, wantCharged)
 	}
-	// reported again, not guessed: the second call returns the same five and settles nothing new
+	// reported again, not guessed: the second call charges nothing new, says the charged ones are already settled and returns the same unmapped ones
 	again := e.settle(job, items...)
-	mnyRequireSettle(t, "the same page again", again, 0, 0, 2, 0, 0, 5)
+	mnyRequireSettle(t, "the same page again", again, 0, 0, nCharged, nFree, 0, nUnmapped)
 	e.requireViewsEmpty("at the end")
 }
 
@@ -1169,7 +1201,7 @@ func TestMoneyStore_FullCycle(t *testing.T) {
 	e.setStatus(job, "running")
 	sr := e.settle(job,
 		mnyItem("i1", mnyM1Accepted), mnyItem("i2", charge.Outcome{Module: "m1", State: "valid", Reason: "mailbox_full"}),
-		mnyItem("i3", charge.Outcome{Module: "m1", State: "invalid", Reason: "no_mx"}), mnyItem("i4", charge.Outcome{Module: "m1", State: "unknown", Reason: "greylisted"}),
+		mnyItem("i3", charge.Outcome{Module: "m1", State: "invalid", Reason: "no_mx"}), mnyItem("i4", charge.Outcome{Module: "m1", State: "unknown", Reason: "greylisted", FailureOrigin: "remote"}),
 		mnyItem("i5", mnyM1Cached), mnyItem("i6", mnyM1Cached), mnyItem("i7", mnyM1Vendor),
 		mnyItem("i8", mnyM1DNS), mnyItem("i9", mnyM1Capacity))
 	mnyRequireSettle(t, "module 1 mixed outcomes", sr, 7, 8, 0, 1, 0, 1)
