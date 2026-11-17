@@ -1,0 +1,8 @@
+# The documents scripts/check-verified-heads.sh reads: one path per line, relative to the repository root; a line starting with # is a comment.
+# Every listed document must exist, hold a status table (a header whose last cell is `Status`, or whose last two cells are `Status` and `Evidence`) and have rows;
+# the build plan must be listed (its status table is the record of what is done); a list that names no document is red ("found 0 documents — the instrument matched nothing").
+# A row is a CLAIM when its status cell starts with **done**, contains `done —`, or is exactly CLOSED; every claim must cite the head (platform@<sha>, verify@<sha>, send-managed@<sha>,
+# send-byo@<sha>, `platform main @ <sha>`, `module 1/2/3 <sha>`, `green on <sha>`) and the run (https://github.com/elzainxx/<repo>/actions/runs/<id>[/attempts/<n>]); see the header of the gate.
+# To add a phase's exit-evidence document: add its path below (its table must follow the same two shapes), and run the gate once on the runner.
+Docs/coldmail-platform-build-plan.md
+Docs/phase-2-closeout-spec.md
