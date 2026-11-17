@@ -37,13 +37,15 @@ pathfix() { cygpath -m "$1" 2>/dev/null || printf '%s' "$1"; }                  
 RP="$(pathfix "$REM")"; case "$RP" in /*) BASE="file://$RP";; *) BASE="file:///$RP";; esac
 mkrepo() {   # <name> — two commits on main, and a bare copy that a clone can read
   ( set -e; rm -rf "${SRC:?}/$1"; git init -q -b main "$SRC/$1"; cd "$SRC/$1"; git config user.email selftest@example.invalid; git config user.name selftest; git config commit.gpgsign false
-    echo one > f; git add f; git commit -q -m one; echo two > f; git commit -q -a -m two
+    echo "one $1" > f; git add f; git commit -q -m one; echo "two $1" > f; git commit -q -a -m two
     git clone -q --bare "$SRC/$1" "$REM/$OWN/$1.git" ) >/dev/null 2>&1
 }
 setup_ok=0; for r in coldmail-verify coldmail-send-managed coldmail-send-byo; do mkrepo "$r" || setup_ok=1; done
 FV="$(git -C "$SRC/coldmail-verify" rev-list --max-parents=0 HEAD 2>/dev/null)"; FM="$(git -C "$SRC/coldmail-send-managed" rev-list --max-parents=0 HEAD 2>/dev/null)"; FB="$(git -C "$SRC/coldmail-send-byo" rev-list --max-parents=0 HEAD 2>/dev/null)"
 TV="$(git -C "$SRC/coldmail-verify" rev-parse HEAD 2>/dev/null)"
 if [ "$setup_ok" -ne 0 ] || [ -z "$FV" ] || [ -z "$FM" ] || [ -z "$FB" ] || [ "$FV" = "$TV" ]; then echo "selftest: RED — could not build the three local fixture repositories"; exit 1; fi
+# the three fixtures must have DISTINCT commit ids: a fast machine commits all three in the same second, and identical content + author + time = identical ids (a run on a GitHub runner proved it), which makes every "count the repository that is pinned at X" assertion count all three
+if [ "$FV" = "$FM" ] || [ "$FV" = "$FB" ] || [ "$FM" = "$FB" ]; then echo "selftest: RED — the three fixture repositories share a first commit id: the pin assertions would be vacuous"; exit 1; fi
 anon() {   # <lock text, printf %b> [VAR=value ...] — fetch with the three keys REMOVED, the anonymous base on the local bare repositories, and the lock; sets out and rc
   lock "$1"; shift; rm -rf "$T/dest"
   out="$(env -u DEPLOY_KEY_COLDMAIL_VERIFY -u DEPLOY_KEY_COLDMAIL_SEND_MANAGED -u DEPLOY_KEY_COLDMAIL_SEND_BYO FETCH_OWNER="$OWN" FETCH_ANON_BASE="$BASE" "$@" bash "$F" --lock "$T/lock" "$T/dest" 2>&1)"; rc=$?

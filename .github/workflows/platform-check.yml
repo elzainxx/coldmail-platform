@@ -92,7 +92,7 @@ jobs:
       - name: Fetch the three module repositories (each over SSH with its read-only deploy key, or anonymously over https when that key is empty; red if a key is wrong or revoked, or an anonymous clone fails)
         run: bash coldmail-platform/tools/fetch-modules.sh "$GITHUB_WORKSPACE"
 
-      - name: Controls — the fetch goes red on a missing key with no anonymous route, a malformed key, an unknown (revoked) key, another repository's key, and a key it cannot prove read-only
+      - name: Controls — the fetch goes red on a missing key with no anonymous route, a malformed key, an unknown (revoked) key, and a key it cannot prove read-only
         run: |
           set -u +e   # every case below EXPECTS a non-zero exit; the runner starts bash with -e
           F="$GITHUB_WORKSPACE/coldmail-platform/tools/fetch-modules.sh"; D="$RUNNER_TEMP/fetch-control"
@@ -115,15 +115,16 @@ jobs:
           expect_red "missing key, anonymous route closed" coldmail-send-managed "could not clone anonymously" -- DEPLOY_KEY_COLDMAIL_SEND_MANAGED= FETCH_ANON_BASE=https://127.0.0.1:1
           expect_red "malformed key"               coldmail-send-byo     "not a usable private key"   -- "DEPLOY_KEY_COLDMAIL_SEND_BYO=this is not a key"
           expect_red "unknown or revoked key"      coldmail-send-byo     "could not clone over SSH"   -- "DEPLOY_KEY_COLDMAIL_SEND_BYO=$UNKNOWN"
-          # the next two controls need a REAL deploy key of this repository's secrets; if the owner removes the secrets once the modules are public, the fetch above runs on the anonymous route and these two
+          # the next control needs a REAL deploy key of this repository's secrets; if the owner removes the secrets now that the modules are public, the fetch above runs on the anonymous route and this one
           # cannot be exercised: that is said out loud (NOT RUN), never silently skipped
           if [ -n "${DEPLOY_KEY_COLDMAIL_VERIFY:-}" ]; then
-            expect_red "another repository's key"  coldmail-send-managed "could not clone over SSH"   -- "DEPLOY_KEY_COLDMAIL_SEND_MANAGED=$DEPLOY_KEY_COLDMAIL_VERIFY"
+            # (the control "another repository's key is refused" was retired when the module repositories became public on 2026-11-17: GitHub serves a PUBLIC repository to any authenticated SSH identity, so
+            # one repository's deploy key can no longer be shown to be refused by another's; the key routes that remain controllable are the three above and the read-only assertion below)
             # the read-only assertion must go red on every answer except GitHub's "marked as read only": point its write probe at a closed local port, so the answer is "connection refused"
             expect_red "read-only not confirmed"   coldmail-verify       "could not confirm the deploy key is read-only" -- FETCH_PROBE_URL=ssh://git@127.0.0.1:1/x.git
-            echo "controls hold: five ways of a bad or absent key are each red"
+            echo "controls hold: four ways of a bad or absent key are each red"
           else
-            echo "controls hold: three ways of a bad or absent key are each red. NOT RUN: 'another repository's key' and 'read-only not confirmed' (they need a real deploy key; DEPLOY_KEY_COLDMAIL_VERIFY is empty, so this run used the anonymous route)"
+            echo "controls hold: three ways of a bad or absent key are each red. NOT RUN: 'read-only not confirmed' (it needs a real deploy key; DEPLOY_KEY_COLDMAIL_VERIFY is empty, so this run used the anonymous route)"
           fi
           rm -rf "$D"
 

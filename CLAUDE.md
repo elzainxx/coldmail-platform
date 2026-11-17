@@ -101,4 +101,4 @@ Docker is currently down on the owner's machine: **only the runner counts.**
 
 1. Edit `tools/modules.lock` (three 40-hex commits), push, and let `harness` go green on the runner.
 2. In the parent repository (`elzainxx/coldmail`) move the three submodule pointers to the same commits.
-3. `bash tools/check-modules-lock.sh <parent-dir>` must say OK. (No CI does this: the parent is private and cannot read the module repositories.)
+3. `bash tools/check-modules-lock.sh <parent-dir>` must say OK. (No CI does this yet: it could not while the parent was private; all five repositories have been public since 2026-11-17, so a job in the parent that checks out the submodules can now run it.)
