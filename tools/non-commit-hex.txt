@@ -20,3 +20,4 @@ a47dd609|agent id: module-comparison verification agent (never returned, unanswe
 # The public-release audit (Docs/public-release-audit.md): a placeholder AWS account id found in a research file, and a commit of the PARENT repository (outside the four-repository layout, like 1a6536b above).
 000000000000|a placeholder AWS account id (twelve zeros), quoted by the public-release audit
 f09df58|commit of the parent repository (outside the four-repository layout): its public-release forward fix, cited by the audit
+c6b53b9|commit of the parent repository (outside the four-repository layout): the parent head at the start of Phase 3, cited by Docs/phase-3-spec.md

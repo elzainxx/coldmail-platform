@@ -82,15 +82,15 @@ leak_run() { # the text of the log every service answers with
   mkdir -p "$T/lk"; printf '%s\n' "$1" > "$T/lk/log.txt"
   ( set -u; WORK="$T/lk"; export WORK; . "$T/env.sh"
     DC() { if [ "$1" = logs ]; then cat "$T/lk/log.txt"; else return 1; fi; }
-    M2_ADMIN_KEY="opkey-0123456789abcdef"; M2_WORKER_TOKEN="wtoken-0123456789abcdef"; M2_TOKEN="svctoken-0123456789abcdef"; SINK_PASS="sinkpass-0123456789ab"
+    M2_ADMIN_KEY="opkeyopkeyopkeyopkey"; M2_WORKER_TOKEN="wtokenwtokenwtokenwt"; M2_TOKEN="svctokensvctokensvct"; SINK_PASS="sinkpasssinkpasssink"
     . "$HERE/stage.sh"; m2w_secret_leak ) 2>&1
 }
 out="$(leak_run 'worker registered id=abc; send accepted; nothing secret here')"; rc=$?
 verdict "m2w_secret_leak: clean logs" 0 "appears in the logs of m2, m2-worker or smtp-ctl" "$out" "$rc"
-out="$(leak_run 'auth ok for wtoken-0123456789abcdef from worker')"; rc=$?
-verdict "m2w_secret_leak: the worker token in a log is red, names the service, shows nothing" 1 "appears in the log of m2 (the log is not shown" "$out" "$rc" "wtoken-0123456789abcdef"
-out="$(leak_run 'password sinkpass-0123456789ab was sent')"; rc=$?
-verdict "m2w_secret_leak: the sink password in a log is red" 1 "appears in the log of m2 " "$out" "$rc" "sinkpass-0123456789ab"
+out="$(leak_run 'auth ok for wtokenwtokenwtokenwt from worker')"; rc=$?
+verdict "m2w_secret_leak: the worker token in a log is red, names the service, shows nothing" 1 "appears in the log of m2 (the log is not shown" "$out" "$rc" "wtokenwtokenwtokenwt"
+out="$(leak_run 'password sinkpasssinkpasssink was sent')"; rc=$?
+verdict "m2w_secret_leak: the sink password in a log is red" 1 "appears in the log of m2 " "$out" "$rc" "sinkpasssinkpasssink"
 
 # ── the control: the verdict function itself fails when the substring is wrong (a selftest that cannot fail proves nothing) ──
 before_bad=$bad; before_ok=$ok; before_cases=$cases

@@ -170,6 +170,7 @@ case "$*" in
 esac
 exit 1
 EOF
+chmod +x "$TMP/fakebin/git"   # a file made by a here-document is not executable on Linux (Windows ignores the bit): without it the PATH lookup skipped the fake and the real git answered
 mk "$D"; printf 'gitdir: elsewhere\n' > "$D/.git"; run_on; OLDPATH="$PATH"; PATH="$TMP/fakebin:$PATH"
 FAKE_LS='100644 e69de29bb2d1d6434b8b29ae775ad8c2e48c5391 0\tREADME.md\000100644 e69de29bb2d1d6434b8b29ae775ad8c2e48c5391 0\tDocs/a\tb.md\000'; export FAKE_LS
 expect "a file name with a tab in it cannot be attributed" 1 "has a tab in its name"

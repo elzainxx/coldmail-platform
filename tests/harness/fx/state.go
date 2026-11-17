@@ -315,7 +315,7 @@ type state struct {
 }
 
 func newState(cfg *fixtureConfig, upstream string) *state {
-	s := &state{orig: cfg, upstream: upstream}
+	s := &state{orig: cfg, upstream: upstream, ttl: uint32(cfg.TTL)} // ttl is read by the packet encoder outside the lock: it is set once here and never again (a write in load raced with it, caught by -race on the runner)
 	s.load()
 	return s
 }
@@ -325,7 +325,6 @@ func (s *state) load() {
 	cfg := s.orig
 	s.zones = append([]string(nil), cfg.Zones...)
 	sort.Slice(s.zones, func(i, j int) bool { return len(s.zones[i]) > len(s.zones[j]) }) // the longest apex wins
-	s.ttl = uint32(cfg.TTL)
 	s.records = map[string]map[string][]string{}
 	for _, r := range cfg.Records {
 		s.putRecords(r.Name, r.Type, r.Values)

@@ -40,3 +40,13 @@ commits = ["355299a6c605a2ca0601bf58afb0e0468d7fccb0"]
 description = "the placeholder SMTP-sink password quoted in the Phase 2 spec text (commit 7b05c78): not a secret"
 targetRules = ["generic-api-key"]
 commits = ["7b05c78367ed7c7799628c07d8ed5342eb5a3bdf"]
+
+# The FOURTH exception (Phase 3): ONE rule, ONE commit, a selftest fixture.
+# Commit 8accb189b1c1a9146445c8bf4b9705befb80c854 added tests/harness/m2worker/stage-selftest.sh, whose line 85 sets the shell variables M2_ADMIN_KEY, M2_WORKER_TOKEN, M2_TOKEN and SINK_PASS to
+# invented values (`opkey-0123456789abcdef` and the like) so that the selftest can prove the secret-leak scan of the harness finds them in a fake log: they are made-up strings written in the
+# script, they were never a credential of anything, and the harness mints its real ones at run time. `generic-api-key` flags the line (the name says KEY, the value has entropy). The next commit
+# replaces the values with low-entropy ones; this commit is in published history and cannot be rewritten (no history rewrites). It is the only finding of that commit (read in full on 2026-11-17).
+[[allowlists]]
+description = "invented credential-shaped values in the m2worker stage selftest fixture (commit 8accb18): not secrets"
+targetRules = ["generic-api-key"]
+commits = ["8accb189b1c1a9146445c8bf4b9705befb80c854"]

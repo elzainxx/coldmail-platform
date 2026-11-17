@@ -109,12 +109,17 @@ func startTestFx(t *testing.T, upstream string) *testFx {
 	st := newState(cfg, upstream)
 	ca := newTestCA(t, "api.ipify.org")
 	logs := &bytes.Buffer{}
+	var logMu sync.Mutex // the DNS, SMTP and HTTPS goroutines all log: a bytes.Buffer is not safe for that (-race on the runner)
 	// Every listener binds port 0 on loopback and the test reads the kernel's choice back (f.dnsAddr, f.dnsTCP, f.httpsA, f.smtpAddr, f.apiAddr): no fixed or reused port, so the tests pass
 	// on a host that refuses some ports (Windows excludes ranges) and on Linux alike. The UDP and the TCP side of DNS are chosen independently (dnsTCPAddr).
 	f, err := startFixture(st, fixtureOpts{
 		roles:   map[string]bool{"dns": true, "https": true, "smtp": true, "api": true},
 		dnsAddr: testSelf + ":0", dnsTCPAddr: testSelf + ":0", httpsAddr: testSelf + ":0", smtpAddr: testSelf + ":0", apiAddr: testSelf + ":0",
-		cert: &ca.cert, hostname: "mx.fixture.test", logf: func(format string, args ...any) { fmt.Fprintf(logs, format+"\n", args...) },
+		cert: &ca.cert, hostname: "mx.fixture.test", logf: func(format string, args ...any) {
+			logMu.Lock()
+			defer logMu.Unlock()
+			fmt.Fprintf(logs, format+"\n", args...)
+		},
 	})
 	if err != nil {
 		t.Fatalf("cannot start the fixture: %v", err)
@@ -359,6 +364,7 @@ func TestDNSModes(t *testing.T) {
 
 // TestDNSWithGoResolver: what module 1's control plane sees, with Go's own resolver (the same code path as its layers): MX and address lookups, and the three failure
 // classes it tells apart (not found, temporary "server misbehaving" = SERVFAIL, non-temporary = REFUSED, timeout = silence).
+// Every name is rooted (a trailing dot): the host's resolv.conf may carry search domains, and Go then retries a failed name with each suffix, which turned the runner's SERVFAIL into "no such host".
 func TestDNSWithGoResolver(t *testing.T) {
 	x := startTestFx(t, "")
 	r := &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
@@ -366,42 +372,42 @@ func TestDNSWithGoResolver(t *testing.T) {
 		return d.DialContext(ctx, "udp", x.f.dnsAddr)
 	}}
 	ctx := x.ctx()
-	mxs, err := r.LookupMX(ctx, "valid.fixture.test")
+	mxs, err := r.LookupMX(ctx, "valid.fixture.test.")
 	if err != nil || len(mxs) != 1 || mxs[0].Pref != 10 || mxs[0].Host != "mx.valid.fixture.test." {
 		t.Fatalf("LookupMX valid: %v %v", mxs, err)
 	}
-	ips, err := r.LookupIPAddr(ctx, "mx.valid.fixture.test")
+	ips, err := r.LookupIPAddr(ctx, "mx.valid.fixture.test.")
 	if err != nil || len(ips) != 1 || ips[0].IP.String() != testSelf {
 		t.Fatalf("LookupIPAddr (A and AAAA, as the control plane asks): %v %v", ips, err)
 	}
 	if names, err := r.LookupAddr(ctx, testNode); err != nil || len(names) != 1 || names[0] != "verifier.fixture.test." {
 		t.Fatalf("LookupAddr of the node: %v %v", names, err)
 	}
-	if mxs, err := r.LookupMX(ctx, "nullmx.fixture.test"); err != nil || len(mxs) != 1 || mxs[0].Pref != 0 || strings.Trim(mxs[0].Host, ".") != "" {
+	if mxs, err := r.LookupMX(ctx, "nullmx.fixture.test."); err != nil || len(mxs) != 1 || mxs[0].Pref != 0 || strings.Trim(mxs[0].Host, ".") != "" {
 		t.Fatalf("the null MX through Go's resolver: %v %v (module 1 recognises MX 0 \".\")", mxs, err)
 	}
 	for _, name := range []string{"nomx.fixture.test", "nodata.fixture.test"} {
-		_, err := r.LookupMX(ctx, name)
+		_, err := r.LookupMX(ctx, name+".")
 		var de *net.DNSError
 		if !errors.As(err, &de) || !de.IsNotFound {
 			t.Fatalf("LookupMX %s: %v, want a not-found DNSError (NXDOMAIN and NODATA both)", name, err)
 		}
-		if _, err := r.LookupIPAddr(ctx, name); !errors.As(err, &de) || !de.IsNotFound {
+		if _, err := r.LookupIPAddr(ctx, name+"."); !errors.As(err, &de) || !de.IsNotFound {
 			t.Fatalf("LookupIPAddr %s: %v, want not found (implicit MX finds no address)", name, err)
 		}
 	}
 	var de *net.DNSError
-	_, err = r.LookupMX(ctx, "servfail.fixture.test")
+	_, err = r.LookupMX(ctx, "servfail.fixture.test.")
 	if !errors.As(err, &de) || !de.IsTemporary || de.Err != "server misbehaving" || de.IsNotFound || de.IsTimeout {
 		t.Fatalf("SERVFAIL must reach the resolver's caller as a temporary \"server misbehaving\": %#v", err)
 	}
-	_, err = r.LookupMX(ctx, "refused.fixture.test")
+	_, err = r.LookupMX(ctx, "refused.fixture.test.")
 	if !errors.As(err, &de) || de.IsTemporary || de.IsNotFound || de.IsTimeout {
 		t.Fatalf("REFUSED must be neither temporary, not-found nor a timeout (module 1 calls it undetermined): %#v", err)
 	}
 	short, cancel := context.WithTimeout(ctx, 700*time.Millisecond)
 	defer cancel()
-	_, err = r.LookupMX(short, "silent.fixture.test")
+	_, err = r.LookupMX(short, "silent.fixture.test.")
 	if !errors.As(err, &de) || !de.IsTimeout {
 		t.Fatalf("silence must be a timeout: %#v", err)
 	}
