@@ -43,6 +43,21 @@ In Supabase → Settings → API → *Exposed schemas*, **remove `public` (and n
 - **Unit costs** (`platform.unit_costs`): five units, integer credits ≥ 1. The seed is `m1_own` 1, `m1_cache` 1, `m1_vendor` **2**, `m2_accepted` 1, `m2_bounced` 1. The vendor-fallback price (`m1_vendor`) is an **admin setting** and must stay above 1; the seed of 2 is a placeholder the owner replaces before launch. Changing a price needs a named admin and a reason and is recorded in `platform.unit_cost_history`; a job freezes its prices at confirm, so a change never affects a job already confirmed.
 - **Module 3** is not metered: an admin enables it per user, optionally until a date.
 
+## Module 1's vendor fallback (ZeroBounce) — ships disabled
+
+The platform charges a vendor answer as `m1_vendor` (the unit price above), but the vendor itself is **module 1's** and is switched on in module 1's environment, never in the platform's. Everything below is module 1's own configuration (`coldmail-verify/Docs/vendor-zerobounce.md` is the reference; the owner steps, in order, are section 3 of the parent repository's `OWNER-ACTIONS.md`). Nothing is sent to the vendor until **all** of the switches are on:
+
+| Dial (module 1) | Default | What it does |
+|---|---|---|
+| `TM_FALLBACK_MODE` | off | `enabled` allows the external-fallback stage (the global kill switch can still force it off) |
+| `TM_EXTERNAL_DPA_CONFIRMED` | false | `true` only after the vendor's data-processing agreement is signed |
+| `TM_EXTERNAL_ZEROBOUNCE_KEY_ENV` | `ZEROBOUNCE_API_KEY` | the **name** of the environment variable that holds the API key (the key itself is never in a file or a repository) |
+| `TM_EXTERNAL_DAILY_SPEND_CAP` | 0 | credits per UTC day module 1 may spend at the vendor; 0 sends nothing |
+| `TM_EXTERNAL_ZEROBOUNCE_TIMEOUT_MS` | 8000 | per-call timeout, 3000–60000 |
+| `TM_EXTERNAL_ZEROBOUNCE_BASE_URL` | `https://api.zerobounce.net` | the vendor endpoint (a regional host if the owner chooses one) |
+
+A vendor *answer* reaches the platform as `risky` or `invalid` with reason `external_verified` and is charged `m1_vendor`; a vendor *non-answer* (an error, a timeout, an `unknown`) leaves module 1's own result standing and is charged by the ordinary rows, never as a vendor call. Not checked: any real vendor call, and the vendor's real status vocabulary (the mapping was built from its official SDKs; the owner verifies it against the live documentation first).
+
 ## Behaviours that are rulings, not accidents
 
 - **Module 1's readiness is all-or-nothing on `TM_QUEUE_ADDR_KEY`.** Without the key `/readyz` reports not-ready and names the key. The platform always submits bulk jobs, so a deployment of module 1 without the queue can never serve the platform; a verify-only mode is deliberately not offered.
