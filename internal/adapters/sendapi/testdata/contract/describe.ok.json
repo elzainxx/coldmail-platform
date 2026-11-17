@@ -1,0 +1,138 @@
+{
+ "module": "send_byo",
+ "api_version": "v1",
+ "capabilities": {
+  "single_send": true,
+  "sequences": false,
+  "reply_to_per_campaign": true,
+  "open_tracking": false,
+  "click_tracking": false,
+  "content_variation": true
+ },
+ "pricing": {
+  "currency": "credits",
+  "model": "flat_subscription",
+  "models": [
+   "flat_per_recipient",
+   "flat_subscription",
+   "free"
+  ],
+  "unit_price_credits": 0,
+  "tiers": [
+   {
+    "id": "shared",
+    "unit_price_credits": 0,
+    "description": "Bring your own SMTP account."
+   }
+  ],
+  "cost_fields_inert": true
+ },
+ "extension_routes": [
+  {
+   "id": "accounts.list",
+   "method": "GET",
+   "path": "/v1/send-byo/accounts"
+  }
+ ],
+ "schemas": {
+  "report": {
+   "type": "object"
+  }
+ },
+ "vocabularies": {
+  "job_state": {
+   "source": "db_enum",
+   "values": [
+    "queued",
+    "assigned",
+    "sending",
+    "sent",
+    "failed",
+    "bounced"
+   ],
+   "fields": [
+    "report.state",
+    "report.items[].state"
+   ]
+  },
+  "error_class": {
+   "source": "db_enum",
+   "values": [
+    "bounce_permanent",
+    "transport_4xx",
+    "auth_failure",
+    "throttle",
+    "timeout",
+    "unknown"
+   ],
+   "fields": [
+    "report.error_class"
+   ]
+  },
+  "detail_issue": {
+   "source": "module_constant",
+   "values": [
+    "required",
+    "malformed",
+    "out_of_range",
+    "not_found"
+   ],
+   "fields": [
+    "error.details[].issue"
+   ]
+  },
+  "pricing_model": {
+   "source": "module_constant",
+   "values": [
+    "flat_per_recipient",
+    "flat_subscription",
+    "free"
+   ],
+   "fields": [
+    "pricing.model"
+   ]
+  }
+ },
+ "error_codes": [
+  {
+   "code": "validation_failed",
+   "http_status": 400
+  },
+  {
+   "code": "unauthenticated",
+   "http_status": 401
+  },
+  {
+   "code": "not_found",
+   "http_status": 404
+  },
+  {
+   "code": "method_not_allowed",
+   "http_status": 405
+  },
+  {
+   "code": "conflict",
+   "http_status": 409
+  },
+  {
+   "code": "unprocessable",
+   "http_status": 422
+  },
+  {
+   "code": "rate_limited",
+   "http_status": 429
+  },
+  {
+   "code": "internal_error",
+   "http_status": 500
+  },
+  {
+   "code": "paused",
+   "http_status": 503
+  }
+ ],
+ "bulk_add": {
+  "warning_code": "credentials_in_plaintext_file",
+  "warning_text": "A fixed sentence."
+ }
+}

@@ -1,0 +1,2 @@
+M2-F1|m2.go|cancel answers the campaign position after the call (cancelled includes earlier calls) and its cancelled and in_flight split is timing dependent, so the position is returned as it is and no delta is computed
+M2-F2|m2.go|a cancel of an unknown campaign, a typo or another tenant campaign answers 200 with all zeros (never a 404), so the adapter cannot tell nothing to cancel from no such campaign and exposes only Empty

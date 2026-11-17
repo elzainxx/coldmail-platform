@@ -1,0 +1,24 @@
+package m2
+
+import (
+	"github.com/coldmail-platform/platform/internal/adapters/sendapi"
+	"github.com/coldmail-platform/platform/internal/modclient"
+)
+
+// RouteCancel is the one route only module 2 has, as its contracts name it.
+const RouteCancel = "POST /v1/cancel"
+
+// Contracts lists every module 2 response the adapter relies on: the shared four routes and describe (sendapi.Contracts with module 2's profile) and cancel. Fixture names a file under this
+// package's testdata/contract/ directory; the Shape of each entry is the one the adapter decodes that response with (the shared ones are built by the same code the Client is, cancel's is
+// cancelShape). B6 replaces the hand-written bodies with recordings from the real module.
+func Contracts() []modclient.RouteContract {
+	cs := sendapi.Contracts(Profile())
+	codes := Profile().Vocabularies()["error_codes"]
+	return append(cs,
+		modclient.RouteContract{Module: modclient.M2, Route: RouteCancel, Case: "ok", Fixture: "cancel.ok.json", Status: 200, Shape: cancelShape},
+		modclient.RouteContract{
+			Module: modclient.M2, Route: RouteCancel, Case: "error validation_failed", Fixture: "cancel.error.validation_failed.json", Status: 400,
+			Shape: sendapi.ErrorShape(), Vocab: map[string][]string{"error_codes": codes},
+		},
+	)
+}

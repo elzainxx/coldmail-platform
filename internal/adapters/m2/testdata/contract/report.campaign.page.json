@@ -1,0 +1,52 @@
+{
+ "campaign_id": "5a1c9e30-7d2b-4f6a-9b8e-1c3d5e7f9a02",
+ "dispatch_paused": false,
+ "totals": {
+  "total": 5,
+  "sent": 1,
+  "bounced": 1,
+  "failed": 1,
+  "in_flight": 0,
+  "pending": 1,
+  "waiting_for_capacity": 0,
+  "cancelled": 1
+ },
+ "progress": {
+  "terminal": 4,
+  "fraction_complete": 0.8,
+  "is_complete": false
+ },
+ "items": {
+  "results": [
+   {
+    "job_item_id": "a1b2c3d4-0000-4000-8000-000000000001",
+    "state": "sent",
+    "provider_message_id": "<job-1@mail.example.test>",
+    "completed_at": "2026-11-17T10:00:00Z",
+    "attempt_count": 0,
+    "reason": null,
+    "error_class": null
+   },
+   {
+    "job_item_id": "a1b2c3d4-0000-4000-8000-000000000002",
+    "state": "bounced",
+    "provider_message_id": null,
+    "completed_at": "2026-11-17T10:00:01Z",
+    "attempt_count": 0,
+    "reason": "bounce_permanent",
+    "error_class": "bounce_permanent"
+   },
+   {
+    "job_item_id": "a1b2c3d4-0000-4000-8000-000000000003",
+    "state": "failed",
+    "provider_message_id": null,
+    "completed_at": "2026-11-17T10:00:02Z",
+    "attempt_count": 3,
+    "reason": "attempts_exhausted",
+    "error_class": "transport_4xx"
+   }
+  ],
+  "next_cursor": "MjAyNi0xMS0xN1QxMDowMDowMy4wMDAwMDBafGExYjJjM2Q0LTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMw",
+  "page_size": 3
+ }
+}

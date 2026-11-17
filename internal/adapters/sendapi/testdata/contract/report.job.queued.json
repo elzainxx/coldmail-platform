@@ -1,0 +1,7 @@
+{
+ "job_id": "0d3e5f70-8192-4a3b-8c4d-5e6f708192a3",
+ "state": "queued",
+ "attempt_count": 1,
+ "smtp_response": "451 4.7.1 try later",
+ "error_class": "transport_4xx"
+}

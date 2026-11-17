@@ -1,0 +1,9 @@
+{
+ "job_id": "0d3e5f70-8192-4a3b-8c4d-5e6f708192a3",
+ "state": "sent",
+ "attempt_count": 1,
+ "provider_message_id": "<job-1@mail.example.test>",
+ "completed_at": "2026-11-17T12:00:01.123456Z",
+ "account_id": "7e8f9a0b-1c2d-4e3f-8a4b-5c6d7e8f9a0b",
+ "account_username": "sender-1@example.test"
+}

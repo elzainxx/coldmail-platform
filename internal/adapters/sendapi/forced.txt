@@ -1,0 +1,11 @@
+SA-F1|errors.go|run answers 409 with one body for every cause (code conflict, no details), so the cause is inferred from the route and the profile: back-pressure on module 2, unexplained on module 3
+SA-F2|errors.go|a cursor that decodes but is not a timestamp and an id is a 500 from the module (documented as 400) and cannot be told from a module fault, so a 500 on a request that carried a cursor is reported as a possible bad cursor
+SA-F3|errors.go|a 404 on a report is the same answer for a job never run, another tenant job and a typo, so the module NotFound is returned untouched and only the missing resource is named
+SA-F4|shapes.go|module 3 omits single-report keys until set where module 2 sends null and campaign items carry null on both, so the Shape requires or allows the single report keys by profile
+SA-F5|client.go|the module reports a malformed job_item_id as required, not malformed, so the adapter validates every id itself before sending
+SA-F6|client.go|quote has no upper bound on recipient_count and multiplies in 64 bits, so the adapter bounds the count itself
+SA-F7|client.go|completed_at has two formats (fractional seconds in the single report, whole seconds in a campaign item), so one RFC 3339 reader serves both and the two are never compared
+SA-F8|walk.go|the module clamps page_size silently, so the page is checked against the page size the module echoes and not the one asked
+SA-F9|walk.go|totals and items are separate queries of the module, not a snapshot, so the report carries the last totals and the caller checks ItemsMatchTotal
+SA-F10|types.go|an unknown campaign, a typo and another tenant campaign all answer an empty 200 (never a 404), so the adapter can only say nothing is known
+SA-F11|client.go|attempt_count is not an attempt count (it saturates and is bumped by requeues that never reached SMTP), so it is carried as advisory and settlement never reads it

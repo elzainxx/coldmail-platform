@@ -1,0 +1,24 @@
+{
+ "campaign_id": "5a1c9e30-7d2b-4f6a-9b8e-1c3d5e7f9a02",
+ "dispatch_paused": false,
+ "totals": {
+  "total": 0,
+  "sent": 0,
+  "bounced": 0,
+  "failed": 0,
+  "in_flight": 0,
+  "pending": 0,
+  "waiting_for_capacity": 0
+ },
+ "progress": {
+  "terminal": 0,
+  "fraction_complete": 0,
+  "is_complete": false
+ },
+ "items": {
+  "results": [],
+  "next_cursor": null,
+  "page_size": 100
+ },
+ "totals_by_account": []
+}

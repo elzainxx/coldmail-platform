@@ -1,0 +1,13 @@
+{
+ "error": {
+  "code": "not_found",
+  "message": "The requested resource was not found.",
+  "details": [
+   {
+    "field": "job_id",
+    "issue": "not_found"
+   }
+  ],
+  "request_id": "req_0123456789abcdef0123456789abcdef"
+ }
+}

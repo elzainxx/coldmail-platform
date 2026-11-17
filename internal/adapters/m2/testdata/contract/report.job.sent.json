@@ -1,0 +1,9 @@
+{
+ "job_id": "0d3e5f70-8192-4a3b-8c4d-5e6f708192a3",
+ "state": "sent",
+ "attempt_count": 0,
+ "reason": null,
+ "error_class": null,
+ "provider_message_id": "<job-1@mail.example.test>",
+ "completed_at": "2026-11-17T10:00:00.123456Z"
+}
