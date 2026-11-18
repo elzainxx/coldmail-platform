@@ -12,7 +12,7 @@ import (
 var (
 	// flagsShape: flags.from_cache is the cache signal the charge table reads (and the only reliable one: meta.from_cache is always false in a bulk result, M1-F6). It is required so
 	// that a module that stopped sending it cannot make every cached answer read as a fresh one (a different unit price).
-	flagsShape = modclient.Object(modclient.Req("from_cache", modclient.Bool), modclient.Opt("is_disposable", modclient.Bool)) // is_disposable: the module omits it when false (the first compare-mode run on the real node: pages without a disposable row lack it)
+	flagsShape = modclient.Object(modclient.Req("from_cache", modclient.Bool), modclient.Opt("is_disposable", modclient.Bool), modclient.Opt("is_free_provider", modclient.Bool), modclient.Opt("is_role", modclient.Bool), modclient.Opt("is_spam_trap", modclient.Bool)) // flags is a map[string]bool in the module (verdict.go): from_cache always, and the cheap layers' signal keys only when the layer says so (the compare-mode runs on the real node: pages without a disposable or spam-trap row lack those keys)
 
 	// signalsShape: the two keys of the open `signals` bag the charge table reads. Both are absent when they do not apply (failure_origin exists on every `unknown`, smtp_skipped_reason
 	// only where the SMTP stage did not run); the bag itself is always an object in a served verdict.

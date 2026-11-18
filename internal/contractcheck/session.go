@@ -396,8 +396,8 @@ func fitNote(rc modclient.RouteContract, rep Report, observations int) string {
 			return fmt.Sprintf("%s: there is no readable current fixture, so this is a new recording (%d observation(s) assigned to this contract)", head, observations)
 		}
 	}
-	return fmt.Sprintf("%s: %d differences, %d gaps against the current fixture (0 and 0 is an exact fit); the block below is the one of the %d observation(s) assigned to this contract that says most",
-		head, len(rep.Diffs), oneSidedGaps(rep), observations)
+	return fmt.Sprintf("%s: %d differences, %d gaps against the current fixture, %d vocabulary values that differ (all 0 is an exact fit); the block below is the one of the %d observation(s) assigned to this contract that says most",
+		head, len(rep.Diffs), oneSidedGaps(rep), len(rep.VocabMismatch), observations)
 }
 
 // pickIndex picks, of several observations of one contract, the one that says most: the fewest positions that tell nothing, then the longest body, then the first.

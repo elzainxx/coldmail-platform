@@ -128,8 +128,9 @@ type MatchResult struct {
 	undeclaredObs [][]Observation // the observations behind each Undeclared entry (record mode prints one of them; never reported)
 }
 
-// rank orders the contracts that could take an observation by DISTANCE: the differences from Compare plus the positions that tell nothing on one side only (one-sided gaps: an
-// empty array, an empty map or a null in the fixture where the live body has content, or the reverse), each gap counting as one position like one difference. Of equal distance the
+// rank orders the contracts that could take an observation by DISTANCE: the differences from Compare, plus the positions that tell nothing on one side only (one-sided gaps: an
+// empty array, an empty map or a null in the fixture where the live body has content, or the reverse), plus the vocabulary positions at which the fixture and the live body carry
+// different values (a test button's ok against failed against unavailable: contracts whose fixtures differ in nothing else), each counting as one position like one difference. Of equal distance the
 // one with fewer gaps comes first. Both halves matter. Differences alone let a fixture that says nothing (an empty page) fit every body with zero differences and take the
 // observations of a populated contract; gaps first let a fixture of a completely different structure (a dozen differences, no gap) lose to one of the right structure that has a
 // single gap. Together, a fixture of the right structure with one stale key or one gap beats one of another structure with a dozen differences, and of two at the same distance the
@@ -138,7 +139,7 @@ type rank struct{ total, oneSided int }
 
 func newRank(rep Report) rank {
 	g := oneSidedGaps(rep)
-	return rank{total: len(rep.Diffs) + g, oneSided: g}
+	return rank{total: len(rep.Diffs) + g + len(rep.VocabMismatch), oneSided: g}
 }
 
 // scored is one candidate contract for an observation, with the report that scored it.
@@ -360,8 +361,8 @@ func (m *missTrack) offer(s scored) {
 	}
 }
 
-// Miss is one way a fixture misses an observation: a path and the name of a difference Kind, or GapFixture / GapLive for a position that tells nothing on that side only. It
-// names no value.
+// Miss is one way a fixture misses an observation: a path and the name of a difference Kind, GapFixture / GapLive for a position that tells nothing on that side only, or
+// VocabValue for a vocabulary position that holds different values in the two. It names no value.
 type Miss struct {
 	Path string
 	Kind string
@@ -420,8 +421,14 @@ func missesOf(rep Report) []Miss {
 			out = append(out, Miss{Path: p, Kind: "Gap" + strings.ToUpper(sides[p][0][:1]) + sides[p][0][1:]})
 		}
 	}
+	for _, p := range rep.VocabMismatch {
+		out = append(out, Miss{Path: p, Kind: KindVocabValue})
+	}
 	return out
 }
+
+// KindVocabValue is the Miss kind of a vocabulary position at which the fixture and the closest observed response carry different values. A Miss names the path only, never the values.
+const KindVocabValue = "VocabValue"
 
 // redactPath keeps the segments of a path that some contract of the module names as a literal and replaces every other segment with {}: the path of an undeclared call is
 // printed in reports and must not carry a real id.

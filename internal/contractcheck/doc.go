@@ -10,6 +10,11 @@
 //     the comparison itself cannot be made). A difference names the module, route, case and path and prints no value except a vocabulary value. A key the contract's Shape
 //     declares Opt (the module omits or sets it depending on state) is never a KeyMissing or a KeyAdded: its presence on one side only is listed in Report.Optional and
 //     noted ("optional per the Shape, presence not compared"), and it does not count in the distance Match ranks by; present on both sides it is compared like any key.
+//     A Vocab path at which the fixture and the live body carry different strings is not a difference but is returned in Report.VocabMismatch.
+//   - Match and Session: which contract an observed response belongs to, and the live gate built on it. Contracts of one module, route and status are told apart by DISTANCE: the
+//     differences from Compare, plus the positions that tell nothing on one side only (an empty array or a null against content), plus the vocabulary positions that hold different
+//     values (a test button that answers ok, failed or unavailable differs in nothing else), each one unit; of equal distance, fewer gaps, then the first contract nothing has been
+//     assigned to yet, then contract order. A contract no response was assigned to keeps a NearestMiss: how far its fixture is from the closest response of its route and status.
 //   - CheckFixtures: the no-rot check (every contract has a usable fixture, every fixture has a contract, nothing secret-shaped is committed).
 //   - Normalise, Record, ParseRecorded and WriteRecorded: record mode. The harness prints each live response as a delimited, normalised block in its log; the lead feeds the
 //     downloaded log to cmd/contract-fixtures, which writes the files to commit.

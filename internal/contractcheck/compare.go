@@ -61,6 +61,11 @@ type Report struct {
 	// Optional are the paths of keys the contract's Shape declares Opt (the module omits or sets them depending on state) that are present on one side only: their presence is not
 	// compared, so they are neither differences nor part of the distance Match ranks by. A key that is present on both sides is compared as any other.
 	Optional []string
+	// VocabMismatch are the paths named in the contract's Vocab at which the fixture and the live body both carry strings and no string is common to the two (for a path that
+	// holds one value, the two values differ; for a path inside an array, the two sets of values have nothing in common). It is not a difference: a module's job moves from queued to
+	// sent. It is the evidence that tells apart contracts of one route and status whose fixtures differ only by a vocabulary value (a test button that answers ok, failed or
+	// unavailable), so Match counts each as one more unit of distance, and the report names the path and never the values.
+	VocabMismatch []string
 }
 
 // Clean is true when there is no difference.
@@ -100,7 +105,8 @@ func (c *comparer) optional(path string) {
 //
 // Positions that tell nothing (an empty array, an empty map, a null) are never differences: they are returned in Report.Gaps. A key the Shape declares Opt that is present on one side
 // only is not a difference either, in either direction (no KeyMissing, no KeyAdded): it is returned in Report.Optional; present on both sides it is compared as any other key. A key
-// the Shape does not list keeps KeyMissing and KeyAdded. The order of Diffs is deterministic: status, then
+// the Shape does not list keeps KeyMissing and KeyAdded. A Vocab path at which the fixture and the live body carry different strings is not a difference either: it is returned in
+// Report.VocabMismatch, for Match to tell contracts apart by. The order of Diffs is deterministic: status, then
 // the structure in fixture order, then added keys, then vocabularies by name, then the Shape check.
 func Compare(rc modclient.RouteContract, fixture, live []byte, liveStatus int) Report {
 	var rep Report
@@ -123,7 +129,7 @@ func Compare(rc modclient.RouteContract, fixture, live []byte, liveStatus int) R
 	if ferr == nil && lerr == nil {
 		fn, ln := build(fv, sv), build(lv, sv)
 		c.walk("", fn, ln, sv)
-		c.vocab(lv)
+		c.vocab(fv, lv)
 	}
 	if lerr == nil {
 		c.shape(live, liveStatus)
@@ -211,7 +217,7 @@ func (c *comparer) walkKeys(path string, fx, lv *node, sv *sview) {
 	}
 }
 
-func (c *comparer) vocab(live value) {
+func (c *comparer) vocab(fixture, live value) {
 	for _, name := range sortedKeys(c.rc.Vocab) {
 		segs, err := parsePath(name)
 		if err != nil || len(segs) == 0 {
@@ -232,7 +238,29 @@ func (c *comparer) vocab(live value) {
 			reported[v] = true
 			c.diff(name, VocabNew, fmt.Sprintf("the live value %s is not in the closed vocabulary (%d values)", printable(v), len(known)))
 		}
+		var fixed []string
+		collectStrings(fixture, segs, &fixed)
+		if disjointStrings(seen, fixed) {
+			c.rep.VocabMismatch = append(c.rep.VocabMismatch, name)
+		}
 	}
+}
+
+// disjointStrings is true when both lists hold at least one string and no string is in both.
+func disjointStrings(a, b []string) bool {
+	if len(a) == 0 || len(b) == 0 {
+		return false
+	}
+	in := make(map[string]bool, len(a))
+	for _, v := range a {
+		in[v] = true
+	}
+	for _, v := range b {
+		if in[v] {
+			return false
+		}
+	}
+	return true
 }
 
 var reIndex = regexp.MustCompile(`\[[0-9]+\]`)
