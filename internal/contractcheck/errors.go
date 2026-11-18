@@ -82,6 +82,8 @@ var (
 	ErrMalformedLog = errors.New("contractcheck: the log holds a malformed fixture block")
 	// ErrConflict: two blocks for one file with different bodies, or a file on disk that would be overwritten with different content.
 	ErrConflict = errors.New("contractcheck: a fixture file would receive two different bodies")
+	// ErrTooManyAddresses: a body holds more distinct IPv4 addresses than the three documentation ranges have hosts (MaxDistinctAddresses), so Normalise cannot rewrite them.
+	ErrTooManyAddresses = errors.New("contractcheck: the body holds more distinct IPv4 addresses than the documentation ranges can stand for")
 	// ErrShapeUnreadable: the contract's Shape could not be walked (modclient changed the internals this package reads).
 	ErrShapeUnreadable = errors.New("contractcheck: the Shape of a contract cannot be read")
 )

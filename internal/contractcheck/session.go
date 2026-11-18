@@ -322,23 +322,28 @@ func (s *Session) finishRecord(t TB, res MatchResult, total, dropped int) {
 		}
 	}
 	// One block per contract that was matched: the observation that says most (an empty page is the worst example of a page).
-	byContract := map[int][]Observation{}
+	byContract := map[int][]Matched{}
 	var order []int
 	for _, m := range res.Matched {
 		if _, ok := byContract[m.Index]; !ok {
 			order = append(order, m.Index)
 		}
-		byContract[m.Index] = append(byContract[m.Index], m.Observation)
+		byContract[m.Index] = append(byContract[m.Index], m)
 	}
 	sort.Ints(order)
 	for _, i := range order {
-		emit(s.contracts[i], representative(byContract[i], s.contracts[i].Shape))
+		ms := byContract[i]
+		m := ms[pickIndex(len(ms), func(j int) []byte { return ms[j].Observation.Body }, s.contracts[i].Shape)]
+		t.Logf("%s", fitNote(s.contracts[i], m.Report, len(ms)))
+		emit(s.contracts[i], m.Observation)
 	}
 	perModule := map[modclient.Module]int{}
 	for i, u := range res.Undeclared {
 		perModule[u.Module]++
 		rc := modclient.RouteContract{Module: u.Module, Route: u.Template(), Fixture: fmt.Sprintf("UNDECLARED-%s-%d.json", u.Module, perModule[u.Module]), Status: u.Status}
-		emit(rc, representative(res.undeclaredObs[i], modclient.Shape{}))
+		obs := res.undeclaredObs[i]
+		t.Logf("NOTE fixture fit: %s %s file=%s: no contract declares this call, so there is no fixture to compare it with (%d observation(s))", rc.Module, rc.Route, rc.Fixture, len(obs))
+		emit(rc, obs[pickIndex(len(obs), func(j int) []byte { return obs[j].Body }, modclient.Shape{})])
 	}
 	t.Logf("contract drift gate (record mode): %d of %d contracts matched and printed, %d groups of undeclared calls printed under UNDECLARED-<module>-<n>.json, %d contracts still unexercised, %d responses observed",
 		len(order), res.Contracts, len(res.Undeclared), len(res.Unexercised), total)
@@ -351,16 +356,35 @@ func (s *Session) finishRecord(t TB, res MatchResult, total, dropped int) {
 	}
 }
 
-// representative picks, of several observations of one contract, the one that says most: the fewest positions that tell nothing, then the longest body, then the first.
-func representative(obs []Observation, shape modclient.Shape) Observation {
-	best, bestGaps := obs[0], 1<<30
-	for _, o := range obs {
+// fitNote is the line printed right before a recorded block: how far the observation that is about to be printed is from the contract's CURRENT fixture, in differences and in
+// one-sided gaps (the two halves of the distance Match ranks by). 0 and 0 is an exact fit; anything else says the recording will change the fixture, and by how much, so a
+// recording that is not a close fit is visible at a glance. ParseRecorded ignores it (it is outside the block).
+func fitNote(rc modclient.RouteContract, rep Report, observations int) string {
+	c := ""
+	if rc.Case != "" {
+		c = " case=" + rc.Case
+	}
+	head := fmt.Sprintf("NOTE fixture fit: %s %s%s file=%s", rc.Module, rc.Route, c, rc.Fixture)
+	for _, d := range rep.Diffs {
+		if d.Kind == ContractInvalid && strings.HasPrefix(d.Detail, "the recorded fixture cannot be read") {
+			return fmt.Sprintf("%s: there is no readable current fixture, so this is a new recording (%d observation(s) assigned to this contract)", head, observations)
+		}
+	}
+	return fmt.Sprintf("%s: %d differences, %d gaps against the current fixture (0 and 0 is an exact fit); the block below is the one of the %d observation(s) assigned to this contract that says most",
+		head, len(rep.Diffs), oneSidedGaps(rep), observations)
+}
+
+// pickIndex picks, of several observations of one contract, the one that says most: the fewest positions that tell nothing, then the longest body, then the first.
+func pickIndex(n int, body func(i int) []byte, shape modclient.Shape) int {
+	best, bestGaps, bestLen := 0, 1<<30, -1
+	for i := 0; i < n; i++ {
+		b := body(i)
 		g := 1 << 29 // a body that cannot be read says nothing
-		if sk, err := Skeleton(o.Body, shape); err == nil {
+		if sk, err := Skeleton(b, shape); err == nil {
 			g = len(sk.Gaps())
 		}
-		if g < bestGaps || g == bestGaps && len(o.Body) > len(best.Body) {
-			best, bestGaps = o, g
+		if g < bestGaps || g == bestGaps && len(b) > bestLen {
+			best, bestGaps, bestLen = i, g, len(b)
 		}
 	}
 	return best

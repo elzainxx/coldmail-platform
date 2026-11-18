@@ -152,7 +152,7 @@ func TestMissTrackKeepsTheClosestCandidateTheFirstOfEqualOnesAndCountsAll(t *tes
 	var tr missTrack
 	for _, n := range []int{3, 1, 1, 2} {
 		r := rep(n)
-		tr.offer(scored{rep: r, rk: rank{0, len(r.Diffs)}})
+		tr.offer(scored{rep: r, rk: newRank(r)})
 	}
 	if tr.seen != 4 || len(tr.rep.Diffs) != 1 || tr.rep.Diffs[0].Path != "p0" {
 		t.Fatalf("track = %+v", tr)
@@ -160,8 +160,8 @@ func TestMissTrackKeepsTheClosestCandidateTheFirstOfEqualOnesAndCountsAll(t *tes
 	// One-sided gaps count as misses too: a report with no differences but a one-sided gap is farther than a clean one.
 	var tr2 missTrack
 	gap := Report{Gaps: []Gap{{Side: "fixture", Path: "items"}}}
-	tr2.offer(scored{rep: gap, rk: rank{1, 0}})
-	tr2.offer(scored{rep: Report{}, rk: rank{0, 0}})
+	tr2.offer(scored{rep: gap, rk: newRank(gap)})
+	tr2.offer(scored{rep: Report{}, rk: newRank(Report{})})
 	if len(missesOf(tr2.rep)) != 0 {
 		t.Fatalf("the clean candidate is closer: %+v", missesOf(tr2.rep))
 	}

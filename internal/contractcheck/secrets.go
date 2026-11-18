@@ -110,6 +110,27 @@ var allowedV4 = func() []netip.Prefix {
 	return out
 }()
 
+// ipv4Spans finds the IPv4 addresses written in s, as the repository's personal-details gate reads them: four dotted numbers that are not glued to a letter, a digit, an
+// underscore or a dot on the left, nor to a letter, a digit or an underscore on the right, nor followed by a further dot and digit ("1.2.3.4.5" and "v1.2.3.4" are version
+// numbers). A span is a candidate: whether it is an address (octets up to 255, no leading zero) is for netip.ParseAddr.
+func ipv4Spans(s string) [][2]int {
+	var out [][2]int
+	word := func(c byte) bool {
+		return c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '_'
+	}
+	for _, loc := range reIPv4.FindAllStringIndex(s, -1) {
+		a, b := loc[0], loc[1]
+		if a > 0 && (word(s[a-1]) || s[a-1] == '.') {
+			continue
+		}
+		if b < len(s) && (word(s[b]) || s[b] == '.' && b+1 < len(s) && s[b+1] >= '0' && s[b+1] <= '9') {
+			continue
+		}
+		out = append(out, [2]int{a, b})
+	}
+	return out
+}
+
 // ipv4Allowed: documentation, private and special-use addresses may be written in a public repository, any other address may not. Text that does not parse as an address
 // (a version number, 999.1.1.1) is not an address.
 func ipv4Allowed(s string) bool {
@@ -192,8 +213,8 @@ func scanText(path, name, s string, add func(path, class string)) {
 			add(path, ClassEmail)
 		}
 	}
-	for _, m := range reIPv4.FindAllString(s, -1) {
-		if !ipv4Allowed(m) {
+	for _, sp := range ipv4Spans(s) {
+		if !ipv4Allowed(s[sp[0]:sp[1]]) {
 			add(path, ClassIPv4)
 		}
 	}

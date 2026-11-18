@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net/netip"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -25,23 +26,78 @@ const (
 // appearance (`00000000-0000-4000-8000-000000000001`, `...002`, in a key or in a string, case-insensitively); every RFC 3339 timestamp becomes `2026-01-01T00:00:00Z` with the
 // same separator, fraction length and offset style; a string under a key that names an id, cursor, token, hash or the like, and any long opaque string of the safe
 // alphabet (16 or more hex characters; 24 or more base64-like characters with a letter and a digit), becomes one repeated character of the same alphabet and the same length;
-// a string under a key that names a secret (key, secret, password, token, authorization, credential) becomes REDACTED. Keys, key order and structure are unchanged; numbers,
-// booleans, null and every other string are untouched. The output has two-space indentation and ends with one newline; the same input always gives the same output, and
-// normalising an already normalised body changes nothing.
+// a string under a key that names a secret (key, secret, password, token, authorization, credential) becomes REDACTED; every IPv4 address in a string or in a key, whatever
+// its range (a harness network is public-looking on purpose, and a body may also name a private or loopback address), becomes a documentation address by order of first appearance
+// in the body (192.0.2.1, 192.0.2.2, ... 192.0.2.254, then 198.51.100.1 ... 198.51.100.254, then 203.0.113.1 ... 203.0.113.254), the same address always the same one, an address
+// inside a longer string ("mx.example [198.51.100.9]:25") rewritten in place; more than 762 distinct addresses is refused with ErrTooManyAddresses. Text that is not an IPv4 address
+// (a version number, an octet above 255, a leading zero) and IPv6 addresses are left as they are. Keys, key order and structure are unchanged; numbers, booleans, null and every
+// other string are untouched. The output has two-space indentation and ends with one newline; the same input always gives the same output, and normalising an already normalised body
+// changes nothing.
 func Normalise(body []byte) ([]byte, error) {
 	v, err := parse(body)
 	if err != nil {
 		return nil, err
 	}
-	n := &normaliser{uuids: map[string]string{}}
+	n := &normaliser{uuids: map[string]string{}, addrs: map[netip.Addr]string{}}
 	var buf bytes.Buffer
 	n.emit(&buf, v, "", 0)
+	if n.err != nil {
+		return nil, n.err
+	}
 	buf.WriteByte('\n')
 	return buf.Bytes(), nil
 }
 
 type normaliser struct {
 	uuids map[string]string
+	addrs map[netip.Addr]string
+	err   error
+}
+
+// documentationBlocks are the three IPv4 ranges set aside for documentation (RFC 5737); 254 host numbers each.
+var documentationBlocks = [...]string{"192.0.2", "198.51.100", "203.0.113"}
+
+// MaxDistinctAddresses is how many distinct IPv4 addresses one body may hold for Normalise: the hosts .1 to .254 of the three documentation ranges.
+const MaxDistinctAddresses = len(documentationBlocks) * 254
+
+// synthetic is the documentation address of an address, assigned by order of first appearance.
+func (n *normaliser) synthetic(a netip.Addr) (string, bool) {
+	if syn, ok := n.addrs[a]; ok {
+		return syn, true
+	}
+	i := len(n.addrs)
+	if i >= MaxDistinctAddresses {
+		return "", false
+	}
+	syn := fmt.Sprintf("%s.%d", documentationBlocks[i/254], i%254+1)
+	n.addrs[a] = syn
+	return syn, true
+}
+
+// ips rewrites every IPv4 address in s to its documentation address. When there are too many distinct ones the normalisation stops: n.err is set and s is returned as it was.
+func (n *normaliser) ips(s string) string {
+	spans := ipv4Spans(s)
+	if len(spans) == 0 || n.err != nil {
+		return s
+	}
+	var b strings.Builder
+	last := 0
+	for _, sp := range spans {
+		a, err := netip.ParseAddr(s[sp[0]:sp[1]])
+		if err != nil || !a.Is4() {
+			continue // not an address (a leading zero, an octet above 255)
+		}
+		syn, ok := n.synthetic(a)
+		if !ok {
+			n.err = fmt.Errorf("%w: more than %d", ErrTooManyAddresses, MaxDistinctAddresses)
+			return s
+		}
+		b.WriteString(s[last:sp[0]])
+		b.WriteString(syn)
+		last = sp[1]
+	}
+	b.WriteString(s[last:])
+	return b.String()
 }
 
 func (n *normaliser) uuid(s string) string {
@@ -143,12 +199,12 @@ func (n *normaliser) str(s, name string) string {
 	}
 	s = timestamp(n.uuid(s))
 	if reUUID.MatchString(s) || reTimestamp.MatchString(s) {
-		return s
+		return n.ips(s)
 	}
 	if name != "" && reIdName.MatchString(canonName(name)) || opaque(s) {
-		return placeholder(s)
+		return placeholder(s) // the whole string is gone: no address in it is numbered, so a second pass numbers the same ones
 	}
-	return s
+	return n.ips(s)
 }
 
 func quote(s string) string {
@@ -176,7 +232,7 @@ func (n *normaliser) emit(buf *bytes.Buffer, v value, name string, depth int) {
 		buf.WriteString("{\n")
 		for i, m := range v.members {
 			buf.WriteString(strings.Repeat("  ", depth+1))
-			buf.WriteString(quote(n.uuid(m.key)))
+			buf.WriteString(quote(n.ips(n.uuid(m.key))))
 			buf.WriteString(": ")
 			n.emit(buf, m.val, m.key, depth+1)
 			if i < len(v.members)-1 {

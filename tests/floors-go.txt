@@ -11,7 +11,7 @@ go|github.com/coldmail-platform/platform/internal/adapters/sendapi|46
 go|github.com/coldmail-platform/platform/internal/app|17
 go|github.com/coldmail-platform/platform/internal/charge|29
 go|github.com/coldmail-platform/platform/internal/config|37
-go|github.com/coldmail-platform/platform/internal/contractcheck|190
+go|github.com/coldmail-platform/platform/internal/contractcheck|211
 go|github.com/coldmail-platform/platform/internal/dsnscrub|8
 go|github.com/coldmail-platform/platform/internal/entitlements|60
 go|github.com/coldmail-platform/platform/internal/httpapi|16

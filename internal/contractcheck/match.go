@@ -128,10 +128,18 @@ type MatchResult struct {
 	undeclaredObs [][]Observation // the observations behind each Undeclared entry (record mode prints one of them; never reported)
 }
 
-// rank orders the contracts that could take an observation. Agreement about what is exercised comes FIRST: a position that tells nothing on one side only (a fixture whose items are
-// empty against a live body that has items, or the reverse) is a worse fit than any number of differences, because a fixture that says nothing fits every body with zero differences
-// and would otherwise take the observations of a populated contract and hide their real differences behind an "unexercised" line. Differences come second.
-type rank struct{ oneSided, diffs int }
+// rank orders the contracts that could take an observation by DISTANCE: the differences from Compare plus the positions that tell nothing on one side only (one-sided gaps: an
+// empty array, an empty map or a null in the fixture where the live body has content, or the reverse), each gap counting as one position like one difference. Of equal distance the
+// one with fewer gaps comes first. Both halves matter. Differences alone let a fixture that says nothing (an empty page) fit every body with zero differences and take the
+// observations of a populated contract; gaps first let a fixture of a completely different structure (a dozen differences, no gap) lose to one of the right structure that has a
+// single gap. Together, a fixture of the right structure with one stale key or one gap beats one of another structure with a dozen differences, and of two at the same distance the
+// one that agrees about what is exercised wins.
+type rank struct{ total, oneSided int }
+
+func newRank(rep Report) rank {
+	g := oneSidedGaps(rep)
+	return rank{total: len(rep.Diffs) + g, oneSided: g}
+}
 
 // scored is one candidate contract for an observation, with the report that scored it.
 type scored struct {
@@ -141,10 +149,10 @@ type scored struct {
 }
 
 func (a rank) less(b rank) bool {
-	if a.oneSided != b.oneSided {
-		return a.oneSided < b.oneSided
+	if a.total != b.total {
+		return a.total < b.total
 	}
-	return a.diffs < b.diffs
+	return a.oneSided < b.oneSided
 }
 
 // oneSidedGaps counts the positions that tell nothing on one side only: a live empty page against a fixture that has elements fits worse than against a fixture that is an empty
@@ -226,10 +234,10 @@ func compareObservation(rc modclient.RouteContract, fixture []byte, ferr error, 
 	return rep
 }
 
-// Match assigns every observation to the contract of the same module, route and status that fits it best: the one with the fewest positions that tell nothing on one side only
-// (an empty array, an empty map or a null in the fixture where the live body has content, or the reverse; see rank), then the fewest differences from Compare against the contract's
-// fixture (read from fixtures under dir), then the first by contract order that no observation has been assigned to yet, then the first. The route of a contract is its "METHOD /template": it fits an observation whose method and path (as sent) fit the template, or whose route
-// label it names. Contracts of one route differ by case (a page and an empty page), so several can fit one observation; the others are listed in Matched.Tied.
+// Match assigns every observation to the contract of the same module, route and status that fits it best: the one with the smallest distance (differences from Compare against the
+// contract's fixture, read from fixtures under dir, plus one-sided gaps; see rank), then the fewest gaps, then the first by contract order that no observation has been assigned to
+// yet, then the first. The route of a contract is its "METHOD /template": it fits an observation whose method and path (as sent) fit the template, or whose route label it names.
+// Contracts of one route differ by case (a page and an empty page), so several can fit one observation; the others are listed in Matched.Tied.
 //
 // The observations are put in a canonical order first, so the result does not depend on the order they arrived in. An observation no contract fits by route and status is
 // Undeclared (grouped, with no body); a contract no observation was assigned to is Unexercised. Match reads fixtures but never fails: a fixture that cannot be read is a
@@ -294,7 +302,7 @@ func Match(contracts []modclient.RouteContract, fixtures fs.FS, dir string, obs 
 		for _, i := range cands {
 			fx, ferr := cache.load(i, contracts[i])
 			rep := compareObservation(contracts[i], fx, ferr, o)
-			sc := scored{i, rep, rank{oneSidedGaps(rep), len(rep.Diffs)}}
+			sc := scored{i, rep, newRank(rep)}
 			all = append(all, sc)
 			tracks[i].offer(sc)
 		}
@@ -347,7 +355,7 @@ type missTrack struct {
 // offer notes one candidate: the closest is the one with the fewest differences plus one-sided gaps; of equal ones the first in canonical order stays.
 func (m *missTrack) offer(s scored) {
 	m.seen++
-	if t := s.rk.oneSided + s.rk.diffs; m.seen == 1 || t < m.total {
+	if t := s.rk.total; m.seen == 1 || t < m.total {
 		m.total, m.rep = t, s.rep
 	}
 }

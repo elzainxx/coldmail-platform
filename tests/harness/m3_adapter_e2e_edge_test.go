@@ -43,14 +43,17 @@ import (
 //	run                  POST /v1/run unauthenticated                     an adapter built over a random service token: 401
 //	                     ... validation_failed                            an empty body (raw): 400
 //	                     ... paused                                       dispatch_mode set to refuse_new for the one call and restored at once: 503, no job created; restored, the same Run is accepted
-//	report, held queue   GET /v1/report job queued                        five items the sink answers 451: queued, attempt_count >= 1, transport_4xx and a 451 text, no account
-//	                     ... campaign page, last page                     the five at page size 2: pages of 2, 2 and 1 (the last has no next cursor)
-//	                     ... campaign cursor_malformed, cursor_forged     a cursor that is not base64: 400; a base64 cursor that is not a timestamp and an id: the module's 500 (research m3-api 6, read not run)
+//	report, held queue   GET /v1/report job queued                        five items, ONE lane held for 60 s after every push, the sink answering 451: the item module 3 tried is queued with attempt_count >= 1, transport_4xx, a 451 text
+//	                                                                      and (the first record run showed) the account of the failed attempt still attached, asserted only as consistent; the four it did not try are queued with attempt_count 0 and nothing else
+//	                     ... campaign page, last page                     the five at page size 2: pages of 2, 2 and 1 (the last has no next cursor and, being a never-tried item, no account: the shape of the last-page contract)
+//	                     ... campaign cursor_malformed, cursor_forged     a cursor that is not base64: 400; a base64 cursor that is not a timestamp and an id: the module's 500 (research m3-api 6, read: it is a 500)
+//	events, system row   GET /v1/send-byo/accounts/{id}/events page       a tenant of its own (ev) with one account whose send the sink refuses AUTH for: an auth_failure, at autoquarantine_mode=shadow module 3 writes an
+//	                                                                      "updated" event with flags before and after and a reason: the events listed through the adapter and, at limit=1, page by page through the raw client
 //
 // WHAT IS ALLOWLISTED (zz_m3_adapter_contract_drift_test.go, with the reason): run internal_error (a failing statement inside module 3), accounts create unprocessable (the From-gate's unacknowledged WARN: the
 // gate is off and the network has no DNS), accounts test unavailable (module 3's verifier failing or missing).
 //
-// THE LEFT-OVERS. X ends suspended through module 3's operator route, so its five queued items (the sink answered 451 and module 3 retries every 30 s) are never claimed again and nothing of X is sent after the
+// THE LEFT-OVERS. X (and then ev) is suspended through module 3's operator route when its steps are done, so the queued items (the sink answered 451 or refused AUTH, and module 3 retries) are never claimed again and nothing of them is sent after the
 // sink is reset; X has no entitlement row, so no platform loop looks at it. The dials this test lowers (quote_long_duration_warn_sec, account_count_cap_per_user, bulk_add_max_rows, dispatch_mode) are put back
 // the moment each step is done, and again when the test ends if a step died in between.
 func TestM3Adapter_ContractEdgeCases(t *testing.T) {
@@ -98,7 +101,11 @@ func TestM3Adapter_ContractEdgeCases(t *testing.T) {
 			if !fz.Feasible || len(fz.Reasons) != 0 || len(fz.Warnings) != 1 || fz.Warnings[0].Code != "long_duration" || fz.Warnings[0].ThresholdSec != 60 || fz.Warnings[0].EstimatedDurationSec < 60 {
 				t.Errorf("a quote of 100 recipients with the warning threshold at 60 s is feasible=%v reasons=%+v warnings=%+v, want feasible with one long_duration warning over a 60 s threshold", fz.Feasible, fz.Reasons, fz.Warnings)
 			}
-			t.Logf("NOTE m3a edge quote: 100 recipients, threshold 60 s: feasible %v, projection %v s, warnings %+v", fz.Feasible, fz.Capacity.EstimatedDurationSec, fz.Warnings)
+			proj := "none"
+			if p := fz.Capacity.EstimatedDurationSec; p != nil {
+				proj = fmt.Sprintf("%d s", *p)
+			}
+			t.Logf("NOTE m3a edge quote: 100 recipients, threshold 60 s: feasible %v, projection %s, warnings %+v", fz.Feasible, proj, fz.Warnings)
 		})
 		if fz, err := x.C.Feasibility(ctx, 100); err != nil || !fz.Feasible || len(fz.Warnings) != 0 {
 			t.Errorf("control: the same quote with the dial restored answered %+v (error %v), want feasible with no warning", fz, err)
@@ -309,15 +316,37 @@ func TestM3Adapter_ContractEdgeCases(t *testing.T) {
 			t.Errorf("control: the same Run with dispatch_mode restored answered %+v (error %v), want a new job", res, err)
 			return
 		}
-		e.waitCampaign(t, extraTn, 90*time.Second, nil)
+		for start := time.Now(); ; time.Sleep(500 * time.Millisecond) { // sent, so that the held campaign below is the only active one (module 3 allows one active campaign per user)
+			rep, err := x.C.ReportCampaign(ctx, extraTn.CampaignID)
+			if err != nil {
+				t.Errorf("ReportCampaign of the control item failed (%s): %s", modclient.KindOf(err), e.raw.scrub(err.Error()))
+				return
+			}
+			if m3aAllTerminal(rep, 1) {
+				t.Logf("NOTE m3a edge run paused control: the same Run with dispatch_mode restored is a new job (202) and the item is %s", rep.Items[0].State)
+				return
+			}
+			if time.Since(start) > 90*time.Second {
+				t.Errorf("the control item did not finish within 90 s: %s", m3aTotalsLine(rep.Totals))
+				return
+			}
+		}
 	})
 
-	// ---- the held queue: five items the sink answers 451 ----
+	// ---- the held queue: five items, the one lane held for 60 s after every push to a worker, the sink answering 451 ----
+	// Module 3 stamps a lane's cooldown when a job is PUSHED to a worker, whatever the outcome (dispatch/loop.go, pacer.Stamp), so with one lane and a 60 s pause the first item is tried (the sink
+	// answers 451: queued, attempt_count 1, transport_4xx, a 451 text, and, as the first record run showed, the account that attempt used still attached) and the other four are not tried at all
+	// (queued, attempt_count 0, nothing else): the two shapes of a queued item, and a last page whose items have no account.
+	var tried, untried []string // job item ids, as the adapter's campaign report shows them
+	byAccount := map[string]bool{}
+	pg, err := sendapi.New(e.mc, m3.Profile(), x.UserID, sendapi.Options{PageSize: 2})
+	if err != nil {
+		t.Fatalf("sendapi.New(page size 2): %s", e.raw.scrub(err.Error()))
+	}
 	step("held queue", func() {
-		e.setPacing(t, x, 3, 0, 0)
+		e.setPacing(t, x, 1, 60, 60)
 		e.setMode(t, m3hMode{DeferRcpt: x.emails("")})
 		took := e.runAll(t, x)
-		var rep sendapi.CampaignReport
 		start := time.Now()
 		for {
 			r, err := x.C.ReportCampaign(ctx, x.CampaignID)
@@ -325,50 +354,104 @@ func TestM3Adapter_ContractEdgeCases(t *testing.T) {
 				t.Errorf("ReportCampaign of the held campaign failed (%s): %s", modclient.KindOf(err), e.raw.scrub(err.Error()))
 				return
 			}
-			rep = r
-			tried := 0
+			tried, untried = nil, nil
 			for _, it := range r.Items {
-				if it.State == "queued" && it.AttemptCount >= 1 && it.ErrorClass != nil && it.SMTPResponse != nil {
-					tried++
+				if it.AttemptCount >= 1 && it.ErrorClass != nil && it.SMTPResponse != nil {
+					tried = append(tried, it.JobItemID)
+				} else {
+					untried = append(untried, it.JobItemID)
 				}
 			}
-			if tried == len(x.Items) {
-				break
+			if len(tried) >= 1 {
+				t.Logf("NOTE m3a edge held queue: %d items run in %s; after %s the report says %s: %d item(s) tried (the sink answered 451), %d not tried (the lane is held for 60 s)", len(x.Items), took.Round(time.Millisecond), time.Since(start).Round(time.Millisecond), m3aTotalsLine(r.Totals), len(tried), len(untried))
+				return
 			}
 			if time.Since(start) > 60*time.Second {
-				t.Errorf("after 60 s only %d of %d item(s) show a failed attempt (%s): the sink's 451 did not reach module 3's report\n%s", tried, len(x.Items), m3aTotalsLine(r.Totals), e.diagnostics(t, x))
+				t.Errorf("after 60 s no item shows a failed attempt (%s): the sink's 451 did not reach module 3's report\n%s", m3aTotalsLine(r.Totals), e.diagnostics(t, x))
 				return
 			}
 			time.Sleep(500 * time.Millisecond)
 		}
-		t.Logf("NOTE m3a edge held queue: %d items run in %s; after %s the report says %s", len(x.Items), took.Round(time.Millisecond), time.Since(start).Round(time.Millisecond), m3aTotalsLine(rep.Totals))
-
-		one, err := x.C.ReportJob(ctx, x.Items[0].ID)
-		if err != nil || one.State != "queued" || one.ErrorClass == nil || *one.ErrorClass != "transport_4xx" || one.SMTPResponse == nil || !strings.Contains(*one.SMTPResponse, "451") || one.AttemptCount < 1 || one.AccountID != nil || one.CompletedAt != nil || one.FailedAt != nil {
-			t.Errorf("the single-job report of an item the sink answered 451 is %+v (error %v), want queued, attempt_count >= 1, transport_4xx, a text naming 451, no account and no end", one, err)
-		} else {
-			t.Logf("NOTE m3a edge job queued: state %s attempt_count %d error_class %s smtp_response %q account %s", one.State, one.AttemptCount, *one.ErrorClass, *one.SMTPResponse, m3aShortID(one.AccountID))
+	})
+	if all, err := x.C.AllAccounts(ctx); err == nil {
+		for _, a := range all {
+			byAccount[a.ID] = true
 		}
-
-		pg, err := sendapi.New(e.mc, m3.Profile(), x.UserID, sendapi.Options{PageSize: 2})
-		if err != nil {
-			t.Errorf("sendapi.New(page size 2): %s", e.raw.scrub(err.Error()))
+	}
+	// account fields of a queued item: both set or both absent, and when set they name one of the tenant's own accounts (the module keeps the account of the last attempt on a requeued job: not asserted either way)
+	accountOf := func(it sendapi.Item) string {
+		if (it.AccountID == nil) != (it.AccountUsername == nil) {
+			t.Errorf("a queued item carries account_id %s and account_username %s: both or neither", m3aText(it.AccountID), m3aText(it.AccountUsername))
+		}
+		if it.AccountID != nil && len(byAccount) != 0 && !byAccount[*it.AccountID] {
+			t.Errorf("a queued item names account %s, which is none of the tenant's accounts", *it.AccountID)
+		}
+		if it.AccountID == nil {
+			return "none"
+		}
+		return m3aShortID(it.AccountID)
+	}
+	step("job queued (tried)", func() {
+		if len(tried) == 0 {
+			t.Errorf("no item was tried: the single-job report of an item the sink answered 451 cannot be read")
 			return
 		}
+		one, err := x.C.ReportJob(ctx, tried[0])
+		if err != nil {
+			t.Errorf("ReportJob of an item the sink answered 451 failed (%s): %s", modclient.KindOf(err), e.raw.scrub(err.Error()))
+			return
+		}
+		if one.State != "queued" || one.Class != sendapi.ClassPending || one.AttemptCount < 1 || one.ErrorClass == nil || *one.ErrorClass != "transport_4xx" || one.SMTPResponse == nil || !strings.Contains(*one.SMTPResponse, "451") ||
+			one.CompletedAt != nil || one.FailedAt != nil || one.ProviderMessageID != nil {
+			t.Errorf("the single-job report of an item the sink answered 451 is state %s class %s attempt_count %d error_class %s smtp_response %s completed_at %v failed_at %v, want queued, pending, attempt_count >= 1, transport_4xx, a text naming 451, and no end",
+				one.State, one.Class, one.AttemptCount, m3aText(one.ErrorClass), m3aText(one.SMTPResponse), one.CompletedAt, one.FailedAt)
+			return
+		}
+		acct := accountOf(one)
+		t.Logf("NOTE m3a edge job queued (tried): state %s attempt_count %d error_class %s smtp_response %q; the account of the failed attempt is still attached: %s", one.State, one.AttemptCount, *one.ErrorClass, *one.SMTPResponse, acct)
+	})
+	step("job queued (not tried)", func() {
+		if len(untried) == 0 {
+			t.Logf("NOTE m3a edge job queued (not tried): every item was tried, so there is no never-tried queued item to read (the lane's 60 s cooldown did not hold the others back)")
+			return
+		}
+		one, err := x.C.ReportJob(ctx, untried[0])
+		if err != nil {
+			t.Errorf("ReportJob of an item module 3 has not tried failed (%s): %s", modclient.KindOf(err), e.raw.scrub(err.Error()))
+			return
+		}
+		if one.State != "queued" || one.AttemptCount != 0 || one.ErrorClass != nil || one.SMTPResponse != nil || one.CompletedAt != nil || one.FailedAt != nil {
+			t.Errorf("the single-job report of an item module 3 has not tried is state %s attempt_count %d error_class %s smtp_response %s, want queued, attempt_count 0 and nothing else", one.State, one.AttemptCount, m3aText(one.ErrorClass), m3aText(one.SMTPResponse))
+			return
+		}
+		t.Logf("NOTE m3a edge job queued (not tried): state %s attempt_count %d, no error class, no provider text; account %s", one.State, one.AttemptCount, accountOf(one))
+	})
+	step("campaign pages", func() {
 		var shape []string
 		var lastNext string
+		withAccount := 0
 		st, err := pg.Walk(ctx, x.CampaignID, func(p sendapi.CampaignPage) error {
 			shape = append(shape, fmt.Sprint(len(p.Items)))
 			lastNext = p.NextCursor
+			for _, it := range p.Items {
+				if it.State != "queued" {
+					t.Errorf("an item of the held campaign is %s, want queued", it.State)
+				}
+				if it.AccountID != nil {
+					withAccount++
+				}
+				accountOf(it)
+			}
 			return nil
 		})
 		if err != nil || st.Pages != 3 || st.Items != 5 || strings.Join(shape, ",") != "2,2,1" || lastNext != "" {
 			t.Errorf("the held campaign at page size 2 walked %+v pages [%s] (error %v, the last page's next cursor %q), want 3 pages of 2, 2 and 1 and no cursor after the last", st, strings.Join(shape, ","), err, lastNext)
-		} else {
-			t.Logf("NOTE m3a edge campaign pages: 5 queued items at page size 2: pages of [%s], the last with no next cursor", strings.Join(shape, ","))
+			return
 		}
-
-		_, err = pg.ReportCampaignPage(ctx, x.CampaignID, "!!!not base64!!!")
+		t.Logf("NOTE m3a edge campaign pages: 5 queued items at page size 2: pages of [%s], the last with no next cursor; %d of the 5 items carry an account", strings.Join(shape, ","), withAccount)
+	})
+	step("campaign cursors", func() {
+		_, err := pg.ReportCampaignPage(ctx, x.CampaignID, "!!!not base64!!!")
 		if me := m3aWantAnswer(t, "ReportCampaignPage with a cursor that is not base64", err, modclient.Refused, 400, "validation_failed"); me != nil {
 			if !errors.Is(err, sendapi.ErrBadCursor) || len(me.Details) != 1 || me.Details[0].Field != "cursor" || me.Details[0].Issue != "malformed" {
 				t.Errorf("the malformed campaign cursor answered %v (details %v), want ErrBadCursor with {cursor, malformed}", err, me.Details)
@@ -387,11 +470,95 @@ func TestM3Adapter_ContractEdgeCases(t *testing.T) {
 			t.Errorf("control: the first page without a cursor answered %d item(s) and cursor %q (error %v), want 2 and a next cursor", len(page.Items), page.NextCursor, err)
 		}
 	})
+	suspend := func(tn *m3aTenant) {
+		t.Helper()
+		status, body := e.raw.do(t, e.raw.m3URL, http.MethodPost, "/v1/admin/users/"+tn.UserID+"/suspend", e.raw.adminKey, map[string]string{"reason": "m3 adapter harness: the queued items of the contract edge cases must never be claimed again"})
+		e.raw.expect(t, "POST /v1/admin/users/{"+tn.Name+"}/suspend", status, body, http.StatusOK, "")
+	}
+	suspend(x) // X is done: nothing of it is claimed again (the sink mode below replaces the 451 mode)
 
-	// ---- the end: freeze X ----
-	status, body := e.raw.do(t, e.raw.m3URL, http.MethodPost, "/v1/admin/users/"+x.UserID+"/suspend", e.raw.adminKey, map[string]string{"reason": "m3 adapter harness: the held queue of the contract edge cases must never be claimed again"})
-	e.raw.expect(t, "POST /v1/admin/users/{X}/suspend", status, body, http.StatusOK, "")
-	t.Logf("NOTE m3a edge end: tenant X (%d accounts) suspended through module 3's operator route: its queued items are never claimed again; the sink is reset when the test ends", len(x.Accounts))
+	// ---- events with a system row: the page of the events contract ----
+	// The events of an account that was created and verified are rows with no flags before, a flags object after, no reason; the events contract's page also carries the rows module 3's own
+	// dispatcher writes (actor system, flags before and after, a reason). One of those is cheap: a send whose AUTH the sink refuses is an auth_failure, and at autoquarantine_mode=shadow
+	// (the seeded mode) module 3 records the quarantine it WOULD have made as an `updated` event with a reason (dispatch/account_effect.go, writeShadowQuarantineEvent). The account is the only
+	// one of a tenant of its own, so the event is on it.
+	step("events with a system row", func() {
+		ev := e.seedTenant(t, "ev", []string{"authfail"})
+		defer suspend(ev) // the item is retried every 30 s: the tenant is frozen when the step ends
+		e.setPacing(t, ev, 1, 0, 0)
+		acct := e.createVerified(t, ev, "1", e.sinkIP)
+		e.setMode(t, m3hMode{FailAuth: true}) // every AUTH, the worker's at SEND time too, is answered 535
+		defer e.setMode(t, m3hMode{})
+		if res, err := ev.C.Run(ctx, ev.Items[0].ID); err != nil || !res.Created {
+			t.Errorf("Run of the item whose AUTH the sink will refuse answered %+v (error %v), want a new job", res, err)
+			return
+		}
+		start := time.Now()
+		var job sendapi.Item
+		for {
+			one, err := ev.C.ReportJob(ctx, ev.Items[0].ID)
+			if err != nil {
+				t.Errorf("ReportJob of the item failed (%s): %s", modclient.KindOf(err), e.raw.scrub(err.Error()))
+				return
+			}
+			job = one
+			if one.AttemptCount >= 1 && one.ErrorClass != nil {
+				break
+			}
+			if time.Since(start) > 60*time.Second {
+				t.Errorf("after 60 s the item shows no failed attempt (state %s attempt_count %d)\n%s", one.State, one.AttemptCount, e.diagnostics(t, ev))
+				return
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+		e.setMode(t, m3hMode{}) // the AUTH refusal is over: the retry (30 s) and the tenant is frozen below
+		t.Logf("NOTE m3a edge auth failure: the item is %s attempt_count %d error_class %s smtp_response %s", job.State, job.AttemptCount, m3aText(job.ErrorClass), m3aText(job.SMTPResponse))
+		time.Sleep(time.Second) // the outcome's event is written in the outcome's own transaction: a second is far more than it needs
+		all, err := ev.C.AccountEvents(ctx, acct.ID, "")
+		if err != nil {
+			t.Errorf("AccountEvents through the adapter failed (%s): %s", modclient.KindOf(err), e.raw.scrub(err.Error()))
+			return
+		}
+		var trail []string
+		withFlags := 0
+		for _, row := range all.Items {
+			trail = append(trail, row.Actor+":"+row.Action)
+			if row.From != nil {
+				withFlags++
+			}
+		}
+		if len(all.Items) < 2 {
+			t.Errorf("the account has %d event(s) after a create, a verification and an auth failure: %v, want at least two", len(all.Items), trail)
+			return
+		}
+		path := "/v1/send-byo/accounts/" + url.PathEscape(acct.ID) + "/events"
+		pages, total, next := 0, 0, ""
+		for pages < 12 {
+			q := url.Values{"user_id": {ev.UserID}, "limit": {"1"}}
+			if next != "" {
+				q.Set("cursor", next)
+			}
+			resp, err := e.rawDo(m3aRawCall{label: "m3.edge.accounts.events", method: http.MethodGet, path: path, query: q})
+			if err != nil {
+				t.Errorf("page %d of the events (limit=1) failed: %s", pages+1, e.raw.scrub(err.Error()))
+				return
+			}
+			n, nx := m3aPageOf(t, resp.Body)
+			pages++
+			total += n
+			if nx == "" {
+				break
+			}
+			next = nx
+		}
+		if total != len(all.Items) || pages != len(all.Items) {
+			t.Errorf("the events at limit=1 are %d page(s) holding %d event(s); the adapter's own read holds %d: want one page per event and the same events", pages, total, len(all.Items))
+		}
+		t.Logf("NOTE m3a edge events: %d event(s) %v, %d with flags before (a system row); the raw walk at limit=1 read %d page(s) of 1 event, every one but the last with a next cursor", len(all.Items), trail, withFlags, pages)
+		if withFlags == 0 {
+			t.Logf("NOTE m3a edge events: no event carries flags before: module 3 wrote no shadow would-quarantine row for the auth failure (autoquarantine_mode is not shadow, or the row is not written for this class): the events contract's page will keep missing the system row")
+		}
+	})
 }
 
 // ---- helpers of the edge cases ----
