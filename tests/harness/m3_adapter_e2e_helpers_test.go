@@ -62,22 +62,27 @@ const (
 // ---- the environment ----
 
 type m3aEnv struct {
-	ctx      context.Context
-	raw      *m3lEnv // HTTP to module 3 (the operator surface, the admin key) and to the sinks
-	ctlURL   string  // the controllable sink's control API
-	cfg      config.Config
-	mc       *modclient.Client // the module client the page-size tests build their own sendapi.Client over (m3.Adapter.For fixes the page size)
-	adm      *m3admin.Client   // the platform's real admin client: the adapter's suspension reader
-	ad       *m3.Adapter       // m3.FromConfig + the suspension reader
-	db       *pgx.Conn         // a SUPERUSER: seeds and observes, never the code under test
-	pool     *pgxpool.Pool     // real logins as platform_app on the live database
-	res      *tenant.Resolver
-	store    *entitlements.Store
-	money    *money.Store
-	admin    string // an active platform admin
-	runID    string
-	prefix   string // "m3a<run>-": the local-part prefix of every recipient of this test
-	sinkIP   string // the controllable sink's private address: what the accounts name
+	ctx    context.Context
+	raw    *m3lEnv // HTTP to module 3 (the operator surface, the admin key) and to the sinks
+	ctlURL string  // the controllable sink's control API
+	cfg    config.Config
+	mc     *modclient.Client // the module client the page-size tests build their own sendapi.Client over (m3.Adapter.For fixes the page size)
+	adm    *m3admin.Client   // the platform's real admin client: the adapter's suspension reader
+	ad     *m3.Adapter       // m3.FromConfig + the suspension reader
+	db     *pgx.Conn         // a SUPERUSER: seeds and observes, never the code under test
+	pool   *pgxpool.Pool     // real logins as platform_app on the live database
+	res    *tenant.Resolver
+	store  *entitlements.Store
+	money  *money.Store
+	admin  string // an active platform admin
+	runID  string
+	prefix string // "m3a<run>-": the local-part prefix of every recipient of this test
+	// sinkIP is the host the accounts of the adapter tests name for the controllable sink. It was the sink's private ADDRESS until the From-gate went on (Phase 3 close-out D2); it is now the sink's network alias
+	// m3dHostCtl (docker-compose.yml), because under from_gate_mode=enforce an account at a bare address is an unmatched provider and can never be aligned, while a name under the From domain example.test is the
+	// self-hosted exception (m3_adapter_closeout_fromgate_helpers_test.go says why the alias, and why it still verifies). The field keeps its name: some thirty call sites read it.
+	sinkIP   string
+	ctlAddr  string // the controllable sink's real private address (for messages: what sinkIP resolves to)
+	dnsURL   string // the From-gate's fixture DNS, its control API (service m3dns)
 	sinkPass string
 	workers  []string
 }
@@ -89,6 +94,13 @@ func newM3aEnv(t *testing.T, ctx context.Context) *m3aEnv {
 	e := &m3aEnv{ctx: ctx, raw: raw, ctlURL: m3lBaseURL(t, m3hEnvCtlURL), runID: randomHex(t, 4), sinkPass: m3lSinkPassword(t)}
 	e.prefix = "m3a" + e.runID + "-"
 	e.db = dial(t, adminURL, func(cfg *pgx.ConnConfig) { cfg.RuntimeParams["application_name"] = "m3-adapter-test" })
+	// Phase 3 close-out D2: module 3's From-gate is ON for every adapter test. Production runs with the gate in `enforce` (owner ruling: never allow a wrong From) and so do these tests, against the fixture
+	// DNS of the stack (service m3dns, tests/harness/m3adapter/m3dns.json). run.sh stage 5b keeps the dial `off` for the raw module 3 tests (TestM3Live_*, the hostile tests), which never reach this builder:
+	// the two dials are written here with setDial and put back by the test's cleanup, and the tests of a package run one after another (none of them calls t.Parallel), so no other test sees them.
+	e.dnsURL = m3lBaseURL(t, m3dEnvURL)
+	e.setDial(t, "from_gate_mode", `"enforce"`)
+	e.setDial(t, "from_dns_resolver", `"`+m3dResolver+`"`)
+	e.requireGateFixture(t)
 	e.pool = m3lAppPool(t, adminURL, requireEnv(t, envAppPassword))
 	e.store = entitlements.NewStore(e.pool)
 	e.money = money.New(e.pool)
@@ -185,6 +197,8 @@ func (e *m3aEnv) prepare(t *testing.T, resetNow, resetAtEnd bool) {
 	if e.sinkIP == "" {
 		t.Fatalf("%s resolves to %v and not one of these is a private address: module 3's worker validates a certificate unless the SMTP host is private, and the sink's is self-signed", m3hCtlHost, addrs)
 	}
+	e.ctlAddr = e.sinkIP
+	e.requireSinkAliases(t, addrs)
 	if resetNow {
 		e.ctl(t, http.MethodPost, "/api/reset", nil, http.StatusOK)
 		e.setMode(t, m3hMode{})
@@ -534,7 +548,8 @@ func (e *m3aEnv) checkAccount(t *testing.T, tn *m3aTenant, host, what string, a 
 	}
 }
 
-// createVerified adds an account through the adapter and requires it verified and aligned: the sink answered the module's worker, and the From-gate is off (run.sh stage 5b).
+// createVerified adds an account through the adapter and requires it verified and aligned: the sink answered the module's worker, and the From-gate (in force: enforce, against the fixture DNS m3dns) read
+// example.test as the self-hosted exception, the From domain of every account newAccount builds (the fixture gives it an SPF record with a bare `mx` and the sinks as its MX; m3dns.json).
 func (e *m3aEnv) createVerified(t *testing.T, tn *m3aTenant, label, host string) m3.Account {
 	t.Helper()
 	a, err := tn.C.CreateAccount(e.ctx, e.newAccount(label, tn, host))
@@ -543,7 +558,14 @@ func (e *m3aEnv) createVerified(t *testing.T, tn *m3aTenant, label, host string)
 	}
 	e.checkAccount(t, tn, host, "CreateAccount "+label, a)
 	if a.Verification.State != m3.VerificationVerified || a.FromAlignment.State != m3.AlignmentAligned {
-		t.Fatalf("the account %s of %s: module 3 says verification %q (code %q, response %v) and alignment %q, want verified and aligned: the worker could not verify the sink, or the From gate is not off", label, tn.Name, a.Verification.State, a.Verification.Code, a.Verification.SMTPResponse, a.FromAlignment.State)
+		hint := ""
+		switch {
+		case a.Verification.Code == m3.VerifyTLSFailed:
+			hint = " (verify_tls_failed: the host name is not exempt from the worker's certificate validation, which skips it only for smtp-sink, localhost and names or addresses with a private-looking prefix: services/worker/src/smtp.js isPrivateHost)"
+		case a.FromAlignment.State != m3.AlignmentAligned:
+			hint = fmt.Sprintf(" (the From-gate is in enforce against m3dns: from %s at host %s was not read as aligned; its message: %s; m3dns.json must give the From domain an SPF record with a bare mx and the host as its MX or a name below it)", a.FromAddress, host, m3aText(a.FromAlignment.Message))
+		}
+		t.Fatalf("the account %s of %s: module 3 says verification %q (code %q, response %v) and alignment %q, want verified and aligned%s", label, tn.Name, a.Verification.State, a.Verification.Code, a.Verification.SMTPResponse, a.FromAlignment.State, hint)
 	}
 	tn.Accounts = append(tn.Accounts, a)
 	return a

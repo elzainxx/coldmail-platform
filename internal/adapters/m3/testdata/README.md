@@ -68,17 +68,25 @@ internal reason), and each such test has the recording itself as its control.
 
 ## Hand-written
 
-These 14 files are hand-written (the first four from the module's code, the other ten for the Phase 3 close-out, see below) (`Docs/history/p3-research/m3-api.md`, checked against the module at the pinned commit), to be replaced by a recording when the
+These 16 files are hand-written (the first four from the module's code, the other twelve for the Phase 3 close-out, see below) (`Docs/history/p3-research/m3-api.md`, checked against the module at the pinned commit), to be replaced by a recording when the
 harness reaches them. The record runs did not reach these responses:
 
 - `run.error.internal_error.json`: a 500 on run needs a fault inside module 3, which the harness does not provoke.
 - `accounts.create.error.unprocessable.json`: the 422 that refuses an unacknowledged From-gate warning (`from_alignment_warning_unacknowledged`) exists only when the From-gate verdict is a
-  warning, and the harness runs the gate off (research m3-api section 12.2), so no create there can reach it.
+  warning. The record runs had the gate off; since the Phase 3 close-out (D2) the module 3 adapter tests run it in `enforce` against a fixture DNS and `TestM3Adapter_FromGatePassWarnBlock` makes the
+  module answer it, so the next record run replaces this file with the recording.
 - `accounts.test.unavailable.json`: the test button answers `unavailable` only when its credential check cannot run (`verify_error`, `verification_unavailable`) and `indeterminate` only when
-  the From check cannot get an answer from DNS; the harness has a worker and no From gate, so neither happens there. It is allowlisted for the drift gate.
-- `accounts.events.page.json`: no populated events listing was ever observed by the drift session (only an empty page), so the page with events in it is hand-written; it will be allowlisted.
+  the From check cannot get an answer from DNS. The record runs had a worker and no From gate, so neither happened. Since the Phase 3 close-out (D2) the `indeterminate` half happens (the From-gate is on and the
+  fixture DNS answers SERVFAIL on command: see `accounts.test.indeterminate.json` below); the `unavailable` half still cannot (it needs the module's own verifier to fail), so this file is allowlisted for the drift gate.
+- `accounts.events.page.json`: a page with a next cursor and a PAUSE event (`pause_reason` `daily_limit`), hand-written. The first record run observed only empty listings. Since D3 populated listings are observed, but the
+  contract matcher gives a live body to the fixture it differs from least, and a page of this module never carries a pause reason (the harness does not pause an account) or a cursor (a page of 200), so every
+  populated page lands on `accounts.events.last_page.json` below (or, for a page of one event, on the empty one) and this case stays unexercised: it is allowlisted for the drift gate.
 
 Ten more are hand-written for the Phase 3 close-out (module 3 at the pin `8855a52`, the lead re-records every one from the real module and then moves it to the list above): the two files of the new route `POST /v1/cancel` (`cancel.ok.json`, `cancel.error.validation_failed.json`), a 409 of run that names its causes (`run.error.conflict.json`: another campaign active and the queue cap, the cap with `current` and `limit`; it REPLACES the recording of the unexplained 409, which an older module would answer), and seven RECORDINGS that were edited by hand to what the new module answers: `quote.ok.json`, `quote.feasible.json` (`caps.campaign_size_cap` added), `quote.infeasible.json` (a quote of 100001 recipients now holds a `campaign_cap` reason beside the queue cap, each with `cause`, `current` and `limit`), `report.campaign.page.json`, `report.campaign.last_page.json`, `report.campaign.empty.json` (`totals.cancelled` added) and `describe.ok.json` (`capabilities.plain_text_alternative`, `cancelled` last in `job_state`, the vocabulary `run_conflict_cause`, the three new `quote_reason_code` values; its `schemas` still say what the module said before C6). Where a file is a recording that was edited, nothing but the additions named here was changed.
+
+One more is hand-written for the Phase 3 close-out D3 (account events, owner decision OD-10): `accounts.events.last_page.json`, the LAST page (no next cursor) of the three events an account that was created, verified and quarantined by an enforced health action has: `created` (actor user, no flags before), `verified` (actor user, the outcome in the reason, no flags at all) and `quarantine` (actor system, flags before and after, reason `auth_failure`). It is written from the module's code (platformapi/account_create.go and dispatch/verify.go write the first two, dispatch/account_effect.go the third) and is the case a populated listing of the harness lands on; the lead re-records it from the first record run that has `TestM3Adapter_AccountEventsOfAnEnforcedHealthAction` in it and moves it to the list above.
+
+Another one is hand-written for the Phase 3 close-out D2 (module 3's From-gate on in the harness): `accounts.test.indeterminate.json`, the test button's answer when the credential check RAN (here it failed: `verify_tls_failed`, no provider text) but the From check could not get an answer from DNS (`from_alignment` state `indeterminate`, code `from_dns_unavailable`). It is written from the module's code (platformapi/account_test_button.go: a check that cannot run answers `{state: indeterminate, code}`) and is a case of its own because `accounts.test.unavailable.json` is the other way round (the credential check could not run) and a live body that shares only the From half would tie with it. The lead re-records it from the first record run that has `TestM3Adapter_FromGatePassWarnBlock` in it and moves it to the list above. The bulk-add contract now reads a row's `verification` and `from_alignment_state` with the test button's two sets (`test_verification_state`, `test_alignment_state`, which add `unavailable` and `indeterminate` to the account's own), the sets the adapter maps those two keys with.
 
 They use the same normalised ids as the recordings (`00000000-0000-4000-8000-000000000001` for the first, `...02` for the tenant of an account file) so that one tenant serves every file. Their request ids and cursors are the normalised forms too (a run of `a`): contractcheck's no-rot check reads a long opaque run as secret-shaped.
 
@@ -86,6 +94,8 @@ They use the same normalised ids as the recordings (`00000000-0000-4000-8000-000
 - `accounts.create.error.unprocessable.json`
 - `accounts.test.unavailable.json`
 - `accounts.events.page.json`
+- `accounts.events.last_page.json`
+- `accounts.test.indeterminate.json`
 - `describe.ok.json`
 - `quote.ok.json`
 - `quote.feasible.json`

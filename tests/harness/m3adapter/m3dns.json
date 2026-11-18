@@ -1,0 +1,14 @@
+{
+ "ttl": 1,
+ "zones": ["test", "messagingengine.com", "google.com"],
+ "records": [
+  {"name":"example.test","type":"TXT","values":["v=spf1 mx ~all"]},
+  {"name":"example.test","type":"MX","values":["10 smtp-sink.","20 smtp-ctl."]},
+  {"name":"_dmarc.example.test","type":"TXT","values":["v=DMARC1; p=none"]},
+  {"name":"spf.messagingengine.com","type":"TXT","values":["v=spf1 ip4:192.0.2.0/24 -all"]},
+  {"name":"_spf.google.com","type":"TXT","values":["v=spf1 ip4:198.51.100.0/24 -all"]},
+  {"name":"spf-other.test","type":"TXT","values":["v=spf1 -all"]}
+ ],
+ "modes": [],
+ "smtp": []
+}

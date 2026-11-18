@@ -253,6 +253,11 @@ psql_su "INSERT INTO send_byo.boxes (id, user_id, token_hash, status) VALUES ('$
 psql_su "INSERT INTO send_byo.boxes (id, user_id, token_hash, status) VALUES ('$M3_WORKER2_ID', '00000000-0000-0000-0000-000000000000', '$M3_WORKER2_HASH', 'active')" >/dev/null || die "could not seed module 3's second worker box row"
 psql_su "INSERT INTO send_byo.boxes (id, user_id, token_hash, status) VALUES ('$M3_WORKER3_ID', '00000000-0000-0000-0000-000000000000', '$M3_WORKER3_HASH', 'active')" >/dev/null || die "could not seed module 3's third worker box row"
 DC up -d m3-worker m3-worker-2 m3-worker-3 smtp-sink smtp-ctl || die "module 3's workers, the SMTP sink or the controllable sink did not start"
+# Phase 3 close-out D2: the From-gate's fixture DNS (service m3dns, tests/harness/m3adapter/m3dns.json). The dial from_gate_mode stays off above for the raw module 3 tests; the module 3 ADAPTER tests switch it to enforce and
+# point from_dns_resolver at m3dns:53 themselves (m3aEnv, set and restored per test), so nothing about the resolver is written here.
+DC up -d --wait --wait-timeout 90 m3dns || die "the From-gate's fixture DNS (service m3dns: tests/harness/fx built with FX_ROLES=dns,api, tests/harness/m3adapter/m3dns.json) did not become healthy"
+i=0; while [ $i -lt 30 ]; do DC exec -T platform wget -q -O /dev/null http://m3dns:8025/readyz 2>/dev/null && break; i=$((i+1)); sleep 2; done
+[ "$i" -lt 30 ] || die "the From-gate's fixture DNS (m3dns) is healthy by its own check but its control API does not answer from another container on the network"
 i=0; while [ $i -lt 60 ]; do
   [ "$(psql_su "select count(*) from send_byo.boxes where id = '$M3_WORKER_ID' and status = 'active' and last_heartbeat_at > '$t0'")" = 1 ] && break
   i=$((i+1)); sleep 2
@@ -271,7 +276,7 @@ i=0; while [ $i -lt 30 ]; do DC exec -T platform wget -q -O /dev/null http://smt
 # the controllable sink: ready means its SMTP listener accepts connections (it exits at start when it cannot read module 3's dev sink certificate and key: its log is below)
 i=0; while [ $i -lt 30 ]; do DC exec -T platform wget -q -O /dev/null http://smtp-ctl:8025/readyz 2>/dev/null && break; i=$((i+1)); sleep 2; done
 [ "$i" -lt 30 ] || die "the controllable SMTP sink (smtp-ctl) did not answer /readyz"
-echo "  module 3's three workers are registered and heartbeating; the SMTP sink and the controllable sink answer; From-gate off"
+echo "  module 3's three workers are registered and heartbeating; the SMTP sink and the controllable sink answer; the From-gate's fixture DNS (m3dns) answers; From-gate off for the raw tests (the adapter tests run it on)"
 [ "$M2W_ON" = 1 ] && m2w_stage_5c   # module 2's real worker (only when it is on): its box row seeded, then the worker started and a heartbeat awaited (tests/harness/m2worker/stage.sh)
 
 # ── 6. tests ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -313,7 +318,7 @@ sline="$(grep '^PROBE SUMMARY' "$WORK/probe.log" | tail -1)"; [ -n "$sline" ] ||
 # ── 8. exposure ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 STAGE=exposure; banner 8 "no service publishes a port; the network is internal"
 DC ps --all --format json > "$WORK/ps.json" || die "docker compose ps failed"
-bash "$HERE/check-exposure.sh" "$WORK/ps.json" postgres m1 m2 m3 platform platform-2 smtp-ctl m3-worker-2 m3-worker-3 $M2W_EXPOSE || die "a service is reachable from outside the network"
+bash "$HERE/check-exposure.sh" "$WORK/ps.json" postgres m1 m2 m3 platform platform-2 smtp-ctl m3dns m3-worker-2 m3-worker-3 $M2W_EXPOSE || die "a service is reachable from outside the network"
 [ "$(docker network inspect "$PROJECT_NET" -f '{{.Internal}}')" = true ] || die "$PROJECT_NET is not an internal network"
 ids="$(DC ps -q)"; [ -n "$ids" ] || die "no running containers to inspect"
 cnt=0; for id in $ids; do
@@ -482,7 +487,10 @@ STAGE=done
 echo
 echo "================ NOT CHECKED (what this run did not and could not vouch for)"
 cat <<'EOF'
-  - CoreDNS is not started and module 3's From-gate is OFF (module 3's own harness does the same): nothing that depends on DNS or on the From alignment is exercised. Module 3 REALLY sends here: three workers, so three lanes of one user, to Mailpit (which
+  - module 3's From-gate is OFF for the raw module 3 tests (TestM3Live_*, the hostile tests) and ON (enforce) for every TestM3Adapter_* test, against a FIXTURE DNS (service m3dns: tests/harness/fx serving tests/harness/m3adapter/m3dns.json, SPF, DMARC and DKIM selector records,
+    changed at run time and SERVFAIL per name on command), not against real DNS: how a real resolver, a real provider's long SPF include chain, a macro or the public internet answers is not exercised (module 3's own real-DNS canary covers one provider), CoreDNS is not started, and
+    an account at one of the two provider-matched aliases (smtp.fastmail.com, smtp.gmail.com) cannot be VERIFIED here (the worker validates the sink's certificate for every host that is not private-looking, and its dev certificate names smtp-sink only): the From verdict of such an account
+    is observed, a send through it is not. Module 3 REALLY sends here: three workers, so three lanes of one user, to Mailpit (which
     accepts everything) and to a controllable sink (tests/harness/sink) that rejects (550) or defers (451) named recipients at RCPT TO and holds the final reply, so that sends are in flight on demand. Still not exercised: a sink that drops a connection, answers
     slowly before DATA, throttles or greylists the way a real provider does (the two RCPT answers, a held final reply and a refused AUTH are all it simulates), more than three lanes or workers, and a provider's own limits. Module 2 has no worker and module 1 no
     SMTP node, so those two never send or probe.

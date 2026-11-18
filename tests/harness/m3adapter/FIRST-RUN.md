@@ -77,7 +77,7 @@ times), `floor: 3 TestM3Adapter_Outage tests declared, each run live and passed`
 
 ## What could not be elicited, and what the first run may reveal
 
-- The module 3 error cases the contracts list but this harness cannot produce: the From-gate paths (WARN, BLOCK, indeterminate: the gate is off in the harness, run.sh stage 5b), `rate_limited` (429) on the test
+- The module 3 error cases the contracts list but this harness cannot produce: `rate_limited` (429) on the test
   button (the limits are 5 per account and 20 per user per day and the tests stay under them on purpose), a slow create that leaves the account `unverified` or answers 500 with the row created (no sink mode delays
   AUTH), a junk cursor that answers 500, a bulk add that times out, a `paused` rung (`503`) and the account routes that are not covered by the adapter (patch, delete, the lifecycle verbs, test-send).
 - Module 3 has no cancel: nothing here cancels a campaign (open decision 1 of the spec).
@@ -138,3 +138,16 @@ Matching pitfalls to read the drift report with (the coordinator's matcher, not 
   account id printed. Still unexercised were `campaign last page` (the live last page had accounts; the hand-written fixture has none, so a populated page always fits `campaign page` better: the held campaign now has ONE
   lane held for 60 s, so only one item is tried and the last page holds a never-tried item with no account) and `events page` (the first-created and verified rows carry no flags before and no reason, so a populated page
   fits the `empty` contract's one-sided gaps as well as the page's: the new `ev` step makes module 3 write a system row with flags and a reason, so that the page's fixture has nothing the live page lacks).
+
+## The From-gate ON, and the account events of an enforced health action (Phase 3 close-out D2 and D3)
+
+Every `TestM3Adapter_*` test now runs with module 3's `from_gate_mode=enforce` and `from_dns_resolver=m3dns:53` (`newM3aEnv` writes both with `setDial` and the test's cleanup puts the originals back; the raw module 3 tests keep the gate off).
+`m3dns` is the compose service built from `tests/harness/fx` with `FX_ROLES=dns,api` and `m3adapter/m3dns.json`; run.sh stage 5b starts it and waits for it, and the exposure check lists it. What to look for on the first run:
+
+- `NOTE m3a fromgate ...` lines (from `m3_adapter_closeout_fromgate_test.go`): one per create, with the verdict, the DMARC policy and the credential check's state and code. An account at `smtp.fastmail.com` or `smtp.gmail.com` shows credential check `failed` with
+  code `verify_tls_failed` (the worker validates the sink's certificate for a host that is not private-looking): that is expected and is not asserted; the From verdict is.
+- Every default account of every other adapter test is `aligned` by the self-hosted exception (`example.test`: SPF with a bare `mx`, MX `smtp-sink` and `smtp-ctl`; the controllable sink is named `10.smtp-ctl.example.test`, which the worker reads as private and
+  module 3 reads as below the From domain). A `createVerified` failure says which of the two it was (the hint names `verify_tls_failed` or the From verdict and its message).
+- The first thing to check when the From-gate test fails is the fixture's log: every step asserts the questions module 3 asked (`m3dRequireAsked`) and a failure prints what it did ask.
+- `NOTE m3a events enforce ...` (from `m3_adapter_closeout_events_test.go`): the trail of the quarantined account (`user:created`, `user:verified (verify: success)`, `system:quarantine (auth_failure)`) and the shadow control's (`system:updated (shadow_would_quarantine: trigger=auth_failure)`).
+- These two files are named `m3_adapter_closeout_*`, which `m3a_evidence` (outage.sh: the NOTE lines it prints) does not match (it reads `m3_adapter_e2e*`): their NOTE lines are in the test log tail and in the `-test.v` log only.

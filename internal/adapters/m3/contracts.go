@@ -82,18 +82,25 @@ func Contracts() []modclient.RouteContract {
 		rc(RouteAccountsTest, "ok", "accounts.test.ok.json", 200, testShape, test),
 		rc(RouteAccountsTest, "failed", "accounts.test.failed.json", 200, testShape, testReason),
 		rc(RouteAccountsTest, "unavailable", "accounts.test.unavailable.json", 200, testShape, testUnavailable),
+		// the click whose credential check RAN (verified or failed, with its reason) but whose From check could not get an answer from DNS (Phase 3 close-out D2): the From check's state is indeterminate with the
+		// closed code from_dns_unavailable. Its own case because the one above is the other way round (the credential check could not run), and a live body that has only the From half in common would tie with it.
+		rc(RouteAccountsTest, "indeterminate", "accounts.test.indeterminate.json", 200, testShape, testUnavailable),
 		rc(RouteAccountsTest, "error rate_limited", "accounts.test.error.rate_limited.json", 429, eb, errs()),
 		rc(RouteAccountsTest, "error conflict", "accounts.test.error.conflict.json", 409, eb, errs()),
 		rc(RouteAccountsTest, "error not_found", "accounts.test.error.not_found.json", 404, eb, errs()),
 
 		// a bulk row's `code` is the module's reason for a rejection OR the reason a created account's credential check failed: one position, so one set, the union of the two
 		rc(RouteAccountsBulk, "ok", "accounts.bulk.ok.json", 200, bulkShape,
-			withSets(vocabBulkRowStatus, "results[].status", vocabCredentialVerification, "results[].verification", vocabFromVerification, "results[].from_alignment_state", vocabBulkRowCode, "results[].code")),
+			withSets(vocabBulkRowStatus, "results[].status", vocabTestVerification, "results[].verification", vocabTestAlignment, "results[].from_alignment_state", vocabBulkRowCode, "results[].code")),
 		rc(RouteAccountsBulk, "error batch_too_large", "accounts.bulk.error.batch_too_large.json", 422, eb, errs()),
 		rc(RouteAccountsBulk, "error conflict", "accounts.bulk.error.conflict.json", 409, eb, errs()),
 		rc(RouteAccountsBulk, "error validation_failed", "accounts.bulk.error.validation_failed.json", 400, eb, errs()),
 
 		rc(RouteAccountsEvents, "page", "accounts.events.page.json", 200, eventsShape, withSets(vocabPauseReason, "items[].to_flags.pause_reason")),
+		// the page the module answers for an account that was created, verified and quarantined by an enforced health action (Phase 3 close-out D3): the last page of three events, no pause reason
+		// anywhere and no next cursor. The matcher assigns a live body to the fixture it differs from least (contractcheck.Match: differences plus the positions that tell nothing on one side only), and
+		// the case `page` above (a cursor, a pause reason) is further from every page this module gives than the empty one is, so a populated page of the harness lands here.
+		rc(RouteAccountsEvents, "last page", "accounts.events.last_page.json", 200, eventsShape, vocabs{}),
 		rc(RouteAccountsEvents, "empty", "accounts.events.empty.json", 200, eventsShape, vocabs{}),
 	)
 }

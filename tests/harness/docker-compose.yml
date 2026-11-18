@@ -236,7 +236,15 @@ services:
     volumes:
       - ${H_MODULES_ROOT:?}/coldmail-send-byo/secrets/dev/certs/sink.crt:/certs/sink.crt:ro
       - ${H_MODULES_ROOT:?}/coldmail-send-byo/secrets/dev/certs/sink.key:/certs/sink.key:ro
-    networks: [private]
+    # Phase 3 close-out D2 (module 3's From-gate ON): a network ALIAS equal to the match string of one entry of module 3's provider table (services/control/internal/fromgate/provider.go: Fastmail,
+    # host `smtp.fastmail.com`, SPF token spf.messagingengine.com, DKIM probes fm1/fm2/fm3._domainkey), so that an account whose smtp_host is that string reaches this sink and the gate identifies the provider from the
+    # literal string. The alias exists on the private network only and resolves to this container's private address (module 3's destination guard admits it: run.sh stage 5b allows the RFC 1918 ranges). WHAT AN ALIASED
+    # ACCOUNT CANNOT DO: be verified. The worker validates the sink's certificate for every host that is not `smtp-sink`, `localhost` or a private-looking name (services/worker/src/smtp.js isPrivateHost), and the
+    # sink's certificate (module 3's dev leaf) names smtp-sink and localhost only, so the credential check of such an account fails (verify_tls_failed): the From-gate's verdict does not depend on it and the
+    # tests of tests/harness/m3_adapter_closeout_fromgate_test.go assert only the verdict.
+    networks:
+      private:
+        aliases: [smtp.fastmail.com]
 
   # ── several lanes and a hostile sink (Phase 2 close-out, E2): two more workers and a CONTROLLABLE sink ────────────────────────────────────────────────────────────────
   # m3-worker-2 and m3-worker-3 are m3-worker again (same build, same environment) with a worker id and token of their own: module 3 pushes one job per worker at a time, so a user with
@@ -303,6 +311,45 @@ services:
     volumes:
       - ${H_MODULES_ROOT:?}/coldmail-send-byo/secrets/dev/certs/sink.crt:/certs/sink.crt:ro
       - ${H_MODULES_ROOT:?}/coldmail-send-byo/secrets/dev/certs/sink.key:/certs/sink.key:ro
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8025/readyz || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    # Phase 3 close-out D2 (module 3's From-gate ON), two network ALIASES of this sink on the private network (they resolve to this container's private address, which module 3's destination guard admits):
+    #   smtp.gmail.com               the match string of the second provider of module 3's table (Google Workspace: SPF token _spf.google.com, DKIM probe google._domainkey): the provider-matched paths of the From-gate
+    #                                tests (tests/harness/m3_adapter_closeout_fromgate_test.go). An account at this name cannot be VERIFIED (the worker validates the certificate of every host that is not private-looking, see
+    #                                the note at smtp-sink); the gate's verdict does not depend on that.
+    #   10.smtp-ctl.example.test     the host name the adapter tests' accounts name for this sink (m3aEnv.sinkIP). It begins with a private prefix on purpose: services/worker/src/smtp.js isPrivateHost tests the host STRING
+    #                                (a name starting 10. counts as private), so the worker skips certificate validation for it as it does for this sink's address, and the account verifies. It is a subdomain of the From domain
+    #                                example.test of every adapter test's account, which module 3 reads as its own mail infrastructure (the self-hosted exception of the From-gate: provider.go selfHostedException),
+    #                                so the account is ALIGNED with an SPF record that has a bare `mx` (tests/harness/m3adapter/m3dns.json).
+    networks:
+      private:
+        aliases: [smtp.gmail.com, 10.smtp-ctl.example.test]
+
+  # ── the From-gate's DNS (Phase 3 close-out D2): module 3 runs with from_gate_mode=enforce and from_dns_resolver=m3dns:53 for the module 3 ADAPTER tests ───────────────────────────────────────────────────
+  # The fixture of tests/harness/fx (module 1's node proof uses the same program as service `fx`), two roles only: `dns` (an authoritative server for the zones of tests/harness/m3adapter/m3dns.json, UDP and TCP on
+  # :53, with SERVFAIL, silence and NXDOMAIN per name on command) and `api` (its control API on :8025: the tests replace a record set at run time, switch a name to SERVFAIL, and read the log of every question the gate
+  # asked). The https and smtp roles are not started (the https role needs a certificate and nothing here asks for one). No address is served: the fixture holds the TXT and MX answers the gate reads (SPF, DMARC, DKIM
+  # selectors) and nothing else. The tests point module 3 at it through the dial from_dns_resolver (set and restored by m3aEnv, never by run.sh: the raw module 3 tests keep the gate off and the system resolver).
+  # Port 53 is below 1024: bound by a non-root user through the namespaced sysctl net.ipv4.ip_unprivileged_port_start=0, no capability (the same as `fx` in docker-compose.m1node.yml). It publishes no port; the exposure
+  # check lists it. Docker's own embedded resolver is the upstream for dotless names (the fixture forwards them; module 3 never asks one).
+  m3dns:
+    build: { context: "${H_PLATFORM_DIR:?}/tests/harness/fx", dockerfile: Dockerfile }
+    user: "${H_HOST_UID:?}:${H_HOST_GID:?}"
+    environment:
+      FX_ROLES: "dns,api"
+      FX_CONFIG: /fx/fixture.json
+      FX_DNS_ADDR: ":53"
+      FX_API_ADDR: ":8025"
+    volumes:
+      - ${H_PLATFORM_DIR:?}/tests/harness/m3adapter/m3dns.json:/fx/fixture.json:ro
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: "0"
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
@@ -398,6 +445,7 @@ services:
       HARNESS_SINK_URL: http://smtp-sink:8025
       HARNESS_SINK_PASSWORD: ${H_SINK_PASSWORD:?}
       HARNESS_CTL_URL: http://smtp-ctl:8025      # the controllable sink's control API (the hostile-sink test); its SMTP port is 1025 on the same host
+      HARNESS_M3DNS_URL: http://m3dns:8025      # the From-gate's fixture DNS: its control API (the module 3 adapter tests replace records, switch a name to SERVFAIL and read the log of what the gate asked); module 3 itself reaches it as m3dns:53
       HARNESS_M3_WORKER_IDS: ${H_M3_WORKER_ID:?},${H_M3_WORKER2_ID:?},${H_M3_WORKER3_ID:?}      # the three module-3 workers (ids only): the several-lanes proof asserts each of them took part
     volumes:
       - ${H_WORK:?}/out:/h:ro

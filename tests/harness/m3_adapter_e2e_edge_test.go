@@ -50,8 +50,9 @@ import (
 //	events, system row   GET /v1/send-byo/accounts/{id}/events page       a tenant of its own (ev) with one account whose send the sink refuses AUTH for: an auth_failure, at autoquarantine_mode=shadow module 3 writes an
 //	                                                                      "updated" event with flags before and after and a reason: the events listed through the adapter and, at limit=1, page by page through the raw client
 //
-// WHAT IS ALLOWLISTED (zz_m3_adapter_contract_drift_test.go, with the reason): run internal_error (a failing statement inside module 3), accounts create unprocessable (the From-gate's unacknowledged WARN: the
-// gate is off and the network has no DNS), accounts test unavailable (module 3's verifier failing or missing).
+// WHAT IS ALLOWLISTED (zz_m3_adapter_contract_drift_test.go, with the reason): run internal_error (a failing statement inside module 3), accounts test unavailable (module 3's verifier failing or missing) and
+// the events case `page` (a page with a cursor and a pause event, which no page of this harness is). The From-gate's 422 (accounts create unprocessable) left the list when the adapter tests turned the gate on
+// (Phase 3 close-out D2, TestM3Adapter_FromGatePassWarnBlock), and the events of an enforced quarantine are the case `last page` (D3, TestM3Adapter_AccountEventsOfAnEnforcedHealthAction).
 //
 // THE LEFT-OVERS. X (and then ev) is suspended through module 3's operator route when its steps are done, so the queued items (the sink answered 451 or refused AUTH, and module 3 retries) are never claimed again and nothing of them is sent after the
 // sink is reset; X has no entitlement row, so no platform loop looks at it. The dials this test lowers (quote_long_duration_warn_sec, account_count_cap_per_user, bulk_add_max_rows, dispatch_mode) are put back

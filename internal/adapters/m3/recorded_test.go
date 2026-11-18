@@ -620,7 +620,7 @@ var recordedFixtures = []string{
 
 // handWrittenFixtures are the four files the record runs did not reach, and why (the README repeats it).
 var handWrittenFixtures = []string{
-	"run.error.internal_error.json", "accounts.create.error.unprocessable.json", "accounts.test.unavailable.json", "accounts.events.page.json",
+	"run.error.internal_error.json", "accounts.create.error.unprocessable.json", "accounts.test.unavailable.json", "accounts.events.page.json", "accounts.events.last_page.json", "accounts.test.indeterminate.json",
 	"cancel.ok.json", "cancel.error.validation_failed.json", "run.error.conflict.json", "describe.ok.json", "quote.ok.json", "quote.feasible.json", "quote.infeasible.json",
 	"report.campaign.page.json", "report.campaign.last_page.json", "report.campaign.empty.json",
 }
@@ -682,7 +682,7 @@ func TestReadmeNamesWhichFixturesAreRecorded(t *testing.T) {
 		}
 		return p
 	}
-	if len(wantRec) != 33 || len(wantHand) != 14 {
+	if len(wantRec) != 33 || len(wantHand) != 16 {
 		t.Fatalf("%d recorded and %d hand-written: the subject changed", len(wantRec), len(wantHand))
 	}
 	for _, f := range recordedFixtures {

@@ -1,0 +1,11 @@
+{
+ "verification": {
+  "state": "failed",
+  "smtp_response": "",
+  "code": "verify_tls_failed"
+ },
+ "from_alignment": {
+  "state": "indeterminate",
+  "code": "from_dns_unavailable"
+ }
+}

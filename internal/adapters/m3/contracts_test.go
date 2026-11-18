@@ -557,6 +557,20 @@ func cases(t testing.TB) map[string]sendapitest.Case {
 			},
 			Mutations: []sendapitest.Mutation{set("verification.state", 5, "verification.state"), set("from_alignment.code", 5, "from_alignment.code")},
 		},
+		// the credential check ran and failed (a TLS failure, with an empty provider text); the From check could not get an answer from DNS (Phase 3 close-out D2; hand-written, see testdata/README.md)
+		"POST /v1/send-byo/accounts/{id}/test | indeterminate": {
+			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) {
+				return c.TestAccount(ctx, acct1, false)
+			}),
+			Check: func(t testing.TB, v any, err error) {
+				r := v.(m3.TestResult)
+				if r.Verification.State != m3.VerificationFailed || r.Verification.Code != m3.VerifyTLSFailed || r.Alignment.State != m3.AlignmentIndeterminate || r.Alignment.Code != m3.AlignmentDNSUnavailable ||
+					r.Alignment.NotStored || r.Alignment.Message != nil {
+					t.Fatalf("result = %+v", r)
+				}
+			},
+			Mutations: []sendapitest.Mutation{set("verification.state", 5, "verification.state"), set("from_alignment.code", 5, "from_alignment.code"), set("verification.code", 5, "verification.code")},
+		},
 		"POST /v1/send-byo/accounts/{id}/test | error rate_limited": {
 			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) {
 				return c.TestAccount(ctx, acct1, false)
@@ -640,6 +654,33 @@ func cases(t testing.TB) map[string]sendapitest.Case {
 			Mutations: []sendapitest.Mutation{
 				del("items[0].actor", "items[0].actor"), set("items[1].user_id", other, "items[1].user_id"), set("items[0].created_at", "x", "items[0].created_at"), set("items[1].to_flags.paused", "x", "items[1].to_flags.paused"),
 				set("next_cursor", 5, "next_cursor"), del("items[1].from_flags", "items[1].from_flags"), set("items[0].id", "", "items[0].id"),
+			},
+		},
+		// the last page of the events of an account that was created, verified and quarantined by an enforced health action (Phase 3 close-out D3; hand-written, see testdata/README.md)
+		"GET /v1/send-byo/accounts/{id}/events | last page": {
+			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) {
+				return c.AccountEvents(ctx, acct1, "")
+			}),
+			Check: func(t testing.TB, v any, err error) {
+				p := v.(m3.EventPage)
+				if len(p.Items) != 3 || p.NextCursor != "" {
+					t.Fatalf("page = %+v", p)
+				}
+				c, ver, q := p.Items[0], p.Items[1], p.Items[2]
+				if c.Actor != "user" || c.Action != "created" || c.From != nil || c.To == nil || c.To.Quarantined || c.Reason != nil || c.RequestID == "" || c.AccountID != acct1 {
+					t.Fatalf("created = %+v", c)
+				}
+				if ver.Actor != "user" || ver.Action != "verified" || ver.From != nil || ver.To != nil || ver.Reason == nil || *ver.Reason != "verify: success" || ver.RequestID != "" {
+					t.Fatalf("verified = %+v", ver)
+				}
+				if q.Actor != "system" || q.Action != "quarantine" || q.From == nil || q.From.Quarantined || q.To == nil || !q.To.Quarantined || q.To.Paused || q.To.Disabled || q.To.PauseReason != "" ||
+					q.Reason == nil || *q.Reason != "auth_failure" || q.RequestID != "" {
+					t.Fatalf("quarantine = %+v", q)
+				}
+			},
+			Mutations: []sendapitest.Mutation{
+				del("items[2].actor", "items[2].actor"), set("items[2].user_id", other, "items[2].user_id"), set("items[2].created_at", "x", "items[2].created_at"), set("items[2].to_flags.quarantined", "x", "items[2].to_flags.quarantined"),
+				set("next_cursor", 5, "next_cursor"), del("items[2].from_flags", "items[2].from_flags"), set("items[1].id", "", "items[1].id"),
 			},
 		},
 		"GET /v1/send-byo/accounts/{id}/events | empty": {

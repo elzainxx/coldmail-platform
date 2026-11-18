@@ -18,7 +18,8 @@ import (
 // judges no host itself any more (its own address rule was removed): it types the module's refusal. The harness lets the private compose network through (run.sh stage 5b sets the dial
 // smtp_host_allow_cidrs to the three RFC 1918 ranges, so the sink is reachable) and every other special-purpose range stays refused: that is what is proved here, through the adapter, against the real module 3.
 //
-//	the controls      the compose sink by its own NAME and by its address (both private, both allowed by the dial) are created, verified and aligned: the host every other test uses
+//	the controls      the compose sink by a NAME (its network alias, the host every other test uses: verified and aligned) and by its ADDRESS (both private, both allowed by the dial): the address is an unmatched
+//	                  provider for the From-gate, so that account is created with the acknowledgment, verified, `unaligned_warned`
 //	add time          create-account with 127.0.0.1, localhost, the cloud metadata address, [::1] and the loopback written as a decimal (2130706433): each is the module's 400 validation_failed naming
 //	                  {smtp_host, forbidden_value}, ErrHostForbidden (and a Refused error, never an open outcome), and creates NOTHING (the tenant's accounts in module 3's own table do not change)
 //	a name that does not resolve is allowed at add time (it is judged at connect): the account is created, its verification failed with one of the closed codes
@@ -34,9 +35,23 @@ func TestM3Adapter_SMTPHostGuard(t *testing.T) {
 
 	tn := e.seedTenant(t, "hostg", nil)
 
-	// ---- the controls: the sink by name and by address is what every other test names ----
-	byName := e.createVerified(t, tn, "name", m3hCtlHost)
-	e.createVerified(t, tn, "ip", e.sinkIP)
+	// ---- the controls: the sink by name and by address ----
+	// By NAME is the sink's network alias e.sinkIP (docker-compose.yml): the worker skips certificate validation for a host that looks private, and the From-gate (enforce, since Phase 3 close-out D2)
+	// reads the alias as the self-hosted exception of example.test, so the account is verified and aligned like every other adapter test's. The service name smtp-ctl would resolve to the same address
+	// but is not private-looking, so the worker would validate the sink's certificate (it names smtp-sink and localhost only) and the check would fail: it is used below as a bulk row, which is
+	// created whatever its credential check says.
+	byName := e.createVerified(t, tn, "name", e.sinkIP)
+	// By ADDRESS: a bare address is an unmatched provider for the From-gate, which can only ever warn, so the account is created with the acknowledgment and is `unaligned_warned`, verified (the worker skips
+	// certificate validation for a private address).
+	byAddr := e.newAccount("ip", tn, e.ctlAddr)
+	byAddr.AcknowledgeAlignmentWarning = true
+	ip, err := tn.C.CreateAccount(ctx, byAddr)
+	if err != nil {
+		t.Fatalf("CreateAccount at the sink's address %s failed (%s, may have been applied: %v): %s", e.ctlAddr, modclient.KindOf(err), m3.MaybeApplied(err), e.raw.scrub(err.Error()))
+	}
+	if ip.Verification.State != m3.VerificationVerified || ip.FromAlignment.State != m3.AlignmentWarned || ip.FromAlignment.AcknowledgedAt == nil {
+		t.Fatalf("the account at the sink's address is verification %q (code %q) with From verdict %q (acknowledged %v), want verified and an acknowledged unaligned_warned", ip.Verification.State, ip.Verification.Code, ip.FromAlignment.State, ip.FromAlignment.AcknowledgedAt != nil)
+	}
 	if got := e.userAccounts(t, tn.UserID); got != 2 {
 		t.Fatalf("module 3 holds %d account(s) of the tenant after the two controls, want 2", got)
 	}
@@ -60,7 +75,9 @@ func TestM3Adapter_SMTPHostGuard(t *testing.T) {
 		t.Logf("NOTE m3a host guard add time: %s refused: HTTP %d %s %v (request %s), no account made", h.what, me.Status, me.Code, me.Details, me.RequestID)
 	}
 	// the control of the refusals: the same call for the sink's name is the one the controls made, and a name that does not resolve at add time is allowed (judged again at every connect)
-	gone, err := tn.C.CreateAccount(ctx, e.newAccount("gone", tn, "no-such-host.invalid"))
+	goneAcct := e.newAccount("gone", tn, "no-such-host.invalid")
+	goneAcct.AcknowledgeAlignmentWarning = true // an unknown host is an unmatched provider for the From-gate (enforce): created only with the acknowledgment
+	gone, err := tn.C.CreateAccount(ctx, goneAcct)
 	if err != nil {
 		t.Fatalf("CreateAccount with a name that does not resolve answered %v (may have been applied %v), want the account created: a name that does not resolve at add time is allowed", err, m3.MaybeApplied(err))
 	}
