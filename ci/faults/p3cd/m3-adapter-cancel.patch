@@ -1,0 +1,11 @@
+--- a/internal/adapters/m3/m3.go
++++ b/internal/adapters/m3/m3.go
+@@ -75,7 +75,7 @@
+ 		// The price is inert (flat subscription, unit price 0): the quote's cost is not an amount the platform can check against recipient_count * unit_price.
+ 		QuoteFeasibility: true,
+ 		LinearCost:       false,
+-		Cancel:           true,
++		Cancel:           false,
+ 		RunConflict:      sendapi.ConflictCauses,
+ 	}
+ }

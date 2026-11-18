@@ -1,0 +1,8 @@
+# Phase 3 close-out, D5 (owner ruling OD-3): a 409 of module 3's run now names its causes in details[] (suspended, campaign_active, campaign_cap, queue_cap) and the shared adapter turns each into a typed cause the caller can errors.Is, so 'cause unknown' happens only for an older module. The fault maps the queue-cap cause to the campaign-cap sentinel; TestRunConflictNamesItsCauses must go red naming the cause that was not found and the one that was. The control is the real tree. Go only.
+GATE=sendapi-conflict-cause
+TARGET=platform
+SETUP=
+STEP=go test TestRunConflictNamesItsCauses (each cause of a run conflict is its own error)
+CMD=GOTOOLCHAIN=local go test -count=1 -v -run '^TestRunConflictNamesItsCauses$' ./internal/adapters/sendapi/
+MESSAGE=--- FAIL: TestRunConflictNamesItsCauses
+MESSAGE=errors.Is(campaign_cap) = true, want false

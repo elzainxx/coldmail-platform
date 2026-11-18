@@ -1,0 +1,11 @@
+--- a/internal/adapters/sendapi/errors.go
++++ b/internal/adapters/sendapi/errors.go
+@@ -96,7 +96,7 @@
+ 	case CauseCampaignCap:
+ 		return ErrRunCampaignCap
+ 	case CauseQueueCap:
+-		return ErrRunQueueCap
++		return ErrRunCampaignCap
+ 	}
+ 	return nil
+ }

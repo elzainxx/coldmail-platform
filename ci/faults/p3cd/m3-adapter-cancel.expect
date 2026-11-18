@@ -1,0 +1,8 @@
+# Phase 3 close-out, D5 (owner ruling OD-1): module 3 now has POST /v1/cancel and the platform's adapter has the method (it used to be deliberately absent, held absent by a test). The fault switches the capability off in module 3's profile; TestCancelOnModule3IsTenantScoped must go red saying the module has no cancel route. The control is the real tree. Go only.
+GATE=m3-adapter-cancel
+TARGET=platform
+SETUP=
+STEP=go test TestCancelOnModule3IsTenantScoped (module 3's adapter cancels for its tenant)
+CMD=GOTOOLCHAIN=local go test -count=1 -v -run '^TestCancelOnModule3IsTenantScoped$' ./internal/adapters/m3/
+MESSAGE=--- FAIL: TestCancelOnModule3IsTenantScoped
+MESSAGE=not supported: the module has no cancel route
