@@ -181,6 +181,9 @@ func failureCells() []failureCell {
 		{name: "a valid document of the wrong type", kind: Contract, handler: replyWith(200, "application/json", `[1,2,3]`), notAnErr: justDo},
 		{name: "an empty body", kind: Contract, handler: replyWith(200, "application/json", ``), notAnErr: justDo},
 		{name: "JSON null", kind: Contract, handler: replyWith(200, "application/json", `null`), notAnErr: justDo},
+		// Phase 3 close-out D4: the liveness branch. A 200 that is a well-formed liveness document whose status is not "ok" is not a healthy module: Health must fail (Contract) on it, and every
+		// other operation fails on it because the document lacks the keys they need. Found by the rehearsal of the modclient-no-value fault proof: a mutation of that branch was not caught.
+		{name: "a 200 whose liveness status is not ok", kind: Contract, handler: replyWith(200, "application/json", `{"status":"degraded","at":"2026-11-17T10:00:00Z"}`), notAnErr: justDo},
 	}
 }
 

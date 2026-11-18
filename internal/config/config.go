@@ -57,6 +57,8 @@ const (
 
 	// The secret every user's module 1 caller key is derived from (internal/tenant, Phase 3 B2).
 	VarM1KeySecret = "PLATFORM_M1_KEY_SECRET"
+	// The version of the keys the platform presents to module 1 (internal/tenant, Phase 3 close-out A4): the number in the derivation text, raised to rotate the secret.
+	VarM1KeyVersion = "PLATFORM_M1_KEY_VERSION"
 
 	// Where the three modules are and the credentials of the platform's own calls to them (the adapters internal/adapters/m1, m2 and m3, Phase 3 B3 to B5). All four are optional: an adapter
 	// whose dial is empty refuses with a typed error, the service still starts. Module 1 has no service token: it is called with each user's derived caller key (VarM1KeySecret).
@@ -72,6 +74,13 @@ const (
 // MinM1KeySecretBytes is the shortest PLATFORM_M1_KEY_SECRET accepted (and the shortest internal/tenant derives a key from). 32 bytes is the size of the HMAC-SHA256 output the key is made of:
 // a shorter secret would make every user's key easier to find than the key it protects is long.
 const MinM1KeySecretBytes = 32
+
+// The versions PLATFORM_M1_KEY_VERSION may take. The version is written into the text every module 1 key is derived from (internal/tenant), so two versions of one user are two different keys and
+// the secret can be rotated while the old keys still work. 999 is far more rotations than a deployment will ever make, and keeps the derivation text short and unambiguous.
+const (
+	MinM1KeyVersion = 1
+	MaxM1KeyVersion = 999
+)
 
 // Upper bounds on the integer dials. They are sanity guards, not tuning: they keep a typo (an extra digit,
 // a value in the wrong unit) from becoming a one-day shutdown, and keep the multiplication into a
@@ -158,7 +167,9 @@ func Vars() []Var {
 		{Name: VarModuleRetryBackoffMS, Default: "250",
 			Doc: fmt.Sprintf("Milliseconds before the first retry of a request to a module; each further retry waits twice as long as the one before, up to 30 seconds, with no random jitter. A 429 that names a Retry-After waits the larger of the two (never more than the request timeout). 0 retries at once. Integer, 0 to %d.", maxModuleBackoffMS)},
 		{Name: VarM1KeySecret, Default: unsetMarker, Secret: true,
-			Doc: fmt.Sprintf("The secret each user's module 1 caller key is derived from: the key is the unpadded base64url of the HMAC-SHA256, under this secret, of the fixed text m1-caller, a vertical bar and the user's id; module 1 keeps only the SHA-256 of each key. At least %d bytes (64 random hexadecimal characters are plenty). The default (unset) means no module 1 key can be derived and no tenant scope built; the service still starts. Changing it changes every user's key. Never printed or logged.", MinM1KeySecretBytes)},
+			Doc: fmt.Sprintf("The secret each user's module 1 caller key is derived from: the key is the unpadded base64url of the HMAC-SHA256, under this secret, of the text m1-caller, v and the key version (PLATFORM_M1_KEY_VERSION) and the user's id, each part set off by a vertical bar; module 1 keeps only the SHA-256 of each key. At least %d bytes (64 random hexadecimal characters are plenty). The default (unset) means no module 1 key can be derived and no tenant scope built; the service still starts. Changing it changes every user's key: rotate it with a new key version (see PLATFORM_M1_KEY_VERSION). Never printed or logged.", MinM1KeySecretBytes)},
+		{Name: VarM1KeyVersion, Default: "1",
+			Doc: fmt.Sprintf("The version of the module 1 caller keys the platform derives and presents: the key of a user is the HMAC-SHA256, under PLATFORM_M1_KEY_SECRET, of the text m1-caller, v and this number, and the user's id, each part set off by a vertical bar. Integer, %d to %d. Raise it (with a new PLATFORM_M1_KEY_SECRET) to rotate: provision the new version's rows first (the old keys keep working beside them), switch this dial and the secret, then retire the old version; the steps are in Docs/config-reference.md. Changing it without provisioning the new rows makes every module 1 call answer 401.", MinM1KeyVersion, MaxM1KeyVersion)},
 		{Name: VarM1URL, Default: unsetMarker,
 			Doc: "Base URL of module 1's control plane (http or https, with a host and no credentials, query or fragment), for example http://m1:8080. Module 1 is called with each user's derived caller key (see PLATFORM_M1_KEY_SECRET), not with a service token. The default (unset) means no module 1 call can be made and its adapter refuses with a typed error; the service still starts. Consumed by `internal/adapters/m1.FromConfig`."},
 		{Name: VarM2URL, Default: unsetMarker,
@@ -196,7 +207,8 @@ type Config struct {
 	ModuleRetries      int           // extra attempts of an idempotent request to a module (internal/modclient FromConfig)
 	ModuleRetryBackoff time.Duration // the first wait between attempts; it doubles (internal/modclient FromConfig)
 
-	M1KeySecret Secret // the secret every user's module 1 caller key is derived from; "" means not configured (internal/tenant NewResolver, DeriveM1Key)
+	M1KeyVersion int    // the version of the module 1 keys derived and presented (internal/tenant WithM1KeyVersion, Scope, ProvisionM1Caller)
+	M1KeySecret  Secret // the secret every user's module 1 caller key is derived from; "" means not configured (internal/tenant NewResolver, DeriveM1Key)
 
 	M1URL          string // base URL of module 1's control plane; "" means not configured (internal/adapters/m1 FromConfig)
 	M2URL          string // base URL of module 2's platform API; "" means not configured (internal/adapters/m2 FromConfig)
@@ -331,6 +343,10 @@ func Load(getenv func(string) string) (Config, error) {
 		case VarModuleRetryBackoffMS:
 			if n, ok := intIn(v.Name, raw, 0, maxModuleBackoffMS); ok {
 				c.ModuleRetryBackoff = time.Duration(n) * time.Millisecond
+			}
+		case VarM1KeyVersion:
+			if n, ok := intIn(v.Name, raw, MinM1KeyVersion, MaxM1KeyVersion); ok {
+				c.M1KeyVersion = n
 			}
 		case VarM1KeySecret:
 			if raw != v.Default { // the default stands for "not configured", which leaves the field empty (see unsetMarker)
@@ -481,6 +497,7 @@ func (c Config) attrs() []slog.Attr {
 		slog.Int("module_retries", c.ModuleRetries),
 		slog.Duration("module_retry_backoff", c.ModuleRetryBackoff),
 		slog.String("m1_key_secret", secretState(c.M1KeySecret)),
+		slog.Int("m1_key_version", c.M1KeyVersion),
 		slog.String("m1_url", urlState(c.M1URL)),
 		slog.String("m2_url", urlState(c.M2URL)),
 		slog.String("m2_service_token", secretState(c.M2ServiceToken)),

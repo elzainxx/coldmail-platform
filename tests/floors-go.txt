@@ -10,7 +10,7 @@ go|github.com/coldmail-platform/platform/internal/adapters/m3|44
 go|github.com/coldmail-platform/platform/internal/adapters/sendapi|48
 go|github.com/coldmail-platform/platform/internal/app|17
 go|github.com/coldmail-platform/platform/internal/charge|29
-go|github.com/coldmail-platform/platform/internal/config|37
+go|github.com/coldmail-platform/platform/internal/config|39
 go|github.com/coldmail-platform/platform/internal/contractcheck|253
 go|github.com/coldmail-platform/platform/internal/dsnscrub|8
 go|github.com/coldmail-platform/platform/internal/entitlements|60
@@ -23,6 +23,6 @@ go|github.com/coldmail-platform/platform/internal/money|23
 go|github.com/coldmail-platform/platform/internal/norm|10
 go|github.com/coldmail-platform/platform/internal/probe|40
 go|github.com/coldmail-platform/platform/internal/server|10
-go|github.com/coldmail-platform/platform/internal/tenant|13
+go|github.com/coldmail-platform/platform/internal/tenant|19
 go|github.com/coldmail-platform/platform/tests/harness/fx|14
 go|github.com/coldmail-platform/platform/tests/harness/sink|20

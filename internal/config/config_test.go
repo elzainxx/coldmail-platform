@@ -128,7 +128,8 @@ func TestLoad_DefaultsAreTheDocumentedOnes(t *testing.T) {
 		"PLATFORM_MODULE_RETRIES":          "2",
 		"PLATFORM_MODULE_RETRY_BACKOFF_MS": "250",
 
-		"PLATFORM_M1_KEY_SECRET": "(unset)",
+		"PLATFORM_M1_KEY_SECRET":  "(unset)",
+		"PLATFORM_M1_KEY_VERSION": "1",
 
 		"PLATFORM_M1_URL":           "(unset)",
 		"PLATFORM_M2_URL":           "(unset)",
@@ -167,6 +168,9 @@ func TestLoad_DefaultsAreTheDocumentedOnes(t *testing.T) {
 		t.Fatalf("the module client defaults did not reach the Config: %v", cfg)
 	}
 	// The optional dials' default is "not configured": an empty field, never the marker text itself.
+	if cfg.M1KeyVersion != 1 {
+		t.Fatalf("the module 1 key version default did not reach the Config: %d", cfg.M1KeyVersion)
+	}
 	if cfg.M1URL != "" || cfg.M2URL != "" || cfg.M2ServiceToken != "" || cfg.M3ServiceToken != "" || cfg.M1KeySecret != "" || cfg.InstanceID != "" {
 		t.Fatalf("an optional dial's default did not load as empty: %v", cfg)
 	}
@@ -299,7 +303,8 @@ var alternatives = map[string]string{
 	VarModuleRetries:        "5",
 	VarModuleRetryBackoffMS: "600",
 
-	VarM1KeySecret: strings.Repeat("alt-", 9), // 36 bytes
+	VarM1KeySecret:  strings.Repeat("alt-", 9), // 36 bytes
+	VarM1KeyVersion: "3",
 
 	VarM1URL:          "http://m1.internal:8081",
 	VarM2URL:          "https://m2.internal:9444/api",

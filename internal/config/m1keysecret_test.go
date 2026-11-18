@@ -85,7 +85,7 @@ func TestM1KeySecretDial_NeedsAtLeast32BytesWhenSet(t *testing.T) {
 func TestM1KeySecretDial_ReachesTheResolver(t *testing.T) {
 	independent := func(secret, user string) string {
 		mac := hmac.New(sha256.New, []byte(secret))
-		mac.Write([]byte("m1-caller|" + user))
+		mac.Write([]byte("m1-caller|v1|" + user))
 		return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 	}
 	scopeKey := func(env map[string]string) (string, error) {

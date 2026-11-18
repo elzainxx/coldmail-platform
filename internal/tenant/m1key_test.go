@@ -22,17 +22,21 @@ import (
 // outside this code, twice and independently (Python's hmac/hashlib/base64 and `openssl dgst -sha256 -hmac ... | base64`, which agreed), so a mistake in the Go derivation cannot hide in a test
 // that runs the same Go.
 //
-//	material = "vector-" x 6 (42 bytes)         message = "m1-caller|" + user          out = base64url-no-padding(HMAC-SHA256(material, message))
+//	material = "vector-" x 6 (42 bytes)         message = "m1-caller|v1|" + user          out = base64url-no-padding(HMAC-SHA256(material, message))
+//
+// (Phase 3 close-out A4 put the key version into the message: before it the message was "m1-caller|" + user, and these three vectors were recomputed once, by the same two tools, for the new text.
+// Nothing was provisioned under the old text outside throwaway harness databases, which mint their secret at run time.)
+//
 //	sum      = hex(SHA-256(the text of out))    wrong    = hex(SHA-256(the 32 raw HMAC bytes))   (the digest rule module 1 does NOT use)
 var vectorMaterial = strings.Repeat("vector-", 6)
 
 var vectors = []struct{ user, material, out, sum, wrong string }{
-	{"11111111-1111-4111-8111-111111111111", vectorMaterial, "RDXStwhy1zpOmq8-zRf6OEaTB5Xi-IdX0B8VL5G2DyA",
-		"2019400fe7790eb4fcd58346c5875dff2d32c864e8397c5e80865e8032388fcb", "7fd377dfb9660635473d50dfbfc2ff015b451f9593ec6359608d5b5f2e6c7f95"},
-	{"22222222-2222-4222-8222-222222222222", vectorMaterial, "UTpcxZtA6nJM2Tsnalo8UqzDMDe-0Me9uZRIonyaqe4",
-		"239905399be668038d54a563f7bd61f2059dba0bdd047d57a5ed85da8b051e7a", "3219b0ede7e9b54ef0b5b8540e28b4b758940bd2c86b0fbb050849cda6b7b5ea"},
+	{"11111111-1111-4111-8111-111111111111", vectorMaterial, "_zs8q9rsm1JttMWRgPI601bNr4ww8Cng0S2XX2Z1WP0",
+		"f96aad5144d083a43942aa1154fa117f5f9e7ff65cb31a101398388134416d61", "1361ab808d9c17f6136eda08337630a1dd41aec7b76e7a1ccc8aae8b14a80829"},
+	{"22222222-2222-4222-8222-222222222222", vectorMaterial, "u_YmPjEgUU9LsTObwLAxtKPzr6dKNqPn0iDb_ISdMiQ",
+		"8bec1e8abd074368e74535063e50db1442f83d9c66b42fca69ec0af07c0b2d9b", "637ca9effedebd304ef659b89a22b27076a37aa6ee2f225ac892472c90fc4405"},
 	// the first user's id under another material: the output depends on the secret
-	{"11111111-1111-4111-8111-111111111111", strings.Repeat("other-", 6), "RG9vmy-c9MCUYVHuHtte1PsNUZpHGHUGRwm1JBmYBRQ", "", ""},
+	{"11111111-1111-4111-8111-111111111111", strings.Repeat("other-", 6), "jnHC3xP2rLyzrDZnlEdF3rD91mw-Q9RJeZLuw4EELJw", "", ""},
 }
 
 func TestDeriveM1Key_PinnedVectors(t *testing.T) {
@@ -67,7 +71,7 @@ func TestDeriveM1Key_PinnedVectors(t *testing.T) {
 	}
 	// the independent recomputation inside the test, so a future vector edit is checked against the standard library too
 	mac := hmac.New(sha256.New, []byte(vectorMaterial))
-	mac.Write([]byte("m1-caller|" + vectors[0].user))
+	mac.Write([]byte("m1-caller|v1|" + vectors[0].user))
 	if got := base64.RawURLEncoding.EncodeToString(mac.Sum(nil)); got != vectors[0].out {
 		t.Fatalf("the pinned vector %q is not what the standard library computes (%q)", vectors[0].out, got)
 	}
@@ -147,11 +151,12 @@ type fakeAdmin struct {
 	execs, queries []dbCall
 	execErr        error
 	read           pgx.Row
+	tag            pgconn.CommandTag // what Exec reports (the zero tag affects no row)
 }
 
 func (f *fakeAdmin) Exec(_ context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
 	f.execs = append(f.execs, dbCall{sql, args})
-	return pgconn.CommandTag{}, f.execErr
+	return f.tag, f.execErr
 }
 
 func (f *fakeAdmin) QueryRow(_ context.Context, sql string, args ...any) pgx.Row {

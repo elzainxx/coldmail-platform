@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -43,9 +44,12 @@ const (
 
 // tenKey and tenDigest are the derivation written out a second time, in the test, from the specification (internal/tenant/m1key.go header), so that a wrong derivation in the package cannot
 // hide behind a test that calls the same code.
-func tenKey(secret config.Secret, user string) string {
+func tenKey(secret config.Secret, user string) string { return tenKeyV(secret, 1, user) }
+
+// tenKeyV is the derivation at an explicit key version: the HMAC-SHA256 of "m1-caller|v<version>|<user>" (Phase 3 close-out A4).
+func tenKeyV(secret config.Secret, version int, user string) string {
 	mac := hmac.New(sha256.New, []byte(secret.Reveal()))
-	mac.Write([]byte("m1-caller|" + user))
+	mac.Write([]byte("m1-caller|v" + strconv.Itoa(version) + "|" + user))
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
@@ -747,5 +751,116 @@ LIMIT 1`
 	}
 	if _, _, found := find(tenDigest("not-a-provisioned-key")); found {
 		t.Error("module 1's lookup found a row for a key nobody provisioned")
+	}
+}
+
+// TestM1LiveTenant_RotationBothVersionsAuthenticateAsTheSameUserThenTheOldOneEnds is the proof of OD-2's rotation path (Phase 3 close-out A4) against module 1's REAL verify.api_callers and its OWN
+// lookup (the statement of its front door, run as verify_app): a user has a version-1 key (secret one) and, provisioned beside it, a version-2 key (secret two). Both digests are found by module
+// 1's lookup, both name the same caller_id and the same owner (so a job submitted with either is the same tenant's), and they are distinct. Retiring version 1 with a grace period leaves it valid
+// until the end of the grace and marks it rotating_out; retiring it at once makes module 1's lookup stop finding it while the version-2 key still resolves; a retirement names exactly one user's
+// row of exactly one version (another user's version-1 key is untouched; a version nobody provisioned is ErrM1CallerNotFound and changes nothing). The paired control is the state before each step.
+func TestM1LiveTenant_RotationBothVersionsAuthenticateAsTheSameUserThenTheOldOneEnds(t *testing.T) {
+	l := newTenLive(t)
+	a, b := l.newUser(), l.newUser()
+	secondSecret := config.Secret(randomHex(t, 32))
+	r2, err := tenant.NewResolver(nil, secondSecret, tenant.WithM1KeyVersion(2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, u := range []string{a, b} { // version 1 of both users first: the state of a deployment before the rotation
+		if err := l.provision(u); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const lookup = `
+SELECT caller_id, COALESCE(user_id::text,'') FROM verify.api_callers
+WHERE key_sha256 = $1
+  AND not_before <= $2
+  AND (not_after IS NULL OR not_after > $2)
+LIMIT 1`
+	find := func(digest []byte) (callerID, owner string, found bool) {
+		t.Helper()
+		sp, err := l.tx.Begin(l.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer sp.Rollback(l.ctx)
+		if err := shapeSwitchRole(l.ctx, sp, "verify_app"); err != nil {
+			t.Fatal(err)
+		}
+		switch err := sp.QueryRow(l.ctx, lookup, digest, time.Now().UTC()).Scan(&callerID, &owner); {
+		case err == nil:
+			return callerID, owner, true
+		case errors.Is(err, pgx.ErrNoRows):
+			return "", "", false
+		default:
+			t.Fatalf("module 1's lookup failed as verify_app: %v", err)
+		}
+		return "", "", false
+	}
+	v1a, v2a := tenDigest(tenKeyV(l.secret, 1, a)), tenDigest(tenKeyV(secondSecret, 2, a))
+	v1b := tenDigest(tenKeyV(l.secret, 1, b))
+	if bytes.Equal(v1a, v2a) {
+		t.Fatal("the version-1 and version-2 digests of one user are equal")
+	}
+	// before the second version exists only the first resolves (the control of the next step)
+	if _, _, found := find(v2a); found {
+		t.Fatal("the version-2 key resolves before it was provisioned")
+	}
+	if err := r2.ProvisionM1Caller(l.ctx, l.tx, a); err != nil { // the resolver's own version: 2
+		t.Fatalf("provision version 2 beside version 1: %v", err)
+	}
+	if got := l.ownedBy(a); got != 2 {
+		t.Fatalf("user A has %d rows after the second provisioning, want 2 (one per version, module 1's rotation design)", got)
+	}
+	for _, c := range []struct {
+		name   string
+		digest []byte
+	}{{"version 1", v1a}, {"version 2", v2a}} {
+		caller, owner, found := find(c.digest)
+		if !found || caller != "platform-user-"+a || owner != a {
+			t.Errorf("module 1's lookup of user A's %s key = (%q, %q, %v), want (platform-user-%s, %s, true): both versions must be the same tenant", c.name, caller, owner, found, a, a)
+		}
+	}
+	// a version the platform never wrote and another user's key do not resolve as user A
+	if _, owner, found := find(tenDigest(tenKeyV(l.secret, 2, a))); found {
+		t.Errorf("version 2 under the OLD secret resolves (owner %q): a rotation that keeps no secret apart would protect nothing", owner)
+	}
+	if _, owner, _ := find(v1b); owner != b {
+		t.Errorf("user B's version-1 key resolves to %q, want B", owner)
+	}
+
+	// retire version 1 with a grace period: still valid inside it, marked rotating_out, version 2 untouched
+	if err := l.res.RetireM1CallerVersion(l.ctx, l.tx, a, 1, time.Hour); err != nil {
+		t.Fatalf("retire version 1 with a grace: %v", err)
+	}
+	if _, _, found := find(v1a); !found {
+		t.Error("version 1 stopped resolving inside its grace period")
+	}
+	if got := mnyRows(t, l.tx, "SELECT status FROM verify.api_callers WHERE key_sha256 = $1", v1a); len(got) != 1 || got[0] != "rotating_out" {
+		t.Errorf("version 1's status after the retirement = %v, want [rotating_out]", got)
+	}
+	if got := mnyRows(t, l.tx, "SELECT status FROM verify.api_callers WHERE key_sha256 = $1", v2a); len(got) != 1 || got[0] != "active" {
+		t.Errorf("version 2's status after the retirement of version 1 = %v, want [active]", got)
+	}
+	// retire it at once: module 1's lookup stops finding it, the version-2 key still resolves, another user's version 1 is untouched
+	if err := l.res.RetireM1CallerVersion(l.ctx, l.tx, a, 1, 0); err != nil {
+		t.Fatalf("retire version 1 at once: %v", err)
+	}
+	if _, _, found := find(v1a); found {
+		t.Error("module 1's lookup still finds the version-1 key after it was retired at once")
+	}
+	if caller, owner, found := find(v2a); !found || owner != a || caller != "platform-user-"+a {
+		t.Errorf("after retiring version 1 the version-2 key resolves to (%q, %q, %v), want user A's", caller, owner, found)
+	}
+	if _, owner, found := find(v1b); !found || owner != b {
+		t.Errorf("retiring user A's version 1 changed user B's version-1 key: (%q, %v)", owner, found)
+	}
+	// a retirement never reaches a version nobody provisioned or a row another user owns, and it deletes nothing
+	if err := l.res.RetireM1CallerVersion(l.ctx, l.tx, a, 3, 0); !errors.Is(err, tenant.ErrM1CallerNotFound) {
+		t.Errorf("retiring a version that was never provisioned: %v, want ErrM1CallerNotFound", err)
+	}
+	if got := l.ownedBy(a); got != 2 {
+		t.Errorf("user A has %d rows after the retirements, want 2: a retirement deletes nothing", got)
 	}
 }

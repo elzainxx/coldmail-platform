@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -50,6 +51,10 @@ var (
 	ErrNoM1KeySecret = errors.New("tenant: the module 1 key secret is not configured")
 	// ErrWeakSecret: the module 1 key secret is shorter than config.MinM1KeySecretBytes.
 	ErrWeakSecret = errors.New("tenant: the module 1 key secret is too short")
+	// ErrBadKeyVersion: a module 1 key version outside config.MinM1KeyVersion to config.MaxM1KeyVersion (or a negative grace period).
+	ErrBadKeyVersion = errors.New("tenant: the module 1 key version is not valid")
+	// ErrM1CallerNotFound: RetireM1CallerVersion found no module 1 caller row of this user for the key of that version. Nothing was changed.
+	ErrM1CallerNotFound = errors.New("tenant: no module 1 caller row of this user for that key version")
 	// ErrNoDatabase: the call needs a database connection the resolver (or the caller) does not have.
 	ErrNoDatabase = errors.New("tenant: no database connection")
 	// ErrM1CallerConflict: an api_callers row for this user's key already exists but would not authenticate the user (another owner, no owner, or outside its validity window). Nothing was changed.
@@ -84,23 +89,52 @@ type DB interface {
 
 // Resolver resolves logins and builds scopes. It holds a database handle and the module 1 key secret and nothing else, so it is safe for concurrent use.
 type Resolver struct {
-	db     DB
-	secret config.Secret // PLATFORM_M1_KEY_SECRET; "" means not configured
-	dsn    string        // kept only to scrub error text (dsnscrub); never logged, never returned
+	db      DB
+	secret  config.Secret // PLATFORM_M1_KEY_SECRET; "" means not configured
+	version int           // PLATFORM_M1_KEY_VERSION: the version Scope presents and ProvisionM1Caller writes; 0 means the first (config.MinM1KeyVersion)
+	dsn     string        // kept only to scrub error text (dsnscrub); never logged, never returned
 }
 
 // NewResolver builds a resolver over the platform's pool (a login as platform_app; nil is allowed for a resolver that only derives and provisions keys, and every call that needs the
 // database then answers ErrNoDatabase). m1KeySecret is PLATFORM_M1_KEY_SECRET: empty means not configured (Scope and ProvisionM1Caller then answer ErrNoM1KeySecret), anything else shorter than
 // config.MinM1KeySecretBytes is refused with ErrWeakSecret and the error never carries the value.
-func NewResolver(db DB, m1KeySecret config.Secret) (*Resolver, error) {
+func NewResolver(db DB, m1KeySecret config.Secret, opts ...Option) (*Resolver, error) {
 	if s := m1KeySecret.Reveal(); s != "" && len(s) < config.MinM1KeySecretBytes {
 		return nil, fmt.Errorf("%w: it must be at least %d bytes", ErrWeakSecret, config.MinM1KeySecretBytes)
 	}
 	r := &Resolver{db: db, secret: m1KeySecret}
+	for _, o := range opts {
+		if err := o(r); err != nil {
+			return nil, err
+		}
+	}
 	if p, ok := db.(*pgxpool.Pool); ok && p != nil {
 		r.dsn = p.Config().ConnString()
 	}
 	return r, nil
+}
+
+// Option adjusts a Resolver at construction.
+type Option func(*Resolver) error
+
+// WithM1KeyVersion sets the key version the resolver presents (Scope) and provisions (ProvisionM1Caller): PLATFORM_M1_KEY_VERSION, config.MinM1KeyVersion to config.MaxM1KeyVersion. Without it the
+// version is the first (1). A version outside the range is refused with ErrBadKeyVersion.
+func WithM1KeyVersion(v int) Option {
+	return func(r *Resolver) error {
+		if v < config.MinM1KeyVersion || v > config.MaxM1KeyVersion {
+			return fmt.Errorf("%w: %d is not in %d to %d", ErrBadKeyVersion, v, config.MinM1KeyVersion, config.MaxM1KeyVersion)
+		}
+		r.version = v
+		return nil
+	}
+}
+
+// keyVersion is the version the resolver presents and provisions.
+func (r *Resolver) keyVersion() int {
+	if r.version == 0 {
+		return config.MinM1KeyVersion
+	}
+	return r.version
 }
 
 // Format, String and GoString render the resolver without its secret for EVERY verb: a struct field of type config.Secret is not enough on its own, because fmt does not call methods on an
@@ -112,7 +146,7 @@ func (r Resolver) String() string {
 	if r.secret == "" {
 		state = "(unset)"
 	}
-	return "tenant.Resolver{m1_key_secret: " + state + "}"
+	return "tenant.Resolver{m1_key_secret: " + state + ", m1_key_version: " + strconv.Itoa(r.keyVersion()) + "}"
 }
 
 func (r Resolver) GoString() string { return r.String() }

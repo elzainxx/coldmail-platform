@@ -27,7 +27,8 @@ start-up with exit status 2, and the message names the variable and the reason, 
 | `PLATFORM_MODULE_TIMEOUT_MS` | `15000` | no | no | Milliseconds one request to a module (module 1, 2 or 3) may take, counted per attempt and including the time to read the response body, before it counts as a timeout. A request that sets its own timeout (module 3's account creation and bulk add run for tens of seconds) overrides it. Integer, 500 to 300000. |
 | `PLATFORM_MODULE_RETRIES` | `2` | no | no | Extra attempts a request to a module gets after a failure, 0 for none. Only a request marked idempotent (a read, or a write the module deduplicates by the platform's own key) is ever retried, and only after the module was unreachable, timed out or answered 429; a refusal, a not found, a module fault (500) or an answer that breaks the contract is never retried, and neither is a write that is not idempotent. Integer, 0 to 10. |
 | `PLATFORM_MODULE_RETRY_BACKOFF_MS` | `250` | no | no | Milliseconds before the first retry of a request to a module; each further retry waits twice as long as the one before, up to 30 seconds, with no random jitter. A 429 that names a Retry-After waits the larger of the two (never more than the request timeout). 0 retries at once. Integer, 0 to 30000. |
-| `PLATFORM_M1_KEY_SECRET` | `(unset)` | no | yes | The secret each user's module 1 caller key is derived from: the key is the unpadded base64url of the HMAC-SHA256, under this secret, of the fixed text m1-caller, a vertical bar and the user's id; module 1 keeps only the SHA-256 of each key. At least 32 bytes (64 random hexadecimal characters are plenty). The default (unset) means no module 1 key can be derived and no tenant scope built; the service still starts. Changing it changes every user's key. Never printed or logged. |
+| `PLATFORM_M1_KEY_SECRET` | `(unset)` | no | yes | The secret each user's module 1 caller key is derived from: the key is the unpadded base64url of the HMAC-SHA256, under this secret, of the text m1-caller, v and the key version (PLATFORM_M1_KEY_VERSION) and the user's id, each part set off by a vertical bar; module 1 keeps only the SHA-256 of each key. At least 32 bytes (64 random hexadecimal characters are plenty). The default (unset) means no module 1 key can be derived and no tenant scope built; the service still starts. Changing it changes every user's key: rotate it with a new key version (see PLATFORM_M1_KEY_VERSION). Never printed or logged. |
+| `PLATFORM_M1_KEY_VERSION` | `1` | no | no | The version of the module 1 caller keys the platform derives and presents: the key of a user is the HMAC-SHA256, under PLATFORM_M1_KEY_SECRET, of the text m1-caller, v and this number, and the user's id, each part set off by a vertical bar. Integer, 1 to 999. Raise it (with a new PLATFORM_M1_KEY_SECRET) to rotate: provision the new version's rows first (the old keys keep working beside them), switch this dial and the secret, then retire the old version; the steps are in Docs/config-reference.md. Changing it without provisioning the new rows makes every module 1 call answer 401. |
 | `PLATFORM_M1_URL` | `(unset)` | no | no | Base URL of module 1's control plane (http or https, with a host and no credentials, query or fragment), for example http://m1:8080. Module 1 is called with each user's derived caller key (see PLATFORM_M1_KEY_SECRET), not with a service token. The default (unset) means no module 1 call can be made and its adapter refuses with a typed error; the service still starts. Consumed by `internal/adapters/m1.FromConfig`. |
 | `PLATFORM_M2_URL` | `(unset)` | no | no | Base URL of module 2's platform API (http or https, with a host and no credentials, query or fragment), for example http://m2:8080. The default (unset) means no module 2 call can be made and its adapter refuses with a typed error; the service still starts. Consumed by `internal/adapters/m2.FromConfig`. |
 | `PLATFORM_M2_SERVICE_TOKEN` | `(unset)` | no | yes | Module 2's service token (its Domain A bearer), sent on every platform call to module 2. Printable ASCII with no spaces. The default (unset) means no module 2 call can be made and its adapter refuses with a typed error; the service still starts. Consumed by `internal/adapters/m2.FromConfig`. Never printed or logged. |
@@ -118,7 +119,7 @@ Modules 2 and 3 take the platform user's id as `user_id` on every call. Module 1
 is limited to that owner. So the platform gives each user one module 1 key and writes the one row that lets module 1 recognise it (`internal/tenant`):
 
 ```
-key    = base64url-without-padding( HMAC-SHA256( PLATFORM_M1_KEY_SECRET, "m1-caller|" + user id ) )     43 characters
+key    = base64url-without-padding( HMAC-SHA256( PLATFORM_M1_KEY_SECRET, "m1-caller|v" + PLATFORM_M1_KEY_VERSION + "|" + user id ) )     43 characters
 digest = SHA-256( the key as text )                                                                     what module 1 stores
 ```
 
@@ -126,8 +127,24 @@ The user id is the platform user's id in lower case; the digest is of the key's 
 side: the key is recomputed on every call. The row (`caller_id`, the digest, `not_before`, `user_id`) is written by `ProvisionM1Caller`, once per user, as the **privileged** identity of module 1's
 database (module 1's runtime login, like the platform's `platform_app`, can only read that table). It is idempotent, and it refuses a user id that is empty or malformed because a key with no owner
 can submit jobs that nobody can read. **`PLATFORM_M1_KEY_SECRET`** is optional so that a deployment that makes no module 1 call starts without it; without it no key is derived and no tenant scope
-is built (the resolver answers `ErrNoM1KeySecret`). Changing the secret changes every user's key and leaves the old rows valid: provision the new rows first, and expire the old ones in module 1's
-database once nothing uses them.
+is built (the resolver answers `ErrNoM1KeySecret`).
+
+### Rotating the secret (owner ruling OD-2: one derived key per user, with a key version)
+
+The version is in the text the HMAC is taken over, so a user's version-2 key is a different key from the version-1 key even under one secret, and module 1 can hold both at once: its key table was
+designed for rotation (two rows for one `caller_id` with overlapping windows, migration 0010). The steps, none of which interrupts a user:
+
+1. Choose the new secret (at least 32 bytes) and the next version, N = the current version + 1.
+2. **Provision** every user's version-N row beside the old one: build a resolver with the NEW secret and `tenant.WithM1KeyVersion(N)` and call `ProvisionM1Caller` (or `ProvisionM1CallerVersion(…, N)`)
+   for each user, as the privileged identity of module 1's database. It is idempotent. Both keys now authenticate as the same user (same `caller_id`, same owner).
+3. **Switch** the platform: set `PLATFORM_M1_KEY_SECRET` to the new secret and `PLATFORM_M1_KEY_VERSION` to N, and restart. From then on the platform presents only version N.
+4. **Retire** the old rows: build a resolver with the OLD secret and call `RetireM1CallerVersion(…, N-1, grace)` for each user (the grace is how long an old key still works; `0` ends it at once). The row
+   gets an end (`not_after`) and the status `rotating_out`; nothing is deleted.
+5. Forget the old secret.
+
+Switching before step 2 is finished makes every call of a user without a version-N row answer 401 (module 1 has never heard of the key); step 4 before step 3 locks everyone out. The tests that prove the
+steps: `internal/tenant` (the pinned vectors of versions 1, 2 and 12, the distinctness of versions, the statements of provisioning and retirement) and, against module 1's real front-door lookup,
+`TestM1LiveTenant_RotationBothVersionsAuthenticateAsTheSameUserThenTheOldOneEnds` in the harness.
 
 ## Where the modules are and which credential each call carries
 
