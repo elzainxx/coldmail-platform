@@ -35,7 +35,8 @@ import (
 // works against the real module 3 and its sinks: the HTTP client of the operator surface (m3lEnv), the waiting loop (m3lWait), the sink's control API types (m3hMode, m3hSinkMsg, m3hRcpt, m3hInflight).
 //
 // WHAT IS DRIVEN, AND WHAT IS NOT. Every call to module 3's DOMAIN A (quote, run, report, the accounts, the test button, bulk add) in these tests goes through internal/adapters/m3 (built by m3.FromConfig,
-// the way the service builds it, with the two options only the harness needs: the suspension reader and AllowPrivateSMTPHosts, because the sink is a private address) and, for the page-size tests, through
+// the way the service builds it, with the one option only the harness needs: the suspension reader; the sink is a private address, which module 3's destination guard lets through because run.sh
+// stage 5b sets its smtp_host_allow_cidrs to the private compose network) and, for the page-size tests, through
 // sendapi.New over the same module client. What module 3 needs before it can send and what the platform does not do is set up beside the adapter and is the tenant's own setup, not the adapter's: the user
 // rows and the job items (the platform's tables, written as the superuser, as the other module 3 tests do), the per-user pacing (module 3's operator surface, the admin key), the dials restored at the end of
 // a test (module 3's own table). The entitlement and its delivery to module 3 go through the platform's real path: entitlements.Store as platform_app, delivered by the platform SERVICE's reconcile loop.
@@ -54,11 +55,6 @@ const (
 	m3aPollEvery          = time.Second
 	m3aBudget             = 15 * time.Minute
 
-	// m3aCampaignCap is THE PLATFORM'S campaign size cap used by these tests: a platform value, chosen here and documented. Module 3 has its own dial (max_campaign_size, 50000 by default) but states it on no
-	// Domain A route (MODULE-FORCED M3-F1), so a pre-check of the size can only be made against a number the platform itself holds. The platform's own number is stricter than the module's: 5000 recipients
-	// in one campaign. The tests run 12 to 45 recipients; 5001 is the refusal control. Phase 4's job engine owns the real value.
-	m3aCampaignCap = 5000
-
 	// m3aEndToEndControls is the number of corrupted copies the end-to-end test shows its comparison functions to catch (six of the report, four of the sink, five of Classify, three of the books).
 	m3aEndToEndControls = 18
 )
@@ -72,8 +68,7 @@ type m3aEnv struct {
 	cfg      config.Config
 	mc       *modclient.Client // the module client the page-size tests build their own sendapi.Client over (m3.Adapter.For fixes the page size)
 	adm      *m3admin.Client   // the platform's real admin client: the adapter's suspension reader
-	ad       *m3.Adapter       // m3.FromConfig + the suspension reader + AllowPrivateSMTPHosts
-	adStrict *m3.Adapter       // the same without AllowPrivateSMTPHosts: what production runs
+	ad       *m3.Adapter       // m3.FromConfig + the suspension reader
 	db       *pgx.Conn         // a SUPERUSER: seeds and observes, never the code under test
 	pool     *pgxpool.Pool     // real logins as platform_app on the live database
 	res      *tenant.Resolver
@@ -114,8 +109,7 @@ func newM3aEnv(t *testing.T, ctx context.Context) *m3aEnv {
 	if err != nil {
 		t.Fatalf("m3admin.New: %s", raw.scrub(err.Error()))
 	}
-	e.ad = e.adapter(t, e.cfg, e.adm, true)
-	e.adStrict = e.adapter(t, e.cfg, e.adm, false)
+	e.ad = e.adapter(t, e.cfg, e.adm)
 	if err := e.db.QueryRow(ctx, "SELECT id::text FROM platform.admins WHERE disabled_at IS NULL ORDER BY created_at LIMIT 1").Scan(&e.admin); err != nil {
 		t.Fatalf("platform.admins has no active admin (the first-admin stage must have run: every entitlement is written against a named admin): %v", err)
 	}
@@ -130,13 +124,10 @@ func newM3aEnv(t *testing.T, ctx context.Context) *m3aEnv {
 	return e
 }
 
-// adapter builds the adapter the way the service does (m3.FromConfig). reader is the suspension reader; private lets an account name the sink's private address.
-func (e *m3aEnv) adapter(t *testing.T, cfg config.Config, reader m3.SuspensionReader, private bool) *m3.Adapter {
+// adapter builds the adapter the way the service does (m3.FromConfig). reader is the suspension reader.
+func (e *m3aEnv) adapter(t *testing.T, cfg config.Config, reader m3.SuspensionReader) *m3.Adapter {
 	t.Helper()
 	opts := []m3.Option{m3.WithSuspensionReader(reader)}
-	if private {
-		opts = append(opts, m3.AllowPrivateSMTPHosts())
-	}
 	if _, err := m3.FromConfig(cfg, opts...); err != nil { // the way the service builds its adapter: the configuration must be accepted as it stands
 		t.Fatalf("m3.FromConfig refused the harness configuration (%s): %s", modclient.KindOf(err), e.raw.scrub(err.Error()))
 	}
@@ -783,7 +774,7 @@ func m3aDecide(o charge.Outcome) m3aDecision {
 // outcome (sent, bounced, failed) is settled free and nothing is charged; an item that has not finished waits; anything else is flagged, never guessed.
 func m3aHand(state string) string {
 	switch state {
-	case "sent", "bounced", "failed":
+	case "sent", "bounced", "failed", "cancelled": // cancelled is the Phase 3 close-out's terminal state (C1): never sent, free by row M3-01
 		return "free"
 	case "queued", "assigned", "sending":
 		return "notfinal"
@@ -806,7 +797,7 @@ func m3aNullIf(s string) string {
 }
 
 func m3aTotalsLine(tt sendapi.Totals) string {
-	return fmt.Sprintf("total=%d sent=%d bounced=%d failed=%d in_flight=%d pending=%d waiting_for_capacity=%d", tt.Total, tt.Sent, tt.Bounced, tt.Failed, tt.InFlight, tt.Pending, tt.WaitingForCapacity)
+	return fmt.Sprintf("total=%d sent=%d bounced=%d failed=%d in_flight=%d pending=%d waiting_for_capacity=%d cancelled=%d", tt.Total, tt.Sent, tt.Bounced, tt.Failed, tt.InFlight, tt.Pending, tt.WaitingForCapacity, tt.Cancelled)
 }
 
 // ---- the comparisons: they return their problems as sentences so the SAME function can be run on a corrupted copy of what it just accepted ----

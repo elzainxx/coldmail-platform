@@ -282,7 +282,7 @@ func TestM3Adapter_ContractEdgeCases(t *testing.T) {
 	step("run unauthenticated", func() {
 		cfg := e.cfg
 		cfg.M3ServiceToken = config.Secret(randomHex(t, 16)) // a token module 3 has never been given
-		stranger, err := e.adapter(t, cfg, e.adm, true).For(x.UserID)
+		stranger, err := e.adapter(t, cfg, e.adm).For(x.UserID)
 		if err != nil {
 			t.Errorf("building the adapter over a random token failed: %s", e.raw.scrub(err.Error()))
 			return

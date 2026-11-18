@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -46,9 +47,8 @@ import (
 // The steps and what each proves:
 //
 //	accounts   CreateAccount (verified, aligned, no secret in any printed verb), TestAccount (the test button against the sink; a refused AUTH is state failed / verify_auth_failed; the account verifies again),
-//	           BulkAddAccounts with a duplicate and an invalid row (the closed code set), AllAccounts, AccountEvents; the strict adapter (production) refuses the sink's private address before anything is sent
-//	quote      Feasibility: infeasible with no account (no_eligible_accounts), feasible with three, the caps equal module 3's own dials, exceeds_queue_cap one over the cap; Quote's price fields are inert (0)
-//	pre-check  PreCheckRun with truthful RunFacts (the platform's campaign cap is m3aCampaignCap) says nothing; each platform fact that is false names its cause
+//	           BulkAddAccounts with a duplicate and an invalid row (the closed code set), AllAccounts, AccountEvents; the module's destination guard refuses the loopback address (the adapter judges no host)
+//	quote      Feasibility: infeasible with no account (no_eligible_accounts), feasible with three, the caps equal module 3's own dials, one over the queue cap: a reason (with its cause) for each cap that binds; Quote's price fields are inert (0); the quote for the tenant's own campaign predicts nothing
 //	run, poll  every item a NEW job (202), the campaign report read to the end through every page
 //	(a)        every item reported once, in the order it was run, in the (state, error class, provider text) of its kind, from one of the tenant's accounts; totals_by_account agrees with the items
 //	(b)        the sink's per-recipient counters agree with the report
@@ -100,14 +100,13 @@ func TestM3Adapter_EndToEndAccountsRunReportClassify(t *testing.T) {
 		t.Errorf("a user with no account asked for a quote of %d: feasible %v reasons %+v eligible %d, want infeasible, one reason no_eligible_accounts, no eligible account", n, f0.Feasible, f0.Reasons, f0.Capacity.EligibleAccounts)
 	}
 
-	// the strict adapter (what production runs) refuses the sink's private address before anything is sent
-	strict := e.bind(t, a, e.adStrict)
-	_, err = strict.CreateAccount(ctx, e.newAccount("strict", a, e.sinkIP))
-	if !errors.Is(err, m3.ErrHostNotAllowed) || modclient.KindOf(err) != modclient.Invalid || m3.MaybeApplied(err) {
-		t.Errorf("the strict adapter's CreateAccount for a private SMTP host answered %v (kind %s, may have been applied %v), want ErrHostNotAllowed, kind invalid, nothing sent", err, modclient.KindOf(err), m3.MaybeApplied(err))
+	// the module's destination guard refuses the loopback address even though the sink's private network is allowed (the module judges the host; the adapter judges none: its own refusal was
+	// removed in the Phase 3 close-out, TestM3Adapter_SMTPHostGuard is the full proof)
+	if _, err = a.C.CreateAccount(ctx, e.newAccount("loopback", a, fmt.Sprintf("%d.%d.%d.%d", 127, 0, 0, 1))); !errors.Is(err, m3.ErrHostForbidden) || m3.MaybeApplied(err) {
+		t.Errorf("CreateAccount for the loopback address answered %v (may have been applied %v), want the module's refusal as ErrHostForbidden", err, m3.MaybeApplied(err))
 	}
 	if accts, err := a.C.AllAccounts(ctx); err != nil || len(accts) != 0 {
-		t.Fatalf("after the strict adapter's refusal the tenant has %d account(s) (error %v), want none: the refused call must not have reached module 3", len(accts), err)
+		t.Fatalf("after the module's refusal the tenant has %d account(s) (error %v), want none: a refused create makes nothing", len(accts), err)
 	}
 
 	// the entitlement, through the platform's real path: the store writes, the platform SERVICE delivers it to module 3 and reads it back
@@ -196,7 +195,7 @@ func TestM3Adapter_EndToEndAccountsRunReportClassify(t *testing.T) {
 	}
 	t.Logf("NOTE m3a accounts A: %d accounts (create + bulk), all verified and aligned at %s:%d; the first account's audit trail: %v", len(accts), "the sink", m3aSMTPPort, actions)
 
-	// ---- the quote, the pre-check ----
+	// ---- the quote ----
 	queueCap, acctCap := e.dialInt(t, "max_queued_jobs"), e.dialInt(t, "account_count_cap_per_user")
 	q, err := a.C.Quote(ctx, int64(n))
 	if err != nil {
@@ -222,40 +221,52 @@ func TestM3Adapter_EndToEndAccountsRunReportClassify(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Feasibility one over the queue cap failed (%s): %s", modclient.KindOf(err), e.raw.scrub(err.Error()))
 	}
-	if fx.Feasible || len(fx.Reasons) != 1 || fx.Reasons[0].Code != m3.InfeasibleExceedsQueueCap || fx.Reasons[0].Limit == nil || *fx.Reasons[0].Limit != queueCap || fx.Reasons[0].Requested == nil || *fx.Reasons[0].Requested != queueCap+1 || fx.Reasons[0].CapName != "queue_depth_cap" {
-		t.Errorf("a quote of %d recipients (one over the queue cap) is %+v, want infeasible with exceeds_queue_cap, limit %d, requested %d, cap name queue_depth_cap", queueCap+1, fx, queueCap, queueCap+1)
+	// since the Phase 3 close-out the quote reads the caps run reads: one over the queue cap is over the campaign size cap too whenever that cap is the smaller (50000 against 100000 by default),
+	// and each cap that binds is a reason of its own with its cause, in the module's order (the campaign cap, then the queue cap); the oracle is written from the two dials
+	campCap := e.dialInt(t, "max_campaign_size")
+	if fz.Caps.CampaignSizeCap != campCap {
+		t.Errorf("the quote's campaign_size_cap is %d, module 3's own max_campaign_size dial is %d", fz.Caps.CampaignSizeCap, campCap)
 	}
-
-	ent, err := e.store.Get(ctx, a.UserID)
-	if err != nil || !ent.Exists || !ent.Enabled {
-		t.Fatalf("Store.Get(A) = %+v (error %v), want an enabled entitlement", ent, err)
+	var wantReasons []struct {
+		code  m3.InfeasibleCode
+		cause sendapi.Cause
+		cap   string
+		limit int64
 	}
-	facts := m3.RunFacts{Entitled: ent.Enabled, JobActive: false, RecipientCount: int64(n), LiveQueuedJobs: 0, QueueDepthCap: fz.QueueDepthLimit(), CampaignSizeCap: m3.KnownLimit(m3aCampaignCap)}
-	if err := m3.PreCheckRun(facts); err != nil || len(facts.NotChecked()) != 0 {
-		t.Fatalf("PreCheckRun with the platform's truthful facts (%+v) answered %v (not checked: %v), want nothing and every check made", facts, err, facts.NotChecked())
+	if queueCap+1 > campCap {
+		wantReasons = append(wantReasons, struct {
+			code  m3.InfeasibleCode
+			cause sendapi.Cause
+			cap   string
+			limit int64
+		}{m3.InfeasibleCampaignCap, sendapi.CauseCampaignCap, "campaign_size_cap", campCap})
 	}
-	for _, c := range []struct {
-		name string
-		mod  func(m3.RunFacts) m3.RunFacts
-		want error
-	}{
-		{"the entitlement is not active", func(f m3.RunFacts) m3.RunFacts { f.Entitled = false; return f }, m3.ErrNotEntitled},
-		{"a job of the user is active", func(f m3.RunFacts) m3.RunFacts { f.JobActive = true; return f }, m3.ErrJobActive},
-		{"the campaign is over the platform's campaign cap", func(f m3.RunFacts) m3.RunFacts { f.RecipientCount = m3aCampaignCap + 1; return f }, m3.ErrOverCampaignCap},
-		{"the campaign is over the module's own queue cap (the number its quote states)", func(f m3.RunFacts) m3.RunFacts { f.RecipientCount = queueCap + 1; return f }, m3.ErrOverQueueCap},
-	} {
-		err := m3.PreCheckRun(c.mod(facts))
-		if !errors.Is(err, c.want) || modclient.KindOf(err) != modclient.Invalid {
-			t.Errorf("control: PreCheckRun when %s answered %v (kind %s), want %v and kind invalid", c.name, err, modclient.KindOf(err), c.want)
+	wantReasons = append(wantReasons, struct {
+		code  m3.InfeasibleCode
+		cause sendapi.Cause
+		cap   string
+		limit int64
+	}{m3.InfeasibleExceedsQueueCap, sendapi.CauseQueueCap, "queue_depth_cap", queueCap})
+	if fx.Feasible || len(fx.Reasons) != len(wantReasons) {
+		t.Errorf("a quote of %d recipients (one over the queue cap) is %+v, want infeasible with %d reason(s)", queueCap+1, fx, len(wantReasons))
+	} else {
+		for i, w := range wantReasons {
+			r := fx.Reasons[i]
+			if r.Code != w.code || r.Cause != w.cause || r.CapName != w.cap || r.Limit == nil || *r.Limit != w.limit || r.Requested == nil || *r.Requested != queueCap+1 || r.Current == nil || *r.Current != 0 {
+				t.Errorf("reason %d of the over-cap quote is %+v, want %s with cause %s, cap %s, limit %d, requested %d, current 0 (the tenant has no job)", i, r, w.code, w.cause, w.cap, w.limit, queueCap+1)
+			}
 		}
 	}
-	unknown := facts
-	unknown.CampaignSizeCap = m3.Limit{}
-	unknown.RecipientCount = m3aCampaignCap + 1
-	if err := m3.PreCheckRun(unknown); errors.Is(err, m3.ErrOverCampaignCap) || len(unknown.NotChecked()) != 1 || unknown.NotChecked()[0] != "campaign_size_cap" {
-		t.Errorf("control: with the campaign cap unknown PreCheckRun answered %v and says it did not check %v, want no refusal for a number nobody supplied and the campaign size named as not checked", err, unknown.NotChecked())
+
+	// the quote for the very campaign the tenant is about to run, from the function run reads: nothing blocks it, and it is the answer a quote for a new campaign gave (the tenant has no job yet)
+	fc, err := a.C.FeasibilityForCampaign(ctx, a.CampaignID, int64(n))
+	if err != nil {
+		t.Fatalf("FeasibilityForCampaign through the adapter failed (%s): %s", modclient.KindOf(err), e.raw.scrub(err.Error()))
 	}
-	t.Logf("NOTE m3a pre-check: truthful facts (entitled, no active job, %d recipients, queue cap %d from the quote, campaign cap %d the platform's own) -> nothing, not checked []; each false fact names its cause (not entitled, job active, over the campaign cap, over the queue cap); an unsupplied cap is reported as not checked", n, queueCap, m3aCampaignCap)
+	if !fc.Feasible || len(fc.Reasons) != 0 || len(fc.Causes()) != 0 || fc.Caps != fz.Caps {
+		t.Errorf("the quote for the tenant's own campaign is %+v, want feasible with no reason and the same caps as the quote for a new campaign (%+v)", fc, fz.Caps)
+	}
+	t.Logf("NOTE m3a quote for a campaign: %d recipients joining the tenant's own campaign: feasible %v, causes %v, campaign size cap %d, queue depth cap %d; one over the queue cap predicts %d reason(s) %v", n, fc.Feasible, fc.Causes(), fc.Caps.CampaignSizeCap, fc.Caps.QueueDepthCap, len(fx.Reasons), fx.Causes())
 
 	// ---- run, poll ----
 	e.setMode(t, m3hMode{RejectRcpt: a.emails("bounce"), RejectCode: 550, DeferRcpt: a.emails("defer")})
@@ -593,13 +604,13 @@ func m3aInSettle(cl sendapi.Classified, id string) bool {
 	return false
 }
 
-// TestM3Adapter_SuspensionRoundTripAndTheUnexplainedConflict (B9): the platform's REAL suspension path against the real module 3, and what the adapter says about it.
+// TestM3Adapter_SuspensionRoundTripAndTheUnexplainedConflict (B9; the name is the one the phase gave it, the 409 is explained since the Phase 3 close-out): the platform's REAL suspension path against the real module 3, and what the adapter says about it.
 //
 //	before      the tenant is entitled and delivered; Suspension reads exactly what module 3 holds (never suspended: version 0), the platform's delivery row and module 3's own table
 //	suspend     entitlements.Store.Disable; the platform SERVICE delivers it and reads it back; Suspension then reads version 1, suspended, the instant module 3 recorded, equal to module 3's own table AND to what
 //	            the platform recorded as observed
-//	the 409     a Run of a NEW job item is the module's 409 whose cause it does not say: ErrConflictUnexplained and never one of the four causes, from ExplainConflict too, while PreCheckRun with the platform's
-//	            facts (the entitlement is off) names ErrNotEntitled BEFORE any call; nothing was created at module 3; the replay of an item that already has a job is still the module's 200 (the lookup precedes
+//	the 409     a Run of a NEW job item is the module's 409 naming its cause: *sendapi.ConflictError with exactly [suspended] (ErrRunSuspended, none of the other three), which the quote of the same recipients
+//	            predicted before the call (the same function); nothing was created at module 3; the replay of an item that already has a job is still the module's 200 (the lookup precedes
 //	            the gate); the account routes the suspension gates answer with the route's own sentence (create: unexplained; the test button and bulk add: ErrActionUnavailable); reads still work
 //	resume      entitlements.Store.Enable; delivered; Suspension reads version 2, active, reinstated, equal to module 3's own table and to the platform's record; the SAME Run now succeeds and sends once
 //
@@ -658,29 +669,27 @@ func TestM3Adapter_SuspensionRoundTripAndTheUnexplainedConflict(t *testing.T) {
 	}
 	t.Logf("NOTE m3a suspension: disabled through the store (ledger row %d); the service delivered it: %s; the adapter reads suspended=%v version=%d at %v; module 3's own table: suspended=%v at %v", dis.LedgerID, m3aSyncString(stS), susp.Suspended, susp.Version, susp.SuspendedAt, ownS.Suspended, ownS.SuspendedAt)
 
-	// the 409: the platform's facts name the cause BEFORE the call; the module's answer does not
-	entNow, err := e.store.Get(ctx, s.UserID)
-	if err != nil || !entNow.Exists || entNow.Enabled {
-		t.Fatalf("Store.Get(S) = %+v (error %v), want a disabled entitlement", entNow, err)
-	}
-	pre := m3.PreCheckRun(m3.RunFacts{Entitled: entNow.Enabled, RecipientCount: 1, QueueDepthCap: m3.KnownLimit(e.dialInt(t, "max_queued_jobs")), CampaignSizeCap: m3.KnownLimit(m3aCampaignCap)})
-	if !errors.Is(pre, m3.ErrNotEntitled) || errors.Is(pre, m3.ErrJobActive) || modclient.KindOf(pre) != modclient.Invalid {
-		t.Errorf("PreCheckRun with the platform's facts (entitlement off) answered %v (kind %s), want ErrNotEntitled alone, refused before any call", pre, modclient.KindOf(pre))
-	}
+	// the 409: the module names its cause, and the quote predicted the same cause from the same function before the call
 	jobsBefore := len(e.jobsOf(t, s.UserID))
+	fzS, err := s.C.FeasibilityForCampaign(ctx, s.CampaignID, 1)
+	if err != nil {
+		t.Fatalf("FeasibilityForCampaign while suspended failed (%s): %s", modclient.KindOf(err), e.raw.scrub(err.Error()))
+	}
+	if fzS.Feasible || !slices.Equal(fzS.Causes(), []sendapi.Cause{sendapi.CauseSuspended}) || !fzS.Predicts(sendapi.CauseSuspended) {
+		t.Errorf("the quote of a suspended user is feasible %v with causes %v, want infeasible with exactly the cause suspended (the same function run reads)", fzS.Feasible, fzS.Causes())
+	}
 	_, runErr := s.C.Run(ctx, s.Items[1].ID)
 	var re *modclient.Error
-	if !errors.As(runErr, &re) || re.Kind != modclient.Refused || re.Status != 409 || re.Route != "m3.run" || !errors.Is(runErr, sendapi.ErrConflictUnexplained) {
-		t.Fatalf("a Run of a new item while suspended answered %v, want the module's 409 (refused, route m3.run) wrapped as ErrConflictUnexplained", runErr)
+	if !errors.As(runErr, &re) || re.Kind != modclient.Refused || re.Status != 409 || re.Route != "m3.run" || !errors.Is(runErr, sendapi.ErrRunSuspended) || errors.Is(runErr, sendapi.ErrConflictUnexplained) {
+		t.Fatalf("a Run of a new item while suspended answered %v, want the module's 409 (refused, route m3.run) naming the cause suspended", runErr)
 	}
-	explained := m3.ExplainConflict(runErr)
-	for _, cause := range []error{m3.ErrNotEntitled, m3.ErrJobActive, m3.ErrOverCampaignCap, m3.ErrOverQueueCap, sendapi.ErrBackpressure} {
-		if errors.Is(explained, cause) || errors.Is(runErr, cause) {
-			t.Errorf("the 409 is explained as %v: the module does not say which of its four causes this is, so the adapter must never name one", cause)
+	if got := sendapi.CausesOf(runErr); !slices.Equal(got, fzS.Causes()) {
+		t.Errorf("the 409 names the causes %v, the quote predicted %v: quote and run must agree", got, fzS.Causes())
+	}
+	for _, other := range []error{sendapi.ErrRunCampaignActive, sendapi.ErrRunCampaignCap, sendapi.ErrRunQueueCap, sendapi.ErrBackpressure} {
+		if errors.Is(runErr, other) {
+			t.Errorf("the 409 of a suspended user is also %v: the module named one cause and so does the adapter", other)
 		}
-	}
-	if !errors.Is(explained, m3.ErrConflictUnexplained) || !errors.As(explained, &re) || re.Status != 409 || modclient.KindOf(explained) != modclient.Refused {
-		t.Errorf("ExplainConflict answered %v, want ErrConflictUnexplained that is still the module's refused 409", explained)
 	}
 	if jobs := e.jobsOf(t, s.UserID); len(jobs) != jobsBefore || jobs[s.Items[1].ID].ID != "" {
 		t.Errorf("module 3 holds %d job(s) of S (%d before) and one for the refused item: a refused Run must create nothing", len(jobs), jobsBefore)
@@ -688,7 +697,7 @@ func TestM3Adapter_SuspensionRoundTripAndTheUnexplainedConflict(t *testing.T) {
 	if replay, err := s.C.Run(ctx, s.Items[0].ID); err != nil || replay.Created || replay.JobID != first.JobID || replay.State != "sent" {
 		t.Errorf("a Run of the item that already has a job, while suspended, answered %+v (error %v), want the module's 200 replay of job %s (the lookup precedes the gate)", replay, err, first.JobID)
 	}
-	t.Logf("NOTE m3a conflict: PreCheckRun names %v before the call; Run of a new item answered kind %s HTTP %d code %q request %s: ExplainConflict keeps it ErrConflictUnexplained (and none of the four causes); module 3 created no job (%d before and after); the replay of the first item is still a 200", pre, re.Kind, re.Status, re.Code, re.RequestID, jobsBefore)
+	t.Logf("NOTE m3a conflict: the quote of the suspended user predicts %v; Run of a new item answered kind %s HTTP %d code %q request %s with the causes %v (ErrRunSuspended, none of the other three); module 3 created no job (%d before and after); the replay of the first item is still a 200", fzS.Causes(), re.Kind, re.Status, re.Code, re.RequestID, sendapi.CausesOf(runErr), jobsBefore)
 
 	// the account routes the suspension gates, and the reads it does not
 	_, err = s.C.CreateAccount(ctx, e.newAccount("2", s, e.sinkIP))
@@ -704,8 +713,8 @@ func TestM3Adapter_SuspensionRoundTripAndTheUnexplainedConflict(t *testing.T) {
 	if list, err := s.C.AllAccounts(ctx); err != nil || len(list) != 1 {
 		t.Errorf("AllAccounts while suspended answered %d account(s) (error %v), want the one account: a read is not gated and the refused create made none", len(list), err)
 	}
-	if _, err := s.C.Quote(ctx, 1); err != nil {
-		t.Errorf("Quote while suspended failed (%v): the quote never reads the suspension", err)
+	if q, err := s.C.Quote(ctx, 1); err != nil || q.Feasible == nil || *q.Feasible {
+		t.Errorf("Quote while suspended answered %+v (error %v), want a successful call that says infeasible: the quote reads the suspension since the close-out", q, err)
 	}
 
 	// resume: the platform's real path
@@ -727,6 +736,9 @@ func TestM3Adapter_SuspensionRoundTripAndTheUnexplainedConflict(t *testing.T) {
 	}
 	t.Logf("NOTE m3a resume: re-enabled through the store (ledger row %d); delivered: %s; the adapter reads suspended=%v version=%d reinstated %v; module 3's own table: suspended=%v", en.LedgerID, m3aSyncString(stR), res.Suspended, res.Version, res.ReinstatedAt, ownR.Suspended)
 
+	if fzR, err := s.C.FeasibilityForCampaign(ctx, s.CampaignID, 1); err != nil || !fzR.Feasible || len(fzR.Causes()) != 0 { // the control of the quote: the same call after the resume predicts nothing
+		t.Errorf("the quote after the resume is %+v (error %v), want feasible with no cause", fzR, err)
+	}
 	// the SAME run, now accepted, sends once
 	again, err := s.C.Run(ctx, s.Items[1].ID)
 	if err != nil || !again.Created || again.State != "queued" {
@@ -1186,7 +1198,7 @@ func TestM3Adapter_CrossTenantReadsAreRefused(t *testing.T) {
 	if _, err := wrong.SetSuspended(ctx, a.UserID, true, "a tenant must not be able to do this"); !errors.Is(err, m3admin.ErrUnauthorized) {
 		t.Errorf("the admin client with the service token suspended A: %v, want m3admin.ErrUnauthorized", err)
 	}
-	viaWrong := e.adapter(t, e.cfg, wrong, true)
+	viaWrong := e.adapter(t, e.cfg, wrong)
 	if s, err := viaWrong.Suspension(ctx, a.UserID); modclient.KindOf(err) != modclient.Refused || s != (m3.Suspension{}) {
 		t.Errorf("the adapter's Suspension through a reader that holds only the service token answered %+v (error %v, kind %s), want a refused error and no value", s, err, modclient.KindOf(err))
 	}

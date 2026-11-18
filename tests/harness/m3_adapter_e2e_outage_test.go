@@ -537,7 +537,7 @@ func TestM3Adapter_OutagePhase2Down(t *testing.T) {
 	// the short dials of a poller that must give up fast: one 3 s attempt and no retry. Both adapters are built exactly as phase 1's was (m3.FromConfig, the admin reader, the same tenant).
 	fast := e.cfg
 	fast.ModuleTimeout, fast.ModuleRetries = 3*time.Second, 0
-	adFast := e.adapter(t, fast, e.adm, true)
+	adFast := e.adapter(t, fast, e.adm)
 	fc := e.bind(t, tn, adFast)
 
 	// the module is really down, from the test container's own network
