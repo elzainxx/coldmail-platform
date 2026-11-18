@@ -19,4 +19,8 @@ type RouteContract struct {
 	// Vocab lists, by a name the adapter chooses, the closed set of values the adapter maps from (statuses, reasons, origins, error codes). The drift gate fails when the module's
 	// advertised or observed values are not covered by it.
 	Vocab map[string][]string
+	// VocabAt says where each named set of Vocab lives in the response: the key is a name of Vocab, the value the JSON path of the string-valued position it constrains ("status",
+	// "items.results[].state", "error.code"; the path grammar of internal/contractcheck: a.b is a key, x[] is every element of an array). A Vocab name with no VocabAt entry is
+	// read as a path itself. The live drift gate checks the real response's strings at that path against the set: without a path a vocabulary constrains nothing.
+	VocabAt map[string]string
 }

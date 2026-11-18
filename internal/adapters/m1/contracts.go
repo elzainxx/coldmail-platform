@@ -12,14 +12,14 @@ import (
 var (
 	// flagsShape: flags.from_cache is the cache signal the charge table reads (and the only reliable one: meta.from_cache is always false in a bulk result, M1-F6). It is required so
 	// that a module that stopped sending it cannot make every cached answer read as a fresh one (a different unit price).
-	flagsShape = modclient.Object(modclient.Req("from_cache", modclient.Bool), modclient.Opt("is_disposable", modclient.Bool), modclient.Opt("is_free_provider", modclient.Bool), modclient.Opt("is_role", modclient.Bool), modclient.Opt("is_spam_trap", modclient.Bool)) // flags is a map[string]bool in the module (verdict.go): from_cache always, and the cheap layers' signal keys only when the layer says so (the compare-mode runs on the real node: pages without a disposable or spam-trap row lack those keys)
+	flagsShape = modclient.Object(modclient.Req("from_cache", modclient.Bool), modclient.Opt("is_disposable", modclient.Bool), modclient.Opt("is_free_provider", modclient.Bool), modclient.Opt("is_role", modclient.Bool), modclient.Opt("is_spam_trap", modclient.Bool)).Open() // flags is a map[string]bool in the module (verdict.go): from_cache always, and the cheap layers' signal keys only when the layer says so (the compare-mode runs on the real node: pages without a disposable or spam-trap row lack those keys)
 
 	// signalsShape: the two keys of the open `signals` bag the charge table reads. Both are absent when they do not apply (failure_origin exists on every `unknown`, smtp_skipped_reason
 	// only where the SMTP stage did not run); the bag itself is always an object in a served verdict.
 	signalsShape = modclient.Object(
 		modclient.Opt("smtp_skipped_reason", modclient.Str),
 		modclient.Opt("failure_origin", modclient.Str),
-	)
+	).Open() // an OPEN bag: the pipeline layers write whichever keys they produced for the row (syntax_valid, mx_found, null_mx, has_typo, engine_mx_hosts, ...), so the keys other than these two differ row by row and are not compared (found by the compare-mode run on the real node)
 
 	// verifyShape: POST /v1/verify, 200. The keys of the verdict object the adapter returns to the caller (api.go handleVerify, verdict.Response).
 	verifyShape = modclient.Object(
@@ -108,43 +108,63 @@ func UncoveredRoutes() map[string]string {
 	return map[string]string{"GET /healthz": why, "GET /readyz": why}
 }
 
-// Contracts lists every module 1 response the adapter relies on: one entry per route and per case whose shape or vocabulary differs (the success of each route, an empty page, a
-// running and a finished job, and the error envelope of every class the adapter reacts to). Fixture names a file under testdata/contract/; Shape is the value the adapter decodes
-// that response with; Vocab holds the closed sets the adapter maps from, as the switches of vocab.go handle them. Module 1's two probe routes, /healthz and /readyz, are NOT listed:
-// the adapter passes them through modclient (Health, Ready), which decodes them with shapes it does not export, so listing a copy here would be a second definition that nothing
-// decodes with (see the report; UncoveredRoutes says so).
+// errorCodeValues is the code of module 1's error envelope (api/errors.go: the nine `code*` constants, additive-only). The adapter has NO switch on it: modclient decides the class
+// of an error by its status and reads the code as data (only `paused` changes a class), so a code module 1 adds later is carried and never refused. It is published for the drift
+// gate alone, on every error contract at `error.code`, so that a new code in a live answer is reported.
+var errorCodeValues = []string{
+	"unauthenticated", "validation_failed", "not_found", "method_not_allowed", "payload_too_large", "unavailable", "paused", "internal_error", "contract_violation",
+}
+
+// Contracts lists every module 1 response the adapter relies on: one entry per route and per case whose shape or vocabulary differs (the success of each route, a page with rows and
+// one without, a running and a finished job, and the error envelope of every class the adapter reacts to). Fixture names a file under testdata/contract/; Shape is the value the
+// adapter decodes that response with; Vocab holds the closed sets the adapter maps from, as the switches of vocab.go handle them, and VocabAt the JSON path of the string position
+// each set constrains IN THAT RESPONSE (a bare set name is read by the drift gate as a path to a top-level key, which most of these bodies do not have).
+//
+// A set is listed on a contract only when the contract's recorded body has a string at that path: a vocabulary that constrains nothing in its own fixture would be inert. So
+// failure_origin and smtp_skipped_reason (signals of an unknown or degraded answer) are on NO contract: no recorded body of the real node holds either (its pages have no unknown
+// row and no row that skipped the SMTP stage), and the page and the verdict that were recorded for the results and verify routes carry neither key. The adapter still maps both
+// (vocab.go), and the tests prove it on inline bodies; they are not checked against a live response. The results page recorded WITHOUT rows (case empty_page) lists no row set at
+// all, for the same reason (it has no row to hold a status).
+//
+// Module 1's two probe routes, /healthz and /readyz, are NOT listed: the adapter passes them through modclient (Health, Ready), which decodes them with shapes it does not export,
+// so listing a copy here would be a second definition that nothing decodes with (UncoveredRoutes says so).
 func Contracts() []modclient.RouteContract {
-	set := func(names ...string) map[string][]string {
+	// with fills Vocab and VocabAt of rc from pairs of (set name, path): the values come from vocabSets (or errorCodeValues), the path is where the set lives in rc's body.
+	with := func(rc modclient.RouteContract, pairs ...string) modclient.RouteContract {
 		all := vocabSets()
-		out := make(map[string][]string, len(names))
-		for _, n := range names {
-			out[n] = all[n]
+		all["error_code"] = append([]string(nil), errorCodeValues...)
+		rc.Vocab, rc.VocabAt = map[string][]string{}, map[string]string{}
+		for i := 0; i < len(pairs); i += 2 {
+			rc.Vocab[pairs[i]] = all[pairs[i]]
+			rc.VocabAt[pairs[i]] = pairs[i+1]
 		}
-		return out
+		return rc
 	}
-	rowVocab := func() map[string][]string { return set("status", "reason", "failure_origin", "smtp_skipped_reason") }
+	errAt := func(rc modclient.RouteContract) modclient.RouteContract { return with(rc, "error_code", "error.code") }
 	m1 := modclient.M1
 	return []modclient.RouteContract{
-		{Module: m1, Route: tplVerify, Case: "ok", Fixture: "verify-ok.json", Status: http.StatusOK, Shape: verifyShape,
-			Vocab: set("status", "reason", "failure_origin", "smtp_skipped_reason", "recommendation")},
+		with(modclient.RouteContract{Module: m1, Route: tplVerify, Case: "ok", Fixture: "verify-ok.json", Status: http.StatusOK, Shape: verifyShape},
+			"status", "status", "reason", "reason", "recommendation", "recommendation"),
 
-		{Module: m1, Route: tplSubmit, Case: "accepted", Fixture: "submit-accepted.json", Status: http.StatusAccepted, Shape: submitShape, Vocab: set("submit_status")},
-		{Module: m1, Route: tplSubmit, Case: "validation_failed", Fixture: "submit-error-validation.json", Status: http.StatusBadRequest, Shape: errorShape},
-		{Module: m1, Route: tplSubmit, Case: "unauthenticated", Fixture: "submit-error-unauthenticated.json", Status: http.StatusUnauthorized, Shape: errorShape},
-		{Module: m1, Route: tplSubmit, Case: "payload_too_large", Fixture: "submit-error-too-large.json", Status: http.StatusRequestEntityTooLarge, Shape: errorShape},
-		{Module: m1, Route: tplSubmit, Case: "paused", Fixture: "submit-error-paused.json", Status: http.StatusServiceUnavailable, Shape: errorShape},
-		{Module: m1, Route: tplSubmit, Case: "unavailable", Fixture: "submit-error-unavailable.json", Status: http.StatusServiceUnavailable, Shape: errorShape},
-		{Module: m1, Route: tplSubmit, Case: "internal_error", Fixture: "submit-error-internal.json", Status: http.StatusInternalServerError, Shape: errorShape},
+		with(modclient.RouteContract{Module: m1, Route: tplSubmit, Case: "accepted", Fixture: "submit-accepted.json", Status: http.StatusAccepted, Shape: submitShape}, "submit_status", "status"),
+		errAt(modclient.RouteContract{Module: m1, Route: tplSubmit, Case: "validation_failed", Fixture: "submit-error-validation.json", Status: http.StatusBadRequest, Shape: errorShape}),
+		errAt(modclient.RouteContract{Module: m1, Route: tplSubmit, Case: "unauthenticated", Fixture: "submit-error-unauthenticated.json", Status: http.StatusUnauthorized, Shape: errorShape}),
+		errAt(modclient.RouteContract{Module: m1, Route: tplSubmit, Case: "payload_too_large", Fixture: "submit-error-too-large.json", Status: http.StatusRequestEntityTooLarge, Shape: errorShape}),
+		errAt(modclient.RouteContract{Module: m1, Route: tplSubmit, Case: "paused", Fixture: "submit-error-paused.json", Status: http.StatusServiceUnavailable, Shape: errorShape}),
+		errAt(modclient.RouteContract{Module: m1, Route: tplSubmit, Case: "unavailable", Fixture: "submit-error-unavailable.json", Status: http.StatusServiceUnavailable, Shape: errorShape}),
+		errAt(modclient.RouteContract{Module: m1, Route: tplSubmit, Case: "internal_error", Fixture: "submit-error-internal.json", Status: http.StatusInternalServerError, Shape: errorShape}),
 
-		{Module: m1, Route: tplStatus, Case: "running", Fixture: "job-running.json", Status: http.StatusOK, Shape: jobShape, Vocab: set("job_status")},
-		{Module: m1, Route: tplStatus, Case: "complete", Fixture: "job-complete.json", Status: http.StatusOK, Shape: jobShape, Vocab: set("job_status")},
-		{Module: m1, Route: tplStatus, Case: "not_found", Fixture: "status-error-not-found.json", Status: http.StatusNotFound, Shape: errorShape},
-		{Module: m1, Route: tplStatus, Case: "unauthenticated", Fixture: "status-error-unauthenticated.json", Status: http.StatusUnauthorized, Shape: errorShape},
+		with(modclient.RouteContract{Module: m1, Route: tplStatus, Case: "running", Fixture: "job-running.json", Status: http.StatusOK, Shape: jobShape}, "job_status", "status"),
+		with(modclient.RouteContract{Module: m1, Route: tplStatus, Case: "complete", Fixture: "job-complete.json", Status: http.StatusOK, Shape: jobShape}, "job_status", "status"),
+		errAt(modclient.RouteContract{Module: m1, Route: tplStatus, Case: "not_found", Fixture: "status-error-not-found.json", Status: http.StatusNotFound, Shape: errorShape}),
+		errAt(modclient.RouteContract{Module: m1, Route: tplStatus, Case: "unauthenticated", Fixture: "status-error-unauthenticated.json", Status: http.StatusUnauthorized, Shape: errorShape}),
 
-		{Module: m1, Route: tplResults, Case: "page", Fixture: "results-page.json", Status: http.StatusOK, Shape: resultsShape, Vocab: rowVocab()},
-		{Module: m1, Route: tplResults, Case: "empty_page", Fixture: "results-empty.json", Status: http.StatusOK, Shape: resultsShape, Vocab: rowVocab()},
-		{Module: m1, Route: tplResults, Case: "bad_cursor", Fixture: "results-error-bad-cursor.json", Status: http.StatusBadRequest, Shape: errorShape},
-		{Module: m1, Route: tplResults, Case: "unauthenticated", Fixture: "results-error-unauthenticated.json", Status: http.StatusUnauthorized, Shape: errorShape},
-		{Module: m1, Route: tplResults, Case: "not_found", Fixture: "results-error-not-found.json", Status: http.StatusNotFound, Shape: errorShape},
+		with(modclient.RouteContract{Module: m1, Route: tplResults, Case: "page", Fixture: "results-page.json", Status: http.StatusOK, Shape: resultsShape},
+			"status", "results[].status", "reason", "results[].reason"),
+		// the page the real node answered under this case holds NO row: no row set can be listed
+		{Module: m1, Route: tplResults, Case: "empty_page", Fixture: "results-empty.json", Status: http.StatusOK, Shape: resultsShape},
+		errAt(modclient.RouteContract{Module: m1, Route: tplResults, Case: "bad_cursor", Fixture: "results-error-bad-cursor.json", Status: http.StatusBadRequest, Shape: errorShape}),
+		errAt(modclient.RouteContract{Module: m1, Route: tplResults, Case: "unauthenticated", Fixture: "results-error-unauthenticated.json", Status: http.StatusUnauthorized, Shape: errorShape}),
+		errAt(modclient.RouteContract{Module: m1, Route: tplResults, Case: "not_found", Fixture: "results-error-not-found.json", Status: http.StatusNotFound, Shape: errorShape}),
 	}
 }

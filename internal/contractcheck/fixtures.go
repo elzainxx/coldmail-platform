@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
+	"sort"
 	"strings"
 
 	"github.com/coldmail-platform/platform/internal/modclient"
@@ -35,8 +36,12 @@ const (
 	ShapeRefused ProblemKind = "ShapeRefused"
 	// Secret: the fixture holds something secret-shaped (the repository is public).
 	Secret ProblemKind = "Secret"
-	// VocabKey: a Vocab key that is not a path of the documented grammar, or that names a position the fixture does not have (a typo would make the vocabulary check vacuous).
+	// VocabKey: the path of a vocabulary (its VocabAt entry, else its name) is not of the documented grammar, or a VocabAt entry names no vocabulary.
 	VocabKey ProblemKind = "VocabKey"
+	// VocabInert: a vocabulary whose path matches no string in the contract's own recorded fixture: the path is wrong (a bare name that is no key of the body, a typo) or the fixture
+	// has no value there, so the vocabulary checks of the live gate constrain nothing. Only a fixture that has no element at the path because an array (or map, or parent) on the
+	// way is empty is excused, and then it is a note, never silence.
+	VocabInert ProblemKind = "VocabInert"
 	// VocabList: a closed vocabulary that is empty, or lists a value twice.
 	VocabList ProblemKind = "VocabList"
 	// VocabOutside: the fixture holds a vocabulary value that its own contract's Vocab does not list (the adapter's mapping would refuse its own fixture).
@@ -75,19 +80,48 @@ type contractKey struct {
 	cas    string
 }
 
-// CheckFixtures is the no-rot check on the recorded files of one adapter package: dir is the fixture directory inside fsys (for example "testdata/contract"). It reports, and
-// never stops at the first: no contract at all; a contract that cannot be used; two contracts for one route and case; two contracts naming one file; a contract naming a file
-// that does not exist; a file in the directory that no contract names; a fixture that is not JSON, that its own Shape refuses, or that holds something secret-shaped; a
-// Vocab key that is not a path or names a position the fixture does not have, an empty or repeating vocabulary, and a fixture value outside its own Vocab. An empty list
-// means every contract has a usable fixture and every fixture a contract (it does not mean the fixtures match the real module: that is Compare, in the harness).
+// FixtureReport is what InspectFixtures finds: the problems, and notes that are not problems (a vocabulary the fixture cannot exercise because an array on the way is empty).
+type FixtureReport struct {
+	Problems []Problem
+	Notes    []string
+}
+
+// CheckFixtures is the problems of InspectFixtures.
 func CheckFixtures(contracts []modclient.RouteContract, fsys fs.FS, dir string) []Problem {
+	return InspectFixtures(contracts, fsys, dir).Problems
+}
+
+// CheckContracts is the one line an adapter's package test calls: it fails t once per problem of InspectFixtures on the package's own contracts and recorded fixtures (the
+// contracts, the files, the Shapes, the vocabularies and their paths) and logs the notes. Pass the adapter's embedded fixtures and "testdata/contract".
+//
+//	func TestContractsAreSound(t *testing.T) { contractcheck.CheckContracts(t, Contracts(), fixtures, "testdata/contract") }
+func CheckContracts(t TB, contracts []modclient.RouteContract, fsys fs.FS, dir string) {
+	t.Helper()
+	rep := InspectFixtures(contracts, fsys, dir)
+	for _, p := range rep.Problems {
+		t.Errorf("contract fixtures: %s", p)
+	}
+	for _, n := range rep.Notes {
+		t.Logf("note: %s", n)
+	}
+}
+
+// InspectFixtures is the no-rot check on the recorded files of one adapter package: dir is the fixture directory inside fsys (for example "testdata/contract"). It reports, and
+// never stops at the first: no contract at all; a contract that cannot be used; two contracts for one route and case; two contracts naming one file; a contract naming a file
+// that does not exist; a file in the directory that no contract names; a fixture that is not JSON, that its own Shape refuses, or that holds something secret-shaped; and for each
+// vocabulary of a contract, resolved to its path (VocabAt, else the name itself): a path that is not of the grammar, a VocabAt entry that names no vocabulary, an empty or
+// repeating set, a path that matches no string in the contract's own fixture (VocabInert: the vocabulary would constrain nothing; an empty array, map or null on the way to it is a
+// note instead), and a fixture value outside the set. An empty list of problems means every contract has a usable fixture and every fixture a contract (it does not mean the
+// fixtures match the real module: that is Compare, in the harness).
+func InspectFixtures(contracts []modclient.RouteContract, fsys fs.FS, dir string) FixtureReport {
 	if len(contracts) == 0 {
-		return []Problem{{Kind: NoContracts, Detail: "found 0 contracts: the instrument matched nothing"}}
+		return FixtureReport{Problems: []Problem{{Kind: NoContracts, Detail: "found 0 contracts: the instrument matched nothing"}}}
 	}
 	if fsys == nil {
-		return []Problem{{Kind: Unreadable, Detail: "no file system was given"}}
+		return FixtureReport{Problems: []Problem{{Kind: Unreadable, Detail: "no file system was given"}}}
 	}
 	var ps []Problem
+	var notes []string
 	named := map[string]bool{}
 	keys := map[contractKey]bool{}
 	for _, rc := range contracts {
@@ -103,12 +137,14 @@ func CheckFixtures(contracts []modclient.RouteContract, fsys fs.FS, dir string) 
 			p(DuplicateFixture, "another contract names this file")
 		}
 		named[rc.Fixture] = true
-		ps = append(ps, checkContract(rc, fsys, dir)...)
+		cp, cn := checkContract(rc, fsys, dir)
+		ps = append(ps, cp...)
+		notes = append(notes, cn...)
 	}
 	entries, err := fs.ReadDir(fsys, dir)
 	if err != nil {
 		ps = append(ps, Problem{Kind: Unreadable, Detail: "the fixture directory cannot be listed: " + errWord(err)})
-		return ps
+		return FixtureReport{Problems: ps, Notes: notes}
 	}
 	for _, e := range entries {
 		if !named[e.Name()] {
@@ -119,7 +155,7 @@ func CheckFixtures(contracts []modclient.RouteContract, fsys fs.FS, dir string) 
 			ps = append(ps, Problem{Fixture: e.Name(), Kind: Stray, Detail: what})
 		}
 	}
-	return ps
+	return FixtureReport{Problems: ps, Notes: notes}
 }
 
 func errWord(err error) string {
@@ -134,7 +170,7 @@ func errWord(err error) string {
 	return "read error"
 }
 
-func checkContract(rc modclient.RouteContract, fsys fs.FS, dir string) []Problem {
+func checkContract(rc modclient.RouteContract, fsys fs.FS, dir string) ([]Problem, []string) {
 	var ps []Problem
 	p := func(k ProblemKind, format string, a ...any) {
 		ps = append(ps, Problem{Module: rc.Module, Route: rc.Route, Case: rc.Case, Fixture: rc.Fixture, Kind: k, Detail: fmt.Sprintf(format, a...)})
@@ -150,7 +186,7 @@ func checkContract(rc modclient.RouteContract, fsys fs.FS, dir string) []Problem
 	}
 	if rc.Fixture == "" || strings.ContainsAny(rc.Fixture, `/\`) || !fs.ValidPath(rc.Fixture) || rc.Fixture == "." {
 		p(BadContract, "the fixture name is not a plain file name")
-		return ps
+		return ps, nil
 	}
 	sv, err := viewOf(rc.Shape)
 	if err != nil {
@@ -163,7 +199,7 @@ func checkContract(rc modclient.RouteContract, fsys fs.FS, dir string) []Problem
 	data, err := fs.ReadFile(fsys, path.Join(dir, rc.Fixture))
 	if err != nil {
 		p(Dangling, "the contract names a file that cannot be read (%s)", errWord(err))
-		return ps
+		return ps, nil
 	}
 	v, err := parse(data)
 	if err != nil {
@@ -173,7 +209,7 @@ func checkContract(rc modclient.RouteContract, fsys fs.FS, dir string) []Problem
 		} else {
 			p(NotJSON, "the fixture cannot be read")
 		}
-		return ps
+		return ps, nil
 	}
 	if ok {
 		if derr := modclient.Decode(&modclient.Response{Status: rc.Status, Body: data}, nil, rc.Shape); derr != nil {
@@ -189,24 +225,50 @@ func checkContract(rc modclient.RouteContract, fsys fs.FS, dir string) []Problem
 	for _, f := range finds {
 		p(Secret, "%s", f)
 	}
-	ps = append(ps, checkVocab(rc, v, sv)...)
-	return ps
+	vp, notes := checkVocab(rc, v, sv)
+	return append(ps, vp...), notes
 }
 
-func checkVocab(rc modclient.RouteContract, v value, sv *sview) []Problem {
+// vocabPath is the JSON path a named vocabulary constrains: its VocabAt entry, else the name itself (a name that is a path, as before).
+func vocabPath(rc modclient.RouteContract, name string) string {
+	if p, ok := rc.VocabAt[name]; ok {
+		return p
+	}
+	return name
+}
+
+func checkVocab(rc modclient.RouteContract, v value, sv *sview) ([]Problem, []string) {
 	var ps []Problem
+	var notes []string
 	p := func(k ProblemKind, format string, a ...any) {
 		ps = append(ps, Problem{Module: rc.Module, Route: rc.Route, Case: rc.Case, Fixture: rc.Fixture, Kind: k, Detail: fmt.Sprintf(format, a...)})
 	}
+	atNames := make([]string, 0, len(rc.VocabAt))
+	for name := range rc.VocabAt {
+		atNames = append(atNames, name)
+	}
+	sort.Strings(atNames)
+	for _, name := range atNames {
+		if _, ok := rc.Vocab[name]; !ok {
+			p(VocabKey, "VocabAt names %q, which is no vocabulary of the contract's Vocab", name)
+		}
+	}
 	root := build(v, sv)
 	for _, name := range sortedKeys(rc.Vocab) {
-		segs, err := parsePath(name)
+		at := vocabPath(rc, name)
+		segs, err := parsePath(at)
 		if err != nil || len(segs) == 0 {
-			p(VocabKey, "the Vocab key %q is not a path of the documented grammar (for example items[].state)", name)
+			p(VocabKey, "vocabulary %q at %q: the path is not of the documented grammar (for example items[].state)", name, at)
 			continue
 		}
-		if _, st := resolve(root, segs); st == missing {
-			p(VocabKey, "the Vocab key %q names no position in the fixture (a typo makes the vocabulary check vacuous)", name)
+		var vals []string
+		collectStrings(v, segs, &vals)
+		if len(vals) == 0 {
+			if _, st := resolve(root, segs); st == beyond {
+				notes = append(notes, fmt.Sprintf("vocabulary %s at %s is not exercised by %s (%s): the fixture has no element there (an empty array, an empty map or a null on the way)", name, at, rc.Fixture, keyOf(rc)))
+			} else {
+				p(VocabInert, "vocabulary %s at %s constrains nothing in %s: the path is wrong or the fixture has no value there", name, at, rc.Fixture)
+			}
 		}
 		list := rc.Vocab[name]
 		if len(list) == 0 {
@@ -219,15 +281,18 @@ func checkVocab(rc modclient.RouteContract, v value, sv *sview) []Problem {
 			}
 			known[s] = true
 		}
-		var vals []string
-		collectStrings(v, segs, &vals)
 		reported := map[string]bool{}
 		for _, s := range vals {
 			if !known[s] && !reported[s] {
 				reported[s] = true
-				p(VocabOutside, "the fixture holds the value %s at %q, which the contract's Vocab does not list", printable(s), name)
+				p(VocabOutside, "the fixture holds the value %s at %q (vocabulary %q), which the contract's Vocab does not list", printable(s), at, name)
 			}
 		}
 	}
-	return ps
+	return ps, notes
+}
+
+// isVocab says whether a problem is about a vocabulary.
+func (k ProblemKind) isVocab() bool {
+	return k == VocabKey || k == VocabInert || k == VocabList || k == VocabOutside
 }

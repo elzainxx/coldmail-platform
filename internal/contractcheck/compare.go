@@ -61,6 +61,10 @@ type Report struct {
 	// Optional are the paths of keys the contract's Shape declares Opt (the module omits or sets them depending on state) that are present on one side only: their presence is not
 	// compared, so they are neither differences nor part of the distance Match ranks by. A key that is present on both sides is compared as any other.
 	Optional []string
+	// Open are the paths of objects the contract's Shape marks Open (a bag of module-defined keys, such as module 1's `signals`) in which a key the Shape does not list is present on
+	// one side only: which keys such an object carries varies from response to response, so those keys are neither KeyMissing nor KeyAdded and add nothing to the distance. A key the
+	// Shape lists is compared as always, and a key present on both sides is compared by type.
+	Open []string
 	// VocabMismatch are the paths named in the contract's Vocab at which the fixture and the live body both carry strings and no string is common to the two (for a path that
 	// holds one value, the two values differ; for a path inside an array, the two sets of values have nothing in common). It is not a difference: a module's job moves from queued to
 	// sent. It is the evidence that tells apart contracts of one route and status whose fixtures differ only by a vocabulary value (a test button that answers ok, failed or
@@ -95,6 +99,17 @@ func (c *comparer) gap(side, path, why string) {
 	c.rep.Gaps = append(c.rep.Gaps, Gap{Side: side, Path: display(path), Why: why})
 }
 
+// openBag notes an open object in which an unlisted key is on one side only (once per path).
+func (c *comparer) openBag(path string) {
+	p := display(path)
+	for _, have := range c.rep.Open {
+		if have == p {
+			return
+		}
+	}
+	c.rep.Open = append(c.rep.Open, p)
+}
+
 // optional notes an Opt key that is on one side only (once per path: a position is visited once, however many array elements it was folded from).
 func (c *comparer) optional(path string) {
 	c.rep.Optional = append(c.rep.Optional, display(path))
@@ -105,7 +120,8 @@ func (c *comparer) optional(path string) {
 //
 // Positions that tell nothing (an empty array, an empty map, a null) are never differences: they are returned in Report.Gaps. A key the Shape declares Opt that is present on one side
 // only is not a difference either, in either direction (no KeyMissing, no KeyAdded): it is returned in Report.Optional; present on both sides it is compared as any other key. A key
-// the Shape does not list keeps KeyMissing and KeyAdded. A Vocab path at which the fixture and the live body carry different strings is not a difference either: it is returned in
+// the Shape does not list keeps KeyMissing and KeyAdded, except inside an object the Shape marks Open (a bag of module-defined keys): there a key the Shape does not list that is
+// present on one side only is neither, and the object's path is returned in Report.Open; the same key on both sides is compared by type like any key. A Vocab path at which the fixture and the live body carry different strings is not a difference either: it is returned in
 // Report.VocabMismatch, for Match to tell contracts apart by. The order of Diffs is deterministic: status, then
 // the structure in fixture order, then added keys, then vocabularies by name, then the Shape check.
 func Compare(rc modclient.RouteContract, fixture, live []byte, liveStatus int) Report {
@@ -188,6 +204,7 @@ func (c *comparer) walkElems(childPath, path string, fx, lv *node, what string, 
 }
 
 func (c *comparer) walkKeys(path string, fx, lv *node, sv *sview) {
+	open := sv.isOpen()
 	for _, k := range fx.keys {
 		kp := join(path, safeKey(k))
 		fld := sv.field(k)
@@ -195,6 +212,10 @@ func (c *comparer) walkKeys(path string, fx, lv *node, sv *sview) {
 		if !ok {
 			if fld != nil && !fld.required {
 				c.optional(kp) // the Shape says the key may be absent: presence is not compared
+				continue
+			}
+			if fld == nil && open {
+				c.openBag(path) // a key of a bag the Shape does not list: which keys there are varies
 				continue
 			}
 			c.diff(kp, KeyMissing, "the key is in the recorded fixture and not in the live body")
@@ -208,8 +229,13 @@ func (c *comparer) walkKeys(path string, fx, lv *node, sv *sview) {
 	}
 	for _, k := range lv.keys {
 		if _, ok := fx.kids[k]; !ok {
-			if fld := sv.field(k); fld != nil && !fld.required {
+			fld := sv.field(k)
+			if fld != nil && !fld.required {
 				c.optional(join(path, safeKey(k))) // optional per the Shape: the fixture simply lacks it
+				continue
+			}
+			if fld == nil && open {
+				c.openBag(path)
 				continue
 			}
 			c.diff(join(path, safeKey(k)), KeyAdded, "the key is in the live body and not in the recorded fixture: refresh the fixture")
@@ -219,9 +245,11 @@ func (c *comparer) walkKeys(path string, fx, lv *node, sv *sview) {
 
 func (c *comparer) vocab(fixture, live value) {
 	for _, name := range sortedKeys(c.rc.Vocab) {
-		segs, err := parsePath(name)
+		// A vocabulary is named by the adapter and constrains the position its VocabAt entry gives (else the name is the path): every report below names that path.
+		at := vocabPath(c.rc, name)
+		segs, err := parsePath(at)
 		if err != nil || len(segs) == 0 {
-			c.diff(name, ContractInvalid, "the Vocab key is not a path of the documented grammar")
+			c.diff(at, ContractInvalid, fmt.Sprintf("the path of vocabulary %q is not of the documented grammar", name))
 			continue
 		}
 		known := map[string]bool{}
@@ -236,12 +264,12 @@ func (c *comparer) vocab(fixture, live value) {
 				continue
 			}
 			reported[v] = true
-			c.diff(name, VocabNew, fmt.Sprintf("the live value %s is not in the closed vocabulary (%d values)", printable(v), len(known)))
+			c.diff(at, VocabNew, fmt.Sprintf("the live value %s is not in the closed vocabulary %q (%d values)", printable(v), name, len(known)))
 		}
 		var fixed []string
 		collectStrings(fixture, segs, &fixed)
 		if disjointStrings(seen, fixed) {
-			c.rep.VocabMismatch = append(c.rep.VocabMismatch, name)
+			c.rep.VocabMismatch = append(c.rep.VocabMismatch, at)
 		}
 	}
 }

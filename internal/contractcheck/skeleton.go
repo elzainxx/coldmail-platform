@@ -9,10 +9,10 @@ import (
 	"github.com/coldmail-platform/platform/internal/modclient"
 )
 
-// THE PATH GRAMMAR (one rule, used by Diff.Path, by the keys of RouteContract.Vocab and by Skel.Lookup): an object key is its name, joined to its parent with a dot
+// THE PATH GRAMMAR (one rule, used by Diff.Path, by the paths of RouteContract.Vocab (through VocabAt) and by Skel.Lookup): an object key is its name, joined to its parent with a dot
 // (`error.code`); `[]` after a name or after another suffix means "every element of that array" (`items[].state`, a body that is itself an array starts `[]`); `{}` means "every
 // value of that map", used only where the contract's Shape says MapOf and the keys are not compared (`checks{}.status`). A name is made of letters, digits, `_` and `-`.
-// A Vocab key is exactly such a path to a string-valued position, so `items[].state` lists the closed set of the `state` of every element of `items`.
+// The path of a vocabulary (RouteContract.VocabAt, else its name) is exactly such a path to a string-valued position, so `items[].state` constrains the `state` of every element of `items`.
 
 type typeSet uint8
 

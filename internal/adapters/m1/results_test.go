@@ -25,7 +25,7 @@ const handPage = `{"job_id":"` + testJob + `","results":[
 ],"next_cursor":"4"}`
 
 // recordedResultsPages names the recorded fixtures of the two results contracts that answered 200, split by what the FILE holds: the ones with rows and the ones with none. The
-// split is made from the content, never from the case name (the page recorded under the case `page` was an empty one, the one under `empty_page` held 220 rows).
+// split is made from the content, never from the case name (in an earlier recording the two were filed the wrong way round: `page` held no row and `empty_page` held 220).
 func recordedResultsPages(t *testing.T) (populated, empty []string) {
 	t.Helper()
 	for _, c := range Contracts() {

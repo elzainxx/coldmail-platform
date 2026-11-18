@@ -121,13 +121,49 @@ func length(t testing.TB, d any, path string) int {
 // vocabSet is a closed set the contracts name, by name: the one list the adapter's switch is held equal to.
 func vocabSet(t testing.TB, name string) []string {
 	t.Helper()
+	if strings.HasPrefix(name, "describe:") { // the module's own published set, whatever the contracts name
+		out := describeSet(t, strings.TrimPrefix(name, "describe:"))
+		if out == nil {
+			t.Fatalf("the module publishes no vocabulary %s", name)
+		}
+		return out
+	}
 	for _, c := range m3.Contracts() {
 		if v, ok := c.Vocab[name]; ok {
 			return v
 		}
 	}
-	t.Fatalf("no contract names the vocabulary %s", name)
+	// a set that no fixture holds a position for is not on any contract (it would constrain nothing there): a bulk row's rejection reasons are the share of its code that is not a
+	// verification code, and an account's pause and quarantine reasons are the module's own published sets (the recorded describe, an independent source)
+	if name == "bulk_reject_code" {
+		var out []string
+		for _, w := range vocabSet(t, "bulk_row_code") {
+			if !slices.Contains(vocabSet(t, "verify_code"), w) {
+				out = append(out, w)
+			}
+		}
+		return out
+	}
+	if out := describeSet(t, name); out != nil {
+		return out
+	}
+	t.Fatalf("no contract names the vocabulary %s and the describe does not publish it", name)
 	return nil
+}
+
+// describeSet is the set the module itself publishes under a name in its describe (the recorded one), nil when it publishes none.
+func describeSet(t testing.TB, name string) []string {
+	t.Helper()
+	d := doc(t, "describe.ok.json")
+	v, ok := lookup(d, "vocabularies."+name+".values")
+	if !ok {
+		return nil
+	}
+	var out []string
+	for i := range v.([]any) {
+		out = append(out, asStr(t, d, fmt.Sprintf("vocabularies.%s.values[%d]", name, i)))
+	}
+	return out
 }
 
 // mapped is what the adapter makes of a module's word: itself when the closed set has it, "unrecognised" otherwise.

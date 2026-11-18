@@ -142,6 +142,9 @@ func AssertLive(t TB, rc modclient.RouteContract, fixtureFS fs.FS, dir string, s
 	for _, p := range rep.Optional {
 		t.Logf("contract %s: optional per the Shape, presence not compared: %s", who, p)
 	}
+	for _, p := range rep.Open {
+		t.Logf("contract %s: open object per the Shape, extra keys not compared: %s", who, p)
+	}
 }
 
 // Finish fails the test when a contract was never exercised, when a call has no contract, and when there are no contracts at all; it always logs the coverage.

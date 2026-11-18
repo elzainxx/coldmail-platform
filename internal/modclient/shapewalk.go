@@ -73,6 +73,10 @@ func (s Shape) Kind() ShapeKind {
 // Nullable reports whether the Shape also accepts JSON null (OrNull).
 func (s Shape) Nullable() bool { return s.nullable }
 
+// IsOpen reports whether the Shape is an object marked Open: a bag of module-defined keys, of which the Shape lists only the ones the platform reads. It is false for every
+// other kind, whatever was called.
+func (s Shape) IsOpen() bool { return s.open && s.kind == kObject }
+
 // Fields returns the listed keys of an object Shape in the order they were given (a copy: the Shape is immutable); nil for any other kind.
 func (s Shape) Fields() []Field {
 	if s.kind != kObject || len(s.fields) == 0 {

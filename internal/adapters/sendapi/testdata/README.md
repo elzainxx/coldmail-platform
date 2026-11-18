@@ -6,3 +6,6 @@ tests of the shared body prove it serves both modules, not only module 2; module
 set is `internal/adapters/m2/testdata/contract/`, and the shared body's tests read it from there too.
 
 Ids and times are obviously synthetic and there is no secret in any file.
+
+Request ids and cursors are written in the harness's normalised spelling (a run of `a`, a run of `A`): the fixture check of the drift gate reads a long mixed run of characters as a
+secret, and a recording of the real module is normalised the same way.

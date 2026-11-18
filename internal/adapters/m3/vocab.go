@@ -21,6 +21,9 @@ const (
 	vocabTestAlignment          = "test_alignment_state"          // the test button's own word set
 	vocabVerifyCode             = "verify_code"                   // the verify_* failure codes and the test button's two "unavailable" codes
 	vocabBulkRejectCode         = "bulk_reject_code"              // the rejected rows' codes the adapter recognises
+	// vocabBulkRowCode is a bulk row's `code` as a whole: a rejected row's reason or the reason a created row's credential check failed, which share the one position of the answer, so the
+	// contract constrains the union of the two sets (the switches rejectReason and verifyCode, held equal to it by a test).
+	vocabBulkRowCode = "bulk_row_code"
 )
 
 // sets is the one place the sets are written down; Vocab and the tests read them through set().
@@ -39,6 +42,8 @@ var sets = map[string][]string{
 	},
 	vocabBulkRejectCode: {"validation_failed", "account_cap_reached", "duplicate_account_for_user", "from_alignment_warning_unacknowledged"},
 }
+
+func init() { sets[vocabBulkRowCode] = slices.Concat(sets[vocabBulkRejectCode], sets[vocabVerifyCode]) }
 
 // set returns a copy of one closed set, for a contract's Vocab.
 func set(name string) []string { return slices.Clone(sets[name]) }

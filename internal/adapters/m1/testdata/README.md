@@ -69,6 +69,24 @@ them (`tests/harness/zz_m1_node_contract_drift_test.go`). They are written from 
 | `submit-error-unavailable.json` | `POST /v1/verify/bulk` | 503 `unavailable` (needs the queue key missing) |
 | `submit-error-internal.json` | `POST /v1/verify/bulk` | 500 `internal_error` |
 
+## Vocabularies and where they live (`VocabAt`)
+
+A contract lists a vocabulary only when its own fixture has a string at the path the set constrains (`RouteContract.VocabAt`; a bare set name would be read by the drift gate as a path to a
+top-level key, which most of these bodies do not have, and the vocabulary would constrain nothing). `TestEveryVocabularyConstrainsSomethingInItsOwnFixture` holds that for every contract.
+
+| Set | Path | On |
+|---|---|---|
+| `status`, `reason`, `recommendation` | `status`, `reason`, `recommendation` | `POST /v1/verify` `ok` |
+| `submit_status` | `status` | `POST /v1/verify/bulk` `accepted` |
+| `job_status` | `status` | `GET /v1/jobs/{id}` `running`, `complete` |
+| `status`, `reason` | `results[].status`, `results[].reason` | `GET /v1/jobs/{id}/results` `page` (the page with rows) |
+| `error_code` (module 1's nine codes) | `error.code` | every error contract (11) |
+
+NOT published on any contract: `failure_origin` and `smtp_skipped_reason`. They live in `signals`, on an unknown answer and on an answer that skipped the SMTP stage, and no recorded verdict
+or results row is either, so a contract that listed them would constrain nothing. The adapter still maps both (`vocab.go`) and the tests prove it on inline bodies; they are NOT checked
+against a live response. `GET /v1/jobs/{id}/results` `empty_page` lists no row set either: it has no row to hold one. When a recording holds one of these keys, a contract lists it and
+`TestVocabListsAreTheSwitches` says to remove it from `unpublishedSets`.
+
 ## How the unit tests use them
 
 A test that serves a RECORDED fixture takes what it expects from the file: `recordedStatus`, `recordedCounts`, `recordedRows`, `recordedDoc` and the summaries of `contracts_test.go`

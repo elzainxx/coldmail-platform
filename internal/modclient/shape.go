@@ -31,6 +31,7 @@ type Shape struct {
 	fields   []Field
 	elem     *Shape
 	nullable bool
+	open     bool
 }
 
 type shapeKind uint8
@@ -78,6 +79,15 @@ func ArrayOf(elem Shape) Shape { return Shape{kind: kArray, elem: &elem} }
 // OrNull returns the shape that also accepts JSON null.
 func (s Shape) OrNull() Shape {
 	s.nullable = true
+	return s
+}
+
+// Open returns the shape marked as an open object: a bag of keys the module defines and fills with whichever it produced for this response (module 1's `signals` carries the keys
+// the pipeline layers that ran for a row produced, so which keys a row has varies from row to row). Decoding is exactly what it was (an object shape has always tolerated keys it
+// does not list, and still checks the ones it lists); the mark is for tools that compare responses, which must not call the presence of a key the Shape does not list on one side
+// only a difference. It means something on an Object shape and is ignored on any other (a MapOf already has free keys).
+func (s Shape) Open() Shape {
+	s.open = true
 	return s
 }
 

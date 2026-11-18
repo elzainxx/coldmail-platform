@@ -794,12 +794,21 @@ func TestVocabIsTheSwitchesAndTheSwitchesAreTheVocab(t *testing.T) {
 		}
 	}
 	sharedNames := []string{"job_state", "error_class", "error_codes", "item_reason"}
+	// the sets that no contract can carry because no fixture holds a string at their position (a quarantine reason is absent from every healthy account, a bulk row's rejection reasons
+	// share the one position of its code with the verification codes): the first is the module's published set, the second the share of the union that is not a verification code
+	noPosition := []string{"quarantine_reason", "bulk_reject_code"}
 	covered := map[string]bool{}
 	for fn, name := range bySwitch {
 		covered[name] = true
-		want, ok := vocab[name]
-		if !ok || len(want) == 0 {
-			t.Fatalf("no contract names the vocabulary %s of the switch %s: the subject is empty", name, fn)
+		want := vocab[name]
+		if len(want) == 0 {
+			if !slices.Contains(noPosition, name) {
+				t.Fatalf("no contract names the vocabulary %s of the switch %s: the subject is empty", name, fn)
+			}
+			want = vocabSet(t, name)
+		}
+		if len(want) == 0 {
+			t.Fatalf("the vocabulary %s of the switch %s is empty", name, fn)
 		}
 		got := handled[fn]
 		if len(got) == 0 {
@@ -814,6 +823,37 @@ func TestVocabIsTheSwitchesAndTheSwitchesAreTheVocab(t *testing.T) {
 		}
 		if p := setDiff(got[1:], want); len(p) != 1 || !strings.Contains(p[0], "the switch does not handle") {
 			t.Fatalf("a missing case was not caught for %s: %v", fn, p)
+		}
+	}
+	// a bulk row's code as a whole is the union of two switches, which share no word
+	union := append(slices.Clone(handled["rejectReason"]), handled["verifyCode"]...)
+	covered["bulk_row_code"] = true
+	if p := setDiff(union, vocab["bulk_row_code"]); len(p) != 0 || len(handled["rejectReason"]) == 0 || len(handled["verifyCode"]) == 0 {
+		t.Fatalf("a bulk row's code and the two switches that map it disagree: %v", p)
+	}
+	for _, w := range handled["rejectReason"] {
+		if slices.Contains(handled["verifyCode"], w) {
+			t.Fatalf("the word %s is both a rejection reason and a verification code: the one position of a bulk row's code would be ambiguous", w)
+		}
+	}
+	if p := setDiff(append(slices.Clone(union), "brand_new"), vocab["bulk_row_code"]); len(p) != 1 || !strings.Contains(p[0], "the switch handles brand_new") {
+		t.Fatalf("an extra case was not caught for a bulk row's code: %v", p)
+	}
+	if p := setDiff(union[1:], vocab["bulk_row_code"]); len(p) != 1 || !strings.Contains(p[0], "the switch does not handle") {
+		t.Fatalf("a missing case was not caught for a bulk row's code: %v", p)
+	}
+	// the sets the module publishes in describe are held to the module's own list too (the recorded describe, an independent source): every switch the module has a set for handles exactly it
+	published := map[string]string{
+		"verificationState": "credential_verification_state", "alignmentState": "from_verification_state", "quoteReason": "quote_reason_code", "pauseReason": "pause_reason",
+		"quarantineReason": "quarantine_reason", "bulkStatus": "bulk_add_row_status",
+	}
+	for fn, name := range published {
+		want := vocabSet(t, "describe:"+name)
+		if p := setDiff(handled[fn], want); len(p) != 0 {
+			t.Fatalf("%s and the module's published %s disagree: %v", fn, name, p)
+		}
+		if p := setDiff(append(slices.Clone(handled[fn]), "brand_new"), want); len(p) != 1 {
+			t.Fatalf("an extra case was not caught against the published %s: %v", name, p)
 		}
 	}
 	for name := range vocab {

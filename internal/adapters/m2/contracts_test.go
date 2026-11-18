@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"github.com/coldmail-platform/platform/internal/adapters/sendapi"
 	"github.com/coldmail-platform/platform/internal/adapters/sendapi/sendapitest"
 	"github.com/coldmail-platform/platform/internal/charge"
+	"github.com/coldmail-platform/platform/internal/contractcheck"
 	"github.com/coldmail-platform/platform/internal/modclient"
 )
 
@@ -551,4 +553,107 @@ func TestRecordedPagesSettleAsTheChargeTableSays(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Every vocabulary a module 2 contract lists constrains something in its own recorded body (a recording of the real module): it has a path (VocabAt), the body holds a string there and
+// every string it holds is in the set. Both checks run on m2.Contracts() and the recordings: the adapter side's own (sendapitest.CheckVocabAt) and the drift gate's no-rot check
+// (contractcheck.CheckFixtures). The paired controls: a path with a typo, a path at a position that holds no string, a vocabulary with no path and a value of the recording that the set
+// does not list are each reported, naming the vocabulary.
+//
+// WHAT BITES ONLY WHEN CheckFixtures READS VocabAt: until then it reads each Vocab key as a path itself, so its zero-problems assertion fails on the NAMES and its control cannot tell a
+// right path from a wrong one; sendapitest.CheckVocabAt is the independent check that holds in both cases.
+func TestEveryVocabularyConstrainsSomethingInItsOwnFixture(t *testing.T) {
+	cs := m2.Contracts()
+	fsys := os.DirFS(".")
+	if problems := sendapitest.CheckVocabAt(cs, fsys, fixtures); len(problems) != 0 {
+		t.Fatalf("a vocabulary constrains nothing, or is misplaced, in its own recording: %v", problems)
+	}
+	if problems := contractcheck.CheckFixtures(cs, fsys, fixtures); len(problems) != 0 {
+		var text []string
+		for _, p := range problems {
+			text = append(text, p.String())
+		}
+		t.Fatalf("the drift gate's fixture check reports problems: %v", text)
+	}
+	// module 2's own: cancel's error body lists the error codes at error.code, and the shared item reasons are placed on a page that holds them
+	placed := map[string]string{}
+	for _, c := range cs {
+		for n, at := range c.VocabAt {
+			placed[sendapitest.Key(c)+" | "+n] = at
+		}
+	}
+	for k, want := range map[string]string{
+		"POST /v1/cancel | error validation_failed | error_codes": sendapi.PathErrorCode,
+		"GET /v1/report | campaign page | item_reason":            sendapi.PathItemReason,
+		"GET /v1/report | campaign page | error_class":            sendapi.PathItemErrorClass,
+		"GET /v1/report | campaign last page | job_state":         sendapi.PathItemState,
+		"GET /v1/describe | ok | error_codes":                     sendapi.PathDescribeErrorCode,
+		"POST /v1/run | replay | job_state":                       sendapi.PathState,
+	} {
+		if placed[k] != want {
+			t.Fatalf("%s is placed at %q, want %q", k, placed[k], want)
+		}
+	}
+	// no contract of module 2 lists a vocabulary its body has no string for: cancel's success, the quote and the empty page list none
+	for _, k := range []string{"POST /v1/cancel | ok", "POST /v1/quote | ok", "GET /v1/report | campaign empty"} {
+		for _, c := range cs {
+			if sendapitest.Key(c) == k && (len(c.Vocab) != 0 || len(c.VocabAt) != 0) {
+				t.Fatalf("%s lists a vocabulary: %v %v", k, c.Vocab, c.VocabAt)
+			}
+		}
+	}
+	edit := func(route, name string, f func(c *modclient.RouteContract)) []modclient.RouteContract {
+		out := append([]modclient.RouteContract(nil), cs...)
+		for i := range out {
+			if out[i].Route == route && out[i].Case == name {
+				out[i].Vocab, out[i].VocabAt = maps.Clone(out[i].Vocab), maps.Clone(out[i].VocabAt)
+				f(&out[i])
+				return out
+			}
+		}
+		t.Fatalf("no contract %s / %s", route, name)
+		return nil
+	}
+	for _, tc := range []struct {
+		name, route, cas string
+		f                func(c *modclient.RouteContract)
+		want             []string
+		gate             bool
+	}{
+		{"a path with a typo", sendapi.RouteReport, "campaign page", func(c *modclient.RouteContract) { c.VocabAt["item_reason"] = "items.results[].reasn" }, []string{`"item_reason"`, "constrains nothing"}, true},
+		{"a path at a position that holds no string", sendapi.RouteReport, "campaign page", func(c *modclient.RouteContract) { c.VocabAt["error_class"] = "totals.total" }, []string{`"error_class"`, "constrains nothing"}, true},
+		{"cancel's error code at the wrong key", m2.RouteCancel, "error validation_failed", func(c *modclient.RouteContract) { c.VocabAt["error_codes"] = "error.kind" }, []string{`"error_codes"`, "constrains nothing"}, true},
+		{"a vocabulary with no path", sendapi.RouteRun, "replay", func(c *modclient.RouteContract) { delete(c.VocabAt, "job_state") }, []string{`"job_state"`, "gives it no path"}, false},
+		{"a value of the recording that the set does not list", sendapi.RouteRun, "replay", func(c *modclient.RouteContract) {
+			c.Vocab["job_state"] = slices.DeleteFunc(slices.Clone(c.Vocab["job_state"]), func(s string) bool { return s == atStr(t, "run.replay.json", "state") })
+		}, []string{`"job_state"`, "does not list"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bad := edit(tc.route, tc.cas, tc.f)
+			problems := sendapitest.CheckVocabAt(bad, fsys, fixtures)
+			if !hasProblem(problems, tc.want...) {
+				t.Fatalf("the check did not report %v: %v", tc.want, problems)
+			}
+			var cf []string
+			for _, p := range contractcheck.CheckFixtures(bad, fsys, fixtures) {
+				cf = append(cf, p.String())
+			}
+			if tc.gate && (len(cf) == 0 || !hasProblem(cf, strings.Trim(tc.want[0], `"`))) {
+				t.Fatalf("CheckFixtures did not report the vocabulary %s: %v", tc.want[0], cf)
+			}
+		})
+	}
+}
+
+func hasProblem(problems []string, subs ...string) bool {
+	for _, p := range problems {
+		ok := true
+		for _, s := range subs {
+			ok = ok && strings.Contains(p, s)
+		}
+		if ok {
+			return true
+		}
+	}
+	return false
 }

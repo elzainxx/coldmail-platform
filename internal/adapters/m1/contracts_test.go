@@ -685,10 +685,24 @@ func TestContracts_EveryVocabValueIsAcceptedAndASiblingIsRefused(t *testing.T) {
 			union[name] = vals
 		}
 	}
-	want := []string{"failure_origin", "job_status", "reason", "recommendation", "smtp_skipped_reason", "status", "submit_status"}
+	// what is published: every set of the adapter except the ones no recorded body can hold (unpublishedSets), and the error codes; each exactly as the adapter holds it
+	want := []string{"error_code"}
+	for name := range vocabSets() {
+		if _, none := unpublishedSets[name]; !none {
+			want = append(want, name)
+		}
+	}
+	sort.Strings(want)
 	var got []string
-	for name := range union {
+	for name, vals := range union {
 		got = append(got, name)
+		own := vocabSets()[name]
+		if name == "error_code" {
+			own = errorCodeValues
+		}
+		if !reflect.DeepEqual(sortedCopy(vals), sortedCopy(own)) {
+			t.Errorf("the published vocabulary %q is not the adapter's own list", name)
+		}
 	}
 	sort.Strings(got)
 	if !reflect.DeepEqual(got, want) {
@@ -738,7 +752,7 @@ func TestContracts_EveryVocabValueIsAcceptedAndASiblingIsRefused(t *testing.T) {
 		}},
 	}
 	checked := 0
-	for name, vals := range union {
+	for name, vals := range vocabSets() { // every set of the adapter, published or not: what the adapter accepts does not depend on whether a recording can hold it
 		chk, ok := checks[name]
 		if !ok {
 			t.Errorf("the vocabulary %q has no check", name)
@@ -757,6 +771,18 @@ func TestContracts_EveryVocabValueIsAcceptedAndASiblingIsRefused(t *testing.T) {
 	}
 	if checked != len(statusValues)+len(reasonValues)+len(originValues)+len(skipValues)+len(recommendationValues)+len(jobStatusValues)+len(submitStatusValues) {
 		t.Fatalf("%d value(s) checked, want every value of every set", checked)
+	}
+	// the error codes are data to the adapter: each published code, and a code module 1 may add later, comes back on the typed error with the class of its STATUS (the adapter has no
+	// switch on it; modclient decides by status, and only `paused` changes a class)
+	for _, code := range append(append([]string(nil), errorCodeValues...), "some_new_code") {
+		f := serve(t, 400, `{"error":{"code":"`+code+`","message":"x","request_id":"00000000-0000-4000-8000-000000000001"}}`)
+		_, err := f.adapter(t).Status(testCtx(t), testJob)
+		if e := asModclient(err); e == nil || e.Kind != modclient.Refused || e.Code != code {
+			t.Errorf("the code %q on a 400: got %v, want a Refused error that carries it", code, err)
+		}
+	}
+	if len(errorCodeValues) != 9 {
+		t.Fatalf("module 1 has 9 error codes (api/errors.go), the list holds %d", len(errorCodeValues))
 	}
 	// the module's own counts, so a silent edit of a list is seen: 4 statuses and 27 reasons (vocab.go), 3 origins, 6 skip tokens (signals.go), 3 recommendations, 4 job words
 	if len(statusValues) != 4 || len(reasonValues) != 27 || len(originValues) != 3 || len(skipValues) != 6 || len(recommendationValues) != 3 || len(jobStatusValues) != 4 || len(submitStatusValues) != 1 {
@@ -827,7 +853,8 @@ func TestVocabListsAreTheSwitches(t *testing.T) {
 		if err != nil {
 			return []string{err.Error()}
 		}
-		a, b := append([]string(nil), cases...), append([]string(nil), published[name]...)
+		// the list the switch is compared with is the adapter's own (vocabSets), which Contracts() copies for the sets it publishes (checked below)
+		a, b := append([]string(nil), cases...), append([]string(nil), sets[name]...)
 		sort.Strings(a)
 		sort.Strings(b)
 		var out []string
@@ -853,15 +880,20 @@ func TestVocabListsAreTheSwitches(t *testing.T) {
 		t.Fatalf("%d switch(es) for %d set(s)", len(funcs), len(sets))
 	}
 	for name := range funcs {
-		if len(published[name]) == 0 {
-			t.Errorf("%s: no contract publishes this set", name)
-		}
 		if d := diff(src, name); len(d) != 0 {
 			t.Errorf("%v", d)
 		}
-		if !reflect.DeepEqual(sortedCopy(sets[name]), sortedCopy(published[name])) {
+		switch _, declared := unpublishedSets[name]; {
+		case len(published[name]) == 0 && !declared:
+			t.Errorf("%s: no contract publishes this set and the test does not declare it unpublished", name)
+		case len(published[name]) != 0 && declared:
+			t.Errorf("%s: a contract now publishes this set: remove it from unpublishedSets", name)
+		case len(published[name]) != 0 && !reflect.DeepEqual(sortedCopy(sets[name]), sortedCopy(published[name])):
 			t.Errorf("%s: vocabSets() and the published Vocab differ", name)
 		}
+	}
+	if _, ok := funcs["error_code"]; ok {
+		t.Error("error_code has a switch: it is data to the adapter, published for the drift gate only")
 	}
 
 	// controls
@@ -879,6 +911,15 @@ func TestVocabListsAreTheSwitches(t *testing.T) {
 	if d := diff(removed, "failure_origin"); len(d) != 1 || !strings.Contains(d[0], `Vocab lists "undetermined"`) {
 		t.Fatalf("control: a case removed from the switch gave %v, want that value reported", d)
 	}
+}
+
+// unpublishedSets are the sets the adapter maps that NO contract publishes, and why. A set is published only on a contract whose recorded body has a string at the path it
+// constrains (TestEveryVocabularyConstrainsSomethingInItsOwnFixture); neither of these keys is in any recording of the real node, so listing them would make them inert. They are
+// tested on inline bodies (TestContracts_EveryVocabValueIsAcceptedAndASiblingIsRefused) and NOT checked against a live response. When a recording holds one, a contract lists it
+// and TestVocabListsAreTheSwitches says to remove it from here.
+var unpublishedSets = map[string]string{
+	"failure_origin":      "signals.failure_origin is on unknown answers only, and no recorded verdict or results row is one",
+	"smtp_skipped_reason": "signals.smtp_skipped_reason is on answers that skipped the SMTP stage only, and no recorded verdict or results row is one",
 }
 
 func sortedCopy(in []string) []string {

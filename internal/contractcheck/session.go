@@ -132,7 +132,7 @@ func keyOf(rc modclient.RouteContract) Exercised { return Exercised{rc.Module, r
 
 // Finish matches what was observed against the contracts and reports it. Outside record mode it fails the test with: every difference between a live response and its
 // fixture (once per distinct difference, with how many observations showed it: module, route, case, path, kind), every undeclared route, every contract nothing exercised
-// that is not in the allowlist, every allowlist entry without a reason, naming no contract or naming a contract that WAS exercised (stale), the cap if it was hit, and an
+// that is not in the allowlist, every vocabulary that constrains nothing in its own fixture (VocabInert and the other vocabulary problems of InspectFixtures), every allowlist entry without a reason, naming no contract or naming a contract that WAS exercised (stale), the cap if it was hit, and an
 // empty list of contracts; and it prints the coverage with the fixed sentence about what the gate cannot see and the allowed-unexercised contracts with their reasons. In record
 // mode it prints one CONTRACT-FIXTURE block per contract that was matched and one per group of undeclared calls (file UNDECLARED-<module>-<n>.json), does not fail on
 // differences, undeclared routes or unexercised contracts, and fails only when a block is refused (a secret-shaped body, a contract that cannot be written into a header)
@@ -152,6 +152,19 @@ func (s *Session) finishCompare(t TB, res MatchResult, total, dropped int) {
 	t.Helper()
 	if len(s.contracts) == 0 {
 		t.Errorf("contract drift gate: found 0 contracts: the instrument matched nothing")
+	}
+	// A vocabulary that constrains nothing in its own recorded fixture (a name that is no path of the body, a typo, a fixture without a value there) would let every live check of
+	// it pass without looking: the gate refuses to run on it, whatever the adapter's own tests said. An empty array on the way to it is a note.
+	if s.fsys != nil {
+		rep := InspectFixtures(s.contracts, s.fsys, s.dir)
+		for _, p := range rep.Problems {
+			if p.Kind.isVocab() {
+				t.Errorf("contract fixtures: %s", p)
+			}
+		}
+		for _, n := range rep.Notes {
+			t.Logf("note: %s", n)
+		}
 	}
 	exercised := map[Exercised]bool{}
 	for _, m := range res.Matched {
@@ -282,10 +295,22 @@ func (s *Session) finishCompare(t TB, res MatchResult, total, dropped int) {
 	for _, l := range optionalNotes(res) {
 		t.Logf("note: %s", l)
 	}
+	for _, l := range openNotes(res) {
+		t.Logf("note: %s", l)
+	}
 }
 
 // optionalNotes lists, once per contract and path, the keys the Shape declares Opt that were present on one side only in some observation: their presence is not compared.
 func optionalNotes(res MatchResult) []string {
+	return pathNotes(res, "optional per the Shape, presence not compared", func(r Report) []string { return r.Optional })
+}
+
+// openNotes lists, once per contract and path, the objects the Shape marks Open in which some observation had a key the Shape does not list on one side only: those keys are not compared.
+func openNotes(res MatchResult) []string {
+	return pathNotes(res, "open object per the Shape, extra keys not compared", func(r Report) []string { return r.Open })
+}
+
+func pathNotes(res MatchResult, text string, pick func(Report) []string) []string {
 	type key struct {
 		idx  int
 		path string
@@ -293,11 +318,11 @@ func optionalNotes(res MatchResult) []string {
 	seen := map[key]bool{}
 	var out []string
 	for _, m := range res.Matched {
-		for _, p := range m.Report.Optional {
+		for _, p := range pick(m.Report) {
 			k := key{m.Index, p}
 			if !seen[k] {
 				seen[k] = true
-				out = append(out, fmt.Sprintf("optional per the Shape, presence not compared: %s (%s)", p, keyOf(m.Contract)))
+				out = append(out, fmt.Sprintf("%s: %s (%s)", text, p, keyOf(m.Contract)))
 			}
 		}
 	}
@@ -375,6 +400,9 @@ func (s *Session) finishRecord(t TB, res MatchResult, total, dropped int) {
 	}
 	logNearestMisses(t, res)
 	for _, l := range optionalNotes(res) {
+		t.Logf("note: %s", l)
+	}
+	for _, l := range openNotes(res) {
 		t.Logf("note: %s", l)
 	}
 	if dropped > 0 {

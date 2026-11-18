@@ -28,6 +28,7 @@ const (
 type sview struct {
 	kind     skind
 	nullable bool
+	open     bool // an object that is a bag of module-defined keys (modclient.Shape.Open)
 	fields   []sfield
 	elem     *sview
 }
@@ -59,6 +60,8 @@ func (s *sview) elemView() *sview {
 }
 
 func (s *sview) isMap() bool { return s != nil && s.kind == skMap }
+
+func (s *sview) isOpen() bool { return s != nil && s.kind == skObject && s.open }
 
 // skindOf maps a kind of the modclient walk to this package's; a kind it does not know is an error.
 func skindOf(k modclient.ShapeKind) (skind, error) {
@@ -96,7 +99,7 @@ func viewShape(sh modclient.Shape, depth int) (*sview, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := &sview{kind: k, nullable: sh.Nullable()}
+	out := &sview{kind: k, nullable: sh.Nullable(), open: sh.IsOpen()}
 	for _, f := range sh.Fields() {
 		child, err := viewShape(f.Shape, depth+1)
 		if err != nil {

@@ -154,7 +154,7 @@ func TestCheckFixturesFlagsAFixtureValueOutsideItsOwnVocab(t *testing.T) {
 func TestCheckFixturesFlagsAVocabKeyThatIsATypoOrNotAPath(t *testing.T) {
 	cs := twoContracts()
 	cs[0].Vocab = map[string][]string{"items[].stat": {"ok"}}
-	wantProblems(t, CheckFixtures(cs, fixtureFS(cleanFiles()), fxDir), "VocabKey:job-done.json")
+	wantProblems(t, CheckFixtures(cs, fixtureFS(cleanFiles()), fxDir), "VocabInert:job-done.json") // a path of the grammar that matches nothing in the fixture
 	cs[0].Vocab = map[string][]string{"items[0].state": {"ok"}}
 	wantProblems(t, CheckFixtures(cs, fixtureFS(cleanFiles()), fxDir), "VocabKey:job-done.json")
 	cs[0].Vocab = map[string][]string{"": {"ok"}}

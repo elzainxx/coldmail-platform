@@ -86,7 +86,7 @@ harness reaches them. The record runs did not reach these responses:
   the From check cannot get an answer from DNS; the harness has a worker and no From gate, so neither happens there. It is allowlisted for the drift gate.
 - `accounts.events.page.json`: no populated events listing was ever observed by the drift session (only an empty page), so the page with events in it is hand-written; it will be allowlisted.
 
-They use the same normalised ids as the recordings (`00000000-0000-4000-8000-000000000001` for the first, `...02` for the tenant of an account file) so that one tenant serves every file.
+They use the same normalised ids as the recordings (`00000000-0000-4000-8000-000000000001` for the first, `...02` for the tenant of an account file) so that one tenant serves every file. Their request ids and cursors are the normalised forms too (a run of `a`): contractcheck's no-rot check reads a long opaque run as secret-shaped.
 
 - `run.error.internal_error.json`
 - `accounts.create.error.unprocessable.json`
