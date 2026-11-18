@@ -1,0 +1,9 @@
+# Phase 3, Part B2: module 1's tenant is the caller key that submitted a job, so the platform derives one key per user as HMAC-SHA256(secret, "m1-caller|" + user id) and provisions its digest as the module's caller row: a derivation that drifts silently would lock every user out of their own results (the module would answer 401 or 404 for a key it never learned). The pinned vector (computed independently of the code) catches any change of the construction. The fault changes the domain-separation prefix from a bar to a colon; TestDeriveM1Key_PinnedVectors must go red naming the user and saying the derived text is not the pinned vector. The control is the real tree. Go only.
+GATE=tenant-m1-key-vector
+TARGET=platform
+SETUP=
+STEP=go test TestDeriveM1Key_PinnedVectors (the module 1 caller key derivation equals the pinned vector)
+CMD=GOTOOLCHAIN=local go test -count=1 -v -run '^TestDeriveM1Key_PinnedVectors$' ./internal/tenant/
+MESSAGE=--- FAIL: TestDeriveM1Key_PinnedVectors
+MESSAGE=user 11111111-1111-4111-8111-111111111111, material "vector"...: the derived text is
+MESSAGE=the pinned vector is

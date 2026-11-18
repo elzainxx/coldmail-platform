@@ -1,0 +1,8 @@
+# Phase 3, Part B: every special case an adapter makes for a module (a MODULE-FORCED tag in its code) must have a line in that adapter's forced.txt, because the findings count them. The fault deletes the registry line of the tag M1-F5 in module 1's adapter; TestForcedSpecialCasesAreRegistered must go red naming the tag and the file. The control is the real tree, whose tags and registry lines agree in all four adapter packages. Go only.
+GATE=adapter-forced-registry
+TARGET=platform
+SETUP=
+STEP=go test TestForcedSpecialCasesAreRegistered in the module 1 adapter (every tag has a registry line)
+CMD=GOTOOLCHAIN=local go test -count=1 -v -run '^TestForcedSpecialCasesAreRegistered$' ./internal/adapters/m1/
+MESSAGE=--- FAIL: TestForcedSpecialCasesAreRegistered
+MESSAGE=the tag M1-F5 in results.go has no line in forced.txt

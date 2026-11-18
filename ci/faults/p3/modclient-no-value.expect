@@ -1,0 +1,8 @@
+# Phase 3, Part B1: a function of the plumbing client that returns an error returns NO value with it (rule 4 of the adapters: the platform never invents an outcome from a half answer). TestNoErrorPathReturnsAValue runs every operation against every failure it applies to (about 176 cells). The fault makes Health return an empty Health value together with the error of a failed request; the table must go red naming the operation, the failure and the value. The control is the real tree. Go only.
+GATE=modclient-no-value
+TARGET=platform
+SETUP=
+STEP=go test TestNoErrorPathReturnsAValue (no error path returns a value)
+CMD=GOTOOLCHAIN=local go test -count=1 -v -run '^TestNoErrorPathReturnsAValue$' ./internal/modclient/
+MESSAGE=--- FAIL: TestNoErrorPathReturnsAValue
+MESSAGE=Health / connection refused: the value *modclient.Health came back together with the error

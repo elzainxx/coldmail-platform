@@ -1,0 +1,8 @@
+# Phase 3, Part B5 (open decision 3): module 3's run answers 409 with one body for four causes (suspended, another campaign active, campaign size cap, queue depth cap), so the platform must never pick one of them: an unexplained 409 is ErrConflictUnexplained ("refused, cause unknown") and only the platform's own pre-check names a cause. The fault makes ExplainConflict wrap ErrJobActive instead; TestExplainConflictNeverPicksACause must go red for every body (the quiet one, the one that says why, the suspension sentence, the recorded one). The control is the real tree. Go only.
+GATE=m3-explain-conflict
+TARGET=platform
+SETUP=
+STEP=go test TestExplainConflictNeverPicksACause in the module 3 adapter (an unexplained 409 never names a cause)
+CMD=GOTOOLCHAIN=local go test -count=1 -v -run '^TestExplainConflictNeverPicksACause$' ./internal/adapters/m3/
+MESSAGE=--- FAIL: TestExplainConflictNeverPicksACause
+MESSAGE=a cause was picked: [m3: a module 3 job of this user is already active]

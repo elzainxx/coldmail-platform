@@ -1,0 +1,11 @@
+--- a/internal/modclient/ops.go
++++ b/internal/modclient/ops.go
+@@ -29,7 +29,7 @@
+ func (c *Client) Health(ctx context.Context) (*Health, error) {
+ 	resp, e := c.do(ctx, Request{Route: string(c.module) + ".healthz", Method: http.MethodGet, Path: "/healthz", Idempotent: true, Anonymous: true}, c.judgeDefault)
+ 	if e != nil {
+-		return nil, e
++		return &Health{}, e
+ 	}
+ 	var w struct {
+ 		Status string `json:"status"`

@@ -1,0 +1,8 @@
+# Phase 3, Part B5: module 3 has no cancel route and no cancelled state (open decision 1 of the phase spec), so the adapter must have no method that says cancel: a fake Cancel would let the platform believe it can stop a module 3 job. The fault adds a Cancel method to module 3's tenant client; TestThereIsNoCancel must go red naming the method and the type. The control is the real tree, whose test finds no such method on the client, the adapter or the shared body (and proves the instrument by catching a type that has one). Go only.
+GATE=m3-no-cancel
+TARGET=platform
+SETUP=
+STEP=go test TestThereIsNoCancel in the module 3 adapter (no method says cancel)
+CMD=GOTOOLCHAIN=local go test -count=1 -v -run '^TestThereIsNoCancel$' ./internal/adapters/m3/
+MESSAGE=--- FAIL: TestThereIsNoCancel
+MESSAGE=*Client has [Cancel]: module 3 has no cancel

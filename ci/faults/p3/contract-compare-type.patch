@@ -1,0 +1,11 @@
+--- a/internal/contractcheck/compare.go
++++ b/internal/contractcheck/compare.go
+@@ -134,7 +134,7 @@
+ 	ft, lt := fx.types&^tNull, lv.types&^tNull
+ 	switch {
+ 	case ft != lt:
+-		c.diff(path, TypeChanged, fmt.Sprintf("recorded %s, live %s", strings.Join(ft.names(), "|"), strings.Join(lt.names(), "|")))
++		_ = fmt.Sprintf("recorded %s, live %s", strings.Join(ft.names(), "|"), strings.Join(lt.names(), "|"))
+ 	case ft&tNumber != 0 && sv != nil && sv.kind == skInteger && fx.integral != lv.integral:
+ 		c.diff(path, TypeChanged, fmt.Sprintf("recorded %s, live %s (the Shape says integer)", intWord(fx.integral), intWord(lv.integral)))
+ 	}

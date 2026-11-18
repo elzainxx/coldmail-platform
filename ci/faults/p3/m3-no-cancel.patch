@@ -1,0 +1,12 @@
+--- a/internal/adapters/m3/feasibility.go
++++ b/internal/adapters/m3/feasibility.go
+@@ -96,6 +96,9 @@
+ // Feasibility asks module 3 whether recipientCount recipients can be accepted for the tenant (POST /v1/quote, read by the shared body) and types the answer. It reserves nothing and is
+ // pure. The count is bounded like Quote's (0 to sendapi.MaxRecipientCount). A feasible verdict with reasons, an infeasible one without, a negative number anywhere, or a projection that
+ // has a duration and no basis (or the reverse) is a Contract error naming the key. ON ANY ERROR THE RESULT IS THE ZERO VALUE.
++// Cancel is the fault: module 3 has no cancel route.
++func (c *Client) Cancel(ctx context.Context) error { return nil }
++
+ func (c *Client) Feasibility(ctx context.Context, recipientCount int64) (Feasibility, error) {
+ 	const route = "m3.quote"
+ 	q, err := c.Client.Quote(ctx, recipientCount)

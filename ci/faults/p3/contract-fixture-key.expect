@@ -1,0 +1,9 @@
+# Phase 3, Part B6: every module response the platform relies on is a recorded fixture that the adapter's own decoder must accept (and the live drift gate compares real responses with). The fault deletes the key dispatch_paused from the recorded campaign report page of the shared sender core; the contract suite must go red naming the fixture and the missing key (a recorded body that its own contract refuses is exactly what a module renaming a key looks like to the adapter). The control is the real tree. Go only.
+GATE=contract-fixture-key
+TARGET=platform
+SETUP=
+STEP=go test TestContractsOfTheSharedBody (every recorded body decodes with its contract's shape)
+CMD=GOTOOLCHAIN=local go test -count=1 -v -run '^TestContractsOfTheSharedBody$' ./internal/adapters/sendapi/
+MESSAGE=--- FAIL: TestContractsOfTheSharedBody
+MESSAGE=the recorded body report.campaign.page.json does not conform to its own contract shape
+MESSAGE="dispatch_paused" is missing

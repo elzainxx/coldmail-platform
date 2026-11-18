@@ -1,0 +1,11 @@
+--- a/internal/adapters/sendapi/walk.go
++++ b/internal/adapters/sendapi/walk.go
+@@ -143,7 +143,7 @@
+ 		asked[cursor] = true
+ 		page, err := c.ReportCampaignPage(ctx, campaignID, cursor)
+ 		if err != nil {
+-			return WalkStats{}, fmt.Errorf("sendapi: the walk of the campaign report failed on page %d (%d page(s) before it were delivered; the listing is NOT complete): %w", st.Pages+1, st.Pages, err)
++			return st, fmt.Errorf("sendapi: the walk of the campaign report failed on page %d (%d page(s) before it were delivered; the listing is NOT complete): %w", st.Pages+1, st.Pages, err)
+ 		}
+ 		for _, it := range page.Items {
+ 			if seen[it.JobItemID] {

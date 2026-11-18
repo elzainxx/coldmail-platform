@@ -1,0 +1,8 @@
+# Phase 3, Part B4 and B10: a campaign report walk that cannot read a page FAILS as a whole: no counts, no partial result that looks complete (the platform settles from what the walk returns, so a half listing would settle half a campaign and call it done). The fault makes the walk return the stats of the pages it did read together with the error; TestAFailedPageFailsTheWholeWalk must go red for every failure kind (paused, unavailable, truncated body...). The control is the real tree. Go only.
+GATE=sendapi-partial-walk
+TARGET=platform
+SETUP=
+STEP=go test TestAFailedPageFailsTheWholeWalk (a failed page fails the whole walk, with no value)
+CMD=GOTOOLCHAIN=local go test -count=1 -v -run '^TestAFailedPageFailsTheWholeWalk$' ./internal/adapters/sendapi/
+MESSAGE=--- FAIL: TestAFailedPageFailsTheWholeWalk
+MESSAGE=stats came back with the error: {Pages:2 Items:4}

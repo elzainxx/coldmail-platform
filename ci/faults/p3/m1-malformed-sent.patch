@@ -1,0 +1,10 @@
+--- a/internal/adapters/m1/plan.go
++++ b/internal/adapters/m1/plan.go
+@@ -115,7 +115,6 @@
+ 		if err != nil {
+ 			reason, _ := norm.ReasonOf(err)
+ 			p.Malformed = append(p.Malformed, Malformed{ItemRef: in.ItemRef, Reason: reason})
+-			continue
+ 		}
+ 		if _, repeat := seen[n]; repeat {
+ 			p.Duplicates++

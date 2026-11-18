@@ -1,0 +1,8 @@
+# Phase 3, Part B6: the live drift gate compares what a real module answered with the recorded fixture and must name EVERY kind of difference, each at its path: a key that changed type is the commonest one a module change causes. The fault silences the TypeChanged difference in the comparison; TestCompareTypeChangedNamesThePathAndBothTypes must go red, showing that only the adapter's own shape check (ShapeViolation) is left and the drift against the fixture is not reported. The control is the real tree. Go only.
+GATE=contract-compare-type
+TARGET=platform
+SETUP=
+STEP=go test TestCompareTypeChangedNamesThePathAndBothTypes (a changed type is reported at its path)
+CMD=GOTOOLCHAIN=local go test -count=1 -v -run '^TestCompareTypeChangedNamesThePathAndBothTypes$' ./internal/contractcheck/
+MESSAGE=--- FAIL: TestCompareTypeChangedNamesThePathAndBothTypes
+MESSAGE=want [ShapeViolation:counts.total TypeChanged:counts.total]

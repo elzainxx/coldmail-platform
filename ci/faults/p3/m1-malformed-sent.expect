@@ -1,0 +1,8 @@
+# Phase 3, Part A2 and B3 together: a malformed address (norm/v1 refuses it) is rejected BEFORE module 1 and is free; it must never be in the request the adapter sends. The fault removes the continue after a malformed row is recorded, so the row is recorded as malformed AND sent; TestPrepare_AMalformedAddressIsNeverSentAndIsFree must go red naming the items to send. The control is the real tree. Go only.
+GATE=m1-malformed-sent
+TARGET=platform
+SETUP=
+STEP=go test TestPrepare_AMalformedAddressIsNeverSentAndIsFree (a malformed address is never in the request)
+CMD=GOTOOLCHAIN=local go test -count=1 -v -run '^TestPrepare_AMalformedAddressIsNeverSentAndIsFree$' ./internal/adapters/m1/
+MESSAGE=--- FAIL: TestPrepare_AMalformedAddressIsNeverSentAndIsFree
+MESSAGE=items to send [{r0 ada@acme.example} {r1 no-at-sign.example}

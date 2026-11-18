@@ -1,0 +1,9 @@
+--- a/internal/adapters/sendapi/testdata/contract/report.campaign.page.json
++++ b/internal/adapters/sendapi/testdata/contract/report.campaign.page.json
+@@ -1,6 +1,5 @@
+ {
+  "campaign_id": "5a1c9e30-7d2b-4f6a-9b8e-1c3d5e7f9a02",
+- "dispatch_paused": false,
+  "totals": {
+   "total": 5,
+   "sent": 1,
