@@ -1,8 +1,8 @@
 {
-  "attempt_count": 2,
+  "attempt_count": 0,
   "completed_at": "2026-01-01T00:00:00.000000Z",
-  "error_class": "transport_4xx",
+  "error_class": "bounce_permanent",
   "job_id": "00000000-0000-4000-8000-000000000001",
-  "reason": "attempts_exhausted",
-  "state": "failed"
+  "reason": "bounce_permanent",
+  "state": "bounced"
 }

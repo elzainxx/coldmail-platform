@@ -1,6 +1,6 @@
 {
   "account_id": "00000000-0000-4000-8000-000000000001",
-  "account_username": "sender-1-e2e-cbd6ca05@example.test",
+  "account_username": "sender-2-e2e-42e1521f@example.test",
   "attempt_count": 0,
   "completed_at": "2026-01-01T00:00:00.000000Z",
   "error_class": "bounce_permanent",

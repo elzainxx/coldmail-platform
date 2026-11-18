@@ -30,6 +30,14 @@
           "issue": "malformed"
         }
       ]
+    },
+    {
+      "row": 4,
+      "status": "created",
+      "account_id": "00000000-0000-4000-8000-000000000002",
+      "verification": "verified",
+      "smtp_response": "235 2.7.0 Authentication successful",
+      "from_alignment_state": "aligned"
     }
   ]
 }

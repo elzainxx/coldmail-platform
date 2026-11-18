@@ -4,7 +4,7 @@
     "message": "One or more fields are invalid.",
     "details": [
       {
-        "field": "smtp_host",
+        "field": "from_address",
         "issue": "malformed"
       }
     ],

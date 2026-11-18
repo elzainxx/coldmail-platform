@@ -1,7 +1,7 @@
 {
-  "cost": 5,
+  "cost": 10,
   "currency": "credits",
-  "recipient_count": 5,
+  "recipient_count": 10,
   "tier": "shared",
   "unit_price_credits": 1
 }
