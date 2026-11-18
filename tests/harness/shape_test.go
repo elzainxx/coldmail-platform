@@ -49,7 +49,7 @@ func TestShape_DeclarationFileParses(t *testing.T) {
 		{"public.job_items", "rendered_subject", "text", true, nil, []string{"m2", "m3"}},
 		{"public.job_items", "rendered_body", "text", true, nil, []string{"m2", "m3"}},
 		{"public.job_items", "reply_to", "text", false, nil, []string{"m2", "m3"}},
-		{"public.job_items", "rendered_text", "text", false, nil, []string{"m2"}}, // the optional plain-text part (Phase 3 close-out B3): module 3 joins when it reads it (C5)
+		{"public.job_items", "rendered_text", "text", false, nil, []string{"m2", "m3"}}, // the optional plain-text part (Phase 3 close-out B3, C5): both senders freeze it in statement J2
 		{"public.job_items", "status", "text", true, nil, []string{"m3"}},
 	}
 	for _, m := range must {

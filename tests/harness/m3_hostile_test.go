@@ -795,7 +795,7 @@ func (r *m3hRun) delayingSinkAndHalt(t *testing.T) {
 // ---- 7: module 3 is not metered ----
 
 func (r *m3hRun) chargeDecisions(t *testing.T) {
-	// every item state module 3's reports showed over the whole test must be FREE by the charge table, by its row M3-01 (module 3 is not metered: entitlements, not credits)
+	// every item state module 3's reports showed over the whole test must be FREE by the charge table, by its row M3-99 (M3-01 for a cancelled one; module 3 is not metered: entitlements, not credits)
 	for _, want := range []string{"sent", "bounced", "queued"} {
 		if r.seen[want] == 0 {
 			t.Fatalf("module 3's reports never showed an item in state %q during this test (seen: %v): the charge check below would not cover it", want, r.seen)
@@ -814,8 +814,12 @@ func (r *m3hRun) chargeDecisions(t *testing.T) {
 	}
 	for _, st := range states {
 		got := charge.Decide(charge.Outcome{Module: "m3", State: st})
-		if got.Kind != charge.Free || got.Rule != "M3-01" || got.Unit != "" {
-			t.Fatalf("the charge table decides module 3's state %q as %+v, want Free by M3-01 with no unit (module 3 is not metered)", st, got)
+		wantRule := "M3-99" // the catch-all: module 3 is not metered; "cancelled" has a row of its own since the Phase 3 close-out (M3-01)
+		if st == "cancelled" {
+			wantRule = "M3-01"
+		}
+		if got.Kind != charge.Free || got.Rule != wantRule || got.Unit != "" {
+			t.Fatalf("the charge table decides module 3's state %q as %+v, want Free by %s with no unit (module 3 is not metered)", st, got, wantRule)
 		}
 	}
 	// the control: the same function does charge a metered module's delivered item, so "Free" above is a decision and not the only thing it can say

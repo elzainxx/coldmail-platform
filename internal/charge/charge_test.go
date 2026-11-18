@@ -106,7 +106,8 @@ var rowCases = []rowCase{
 	{"M2-07", Outcome{Module: "m2", State: "sending"}, nfi("M2-07")},
 	{"M2-08", Outcome{Module: "m2", State: "cancelled"}, fre("M2-08")},
 	{"M2-99", Outcome{Module: "m2", State: "refunded"}, unm("M2-99")},
-	{"M3-01", Outcome{Module: "m3", State: "sent"}, fre("M3-01")},
+	{"M3-01", Outcome{Module: "m3", State: "cancelled"}, fre("M3-01")},
+	{"M3-99", Outcome{Module: "m3", State: "sent"}, fre("M3-99")},
 	{"P-01", Outcome{Module: "platform", State: "cancelled"}, fre("P-01")},
 	{"P-02", Outcome{Module: "platform", State: "expired"}, fre("P-02")},
 	{"P-03", Outcome{Module: "platform", State: "quarantined"}, fre("P-03")},
@@ -529,7 +530,7 @@ func TestDecide_PlatformDuplicate(t *testing.T) {
 	}{
 		{m1("duplicate", ""), unm("M1-99")},
 		{m2("duplicate", ""), unm("M2-99")},
-		{Outcome{Module: "m3", State: "duplicate"}, fre("M3-01")},
+		{Outcome{Module: "m3", State: "duplicate"}, fre("M3-99")},
 		{Outcome{Module: "platform", State: "Duplicate"}, unm(noRule)},
 		{Outcome{Module: "platform", State: "duplicate "}, unm(noRule)},
 	} {
@@ -635,7 +636,7 @@ func TestDecide_PlatformMalformed(t *testing.T) {
 		{"module 1's own refusal of an address is still its own row, charged", m1("invalid", "invalid_syntax"), chg("M1-10", "m1_own")},
 		{"module 1 has no malformed state", m1("malformed", ""), unm("M1-99")},
 		{"module 2 has no malformed state", m2("malformed", ""), unm("M2-99")},
-		{"module 3 is free whatever it says", Outcome{Module: "m3", State: "malformed"}, fre("M3-01")},
+		{"module 3 is free whatever it says", Outcome{Module: "m3", State: "malformed"}, fre("M3-99")},
 		{"a wrong-case spelling matches no row", Outcome{Module: "platform", State: "Malformed"}, unm(noRule)},
 		{"a padded spelling matches no row", Outcome{Module: "platform", State: "malformed "}, unm(noRule)},
 		{"the neighbouring platform state is its own row", Outcome{Module: "platform", State: "duplicate"}, fre("P-07")},
@@ -696,8 +697,8 @@ func TestDecide_InputHygiene(t *testing.T) {
 		{"a platform state the table does not know", Outcome{Module: "platform", State: "refunded"}, none},
 		{"a platform state in the wrong case", Outcome{Module: "platform", State: "Cancelled"}, none},
 		{"a platform duplicate in the wrong case", Outcome{Module: "platform", State: "Duplicate"}, none},
-		{"m3 is free whatever it says", Outcome{Module: "m3", State: "whatever", Reason: "x", FromCache: true, SkipReason: "y", FailureOrigin: "remote"}, fre("M3-01")},
-		{"m3 with nothing else", Outcome{Module: "m3"}, fre("M3-01")},
+		{"m3 is free whatever it says", Outcome{Module: "m3", State: "whatever", Reason: "x", FromCache: true, SkipReason: "y", FailureOrigin: "remote"}, fre("M3-99")},
+		{"m3 with nothing else", Outcome{Module: "m3"}, fre("M3-99")},
 	}
 	for _, c := range cases {
 		got := Decide(c.in)
@@ -956,7 +957,7 @@ func TestDecide_SweepControl(t *testing.T) {
 		mod  string
 	}{
 		{"a platform row that charges", withRows(func(r []Rule) { i := rowIndex(r, "P-04"); r[i].Kind, r[i].Unit = Charge, "m1_own" }), vForbiddenCharge, "platform"},
-		{"an m3 row that charges", withRows(func(r []Rule) { i := rowIndex(r, "M3-01"); r[i].Kind, r[i].Unit = Charge, "m2_accepted" }), vForbiddenCharge, "m3"},
+		{"an m3 row that charges", withRows(func(r []Rule) { i := rowIndex(r, "M3-99"); r[i].Kind, r[i].Unit = Charge, "m2_accepted" }), vForbiddenCharge, "m3"},
 		{"a charge of a unit the database does not know", withRows(func(r []Rule) { r[rowIndex(r, "M2-01")].Unit = "m2_bogus" }), vUnitUnknown, "m2"},
 		{"a charge of another module's unit", withRows(func(r []Rule) { r[rowIndex(r, "M2-02")].Unit = "m1_own" }), vUnitModule, "m2"},
 		{"an unmapped row that carries a unit", withRows(func(r []Rule) { r[rowIndex(r, "M1-23")].Unit = "m1_own" }), vUnitOnNonCharge, "m1"},
@@ -966,7 +967,7 @@ func TestDecide_SweepControl(t *testing.T) {
 		{"the no-origin unknown row that charges", withRows(func(r []Rule) { i := rowIndex(r, "M1-23"); r[i].Kind, r[i].Unit = Charge, "m1_own" }), vUnknownCharged, "m1"},
 		{"the attempt-cap row that charges", withRows(func(r []Rule) { i := rowIndex(r, "M1-19"); r[i].Kind, r[i].Unit = Charge, "m1_own" }), vUnknownCharged, "m1"},
 		{"the origin cell of the remote row widened to *", withRows(func(r []Rule) { r[rowIndex(r, "M1-20")].Origin = "*" }), vUnknownCharged, "m1"},
-		{"an unknown module that matches a row", withRows(func(r []Rule) { r[rowIndex(r, "M3-01")].Module = "*" }), vUnknownModule, "m4"},
+		{"an unknown module that matches a row", withRows(func(r []Rule) { r[rowIndex(r, "M3-99")].Module = "*" }), vUnknownModule, "m4"},
 		{"a decision with no row", func(o Outcome) Decision { return Decision{Kind: Free} }, vNoRule, ""},
 		{"a kind that is none of the four", func(o Outcome) Decision { return Decision{Rule: "X-01"} }, vBadKind, ""},
 		{"a matcher that panics for m3", func(o Outcome) Decision {

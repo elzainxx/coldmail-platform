@@ -243,6 +243,10 @@ echo "  module 1 holds $n connection(s) as verify_app (pg_stat_activity)"
 STAGE=m3-worker; banner "5b" "module 3's three workers (own token, own box row each), the SMTP sink and the controllable sink"
 psql_su() { DC exec -T postgres psql -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -tAc "$1"; }
 psql_su "UPDATE send_byo.config SET value = '{\"v\":\"off\"}' WHERE key = 'from_gate_mode'" >/dev/null || die "could not switch module 3's From-gate off"
+# Module 3 guards the destination of every SMTP host a user gives it (Phase 3 close-out C4: loopback, private networks, link-local, the cloud metadata address and the other special-use ranges are refused at add time AND at
+# connect time). The harness's sink lives on the private compose network, so exactly the three private ranges of RFC 1918 are allowed by the one dial built for that (smtp_host_allow_cidrs, empty in production: the module logs
+# a loud warning at every start while it is not). Everything else stays refused, and the live tests prove it: loopback, localhost and the metadata address are still refused with the allowlist in force.
+psql_su "UPDATE send_byo.config SET value = '{\"v\":[\"10.0.0.0/8\",\"172.16.0.0/12\",\"192.168.0.0/16\"]}' WHERE key = 'smtp_host_allow_cidrs'" >/dev/null || die "could not set module 3's SMTP host allowlist for the private compose network"
 t0="$(psql_su "select clock_timestamp()")"; [ -n "$t0" ] || die "could not read the database clock"
 psql_su "INSERT INTO send_byo.boxes (id, user_id, token_hash, status) VALUES ('$M3_WORKER_ID', '00000000-0000-0000-0000-000000000000', '$M3_WORKER_HASH', 'active')" >/dev/null || die "could not seed module 3's worker box row"
 # the second and third workers (E2: several lanes): their box rows are seeded exactly like the first's, before they start

@@ -90,12 +90,12 @@ func TestClassifyModule2AgainstTheChargeTable(t *testing.T) {
 	}
 }
 
-// Module 3's table row says every state is free (M3-01: not metered), and the adapter still settles only the terminal ones: the paired control shows the table alone would call a queued
+// Module 3's table row says every state is free (M3-99: not metered; M3-01 is the cancelled row), and the adapter still settles only the terminal ones: the paired control shows the table alone would call a queued
 // item free, so the terminal check is the adapter's.
 func TestClassifyModule3NeverSettlesWhatIsNotFinal(t *testing.T) {
 	c := newEnv(t, m3like(), userA, nil, modclient.Options{}, sendapi.Options{}).c
 	for _, s := range []string{"queued", "assigned", "sending"} {
-		if d := charge.Decide(charge.Outcome{Module: "m3", State: s}); d.Kind != charge.Free || d.Rule != "M3-01" {
+		if d := charge.Decide(charge.Outcome{Module: "m3", State: s}); d.Kind != charge.Free || d.Rule != "M3-99" {
 			t.Fatalf("control: the table says %s by %s for module 3 %s", d.Kind, d.Rule, s)
 		}
 		got, err := c.Classify([]sendapi.Item{item(1, s, nil)})
@@ -108,7 +108,7 @@ func TestClassifyModule3NeverSettlesWhatIsNotFinal(t *testing.T) {
 		if err != nil || len(got.Settle) != 1 || len(got.NotYet) != 0 || len(got.Unmapped) != 0 {
 			t.Fatalf("%s: %v %+v", s, err, got)
 		}
-		if d := charge.Decide(got.Settle[0].Outcome); d.Kind != charge.Free || d.Rule != "M3-01" || got.Settle[0].Outcome.Module != "m3" {
+		if d := charge.Decide(got.Settle[0].Outcome); d.Kind != charge.Free || d.Rule != "M3-99" || got.Settle[0].Outcome.Module != "m3" {
 			t.Fatalf("%s: %+v", s, d)
 		}
 	}

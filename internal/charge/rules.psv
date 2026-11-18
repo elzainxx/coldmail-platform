@@ -32,7 +32,8 @@ M2-06|m2|assigned|*|*|*|*|notfinal||
 M2-07|m2|sending|*|*|*|*|notfinal||
 M2-08|m2|cancelled|*|*|*|*|free||cancelled before it was claimed (B4): work not done
 M2-99|m2|*|*|*|*|*|unmapped||a state the pinned module does not define
-M3-01|m3|*|*|*|*|*|free||module 3 is not metered: entitlements, not credits
+M3-01|m3|cancelled|*|*|*|*|free||cancelled before it was claimed (close-out C1: POST /v1/cancel): work not done, and module 3 is not metered anyway; the row is placed first so that the cancel is named, the wildcard row below it stays the rule of every other state
+M3-99|m3|*|*|*|*|*|free||module 3 is not metered: entitlements, not credits
 P-01|platform|cancelled|*|*|*|*|free||cancelled by the user or an admin: work not done
 P-02|platform|expired|*|*|*|*|free||a scheduled job or entitlement expired: work not done
 P-03|platform|quarantined|*|*|*|*|free||quarantined by the platform: work not done
