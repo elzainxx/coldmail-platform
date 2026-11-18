@@ -11,3 +11,13 @@ deploy/dns-test/*|1.1.1.1|Cloudflare's public resolver, the catch-all upstream o
 deploy/dns-test/*|8.8.8.8|Google Public DNS, the catch-all upstream of the DNS test fixture (a documented public service)
 services/control/internal/fromgate/evaluate_realdns_test.go|74.125.0.0|the SPF range the real-DNS canary test checks the mail provider still publishes (a documented public range)
 services/control/internal/fromgate/spf.go|a:/ptr|the SPF mechanism names a, ptr and exists in a comment (a:/ptr:/exists:), not a drive path
+services/control/internal/hostguard/ranges.txt|192.0.0.0|a row of the SMTP host destination guard's blocked-range table (192.0.0.0/24, the IETF protocol assignments block): data of the guard, never a host
+services/control/internal/hostguard/ranges.txt|192.88.99.0|a row of the guard's blocked-range table (192.88.99.0/24, the retired 6to4 relay anycast block): data of the guard, never a host
+services/control/internal/hostguard/ranges.txt|198.18.0.0|a row of the guard's blocked-range table (198.18.0.0/15, the benchmarking block): data of the guard, never a host
+services/control/internal/hostguard/ranges.txt|240.0.0.0|a row of the guard's blocked-range table (240.0.0.0/4, the reserved block): data of the guard, never a host
+services/worker/src/destguard.js|192.0.0.0|the worker's copy of the guard's blocked-range table (192.0.0.0/24, IETF protocol assignments), held equal to ranges.txt by a parity test
+services/worker/src/destguard.js|192.88.99.0|the worker's copy of the guard's blocked-range table (192.88.99.0/24, retired 6to4 relay anycast)
+services/worker/src/destguard.js|198.18.0.0|the worker's copy of the guard's blocked-range table (198.18.0.0/15, benchmarking)
+services/worker/src/destguard.js|240.0.0.0|the worker's copy of the guard's blocked-range table (240.0.0.0/4, reserved)
+services/control/internal/hostguard/hostguard_test.go|08.0.0.1|an octal-looking spelling the guard must judge as a spelling of an address (a test input, not an address of ours)
+services/control/internal/platformapi/host_guard_test.go|8.8.4.4|Google Public DNS's second address, the PUBLIC control of the guard's tests (a documented public service, never dialled)

@@ -8,3 +8,4 @@ Docs/phase-2-spec.md|17.12.0.000|the supabase/postgres image tag quoted in the s
 tests/harness/docker-compose.yml|17.12.0.000|the supabase/postgres image tag (a version of the image, not an address)
 tests/supabase/classify-selftest.sh|17.12.0.000|the supabase/postgres image tag in a fixture line the selftest classifies (a version, not an address)
 tests/personal-details/*.allow|*|the allowlists of the five repositories name the addresses they allow; each is justified in the file that lists it (these entries are the instrument's data, not addresses of ours)
+ci/faults/p3cc/m3-host-range-removed.patch|192.0.0.0|context line of the fault patch: a row of module 3's blocked-range table (192.0.0.0/24, IETF protocol assignments), data and not a host
