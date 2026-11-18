@@ -2,6 +2,46 @@
 
 Spec: [`phase-3-spec.md`](phase-3-spec.md) (row B14). Research the work stood on: [`history/p3-research/`](history/p3-research/). Every claim below cites a test, a fixture, a run or a `file:line`; where a number comes from a command the command is named. **The Tier 4 decision is the owner's**; this document recommends and implements nothing of Tier 4.
 
+## Addendum: the Phase 3 close-out (written after the owner ruled on section 8; evidence in [`phase-3-closeout-spec.md`](phase-3-closeout-spec.md))
+
+Everything below this addendum is the record of Phase 3 as it ended (`platform@52fe035`); it is kept as it was written. The close-out built what the owner ruled, and these statements of the sections below are therefore **no longer true**:
+
+- Section 1 and 3 (B13): "module 3 has no cancel" and "the Tier 4 decision is the owner's" are history: module 3 has `POST /v1/cancel` (ruling OD-1, `send-byo@8855a52`) and module 1 has the partial Tier 4 the section 5 recommends (ruling OD-6/OD-8, `verify@fad942e`).
+- Section 4's counts. After the close-out the adapters are (non-test, non-comment, non-blank lines, tests by `grep -c '^func Test'`, contracts by `len(Contracts())`):
+
+| Package | Lines | Unit tests | Contracts | `MODULE-FORCED` cases (was) |
+|---|---|---|---|---|
+| `modclient` | 1,588 | 69 | n/a | n/a |
+| `adapters/m1` | 1,312 | 86 | 20 | **9** (13) |
+| `adapters/sendapi` (modules 2 and 3 share it) | 1,270 | 60 | shared | 13 (11) |
+| `adapters/m2` | 90 | 22 | 20 | 1 (2) |
+| `adapters/m3` | 1,546 | 44 | 49 | **2** (9) |
+
+  The 35 forced cases are **25**. Module 1 grew by 308 lines (describe and its vocabulary check, the idempotent submission, the totals) and lost four special cases; the shared body grew by the cancel and the cause mapping that module 3 now offers (and took over module 2's two cancel cases, SA-F12 and SA-F13); module 3's adapter lost its whole prediction layer (`PreCheckRun`, `RunFacts`, `ExplainConflict`, its own host rule) and seven special cases because the module now says what it used to leave to guessing.
+- **The 13 module 1 special cases (section 4 and 5), each removed or kept:**
+
+| Case | Now | Why |
+|---|---|---|
+| M1-F1 a non-UUID job id is a 500 | **removed** | the module answers a 400 `validation_failed` (A3); a cheap local check stays as plain input validation |
+| M1-F2 the bulk submission is not idempotent ("orphan job possible") | **removed** | `Idempotency-Key`: a repeat is the same job; the adapter always sends a key and retries safely; the orphan handling is gone |
+| M1-F3 no describe | **removed** | `GET /v1/describe`; the adapter asks the module (`CheckVocabularies`) like it does modules 2 and 3 |
+| M1-F4 a running job's results are a moving target | **kept, narrowed** | still true while a job runs; the module now documents and tests that the listing is stable once `complete` is true, which is what the re-walk after completion relies on; the completeness check is against the job's totals |
+| M1-F5, F6, F7 data shape (duplicate rows carry the first verdict, the cache flag's place, the open `signals` bag) | kept | per-route quirks no verb touches |
+| M1-F8 counts only in the 202 | **removed** | the counts are `totals` of the job status |
+| M1-F9 to F12 item_id rules, the 100,000-row cap, the 64 MiB body, the silent limit clamp | kept | per-route limits |
+| M1-F13 the job status word passes through | kept | the boolean `complete` stays authoritative |
+
+  Four of the 13 are gone and one is narrower: the section 5 estimate ("a shared job core would save about a quarter of the adapter") was not what happened: the three additive changes cost 308 lines of adapter and removed the three failure classes (an unconfirmable submission, a vocabulary only CI could see, a count that exists once), which is what the recommendation said they would.
+- **Module 3's nine special cases (section 4):** M3-F1 (the campaign cap is returned), F2 (the quote reads the same function as run), F3 (the 409 names its causes), F4 and F7 (closed code sets, no internal text), F5 (describe agrees with the handlers) and F8 (the module guards the host, at add and at connect time) are **removed**; F6 and F9 (a create 409 and a test-button 409 with one fixed sentence) are kept.
+- **Section 6 (what the modules showed):** the node registration and lease items are closed by A2 and documented (`operator-runbook` §5.1 and §5.2); module 2's worker never gives up (B1); module 3's internal reasons no longer cross the boundary (C3, with a gate); the `Health` liveness cell is in the no-value table (D4).
+- **Section 7 (what the gates do not see):** the From-gate WARN and BLOCK paths are now run (D2), the enforced health action is observed (D3), module 1's results fixture is a recording of a 7-row page (7 KB, it was 170 KB; D1). Still not seen: the list in row E3 of the close-out spec, each with the later phase or owner action that covers it.
+- **Section 8 (decisions):** every one is ruled and closed in the close-out spec's table; the only thing still to decide is listed in the report (the forged-cursor 500 that module 3 still answers).
+
+What the close-out found that this document did not expect, in the order it was found:
+1. The shared vector file's expectations had to be produced by module 1's real syntax layer; the platform's own rule is now `norm/v1` plus that layer (`norm.Validate`), which **supersedes the Phase 2 ruling that `a@b` is storable** (OD-11).
+2. The hand-written fixtures, compared with the recordings of the real modules (record runs 44395876225 and 44399346732 on the runner): module 1: 12 of the 17 recorded files are byte-identical to what was committed (three of them, the `totals`-bearing complete job, the 409 for a reused key and the 401 of describe, were written by hand from the module's code and the module answered exactly that); the other five are the same shape with other values (the describe, the running job, the verdict and the validation error) except the results page, whose shape differs because the smaller job it now comes from holds other optional keys. Module 2: nine files differ in values, two in shape. Module 3: twelve files differ in shape, every one of them by keys the module added in the close-out (`from_alignment`, `cancelled`, `campaign_size_cap`, the cause fields). The recording also showed that the recorder's tie-break had made a 220-row page of 170 KB the fixture of module 1's results route: it now keeps the shortest body that says the most, and the fixture is a 7-row page of 7 KB (a recording of a smaller harness job; no recording was edited).
+3. Module 3's own prediction code in the platform was deleted rather than updated: a second copy of the module's rules is a source of disagreement, so the adapter reads the module's `details[]` and the quote's own reasons.
+
 ## 1. The verdict in short
 
 - **The contract held, with no module change.** Three modules whose APIs were designed separately were driven through three thin adapters end to end (submit, poll, read every page, settle through the money core), item by item, against the REAL modules in the harness: nothing was mocked and no module was edited. Every module-side behaviour the adapters needed already existed; what the adapters had to absorb is a list of **35 quirks** (section 4), none of which blocked a flow.
