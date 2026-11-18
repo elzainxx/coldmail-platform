@@ -55,6 +55,10 @@ The platform is the product users and the admin touch. The three modules do the 
 
 24. **The repositories are public: source visible for transparency, all rights reserved, nothing real committed** (owner decision 2026-11-17). Every repository carries the same one-paragraph `LICENSE` (`tests/license-canonical.txt` is its one statement), a `NOTICE` that opens with the same sentences and a `README.md` with the notice line, and none says "confidential" (gate `check-license`: platform `gates`, `platform-check` for the three module clones, the parent's `modules-lock` for all five). No tracked file names a Windows home path, a drive-letter path or an IPv4 address outside the documentation, private and special-use classes unless an allowlist entry says why (gate `check-personal-details`, one allowlist per repository in `tests/personal-details/`, a mandatory reason on each entry and a red for an entry that matches nothing). A path is removed from the file in a forward commit (git history cannot be rewritten); a fault proof that needs such a string builds it at run time. The owner's name in prose and the commit authors stay.
 
+## Rules added in the Phase 3 close-out
+
+25. **Push one commit to one ref at a time.** Pushing one commit to several refs at once once failed to start the workflows on `main` (they had to be dispatched by hand); push one ref, wait for its runs to start, then push the next. A documentation-only head has no heavy run of its own: push a `phase-*` tag at it (one ref, alone) to run every workflow on that exact SHA. The only GitHub deletion ever authorised is the one named in `Docs/phase-3-closeout-spec.md` row E1 (scratch branches; never `main`, a tag or anything in `zexSites`).
+
 ## Repository layout
 
 | Path | What |
