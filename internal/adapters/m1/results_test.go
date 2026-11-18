@@ -13,13 +13,40 @@ import (
 	"github.com/coldmail-platform/platform/internal/money"
 )
 
-// TestResults_ReadsTheRecordedPage: the recorded page of results-page.json (a first answer, an unknown with its origin, a repeat of row 0, a degraded answer with its skip token and
-// origin, a malformed row) decodes to exactly the fields the platform acts on, in order, with the cursor; every key it does not read (email, meta, raw, confidence, ...) is ignored.
-// Paired control: the recorded last page decodes to NO rows and "" (not an error), and two different elements decode to different Rows, so the decoder is not returning a
-// constant; duplicate_of 0 is a pointer to 0, never an absent key.
-func TestResults_ReadsTheRecordedPage(t *testing.T) {
-	body := fixture(t, "results-page.json")
-	f := newFakeM1(t, func(call) (int, string) { return 200, body })
+// handPage is a page of results written by hand, because the real node's recordings (testdata/contract) hold none of its cases: a first answer, an unknown with its origin, a repeat of
+// row 0 (the recorded repeats point at rows 10, 100 and 150), a degraded answer with its skip token and origin, and a malformed row. It keeps the shapes of module 1's handler
+// (api.go handleJobResults, bulk_rows.go, queue/enqueue.go rejectTemplate).
+const handPage = `{"job_id":"` + testJob + `","results":[
+{"api_version":"v1","status":"valid","reason":"accepted","confidence":90,"recommendation":"send","email":"","domain":"acme.example","flags":{"from_cache":false},"signals":{"smtp_code":"250"},"raw":null,"item_id":"row-0","ordinal":0},
+{"api_version":"v1","status":"unknown","reason":"dns_error","confidence":10,"recommendation":"review","email":"","domain":"gone.example","flags":{"from_cache":false},"signals":{"failure_origin":"remote","retry_after_hint_s":300},"raw":null,"item_id":"row-1","ordinal":1},
+{"api_version":"v1","status":"valid","reason":"accepted","confidence":90,"recommendation":"send","email":"","domain":"acme.example","flags":{"from_cache":false},"signals":{"smtp_code":"250"},"raw":null,"item_id":"row-2","ordinal":2,"duplicate_of":0},
+{"api_version":"v1","status":"risky","reason":"plausible","confidence":40,"recommendation":"review","email":"","domain":"slow.example","flags":{"from_cache":false},"signals":{"smtp_skipped_reason":"smtp_unwired","failure_origin":"own"},"raw":null,"item_id":"row-3","ordinal":3},
+{"api_version":"v1","status":"invalid","reason":"invalid_syntax","confidence":99,"recommendation":"skip","email":"","domain":"","flags":{"from_cache":false},"signals":{"syntax_valid":false},"raw":null,"item_id":"row-4","ordinal":4}
+],"next_cursor":"4"}`
+
+// recordedResultsPages names the recorded fixtures of the two results contracts that answered 200, split by what the FILE holds: the ones with rows and the ones with none. The
+// split is made from the content, never from the case name (the page recorded under the case `page` was an empty one, the one under `empty_page` held 220 rows).
+func recordedResultsPages(t *testing.T) (populated, empty []string) {
+	t.Helper()
+	for _, c := range Contracts() {
+		if c.Route != tplResults || c.Status != 200 {
+			continue
+		}
+		if len(recordedRows(t, c.Fixture)) > 0 {
+			populated = append(populated, c.Fixture)
+		} else {
+			empty = append(empty, c.Fixture)
+		}
+	}
+	return populated, empty
+}
+
+// TestResults_ReadsTheCasesTheRecordingsDoNotHold: a hand-written page (handPage: a first answer, an unknown with its origin, a repeat of row 0, a degraded answer with its skip
+// token and origin, a malformed row) decodes to exactly the fields the platform acts on, in order, with the cursor; every key it does not read (email, meta, raw, confidence, ...)
+// is ignored. Paired control: a page with nothing on it (the recorded empty page) decodes to NO rows and "" (not an error), and two different elements decode to different Rows,
+// so the decoder is not returning a constant; duplicate_of 0 is a pointer to 0, never an absent key.
+func TestResults_ReadsTheCasesTheRecordingsDoNotHold(t *testing.T) {
+	f := newFakeM1(t, func(call) (int, string) { return 200, handPage })
 	a := f.adapter(t)
 	rows, next, err := a.Results(testCtx(t), testJob, "", 0)
 	if err != nil {
@@ -45,20 +72,23 @@ func TestResults_ReadsTheRecordedPage(t *testing.T) {
 		t.Fatal("control: two different elements decoded to the same Row: the decoder returns something that does not depend on its input")
 	}
 
-	// control: a page with nothing on it (the recorded last page with its results emptied: the recording's job id and next_cursor, an empty array) decodes to no rows
-	empty := withoutResults(t, "results-empty.json")
-	g := newFakeM1(t, func(call) (int, string) { return 200, empty })
+	// control: a page with nothing on it decodes to no rows
+	_, empty := recordedResultsPages(t)
+	if len(empty) == 0 {
+		t.Fatal("control setup: no recorded results page is empty")
+	}
+	g := newFakeM1(t, func(call) (int, string) { return 200, fixture(t, empty[0]) })
 	rows, next, err = g.adapter(t).Results(testCtx(t), testJob, "4", 0)
 	if err != nil || len(rows) != 0 || next != "" {
 		t.Fatalf("control: an empty last page gave %+v %q %v", rows, next, err)
 	}
 }
 
-// TestResults_ReadsTheRecordedLastPage: the page RECORDED from the real module (results-empty.json: the last page of a job, whatever its case name says: it holds every row and no
-// next cursor) decodes row for row to what an independent parse of the same file says: ordinal, item_id, status, reason, the duplicate_of of the rows that repeat an address (a
-// pointer to the value, 0 included), the cache flag, the skip token and the failure origin, and the page's next cursor; and the rows are one per ordinal, in order. Paired control:
-// the same comparison over a copy of the recording with one row changed fails, so it is a comparison that can see a difference.
-func TestResults_ReadsTheRecordedLastPage(t *testing.T) {
+// TestResults_ReadsEveryRecordedPage: each page RECORDED from the real module decodes row for row to what an independent parse of the same file says: ordinal, item_id, status,
+// reason, the duplicate_of of the rows that repeat an address (a pointer to the value, 0 included), the cache flag, the skip token and the failure origin, and the page's next
+// cursor; the rows are one per ordinal, in order. The recordings must include a page with rows (220 of them) and a page with none: a set of one kind only is red. Paired controls:
+// the same comparison over a copy with one row changed, and a page with its rows against the expectation of one without, each fail, so it is a comparison that can see a difference.
+func TestResults_ReadsEveryRecordedPage(t *testing.T) {
 	read := func(body string) ([]Row, string, error) {
 		return serve(t, 200, body).adapter(t).Results(testCtx(t), testJob, "", 0)
 	}
@@ -93,34 +123,48 @@ func TestResults_ReadsTheRecordedLastPage(t *testing.T) {
 		}
 		return out
 	}
-	body := fixture(t, "results-empty.json")
-	want := recordedRows(t, "results-empty.json")
-	rows, next, err := read(body)
-	if err != nil {
-		t.Fatal(err)
+	populated, empty := recordedResultsPages(t)
+	if len(populated) == 0 || len(empty) == 0 {
+		t.Fatalf("the recorded results pages are %v with rows and %v without: both kinds are needed", populated, empty)
 	}
-	if d := differences(rows, want); len(d) != 0 {
-		t.Fatalf("the decoded rows differ from the recording: %v", d)
+	for _, name := range append(append([]string(nil), populated...), empty...) {
+		body := fixture(t, name)
+		want := recordedRows(t, name)
+		rows, next, err := read(body)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if d := differences(rows, want); len(d) != 0 {
+			t.Fatalf("%s: the decoded rows differ from the recording: %v", name, d)
+		}
+		if wantNext := recordedDoc(t, name)["next_cursor"].(string); next != wantNext {
+			t.Fatalf("%s: next cursor %q, the file says %q", name, next, wantNext)
+		}
 	}
-	if wantNext := recordedDoc(t, "results-empty.json")["next_cursor"].(string); next != wantNext {
-		t.Fatalf("next cursor %q, the file says %q", next, wantNext)
+	for _, name := range populated {
+		want := recordedRows(t, name)
+		if len(want) < 2 {
+			t.Fatalf("%s holds %d row(s): too few to say anything about paging", name, len(want))
+		}
+		// control: one row of the recording changed (its reason, to another word of the vocabulary) is a difference the comparison reports
+		original := want[0]["reason"].(string)
+		other := "null_mx"
+		if original == other {
+			other = "no_mx"
+		}
+		mrows, _, err := read(retype("results[0].reason", other).apply(t, fixture(t, name)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d := differences(mrows, want); len(d) != 1 || !strings.Contains(d[0], "row 0") {
+			t.Fatalf("%s control: one changed row gave %v, want exactly that row reported", name, d)
+		}
+		// control: a page with rows is not a page without
+		if d := differences(mrows[:0], want); len(d) == 0 {
+			t.Fatalf("%s control: no rows against a page with rows reported no difference", name)
+		}
 	}
-	if len(want) < 2 {
-		t.Fatalf("the recording holds %d row(s): too few to say anything about paging", len(want))
-	}
-
-	// control: one row of the recording changed (its reason, to another word of the vocabulary) is a difference the comparison reports
-	mutated := strings.Replace(body, `"reason": "no_mx"`, `"reason": "null_mx"`, 1)
-	if mutated == body {
-		t.Fatal("control setup: the recording has no no_mx row to change")
-	}
-	mrows, _, err := read(mutated)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if d := differences(mrows, want); len(d) != 1 || !strings.Contains(d[0], "row 0") {
-		t.Fatalf("control: one changed row gave %v, want exactly that row reported", d)
-	}
+	t.Logf("recorded pages with rows: %v (%d row(s) in the first); without: %v", populated, len(recordedRows(t, populated[0])), empty)
 }
 
 // TestResults_ReadsOriginSkipTokenAndCache: the three provenance fields the charge table reads come out of their nested places (flags.from_cache, signals.smtp_skipped_reason,

@@ -394,25 +394,25 @@ func TestRecordedFixturesCarryTheNormalisedIDs(t *testing.T) {
 		case strings.HasPrefix(name, "accounts.get.ok"), strings.HasPrefix(name, "accounts.create.created"):
 			check("id", norm1)
 			check("user_id", norm2)
-		case name == "accounts.list.page.json" || name == "accounts.list.empty.json":
+		case strings.HasPrefix(name, "accounts.list.") && !strings.Contains(name, ".error."):
 			n, _ := lookup(d, "items")
 			for i := range n.([]any) {
 				check(fmt.Sprintf("items[%d].user_id", i), norm2)
 			}
-			check("items[0].id", norm1)
-		case strings.HasPrefix(name, "report.campaign.page"), strings.HasPrefix(name, "report.campaign.empty"), strings.HasPrefix(name, "report.campaign.last_page"):
+			if len(n.([]any)) > 0 {
+				check("items[0].id", norm1)
+			}
+		case strings.HasPrefix(name, "report.campaign.") && !strings.Contains(name, ".error."):
 			check("campaign_id", norm1)
 		}
 		return p
 	}
-	recorded := []string{
-		"accounts.get.ok.json", "accounts.create.created.json", "accounts.create.created_failed.json", "accounts.list.page.json", "accounts.list.empty.json",
-		"report.campaign.page.json", "report.campaign.empty.json",
-	}
-	handWritten := []string{"accounts.list.last_page.json", "accounts.events.page.json", "report.campaign.last_page.json"}
-	for _, name := range append(slices.Clone(recorded), handWritten...) {
-		if p := idProblems(name, doc(t, name)); len(p) != 0 {
-			t.Fatalf("%v", p)
+	// every account file and campaign report, recorded or hand-written, names the ids the tests use
+	for _, name := range append(slices.Clone(recordedFixtures), handWrittenFixtures...) {
+		if strings.HasPrefix(name, "accounts.") || strings.HasPrefix(name, "report.campaign.") {
+			if p := idProblems(name, doc(t, name)); len(p) != 0 {
+				t.Fatalf("%v", p)
+			}
 		}
 	}
 	// the events of the hand-written page name the same tenant and account
@@ -464,6 +464,22 @@ func TestKeysTheRecordingsLackAreReadAndRefusedWhenBroken(t *testing.T) {
 		return func(m map[string]any, v any) { sub(t, m, path)[key] = v }
 	}
 	for _, c := range []tc{
+		{
+			name: "error_class of a queued job", fixture: "report.job.queued.json", inject: func(m map[string]any, v any) { m["error_class"] = v },
+			good: "transport_4xx", bad: 7, badKey: "error_class",
+			call: func(t testing.TB, url string) (any, error) { return client(t, url).ReportJobByID(ctxT(t), jobID) },
+			check: func(t testing.TB, v any) {
+				samePtr(t, "error_class", v.(sendapi.Item).ErrorClass, str("transport_4xx"))
+			},
+		},
+		{
+			name: "smtp_response of a queued job", fixture: "report.job.queued.json", inject: func(m map[string]any, v any) { m["smtp_response"] = v },
+			good: "451 4.7.1 try later", bad: 5, badKey: "smtp_response",
+			call: func(t testing.TB, url string) (any, error) { return client(t, url).ReportJobByID(ctxT(t), jobID) },
+			check: func(t testing.TB, v any) {
+				samePtr(t, "smtp_response", v.(sendapi.Item).SMTPResponse, str("451 4.7.1 try later"))
+			},
+		},
 		{
 			name: "from_alignment.acknowledged_at", fixture: "accounts.create.created_failed.json", inject: acct("from_alignment", "acknowledged_at"),
 			good: "2026-01-01T00:00:00Z", bad: "when", badKey: "from_alignment.acknowledged_at",
@@ -549,15 +565,25 @@ func statusOf(fixture string) int {
 	return 200
 }
 
-// recordedFixtures are the 24 fixtures that were recorded from the real module 3 (record run 44211654839, 2026-11-18) and normalised by contractcheck.Normalise; the other 21 files of
-// testdata/contract are still hand-written. testdata/README.md names both lists and TestReadmeNamesWhichFixturesAreRecorded holds it to this one.
+// recordedFixtures are the 41 fixtures that were recorded from the real module 3 (full record run 44225747596, 2026-11-18) and normalised by contractcheck.Normalise; the other four files of
+// testdata/contract (handWrittenFixtures) are still hand-written. testdata/README.md names both lists and TestReadmeNamesWhichFixturesAreRecorded holds it to these two.
 var recordedFixtures = []string{
-	"quote.ok.json", "quote.infeasible.json", "run.created.json", "run.replay.json", "run.error.not_found.json", "run.error.conflict.json",
-	"report.job.sent.json", "report.job.error.not_found.json", "report.campaign.page.json", "report.campaign.empty.json",
-	"accounts.list.page.json", "accounts.list.empty.json", "accounts.get.ok.json", "accounts.get.error.not_found.json",
-	"accounts.create.created.json", "accounts.create.created_failed.json", "accounts.create.error.duplicate.json",
-	"accounts.test.ok.json", "accounts.test.failed.json", "accounts.test.error.conflict.json", "accounts.test.error.not_found.json",
-	"accounts.bulk.ok.json", "accounts.bulk.error.conflict.json", "accounts.events.empty.json",
+	"describe.ok.json",
+	"quote.ok.json", "quote.feasible.json", "quote.infeasible.json",
+	"run.created.json", "run.replay.json", "run.error.validation_failed.json", "run.error.unauthenticated.json", "run.error.not_found.json", "run.error.conflict.json", "run.error.paused.json",
+	"report.job.sent.json", "report.job.queued.json", "report.job.error.not_found.json",
+	"report.campaign.page.json", "report.campaign.last_page.json", "report.campaign.empty.json", "report.campaign.error.cursor_malformed.json", "report.campaign.error.cursor_forged.json",
+	"accounts.list.page.json", "accounts.list.last_page.json", "accounts.list.empty.json", "accounts.list.error.validation_failed.json", "accounts.list.error.cursor_malformed.json",
+	"accounts.get.ok.json", "accounts.get.error.not_found.json",
+	"accounts.create.created.json", "accounts.create.created_failed.json", "accounts.create.error.validation_failed.json", "accounts.create.error.duplicate.json", "accounts.create.error.conflict.json",
+	"accounts.test.ok.json", "accounts.test.failed.json", "accounts.test.error.rate_limited.json", "accounts.test.error.conflict.json", "accounts.test.error.not_found.json",
+	"accounts.bulk.ok.json", "accounts.bulk.error.batch_too_large.json", "accounts.bulk.error.conflict.json", "accounts.bulk.error.validation_failed.json",
+	"accounts.events.empty.json",
+}
+
+// handWrittenFixtures are the four files the record runs did not reach, and why (the README repeats it).
+var handWrittenFixtures = []string{
+	"run.error.internal_error.json", "accounts.create.error.unprocessable.json", "accounts.test.unavailable.json", "accounts.events.page.json",
 }
 
 // readmeSections splits testdata/README.md into the file names it lists under "## Recorded" and under "## Hand-written" (one backticked name per list item).
@@ -582,7 +608,7 @@ func readmeSections(text string) (recorded, hand []string) {
 	return recorded, hand
 }
 
-// The README says which fixtures are recorded and which are still hand-written, and the two lists are the 24 recorded files and the other 21 (every file of the directory once, none in both),
+// The README says which fixtures are recorded and which are still hand-written, and the two lists are the 41 recorded files and the 4 others (every file of the directory once, none in both),
 // and it cites the record run. The control: a README that lists a recorded file as hand-written, or forgets one, is caught by the same comparison.
 func TestReadmeNamesWhichFixturesAreRecorded(t *testing.T) {
 	text := string(sendapitest.Read(t, "testdata", "README.md"))
@@ -590,13 +616,17 @@ func TestReadmeNamesWhichFixturesAreRecorded(t *testing.T) {
 	for _, c := range m3.Contracts() {
 		all[c.Fixture] = true
 	}
-	var wantHand []string
+	wantHand := slices.Clone(handWrittenFixtures)
+	slices.Sort(wantHand)
+	// the two lists are disjoint and together are every file of the directory, named by a contract
 	for f := range all {
-		if !slices.Contains(recordedFixtures, f) {
-			wantHand = append(wantHand, f)
+		if slices.Contains(recordedFixtures, f) == slices.Contains(handWrittenFixtures, f) {
+			t.Fatalf("%s is in both lists or in neither", f)
 		}
 	}
-	slices.Sort(wantHand)
+	if len(recordedFixtures)+len(handWrittenFixtures) != len(all) {
+		t.Fatalf("%d recorded and %d hand-written files, %d contracts", len(recordedFixtures), len(handWrittenFixtures), len(all))
+	}
 	wantRec := slices.Clone(recordedFixtures)
 	slices.Sort(wantRec)
 	problems := func(text string) []string {
@@ -608,12 +638,12 @@ func TestReadmeNamesWhichFixturesAreRecorded(t *testing.T) {
 		if !slices.Equal(hand, wantHand) {
 			p = append(p, fmt.Sprintf("the hand-written list is %v, want %v", hand, wantHand))
 		}
-		if !strings.Contains(text, "44211654839") || !strings.Contains(text, "2026-11-18") {
+		if !strings.Contains(text, "44225747596") || !strings.Contains(text, "2026-11-18") {
 			p = append(p, "the record run and its date are not cited")
 		}
 		return p
 	}
-	if len(wantRec) != 24 || len(wantHand) != 21 {
+	if len(wantRec) != 41 || len(wantHand) != 4 {
 		t.Fatalf("%d recorded and %d hand-written: the subject changed", len(wantRec), len(wantHand))
 	}
 	for _, f := range recordedFixtures {
@@ -624,11 +654,14 @@ func TestReadmeNamesWhichFixturesAreRecorded(t *testing.T) {
 	if p := problems(text); len(p) != 0 {
 		t.Fatalf("the README is out of step: %v", p)
 	}
-	moved := strings.Replace(text, "- `quote.ok.json`", "- `quote.gone.json`", 1)
+	moved := strings.Replace(text, "\n- `quote.ok.json`\n", "\n- `quote.gone.json`\n", 1) // the bare list entry, not an explanatory bullet that starts with the same name
+	if moved == text {
+		t.Fatal("the control found no bare list entry to change")
+	}
 	if p := problems(moved); len(p) == 0 {
 		t.Fatal("a README that does not list a recorded file was not caught")
 	}
-	if p := problems(strings.ReplaceAll(text, "44211654839", "1")); len(p) != 1 || !strings.Contains(p[0], "record run") {
+	if p := problems(strings.ReplaceAll(text, "44225747596", "1")); len(p) != 1 || !strings.Contains(p[0], "record run") {
 		t.Fatalf("a README that does not cite the run: %v", p)
 	}
 }

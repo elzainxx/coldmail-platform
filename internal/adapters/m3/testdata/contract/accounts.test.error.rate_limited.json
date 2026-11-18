@@ -1,7 +1,7 @@
 {
- "error": {
-  "code": "rate_limited",
-  "message": "Too many requests.",
-  "request_id": "req_0123456789abcdef0123456789abcdef"
- }
+  "error": {
+    "code": "rate_limited",
+    "message": "Too many requests.",
+    "request_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
 }

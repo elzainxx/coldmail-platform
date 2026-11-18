@@ -11,18 +11,23 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coldmail-platform/platform/internal/adapters/m2"
 	"github.com/coldmail-platform/platform/internal/adapters/sendapi"
 	"github.com/coldmail-platform/platform/internal/adapters/sendapi/sendapitest"
 	"github.com/coldmail-platform/platform/internal/modclient"
 )
 
-// Ten of the fixtures under testdata/contract are RECORDINGS of the real module 2 (drift session, run 44211663760, 2026-11-18), normalised by the harness: uuids become
-// 00000000-0000-4000-8000-0000000000NN by first appearance, instants 2026-01-01T00:00:00Z, provider ids a run of A. The tests therefore never hard-code a value out of a recording
-// (an id, a count, a state): they READ it from the fixture, through encoding/json, which is a different path from the adapter's decoding, and compare what the adapter returned
-// with what the file says. The fixtures that were not reached stay hand-written and are read the same way.
+// Every fixture under testdata/contract is a RECORDING of the real module 2 (the contract drift sessions of 2026-11-18: full record run 44225747596 and scoped record run
+// 44225754836), normalised by the harness: uuids become 00000000-0000-4000-8000-0000000000NN by first appearance, instants 2026-01-01T00:00:00Z, provider ids a run of A. The tests
+// therefore never hard-code a value out of a recording (an id, a count, a state, a cursor): they READ it from the fixture, through encoding/json, which is a different path from the
+// adapter's decoding, and compare what the adapter returned with what the file says. They do not assume what a file name says about its content either (what a recording of a
+// "page" holds is read from the page), and they do not assume that one recorded page is a whole campaign: see campaignPages.
 var recordedFixtures = []string{
-	"quote.ok.json", "run.created.json", "run.replay.json", "run.error.not_found.json", "report.job.sent.json", "report.job.error.not_found.json",
-	"report.campaign.page.json", "report.campaign.last_page.json", "report.campaign.empty.json", "cancel.ok.json",
+	"cancel.error.validation_failed.json", "cancel.ok.json", "describe.ok.json", "quote.ok.json",
+	"report.campaign.empty.json", "report.campaign.error.cursor_forged.json", "report.campaign.error.cursor_malformed.json", "report.campaign.last_page.json", "report.campaign.page.json",
+	"report.job.error.not_found.json", "report.job.queued.json", "report.job.sent.json",
+	"run.created.json", "run.error.conflict.json", "run.error.internal_error.json", "run.error.not_found.json", "run.error.paused.json", "run.error.unauthenticated.json",
+	"run.error.validation_failed.json", "run.replay.json",
 }
 
 // The normalisation's own spellings, named: what a recording may carry in place of an id, an instant and a provider id.
@@ -179,25 +184,188 @@ func emptyPageFrom(t testing.TB, name string) []byte {
 	return body
 }
 
-// An unknown, mistyped or foreign campaign is answered with an empty 200, and the adapter says only that nothing is known. The empty page is derived from the recorded page by taking
-// its content out (see emptyPageFrom), and the control is the recorded page itself, which is NOT nothing known.
-func TestAnEmptyPageIsNothingKnown(t *testing.T) {
-	id := atStr(t, "report.campaign.page.json", "campaign_id")
-	s := newStack(t, func(w http.ResponseWriter, r *http.Request, _ int) {
-		sendapitest.JSON(w, 200, string(emptyPageFrom(t, "report.campaign.page.json")))
-	}, modclient.Options{})
+// cutPage returns the recorded campaign report `name` with its items cut to results[from:to] and its next cursor set to next (nil for none): every other key and type is the module's.
+func cutPage(t testing.TB, name string, from, to int, next any) []byte {
+	t.Helper()
+	results := at(t, rec(t, name), "items", "results").([]any)
+	body := sendapitest.Read(t, fixtures, name)
+	var err error
+	if body, err = sendapitest.Mutate(body, "items.results", sendapitest.Set, results[from:to]); err != nil {
+		t.Fatal(err)
+	}
+	if body, err = sendapitest.Mutate(body, "items.next_cursor", sendapitest.Set, next); err != nil {
+		t.Fatal(err)
+	}
+	return body
+}
+
+// tailPageFrom derives the page that follows a recorded page that names a next cursor: the recorded page's last page is not among the recordings (a campaign is recorded as it was
+// when the page was taken, and the page after it was not), so the tail is the recorded page with `total - items` items (at least one) copied from its first item under fresh ids, and no
+// next cursor. With the recorded totals the walk then reads exactly the campaign the module said it had.
+func tailPageFrom(t testing.TB, name string) []byte {
+	t.Helper()
+	doc := rec(t, name)
+	results := at(t, doc, "items", "results").([]any)
+	total, _ := at(t, doc, "totals", "total").(float64)
+	n := int(total) - len(results)
+	if n < 1 {
+		n = 1
+	}
+	var tail []any
+	for i := 0; i < n; i++ {
+		item := map[string]any{}
+		for k, v := range results[0].(map[string]any) {
+			item[k] = v
+		}
+		item["job_item_id"] = fmt.Sprintf("00000000-0000-4000-8000-%012d", 9000+i)
+		tail = append(tail, item)
+	}
+	body := sendapitest.Read(t, fixtures, name)
+	var err error
+	if body, err = sendapitest.Mutate(body, "items.results", sendapitest.Set, tail); err != nil {
+		t.Fatal(err)
+	}
+	if body, err = sendapitest.Mutate(body, "items.next_cursor", sendapitest.Set, nil); err != nil {
+		t.Fatal(err)
+	}
+	return body
+}
+
+// walkPages are the two pages of a campaign walk and the cursor between them. The first page is the recorded campaign report that names a next cursor (a real middle page) when there is
+// one, with the tail page derived from it (tailPageFrom); when no recording names a cursor, it is the recorded page cut in half with a cursor that is not a recording. `recorded` says
+// which. Nothing in the tests assumes that a recorded page is a whole campaign: a stub that serves one page again for the request that carries its cursor is refused by the walk
+// (the same item on two pages), and the tests that walk a campaign serve these pages by the cursor value.
+type walkPages struct {
+	source      string
+	first, tail []byte
+	cursor      string
+	recorded    bool
+}
+
+// pagesOf is the walk of one recorded campaign report: a report that names a next cursor is its first page, with the derived tail; one that does not is a whole campaign, served as it is.
+func pagesOf(t testing.TB, name string) walkPages {
+	t.Helper()
+	w := walkPages{source: name, first: sendapitest.Read(t, fixtures, name), recorded: true}
+	if cur := optStr(at(t, rec(t, name), "items", "next_cursor")); cur != nil {
+		w.tail, w.cursor = tailPageFrom(t, name), *cur
+	}
+	return w
+}
+
+func campaignPages(t testing.TB) walkPages {
+	t.Helper()
+	for _, name := range []string{"report.campaign.page.json", "report.campaign.last_page.json", "report.campaign.empty.json"} {
+		if optStr(at(t, rec(t, name), "items", "next_cursor")) != nil {
+			return pagesOf(t, name)
+		}
+	}
+	const name, cursor = "report.campaign.page.json", "AAAA" // opaque to the adapter, passed back verbatim
+	n := len(at(t, rec(t, name), "items", "results").([]any))
+	if n < 2 {
+		t.Fatalf("%s has %d item(s): nothing to cut in two", name, n)
+	}
+	return walkPages{source: name, first: cutPage(t, name, 0, n/2, cursor), tail: cutPage(t, name, n/2, n, nil), cursor: cursor}
+}
+
+// follow is a stub that FOLLOWS THE CURSOR VALUE: the first page for a request with no cursor, the tail for the request that carries exactly the first page's cursor, a module fault for any
+// other cursor (the stub cannot answer a cursor it did not issue).
+func (w walkPages) follow() handler {
+	first, tail := string(w.first), string(w.tail)
+	return func(rw http.ResponseWriter, r *http.Request, _ int) {
+		switch c := r.URL.Query().Get("cursor"); c {
+		case "":
+			sendapitest.JSON(rw, 200, first)
+		case w.cursor:
+			sendapitest.JSON(rw, 200, tail)
+		default:
+			sendapitest.JSON(rw, 500, sendapitest.Envelope("internal_error"))
+		}
+	}
+}
+
+// idsOf are the job item ids of a page body, in order.
+func idsOf(t testing.TB, body []byte) []string {
+	t.Helper()
+	var doc map[string]any
+	if err := json.Unmarshal(body, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, r := range at(t, doc, "items", "results").([]any) {
+		out = append(out, r.(map[string]any)["job_item_id"].(string))
+	}
+	return out
+}
+
+// A campaign report that names a next cursor is walked through its cursor: the walk reads the first page, then the tail for the request that carries the first page's cursor, every item
+// once, in order, and the report's own total agrees with the number of items read. The paired control is the stub that does NOT follow the cursor (it serves the first page again): the
+// walk refuses it as the same item on two pages, naming the key, and returns no report: a recorded page is not a whole campaign unless its cursor is null.
+func TestARecordedMiddlePageIsWalkedThroughItsCursor(t *testing.T) {
+	w := campaignPages(t)
+	id := atStr(t, w.source, "campaign_id")
+	s := newStack(t, w.follow(), modclient.Options{})
 	rep, err := s.client(t, userA).ReportCampaign(ctxT(t), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := append(idsOf(t, w.first), idsOf(t, w.tail)...)
+	var got []string
+	for _, it := range rep.Items {
+		got = append(got, it.JobItemID)
+	}
+	if problems := sendapitest.ExactSet(got, want); len(problems) != 0 || rep.Pages != 2 {
+		t.Fatalf("pages %d, the walk is not the exact set: %v", rep.Pages, problems)
+	}
+	if reqs := s.stub.Requests(); len(reqs) != 2 || reqs[0].Query.Has("cursor") || reqs[1].Query.Get("cursor") != w.cursor {
+		t.Fatalf("requests: %+v", reqs)
+	}
+	if w.recorded && !rep.ItemsMatchTotal() {
+		t.Fatalf("the recorded middle page and its derived tail read %d item(s), the module's total says %d", len(rep.Items), rep.Totals.Total)
+	}
+	// control: the same first page served for every request (the old stub) is refused, and nothing is returned
+	again := newStack(t, reply(200, string(w.first)), modclient.Options{})
+	none, err := again.client(t, userA).ReportCampaign(ctxT(t), id)
+	if ce := wantKind(t, err, modclient.Contract); ce.Key != "items.results" || !strings.Contains(ce.Message, "same job item") {
+		t.Fatalf("key %q: %v", ce.Key, err)
+	}
+	if len(none.Items) != 0 || none.Pages != 0 {
+		t.Fatalf("a report came back with the error: %+v", none)
+	}
+}
+
+// An unknown, mistyped or foreign campaign is answered with an empty 200, and the adapter says only that nothing is known. Two subjects, each read for what it holds: the page
+// derived from a recorded page by taking its content out (see emptyPageFrom), which is nothing known by construction, and the recording named `empty`, which is nothing known exactly
+// when its file has no items and a total of 0. The control is a recorded page with items, which is NOT nothing known.
+func TestAnEmptyPageIsNothingKnown(t *testing.T) {
+	const src = "report.campaign.page.json"
+	id := atStr(t, src, "campaign_id")
+	derived := newStack(t, func(w http.ResponseWriter, r *http.Request, _ int) {
+		sendapitest.JSON(w, 200, string(emptyPageFrom(t, src)))
+	}, modclient.Options{})
+	rep, err := derived.client(t, userA).ReportCampaign(ctxT(t), id)
 	if err != nil || !rep.NothingKnown() || !rep.ItemsMatchTotal() || rep.Progress.IsComplete || rep.Pages != 1 {
 		t.Fatalf("%v %+v", err, rep)
 	}
-	recorded := newStack(t, reply(200, string(sendapitest.Read(t, fixtures, "report.campaign.page.json"))), modclient.Options{})
+	const named = "report.campaign.empty.json"
+	n := int64(len(at(t, rec(t, named), "items", "results").([]any)))
+	total := atInt(t, named, "totals", "total")
+	namedStack := newStack(t, pagesOf(t, named).follow(), modclient.Options{})
+	rep, err = namedStack.client(t, userA).ReportCampaign(ctxT(t), atStr(t, named, "campaign_id"))
+	if err != nil || rep.NothingKnown() != (n == 0 && total == 0) || rep.Totals.Total != total || rep.ItemsMatchTotal() != (int64(len(rep.Items)) == total) {
+		t.Fatalf("the recording named empty (%d item(s), total %d): %v %+v", n, total, err, rep.Totals)
+	}
+	// control: a recorded page with items is not nothing known
+	if n := int64(len(at(t, rec(t, src), "items", "results").([]any))); n == 0 {
+		t.Fatal("the control page has no items, so the control could not fail")
+	}
+	recorded := newStack(t, pagesOf(t, src).follow(), modclient.Options{})
 	rep, err = recorded.client(t, userA).ReportCampaign(ctxT(t), id)
-	if err != nil || rep.NothingKnown() || !rep.ItemsMatchTotal() || int64(len(rep.Items)) != atInt(t, "report.campaign.page.json", "totals", "total") {
+	if err != nil || rep.NothingKnown() || len(rep.Items) == 0 {
 		t.Fatalf("the recorded page: %v %+v", err, rep.Totals)
 	}
 }
 
-// The recorded fixtures carry only what the normalisation leaves: ids of the form 00000000-0000-4000-8000-0000000000NN, instants 2026-01-01T00:00:00Z, provider ids a run of A and request
+// The recorded fixtures (all of them) carry only what the normalisation leaves: ids of the form 00000000-0000-4000-8000-0000000000NN, instants 2026-01-01T00:00:00Z, provider ids a run of A and request
 // ids a run of a; no host name, no address, no token. A recording that kept a real id or instant would fail here, and the control runs the same scan on a body that does.
 func TestRecordedFixturesAreNormalised(t *testing.T) {
 	scan := func(body []byte) []string {
@@ -256,8 +424,9 @@ func TestRecordedFixturesAreNormalised(t *testing.T) {
 	}
 }
 
-// testdata/README.md names the recordings and the hand-written fixtures exactly: every recorded file is named under RECORDED, every other file of contract/ under HAND-WRITTEN, the run
-// that recorded them is cited, and nothing is in both or in neither. The control runs the same comparison on a README that omits one file and on one that names a file twice.
+// testdata/README.md names the recordings and the hand-written fixtures exactly: every recorded file is named under RECORDED, every other file of contract/ (there is none now: every
+// contract was reached) under HAND-WRITTEN, both recording runs are cited with their date, and nothing is in both or in neither. The control runs the same comparison on a README that
+// omits one file, one that names a recording as hand-written, one that omits a run, and an empty one.
 func TestReadmeNamesTheRecordedAndHandWrittenFixtures(t *testing.T) {
 	readme, err := os.ReadFile(filepath.Join("testdata", "README.md"))
 	if err != nil {
@@ -271,18 +440,20 @@ func TestReadmeNamesTheRecordedAndHandWrittenFixtures(t *testing.T) {
 	for _, e := range entries {
 		files = append(files, e.Name())
 	}
-	problems := func(doc string) []string {
+	isRecorded := map[string]bool{}
+	for _, n := range recordedFixtures {
+		isRecorded[n] = true
+	}
+	problems := func(doc string, files []string) []string {
 		recSection, handSection, ok := strings.Cut(doc, "HAND-WRITTEN")
 		if !ok || !strings.Contains(recSection, "RECORDED") {
 			return []string{"the README has no RECORDED and HAND-WRITTEN sections"}
 		}
 		var out []string
-		if !strings.Contains(doc, "44211663760") || !strings.Contains(doc, "2026-11-18") {
-			out = append(out, "the README does not cite the recording run and date")
-		}
-		isRecorded := map[string]bool{}
-		for _, n := range recordedFixtures {
-			isRecorded[n] = true
+		for _, run := range []string{"44225747596", "44225754836", "2026-11-18"} {
+			if !strings.Contains(doc, run) {
+				out = append(out, "the README does not cite "+run)
+			}
 		}
 		for _, f := range files {
 			inRec, inHand := strings.Contains(recSection, "`"+f+"`"), strings.Contains(handSection, "`"+f+"`")
@@ -295,21 +466,38 @@ func TestReadmeNamesTheRecordedAndHandWrittenFixtures(t *testing.T) {
 		}
 		return out
 	}
-	if p := problems(string(readme)); len(p) != 0 {
+	if p := problems(string(readme), files); len(p) != 0 {
 		t.Fatalf("the README and the fixtures disagree: %v", p)
 	}
-	if len(files) != len(recordedFixtures)+10 {
-		t.Fatalf("%d fixtures, %d recorded: the README's hand-written list must be revisited when this changes", len(files), len(recordedFixtures))
+	onDisk := map[string]bool{}
+	for _, f := range files {
+		onDisk[f] = true
+	}
+	for _, n := range recordedFixtures {
+		if !onDisk[n] {
+			t.Fatalf("%s is listed as recorded and is not in the directory", n)
+		}
+	}
+	if len(files) != len(m2.Contracts()) {
+		t.Fatalf("%d fixtures for %d contracts", len(files), len(m2.Contracts()))
 	}
 	omit := strings.Replace(string(readme), "`quote.ok.json`", "quote", 1)
-	if p := problems(omit); len(p) == 0 {
+	if p := problems(omit, files); len(p) == 0 {
 		t.Fatal("a README that omits a recorded file passed")
 	}
 	twice := strings.Replace(string(readme), "HAND-WRITTEN", "HAND-WRITTEN `cancel.ok.json`", 1)
-	if p := problems(twice); len(p) == 0 {
+	if p := problems(twice, files); len(p) == 0 {
 		t.Fatal("a README that names a recording as hand-written passed")
 	}
-	if p := problems("nothing"); len(p) == 0 {
+	oneRun := strings.ReplaceAll(string(readme), "44225754836", "0")
+	if p := problems(oneRun, files); len(p) == 0 {
+		t.Fatal("a README that omits a recording run passed")
+	}
+	if p := problems("nothing", files); len(p) == 0 {
 		t.Fatal("an empty README passed")
+	}
+	// the control the other way: a file in the directory that is neither recorded nor named as hand-written is caught
+	if p := problems(string(readme), append(append([]string(nil), files...), "stray.json")); len(p) != 1 || !strings.Contains(p[0], "stray.json is hand-written") {
+		t.Fatalf("a stray file was not caught: %v", p)
 	}
 }

@@ -4,111 +4,20 @@
   "items": {
     "next_cursor": null,
     "page_size": 200,
-    "results": [
-      {
-        "job_item_id": "00000000-0000-4000-8000-000000000002",
-        "state": "sent",
-        "provider_message_id": "AAAAAAAAAAAAAAAAA",
-        "completed_at": "2026-01-01T00:00:00Z",
-        "attempt_count": 0,
-        "reason": null,
-        "error_class": null
-      },
-      {
-        "job_item_id": "00000000-0000-4000-8000-000000000003",
-        "state": "bounced",
-        "provider_message_id": null,
-        "completed_at": "2026-01-01T00:00:00Z",
-        "attempt_count": 0,
-        "reason": "bounce_permanent",
-        "error_class": "bounce_permanent"
-      },
-      {
-        "job_item_id": "00000000-0000-4000-8000-000000000004",
-        "state": "sent",
-        "provider_message_id": "AAAAAAAAAAAAAAAAA",
-        "completed_at": "2026-01-01T00:00:00Z",
-        "attempt_count": 0,
-        "reason": null,
-        "error_class": null
-      },
-      {
-        "job_item_id": "00000000-0000-4000-8000-000000000005",
-        "state": "failed",
-        "provider_message_id": null,
-        "completed_at": "2026-01-01T00:00:00Z",
-        "attempt_count": 2,
-        "reason": "attempts_exhausted",
-        "error_class": "transport_4xx"
-      },
-      {
-        "job_item_id": "00000000-0000-4000-8000-000000000006",
-        "state": "sent",
-        "provider_message_id": "AAAAAAAAAAAAAAAAA",
-        "completed_at": "2026-01-01T00:00:00Z",
-        "attempt_count": 0,
-        "reason": null,
-        "error_class": null
-      },
-      {
-        "job_item_id": "00000000-0000-4000-8000-000000000007",
-        "state": "sent",
-        "provider_message_id": "AAAAAAAAAAAAAAAAA",
-        "completed_at": "2026-01-01T00:00:00Z",
-        "attempt_count": 0,
-        "reason": null,
-        "error_class": null
-      },
-      {
-        "job_item_id": "00000000-0000-4000-8000-000000000008",
-        "state": "bounced",
-        "provider_message_id": null,
-        "completed_at": "2026-01-01T00:00:00Z",
-        "attempt_count": 0,
-        "reason": "bounce_permanent",
-        "error_class": "bounce_permanent"
-      },
-      {
-        "job_item_id": "00000000-0000-4000-8000-000000000009",
-        "state": "sent",
-        "provider_message_id": "AAAAAAAAAAAAAAAAA",
-        "completed_at": "2026-01-01T00:00:00Z",
-        "attempt_count": 0,
-        "reason": null,
-        "error_class": null
-      },
-      {
-        "job_item_id": "00000000-0000-4000-8000-000000000010",
-        "state": "queued",
-        "provider_message_id": null,
-        "completed_at": null,
-        "attempt_count": 1,
-        "reason": "transport_4xx",
-        "error_class": "transport_4xx"
-      },
-      {
-        "job_item_id": "00000000-0000-4000-8000-000000000011",
-        "state": "sent",
-        "provider_message_id": "AAAAAAAAAAAAAAAAA",
-        "completed_at": "2026-01-01T00:00:00Z",
-        "attempt_count": 0,
-        "reason": null,
-        "error_class": null
-      }
-    ]
+    "results": []
   },
   "progress": {
-    "fraction_complete": 0.9,
+    "fraction_complete": 0,
     "is_complete": false,
-    "terminal": 9
+    "terminal": 0
   },
   "totals": {
-    "total": 10,
-    "sent": 6,
-    "bounced": 2,
-    "failed": 1,
+    "total": 0,
+    "sent": 0,
+    "bounced": 0,
+    "failed": 0,
     "in_flight": 0,
-    "pending": 1,
+    "pending": 0,
     "waiting_for_capacity": 0,
     "cancelled": 0
   }

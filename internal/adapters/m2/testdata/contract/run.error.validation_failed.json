@@ -1,13 +1,13 @@
 {
- "error": {
-  "code": "validation_failed",
-  "message": "One or more fields are invalid.",
-  "details": [
-   {
-    "field": "user_id",
-    "issue": "required"
-   }
-  ],
-  "request_id": "req_0123456789abcdef0123456789abcdef"
- }
+  "error": {
+    "code": "validation_failed",
+    "message": "One or more fields are invalid.",
+    "details": [
+      {
+        "field": "user_id",
+        "issue": "required"
+      }
+    ],
+    "request_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
 }

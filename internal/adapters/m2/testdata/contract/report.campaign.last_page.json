@@ -2,8 +2,8 @@
   "campaign_id": "00000000-0000-4000-8000-000000000001",
   "dispatch_paused": false,
   "items": {
-    "next_cursor": null,
-    "page_size": 200,
+    "next_cursor": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "page_size": 41,
     "results": [
       {
         "job_item_id": "00000000-0000-4000-8000-000000000002",
@@ -16,38 +16,362 @@
       },
       {
         "job_item_id": "00000000-0000-4000-8000-000000000003",
-        "state": "cancelled",
-        "provider_message_id": null,
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
         "completed_at": "2026-01-01T00:00:00Z",
         "attempt_count": 0,
-        "reason": "cancelled",
+        "reason": null,
         "error_class": null
       },
       {
         "job_item_id": "00000000-0000-4000-8000-000000000004",
-        "state": "cancelled",
-        "provider_message_id": null,
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
         "completed_at": "2026-01-01T00:00:00Z",
         "attempt_count": 0,
-        "reason": "cancelled",
+        "reason": null,
         "error_class": null
       },
       {
         "job_item_id": "00000000-0000-4000-8000-000000000005",
-        "state": "cancelled",
-        "provider_message_id": null,
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
         "completed_at": "2026-01-01T00:00:00Z",
         "attempt_count": 0,
-        "reason": "cancelled",
+        "reason": null,
         "error_class": null
       },
       {
         "job_item_id": "00000000-0000-4000-8000-000000000006",
-        "state": "cancelled",
-        "provider_message_id": null,
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
         "completed_at": "2026-01-01T00:00:00Z",
         "attempt_count": 0,
-        "reason": "cancelled",
+        "reason": null,
+        "error_class": null
+      },
+      {
+        "job_item_id": "00000000-0000-4000-8000-000000000007",
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
+        "completed_at": "2026-01-01T00:00:00Z",
+        "attempt_count": 0,
+        "reason": null,
+        "error_class": null
+      },
+      {
+        "job_item_id": "00000000-0000-4000-8000-000000000008",
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
+        "completed_at": "2026-01-01T00:00:00Z",
+        "attempt_count": 0,
+        "reason": null,
+        "error_class": null
+      },
+      {
+        "job_item_id": "00000000-0000-4000-8000-000000000009",
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
+        "completed_at": "2026-01-01T00:00:00Z",
+        "attempt_count": 0,
+        "reason": null,
+        "error_class": null
+      },
+      {
+        "job_item_id": "00000000-0000-4000-8000-000000000010",
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
+        "completed_at": "2026-01-01T00:00:00Z",
+        "attempt_count": 0,
+        "reason": null,
+        "error_class": null
+      },
+      {
+        "job_item_id": "00000000-0000-4000-8000-000000000011",
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
+        "completed_at": "2026-01-01T00:00:00Z",
+        "attempt_count": 0,
+        "reason": null,
+        "error_class": null
+      },
+      {
+        "job_item_id": "00000000-0000-4000-8000-000000000012",
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
+        "completed_at": "2026-01-01T00:00:00Z",
+        "attempt_count": 0,
+        "reason": null,
+        "error_class": null
+      },
+      {
+        "job_item_id": "00000000-0000-4000-8000-000000000013",
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
+        "completed_at": "2026-01-01T00:00:00Z",
+        "attempt_count": 0,
+        "reason": null,
+        "error_class": null
+      },
+      {
+        "job_item_id": "00000000-0000-4000-8000-000000000014",
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
+        "completed_at": "2026-01-01T00:00:00Z",
+        "attempt_count": 0,
+        "reason": null,
+        "error_class": null
+      },
+      {
+        "job_item_id": "00000000-0000-4000-8000-000000000015",
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
+        "completed_at": "2026-01-01T00:00:00Z",
+        "attempt_count": 0,
+        "reason": null,
+        "error_class": null
+      },
+      {
+        "job_item_id": "00000000-0000-4000-8000-000000000016",
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
+        "completed_at": "2026-01-01T00:00:00Z",
+        "attempt_count": 0,
+        "reason": null,
+        "error_class": null
+      },
+      {
+        "job_item_id": "00000000-0000-4000-8000-000000000017",
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
+        "completed_at": "2026-01-01T00:00:00Z",
+        "attempt_count": 0,
+        "reason": null,
+        "error_class": null
+      },
+      {
+        "job_item_id": "00000000-0000-4000-8000-000000000018",
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
+        "completed_at": "2026-01-01T00:00:00Z",
+        "attempt_count": 0,
+        "reason": null,
+        "error_class": null
+      },
+      {
+        "job_item_id": "00000000-0000-4000-8000-000000000019",
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
+        "completed_at": "2026-01-01T00:00:00Z",
+        "attempt_count": 0,
+        "reason": null,
+        "error_class": null
+      },
+      {
+        "job_item_id": "00000000-0000-4000-8000-000000000020",
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
+        "completed_at": "2026-01-01T00:00:00Z",
+        "attempt_count": 0,
+        "reason": null,
+        "error_class": null
+      },
+      {
+        "job_item_id": "00000000-0000-4000-8000-000000000021",
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
+        "completed_at": "2026-01-01T00:00:00Z",
+        "attempt_count": 0,
+        "reason": null,
+        "error_class": null
+      },
+      {
+        "job_item_id": "00000000-0000-4000-8000-000000000022",
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
+        "completed_at": "2026-01-01T00:00:00Z",
+        "attempt_count": 0,
+        "reason": null,
+        "error_class": null
+      },
+      {
+        "job_item_id": "00000000-0000-4000-8000-000000000023",
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
+        "completed_at": "2026-01-01T00:00:00Z",
+        "attempt_count": 0,
+        "reason": null,
+        "error_class": null
+      },
+      {
+        "job_item_id": "00000000-0000-4000-8000-000000000024",
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
+        "completed_at": "2026-01-01T00:00:00Z",
+        "attempt_count": 0,
+        "reason": null,
+        "error_class": null
+      },
+      {
+        "job_item_id": "00000000-0000-4000-8000-000000000025",
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
+        "completed_at": "2026-01-01T00:00:00Z",
+        "attempt_count": 0,
+        "reason": null,
+        "error_class": null
+      },
+      {
+        "job_item_id": "00000000-0000-4000-8000-000000000026",
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
+        "completed_at": "2026-01-01T00:00:00Z",
+        "attempt_count": 0,
+        "reason": null,
+        "error_class": null
+      },
+      {
+        "job_item_id": "00000000-0000-4000-8000-000000000027",
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
+        "completed_at": "2026-01-01T00:00:00Z",
+        "attempt_count": 0,
+        "reason": null,
+        "error_class": null
+      },
+      {
+        "job_item_id": "00000000-0000-4000-8000-000000000028",
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
+        "completed_at": "2026-01-01T00:00:00Z",
+        "attempt_count": 0,
+        "reason": null,
+        "error_class": null
+      },
+      {
+        "job_item_id": "00000000-0000-4000-8000-000000000029",
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
+        "completed_at": "2026-01-01T00:00:00Z",
+        "attempt_count": 0,
+        "reason": null,
+        "error_class": null
+      },
+      {
+        "job_item_id": "00000000-0000-4000-8000-000000000030",
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
+        "completed_at": "2026-01-01T00:00:00Z",
+        "attempt_count": 0,
+        "reason": null,
+        "error_class": null
+      },
+      {
+        "job_item_id": "00000000-0000-4000-8000-000000000031",
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
+        "completed_at": "2026-01-01T00:00:00Z",
+        "attempt_count": 0,
+        "reason": null,
+        "error_class": null
+      },
+      {
+        "job_item_id": "00000000-0000-4000-8000-000000000032",
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
+        "completed_at": "2026-01-01T00:00:00Z",
+        "attempt_count": 0,
+        "reason": null,
+        "error_class": null
+      },
+      {
+        "job_item_id": "00000000-0000-4000-8000-000000000033",
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
+        "completed_at": "2026-01-01T00:00:00Z",
+        "attempt_count": 0,
+        "reason": null,
+        "error_class": null
+      },
+      {
+        "job_item_id": "00000000-0000-4000-8000-000000000034",
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
+        "completed_at": "2026-01-01T00:00:00Z",
+        "attempt_count": 0,
+        "reason": null,
+        "error_class": null
+      },
+      {
+        "job_item_id": "00000000-0000-4000-8000-000000000035",
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
+        "completed_at": "2026-01-01T00:00:00Z",
+        "attempt_count": 0,
+        "reason": null,
+        "error_class": null
+      },
+      {
+        "job_item_id": "00000000-0000-4000-8000-000000000036",
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
+        "completed_at": "2026-01-01T00:00:00Z",
+        "attempt_count": 0,
+        "reason": null,
+        "error_class": null
+      },
+      {
+        "job_item_id": "00000000-0000-4000-8000-000000000037",
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
+        "completed_at": "2026-01-01T00:00:00Z",
+        "attempt_count": 0,
+        "reason": null,
+        "error_class": null
+      },
+      {
+        "job_item_id": "00000000-0000-4000-8000-000000000038",
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
+        "completed_at": "2026-01-01T00:00:00Z",
+        "attempt_count": 0,
+        "reason": null,
+        "error_class": null
+      },
+      {
+        "job_item_id": "00000000-0000-4000-8000-000000000039",
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
+        "completed_at": "2026-01-01T00:00:00Z",
+        "attempt_count": 0,
+        "reason": null,
+        "error_class": null
+      },
+      {
+        "job_item_id": "00000000-0000-4000-8000-000000000040",
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
+        "completed_at": "2026-01-01T00:00:00Z",
+        "attempt_count": 0,
+        "reason": null,
+        "error_class": null
+      },
+      {
+        "job_item_id": "00000000-0000-4000-8000-000000000041",
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
+        "completed_at": "2026-01-01T00:00:00Z",
+        "attempt_count": 0,
+        "reason": null,
+        "error_class": null
+      },
+      {
+        "job_item_id": "00000000-0000-4000-8000-000000000042",
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
+        "completed_at": "2026-01-01T00:00:00Z",
+        "attempt_count": 0,
+        "reason": null,
         "error_class": null
       }
     ]
@@ -55,16 +379,16 @@
   "progress": {
     "fraction_complete": 1,
     "is_complete": true,
-    "terminal": 5
+    "terminal": 42
   },
   "totals": {
-    "total": 5,
-    "sent": 1,
+    "total": 42,
+    "sent": 42,
     "bounced": 0,
     "failed": 0,
     "in_flight": 0,
     "pending": 0,
     "waiting_for_capacity": 0,
-    "cancelled": 4
+    "cancelled": 0
   }
 }

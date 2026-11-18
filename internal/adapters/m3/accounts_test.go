@@ -537,6 +537,9 @@ func TestAllAccountsReadsEveryPageOrNothing(t *testing.T) {
 // feasibility (zero accounts), and an unknown tenant on create and bulk is a 400 that names user_id. The live proof of every row is B11.
 func tenantModule(t testing.TB) handler {
 	good := func(name string) string { return string(sendapitest.Read(t, fixtures, name)) }
+	// the answers that depend on what a recording holds, chosen by what it holds (recorded_helpers_test.go): a whole campaign in one page, a listing with accounts, the quote of a count
+	campaignOwner, campaignStranger := good(terminalCampaign(t)), string(emptyCampaignBody(t))
+	listOwner, quoteStranger := good(populatedList(t)), string(strangerQuoteBody(t))
 	return func(w http.ResponseWriter, r *http.Request, body []byte) {
 		p, q := r.URL.Path, r.URL.Query()
 		user := q.Get("user_id")
@@ -560,10 +563,10 @@ func tenantModule(t testing.TB) handler {
 			notFound("job_item_id")
 		case p == "/v1/report" && q.Get("campaign_id") != "":
 			if owner {
-				sendapitest.JSON(w, 200, good("report.campaign.last_page.json"))
+				sendapitest.JSON(w, 200, campaignOwner)
 				return
 			}
-			sendapitest.JSON(w, 200, good("report.campaign.empty.json"))
+			sendapitest.JSON(w, 200, campaignStranger)
 		case p == "/v1/report":
 			if owner {
 				sendapitest.JSON(w, 200, good("report.job.sent.json"))
@@ -579,8 +582,7 @@ func tenantModule(t testing.TB) handler {
 				sendapitest.JSON(w, 200, good("quote.feasible.json"))
 				return
 			}
-			sendapitest.JSON(w, 200, `{"recipient_count":5000,"cost":0,"currency":"credits","unit_price_credits":0,"tier":"shared","feasible":false,"reasons":[{"code":"no_eligible_accounts"}],`+
-				`"caps":{"queue_depth_cap":100000,"daily_send_cap":0,"account_count_cap":20},"capacity":{"eligible_accounts":0,"daily_capacity_remaining":0,"effective_concurrency":3},"warnings":[]}`)
+			sendapitest.JSON(w, 200, quoteStranger)
 		case p == "/v1/send-byo/accounts" && r.Method == http.MethodPost, p == "/v1/send-byo/accounts/bulk":
 			if owner {
 				if p == "/v1/send-byo/accounts" {
@@ -593,7 +595,7 @@ func tenantModule(t testing.TB) handler {
 			sendapitest.JSON(w, 400, sendapitest.Envelope("validation_failed", [2]string{"user_id", "not_found"}))
 		case p == "/v1/send-byo/accounts":
 			if owner {
-				sendapitest.JSON(w, 200, good("accounts.list.last_page.json"))
+				sendapitest.JSON(w, 200, listOwner)
 				return
 			}
 			sendapitest.JSON(w, 200, `{"items":[],"next_cursor":null}`)
@@ -651,7 +653,8 @@ func TestCrossTenantMatrixAsTheModuleAnswers(t *testing.T) {
 		{"report by job id", func(c *m3.Client) (any, error) { return c.ReportJobByID(ctx, jobID) }, ok, notFound("job_id")},
 		{"campaign report", func(c *m3.Client) (any, error) { return c.ReportCampaign(ctx, campaign) },
 			func(t testing.TB, v any, err error) {
-				if rep := v.(sendapi.CampaignReport); err != nil || rep.NothingKnown() || len(rep.Items) != 2 {
+				rep := v.(sendapi.CampaignReport)
+				if err != nil || rep.NothingKnown() || len(rep.Items) != length(t, doc(t, terminalCampaign(t)), "items.results") || !rep.ItemsMatchTotal() {
 					t.Fatalf("the owner: %v %+v", err, rep)
 				}
 			},
@@ -661,9 +664,10 @@ func TestCrossTenantMatrixAsTheModuleAnswers(t *testing.T) {
 					t.Fatalf("a stranger: %v %+v", err, rep)
 				}
 			}},
-		{"feasibility", func(c *m3.Client) (any, error) { return c.Feasibility(ctx, 5000) },
+		{"feasibility", func(c *m3.Client) (any, error) { return c.Feasibility(ctx, quoteCount(t, "quote.feasible.json")) },
 			func(t testing.TB, v any, err error) {
-				if f := v.(m3.Feasibility); err != nil || !f.Feasible || f.Capacity.EligibleAccounts != 2 {
+				f := v.(m3.Feasibility)
+				if err != nil || !f.Feasible || f.Capacity.EligibleAccounts != asInt(t, doc(t, "quote.feasible.json"), "capacity.eligible_accounts") {
 					t.Fatalf("the owner: %v %+v", err, f)
 				}
 			},
@@ -689,8 +693,14 @@ func TestCrossTenantMatrixAsTheModuleAnswers(t *testing.T) {
 			}},
 		{"list the accounts", func(c *m3.Client) (any, error) { return c.ListAccounts(ctx, "") },
 			func(t testing.TB, v any, err error) {
-				if p := v.(m3.AccountPage); err != nil || len(p.Items) != 1 || p.Items[0].UserID != userA {
+				p := v.(m3.AccountPage)
+				if err != nil || len(p.Items) != length(t, doc(t, populatedList(t)), "items") || len(p.Items) == 0 {
 					t.Fatalf("the owner: %v %+v", err, p)
+				}
+				for _, a := range p.Items {
+					if a.UserID != userA {
+						t.Fatalf("the owner's listing holds an account of %s", a.UserID)
+					}
 				}
 			},
 			func(t testing.TB, v any, err error) {
@@ -760,7 +770,7 @@ func TestFeasibilityBeyondTheRecordedBodies(t *testing.T) {
 	off, _ = sendapitest.Mutate(off, "capacity.estimate_basis", sendapitest.Delete, nil)
 	off, _ = sendapitest.Mutate(off, "warnings", sendapitest.Set, []any{})
 	s2 := newStack(t, reply(200, string(off)), modclient.Options{})
-	f2, err := s2.client(t, userA).Feasibility(ctxT(t), 5000)
+	f2, err := s2.client(t, userA).Feasibility(ctxT(t), quoteCount(t, "quote.feasible.json"))
 	if err != nil || !f2.Feasible || f2.Capacity.EstimatedDurationSec != nil || f2.Capacity.EstimateBasis != "" || len(f2.Warnings) != 0 {
 		t.Fatalf("a quote without a projection: %v %+v", err, f2)
 	}
@@ -778,7 +788,7 @@ func TestFeasibilityBeyondTheRecordedBodies(t *testing.T) {
 	// a module that is down is a typed error and the zero verdict, never "feasible"
 	down := newStack(t, replyFixture(200, "quote.feasible.json", t), modclient.Options{})
 	down.stub.Close()
-	if f, err := down.client(t, userA).Feasibility(ctxT(t), 5000); modclient.KindOf(err) != modclient.Unavailable || !isZero(f) || f.Feasible {
+	if f, err := down.client(t, userA).Feasibility(ctxT(t), quoteCount(t, "quote.feasible.json")); modclient.KindOf(err) != modclient.Unavailable || !isZero(f) || f.Feasible {
 		t.Fatalf("a module that is down: %v %+v", err, f)
 	}
 }

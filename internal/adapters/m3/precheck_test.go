@@ -182,14 +182,15 @@ func TestPreCheckRunSaysWhatItDidNotCheck(t *testing.T) {
 // never says it).
 func TestTheQuoteStatesTheQueueCapAndNotTheCampaignCap(t *testing.T) {
 	s := newStack(t, replyFixture(200, "quote.feasible.json", t), modclient.Options{})
-	f, err := s.client(t, userA).Feasibility(ctxT(t), 5000)
+	n := quoteCount(t, "quote.feasible.json")
+	f, err := s.client(t, userA).Feasibility(ctxT(t), n)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := f.QueueDepthLimit(); !got.Known || got.N != 100000 {
+	if got := f.QueueDepthLimit(); !got.Known || got.N != asInt(t, doc(t, "quote.feasible.json"), "caps.queue_depth_cap") {
 		t.Fatalf("the queue depth limit: %+v", got)
 	}
-	facts := m3.RunFacts{Entitled: true, RecipientCount: 5000, QueueDepthCap: f.QueueDepthLimit()}
+	facts := m3.RunFacts{Entitled: true, RecipientCount: n, QueueDepthCap: f.QueueDepthLimit()}
 	if err := m3.PreCheckRun(facts); err != nil {
 		t.Fatal(err)
 	}

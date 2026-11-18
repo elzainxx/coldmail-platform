@@ -465,23 +465,18 @@ func TestRecordedPagesSettleAsTheChargeTableSays(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			doc := rec(t, name)
 			results := at(t, doc, "items", "results").([]any)
+			// a report with at least two items is cut in two with a cursor between the halves; one with fewer (an empty campaign) is a single page and says so
+			wantPages, half := 2, len(results)/2
 			if len(results) < 2 {
-				t.Fatalf("%s has %d item(s): nothing to cut in two", name, len(results))
-			}
-			half := len(results) / 2
-			cut := func(from, to int, next any) string {
-				body := sendapitest.Read(t, fixtures, name)
-				var err error
-				if body, err = sendapitest.Mutate(body, "items.results", sendapitest.Set, results[from:to]); err != nil {
-					t.Fatal(err)
-				}
-				if body, err = sendapitest.Mutate(body, "items.next_cursor", sendapitest.Set, next); err != nil {
-					t.Fatal(err)
-				}
-				return string(body)
+				wantPages, half = 1, len(results)
 			}
 			const cursor = "AAAA" // opaque to the adapter, passed back verbatim; the stub only tells the two pages apart by it
-			first, second := cut(0, half, cursor), cut(half, len(results), nil)
+			var first, second string
+			if wantPages == 2 {
+				first, second = string(cutPage(t, name, 0, half, cursor)), string(cutPage(t, name, half, len(results), nil))
+			} else {
+				first = string(cutPage(t, name, 0, len(results), nil))
+			}
 			s := newStack(t, func(w http.ResponseWriter, r *http.Request, _ int) {
 				switch r.URL.Query().Get("cursor") {
 				case "":
@@ -494,7 +489,7 @@ func TestRecordedPagesSettleAsTheChargeTableSays(t *testing.T) {
 			}, modclient.Options{})
 			c := s.client(t, userA)
 			rep, err := c.ReportCampaign(ctxT(t), atStr(t, name, "campaign_id"))
-			if err != nil || rep.Pages != 2 || len(rep.Items) != len(results) {
+			if err != nil || rep.Pages != wantPages || len(rep.Items) != len(results) {
 				t.Fatalf("%v pages=%d items=%d, the file has %d", err, rep.Pages, len(rep.Items), len(results))
 			}
 			got, err := c.Classify(rep.Items)
@@ -551,7 +546,7 @@ func TestRecordedPagesSettleAsTheChargeTableSays(t *testing.T) {
 				}
 			}
 			// control: the walk really was two pages, so the second half was read through the cursor and not by luck
-			if reqs := s.stub.Requests(); len(reqs) != 2 || reqs[1].Query.Get("cursor") != cursor {
+			if reqs := s.stub.Requests(); len(reqs) != wantPages || (wantPages == 2 && reqs[1].Query.Get("cursor") != cursor) {
 				t.Fatalf("requests: %+v", reqs)
 			}
 		})

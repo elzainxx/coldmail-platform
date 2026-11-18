@@ -1,7 +1,7 @@
 {
- "error": {
-  "code": "unauthenticated",
-  "message": "Missing or invalid platform service token.",
-  "request_id": "req_0123456789abcdef0123456789abcdef"
- }
+  "error": {
+    "code": "unauthenticated",
+    "message": "Missing or invalid platform service token.",
+    "request_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
 }

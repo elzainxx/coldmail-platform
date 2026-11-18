@@ -376,8 +376,9 @@ func encodeDoc(t *testing.T, doc any) string {
 	return buf.String()
 }
 
-// edit applies op to the container that holds the last step of path. It fails when the path is not in the document: a mutation that touches nothing proves nothing.
-func edit(doc any, path string, op func(container any, last pathStep)) error {
+// edit applies op to the container that holds the last step of path. A mutation that touches nothing proves nothing, so it is an error when the path is not what the mode says:
+// mode "exist" needs the key (or element) to be in the document, mode "add" needs the parent to be an object that does NOT have the key yet.
+func edit(doc any, path, mode string, op func(container any, last pathStep)) error {
 	steps := parsePath(path)
 	cur := doc
 	for _, s := range steps[:len(steps)-1] {
@@ -400,11 +401,17 @@ func edit(doc any, path string, op func(container any, last pathStep)) error {
 	last := steps[len(steps)-1]
 	switch c := cur.(type) {
 	case map[string]any:
-		if _, ok := c[last.key]; !ok || last.isIdx {
+		_, has := c[last.key]
+		switch {
+		case last.isIdx:
+			return fmt.Errorf("%s: the parent is an object, not an array", path)
+		case mode == "add" && has:
+			return fmt.Errorf("%s: the document already has that key", path)
+		case mode != "add" && !has:
 			return fmt.Errorf("%s: the document has no such key", path)
 		}
 	case []any:
-		if !last.isIdx || last.idx >= len(c) {
+		if mode == "add" || !last.isIdx || last.idx >= len(c) {
 			return fmt.Errorf("%s: the document has no such element", path)
 		}
 	default:
@@ -417,8 +424,8 @@ func edit(doc any, path string, op func(container any, last pathStep)) error {
 type mutation struct {
 	name string
 	path string
-	op   string // remove, set
-	to   any    // the value for set
+	op   string // remove, set, add
+	to   any    // the value for set and add
 	key  string // the key the Contract error must name
 }
 
@@ -432,10 +439,22 @@ func outside(path string, to any) mutation {
 	return mutation{name: fmt.Sprintf("set %s outside its vocabulary (%v)", path, to), path: path, op: "set", to: to, key: path}
 }
 
+// add puts a key the recording does not have (a vocabulary-bearing key of the open signals bag, say) into an object that exists.
+func add(path string, to any) mutation {
+	return mutation{name: fmt.Sprintf("add %s = %v", path, to), path: path, op: "add", to: to, key: path}
+}
+
+// naming says the error is expected to name another key than the mutated path (replacing an array by one whose element is wrong is refused at the element).
+func (m mutation) naming(key string) mutation { m.key = key; return m }
+
 func (m mutation) apply(t *testing.T, body string) string {
 	t.Helper()
 	doc := decodeDoc(t, body)
-	err := edit(doc, m.path, func(container any, last pathStep) {
+	mode := "exist"
+	if m.op == "add" {
+		mode = "add"
+	}
+	err := edit(doc, m.path, mode, func(container any, last pathStep) {
 		switch c := container.(type) {
 		case map[string]any:
 			if m.op == "remove" {
@@ -453,20 +472,67 @@ func (m mutation) apply(t *testing.T, body string) string {
 	return encodeDoc(t, doc)
 }
 
+// rowMutations are the mutations of a recorded results page that HAS rows, written against its own first, middle and last rows and against its first row that repeats an address
+// (found by the independent parse): the indexes are the page's, not a literal, so a longer or shorter recording keeps them meaningful. It fails the test when the page has no
+// row that repeats an address, because then the duplicate_of mutations would not apply and the instrument would cover less than it claims.
+func rowMutations(t *testing.T, name string) []mutation {
+	t.Helper()
+	rows := recordedRows(t, name)
+	if len(rows) < 3 {
+		t.Fatalf("%s has %d row(s): too few to mutate first, middle and last", name, len(rows))
+	}
+	dup := -1
+	for i, r := range rows {
+		if _, ok := r["duplicate_of"]; ok {
+			dup = i
+			break
+		}
+	}
+	if dup < 0 {
+		t.Fatalf("%s has no row with duplicate_of: its mutations would not apply", name)
+	}
+	first, mid, last := 0, len(rows)/2, len(rows)-1
+	at := func(i int, key string) string { return fmt.Sprintf("results[%d].%s", i, key) }
+	return []mutation{
+		remove("job_id"), remove("results"), retype("results", map[string]any{}), retype("results", nil), remove("next_cursor"), retype("next_cursor", 4),
+		remove(at(first, "ordinal")), retype(at(mid, "ordinal"), "1"), retype(at(mid, "ordinal"), -1),
+		remove(at(last, "item_id")), retype(at(last, "item_id"), ""), retype(at(last, "item_id"), 3),
+		remove(at(first, "status")), outside(at(first, "status"), "maybe"),
+		remove(at(mid, "reason")), outside(at(mid, "reason"), "vibes"),
+		remove(at(last, "flags")), remove(at(last, "flags.from_cache")), retype(at(last, "flags.from_cache"), "false"),
+		remove(at(first, "signals")), retype(at(mid, "signals"), 3),
+		add(at(mid, "signals.failure_origin"), "theirs"), add(at(mid, "signals.failure_origin"), 1), add(at(mid, "signals.smtp_skipped_reason"), "lazy"),
+		outside(at(dup, "duplicate_of"), num(t, rows[dup]["ordinal"])), outside(at(dup, "duplicate_of"), -1), retype(at(dup, "duplicate_of"), "0"),
+		retype(fmt.Sprintf("results[%d]", first), []any{1}),
+	}
+}
+
+// emptyMutations are the mutations of a recorded results page with NO rows: its own keys, and what happens when a row is put where there is none.
+func emptyMutations() []mutation {
+	return []mutation{
+		remove("job_id"), remove("next_cursor"), retype("next_cursor", 7), retype("results", nil), remove("results"), retype("results", map[string]any{}),
+		retype("results", []any{map[string]any{"ordinal": 0}}).naming("results[0].item_id"),
+		retype("results", []any{1}).naming("results[0]"),
+	}
+}
+
 // TestContracts_AMutatedFixtureIsRefusedNamingTheKey: for every success contract, a required key removed, a key's type changed, and a vocabulary value outside Vocab each make the adapter's
 // own call fail with a Contract error that names the key. The same call over the untouched fixture succeeds (TestContracts_EveryFixtureDecodesThroughTheAdaptersRealPath), so the
-// mutation is the only thing that changed. Every mutation is checked to have changed the document.
+// mutation is the only thing that changed. Every mutation is checked to have changed the document, and one that does not apply to the body it is given fails the test as proving
+// nothing. The two results contracts get DIFFERENT mutations according to what their recording holds (rows or none), decided from the file and not from the case name: the page
+// that was recorded with rows gets row mutations, the page that was recorded empty gets the mutations of an empty page, and a recording set with neither kind is red.
 func TestContracts_AMutatedFixtureIsRefusedNamingTheKey(t *testing.T) {
 	table := contractTable()
-	mutations := map[string][]mutation{
+	static := map[string][]mutation{
 		contractKey(tplVerify, "ok"): {
 			remove("status"), retype("status", 5), outside("status", "fine"),
 			remove("reason"), outside("reason", "vibes"),
-			remove("confidence"), retype("confidence", "90"),
+			remove("confidence"), retype("confidence", "90"), retype("confidence", 190),
 			remove("recommendation"), outside("recommendation", "yes"),
 			remove("domain"), retype("domain", nil),
 			remove("flags"), remove("flags.from_cache"), retype("flags.from_cache", "no"),
 			remove("signals"), retype("signals", []any{}),
+			add("signals.failure_origin", "theirs"), add("signals.smtp_skipped_reason", "lazy"),
 		},
 		contractKey(tplSubmit, "accepted"): {
 			remove("job_id"), retype("job_id", 7), outside("job_id", "J-42"),
@@ -483,41 +549,27 @@ func TestContracts_AMutatedFixtureIsRefusedNamingTheKey(t *testing.T) {
 		contractKey(tplStatus, "complete"): {
 			remove("complete"), outside("status", "running"), outside("status", "done"), remove("counts.settled"),
 		},
-		contractKey(tplResults, "page"): {
-			remove("job_id"), remove("results"), retype("results", map[string]any{}), retype("results", nil), remove("next_cursor"), retype("next_cursor", 4),
-			remove("results[0].ordinal"), retype("results[1].ordinal", "1"), retype("results[1].ordinal", -1),
-			remove("results[2].item_id"), retype("results[2].item_id", ""), retype("results[2].item_id", 3),
-			remove("results[0].status"), outside("results[0].status", "maybe"),
-			remove("results[1].reason"), outside("results[1].reason", "vibes"),
-			remove("results[3].flags"), remove("results[3].flags.from_cache"), retype("results[3].flags.from_cache", "false"),
-			remove("results[4].signals"), retype("results[4].signals", 3),
-			outside("results[1].signals.failure_origin", "theirs"), retype("results[1].signals.failure_origin", 1),
-			outside("results[3].signals.smtp_skipped_reason", "lazy"),
-			outside("results[2].duplicate_of", 2), outside("results[2].duplicate_of", -1), retype("results[2].duplicate_of", "0"),
-			retype("results[0]", []any{1}),
-		},
-		contractKey(tplResults, "empty_page"): {
-			remove("job_id"), remove("next_cursor"), retype("next_cursor", 7), retype("results", nil), remove("results"),
-			remove("results[0].ordinal"), retype("results[0].ordinal", "0"), remove("results[7].item_id"), retype("results[7].item_id", 7),
-			remove("results[0].status"), outside("results[0].status", "maybe"), remove("results[3].reason"), outside("results[3].reason", "vibes"),
-			remove("results[5].flags"), remove("results[5].flags.from_cache"), retype("results[5].flags.from_cache", 0), remove("results[9].signals"),
-			outside("results[219].reason", "vibes"), remove("results[219].ordinal"),
-		},
 	}
-	total := 0
-	for key, ms := range mutations {
+	total, populated, empty := 0, 0, 0
+	for _, c := range Contracts() {
+		key := contractKey(c.Route, c.Case)
+		if c.Status < 200 || c.Status > 299 {
+			continue
+		}
 		exp, ok := table[key]
 		if !ok {
-			t.Fatalf("mutations for %q, which has no entry in the table", key)
+			t.Fatalf("%q is a contract with no entry in the table", key)
 		}
-		var c modclient.RouteContract
-		for _, x := range Contracts() {
-			if contractKey(x.Route, x.Case) == key {
-				c = x
+		ms, hasStatic := static[key]
+		if c.Route == tplResults {
+			if n := len(recordedRows(t, c.Fixture)); n > 0 {
+				ms, populated = rowMutations(t, c.Fixture), populated+1
+			} else {
+				ms, empty = emptyMutations(), empty+1
 			}
-		}
-		if c.Fixture == "" {
-			t.Fatalf("mutations for %q, which is not a contract", key)
+		} else if !hasStatic {
+			t.Errorf("%s: no mutations are written for this success contract", key)
+			continue
 		}
 		base := fixture(t, c.Fixture)
 		for _, m := range ms {
@@ -541,10 +593,13 @@ func TestContracts_AMutatedFixtureIsRefusedNamingTheKey(t *testing.T) {
 			}
 		}
 	}
+	if populated == 0 || empty == 0 {
+		t.Fatalf("the results recordings are %d page(s) with rows and %d without: the mutations of one kind never ran", populated, empty)
+	}
 	if total < 60 {
 		t.Fatalf("only %d mutation(s) ran: the instrument covers too little", total)
 	}
-	t.Logf("%d mutated fixture(s) refused, each naming its key", total)
+	t.Logf("%d mutated fixture(s) refused, each naming its key (%d results page(s) with rows, %d empty)", total, populated, empty)
 }
 
 // TestContracts_AnErrorEnvelopeIsReadByItsStatusAndOnlyWhenWellFormed: for EVERY error contract (the three recorded in run 44211659227 that the first suite did not declare, GET

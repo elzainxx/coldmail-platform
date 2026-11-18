@@ -330,6 +330,8 @@ func bodyUser(b []byte) string {
 // moduleStub answers every route of the adapter's surface from its recorded body.
 func moduleStub(t testing.TB) handler {
 	good := func(name string) string { return string(sendapitest.Read(t, fixtures, name)) }
+	// a whole campaign in one page and a whole listing in one page, chosen by what the recordings hold (a walk reads them once)
+	campaignOne, listOne := good(terminalCampaign(t)), good(terminalList(t))
 	return func(w http.ResponseWriter, r *http.Request, _ []byte) {
 		p := r.URL.Path
 		switch {
@@ -338,13 +340,13 @@ func moduleStub(t testing.TB) handler {
 		case p == "/v1/run":
 			sendapitest.JSON(w, 202, good("run.created.json"))
 		case p == "/v1/report" && r.URL.Query().Get("campaign_id") != "":
-			sendapitest.JSON(w, 200, good("report.campaign.last_page.json"))
+			sendapitest.JSON(w, 200, campaignOne)
 		case p == "/v1/report":
 			sendapitest.JSON(w, 200, good("report.job.sent.json"))
 		case p == "/v1/send-byo/accounts" && r.Method == http.MethodPost:
 			sendapitest.JSON(w, 201, good("accounts.create.created.json"))
 		case p == "/v1/send-byo/accounts":
-			sendapitest.JSON(w, 200, good("accounts.list.last_page.json"))
+			sendapitest.JSON(w, 200, listOne)
 		case p == "/v1/send-byo/accounts/bulk":
 			sendapitest.JSON(w, 200, good("accounts.bulk.ok.json"))
 		case strings.HasSuffix(p, "/test"):
@@ -364,8 +366,8 @@ func TestEveryCallCarriesItsTenant(t *testing.T) {
 	c := s.client(t, userA)
 	ctx := ctxT(t)
 	steps := map[string]func() error{
-		"quote":       func() error { _, err := c.Quote(ctx, 5000); return err },
-		"feasibility": func() error { _, err := c.Feasibility(ctx, 5000); return err },
+		"quote":       func() error { _, err := c.Quote(ctx, quoteCount(t, "quote.feasible.json")); return err },
+		"feasibility": func() error { _, err := c.Feasibility(ctx, quoteCount(t, "quote.feasible.json")); return err },
 		"run":         func() error { _, err := c.Run(ctx, jobItem); return err },
 		"report job":  func() error { _, err := c.ReportJob(ctx, jobItem); return err },
 		"report camp": func() error { _, err := c.ReportCampaign(ctx, campaign); return err },

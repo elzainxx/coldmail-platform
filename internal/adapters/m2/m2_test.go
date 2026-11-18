@@ -268,6 +268,7 @@ func TestForRefusesWhatIsNotATenant(t *testing.T) {
 // run on a client built for another tenant names it.
 func TestEveryCallCarriesItsTenant(t *testing.T) {
 	good := func(name string) []byte { return sendapitest.Read(t, fixtures, name) }
+	pages := campaignPages(t)
 	h := func(w http.ResponseWriter, r *http.Request, _ int) {
 		switch {
 		case r.URL.Path == "/v1/quote":
@@ -277,7 +278,7 @@ func TestEveryCallCarriesItsTenant(t *testing.T) {
 		case r.URL.Path == "/v1/cancel":
 			sendapitest.JSON(w, 200, string(good("cancel.ok.json")))
 		case r.URL.Query().Get("campaign_id") != "":
-			sendapitest.JSON(w, 200, string(good("report.campaign.last_page.json")))
+			pages.follow()(w, r, 0) // a recorded page is not a whole campaign: the stub follows the cursor value
 		default:
 			sendapitest.JSON(w, 200, string(good("report.job.sent.json")))
 		}
@@ -287,7 +288,7 @@ func TestEveryCallCarriesItsTenant(t *testing.T) {
 	ctx := ctxT(t)
 	// the ids and the count the recordings answer for are read from the recordings
 	count := atInt(t, "quote.ok.json", "recipient_count")
-	reportID := atStr(t, "report.campaign.last_page.json", "campaign_id")
+	reportID := atStr(t, pages.source, "campaign_id")
 	cancelID := atStr(t, "cancel.ok.json", "campaign_id")
 	if _, err := c.Quote(ctx, count); err != nil {
 		t.Fatal(err)
@@ -305,8 +306,8 @@ func TestEveryCallCarriesItsTenant(t *testing.T) {
 		t.Fatal(err)
 	}
 	reqs := s.stub.Requests()
-	if len(reqs) != 5 {
-		t.Fatalf("%d requests, want 5", len(reqs))
+	if len(reqs) != 6 { // quote, run, the single report, the two pages of the campaign walk, cancel
+		t.Fatalf("%d requests, want 6", len(reqs))
 	}
 	if problems := sendapitest.CheckTenancy(reqs, userA); len(problems) != 0 {
 		t.Fatalf("%v", problems)
@@ -530,8 +531,9 @@ func TestPollCadenceIsTheDocumentedGuidance(t *testing.T) {
 	if size != 200 || size != maxSize {
 		t.Fatalf("the report page size is %d", size)
 	}
-	s := newStack(t, reply(200, string(sendapitest.Read(t, fixtures, "report.campaign.last_page.json"))), modclient.Options{})
-	if _, err := s.client(t, userA).ReportCampaign(ctxT(t), atStr(t, "report.campaign.last_page.json", "campaign_id")); err != nil {
+	pages := campaignPages(t)
+	s := newStack(t, pages.follow(), modclient.Options{})
+	if _, err := s.client(t, userA).ReportCampaign(ctxT(t), atStr(t, pages.source, "campaign_id")); err != nil {
 		t.Fatal(err)
 	}
 	if got := s.stub.Requests()[0].Query.Get("page_size"); got != "200" {

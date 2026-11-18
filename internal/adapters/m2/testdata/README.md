@@ -5,43 +5,51 @@ names each file once (`Route`, `Case`, `Fixture`, `Status`, the `Shape` the adap
 it through the adapter's real code, refuse a file no contract names and a contract whose file is missing, and refuse mutated copies (a required key removed, a key's type changed, a state
 outside the vocabulary).
 
-Twenty files, two origins. The test `TestReadmeNamesTheRecordedAndHandWrittenFixtures` holds this list to the directory: a file named in the wrong section, in both or in neither is a failure.
+All twenty files are recordings. The test `TestReadmeNamesTheRecordedAndHandWrittenFixtures` holds this list to the directory: a file named in the wrong section, in both or in neither is a failure.
 
-## RECORDED (10 files, from the real module)
+## RECORDED (20 files, from the real module)
 
-Recorded from module 2 running as a real service with a real worker and a controllable SMTP sink, by the contract drift session in record mode: harness run 44211663760, 2026-11-18, and
-normalised by `contractcheck.Normalise` (uuids become `00000000-0000-4000-8000-0000000000NN` by first appearance, instants `2026-01-01T00:00:00Z`, provider ids a run of `A`, request ids a
-run of `a`; `TestRecordedFixturesAreNormalised` pins that). Their shapes were identical to the hand-written bodies they replaced in all ten cases; their CONTENT is not what the
-file names suggest, and the tests read what each file says instead of assuming it:
+Recorded from module 2 running as a real service with a real worker and a controllable SMTP sink, by the contract drift sessions in record mode on the runner, 2026-11-18: the full record run
+44225747596 and the scoped record run 44225754836 (an earlier scoped run, 44211663760, recorded the first ten). They are normalised by `contractcheck.Normalise`: uuids become
+`00000000-0000-4000-8000-0000000000NN` by first appearance, instants `2026-01-01T00:00:00Z`, provider ids a run of `A`, request ids a run of `a` (`TestRecordedFixturesAreNormalised` pins that).
+The tests read what each file says (an id, a count, a state, a cursor) from the file and never from a constant, so a re-recording changes no test. What the files hold, as of this recording:
 
 - `quote.ok.json`: a quote for 10 recipients at 1 credit each.
 - `run.created.json`: the 202 of a new job, state `queued`.
-- `run.replay.json`: the 200 of a repeated run, with the state the job had when the replay was made: `sending`, not `sent`.
-- `run.error.not_found.json`: 404 `not_found`, details `job_item_id`.
-- `report.job.sent.json`: a single-job report of a job that ended `bounced` (reason and error class `bounce_permanent`), not `sent`; the name is the contract case.
-- `report.job.error.not_found.json`: 404 `not_found` of a report asked by job item id: the module names the selector the caller used, `job_item_id` (the research could only infer that).
-- `report.campaign.page.json`: one page, no next cursor, ten items (six sent, two bounced, two failed with `attempts_exhausted`).
-- `report.campaign.last_page.json`: one page, no next cursor, five items (one sent, four cancelled).
-- `report.campaign.empty.json`: NOT an empty campaign: the same ten-item campaign while one item was still queued (reason and error class `transport_4xx`). The real run did not ask for a
-  campaign the module does not know, so the empty answer is not recorded; `TestAnEmptyPageIsNothingKnown` derives it from `report.campaign.page.json` by taking the content out.
-- `cancel.ok.json`: the module's answer to a cancel of a campaign with nothing left to cancel: `{0, 0, 0}`. A position with counts in it is that recording with its counts filled in, in
-  `TestCancelIsAPositionAndASecondCancelIsANoOp`.
-
-A cursor between two pages was not recorded either (every recorded report fits in one page): the tests cut a recorded page in two (`TestRecordedPagesSettleAsTheChargeTableSays`), so the
-cursor path runs over real items with a cursor value that is not a recording.
-
-## HAND-WRITTEN (10 files, the contracts the real run did not reach)
-
-Written by hand from the module's code (the Phase 3 research `Docs/history/p3-research/m2-api-and-worker.md` and the handlers it cites), to be replaced by a recording when a run reaches the
-response (Phase 3 B6). Ids and times are obviously synthetic and there is no secret in any of them. These stay UNPROVEN against the real module until then.
-
-- `run.error.validation_failed.json`: 400 with details `user_id` `required`.
+- `run.replay.json`: the 200 of a repeated run, with the state the job had when the replay was made: `sending`.
+- `run.error.validation_failed.json`: 400, details `user_id` `required`.
 - `run.error.unauthenticated.json`: 401.
-- `run.error.conflict.json`: 409 `conflict`, the back-pressure of a second active campaign.
+- `run.error.not_found.json`: 404 `not_found`, details `job_item_id`.
+- `run.error.conflict.json`: 409 `conflict`, no details.
 - `run.error.paused.json`: 503 `paused`.
-- `run.error.internal_error.json`: 500.
-- `report.job.queued.json`: a single-job report of a job waiting for a retry (reason and error class `transport_4xx`).
-- `report.campaign.error.cursor_malformed.json`: 400 with details `cursor` `malformed`.
-- `report.campaign.error.cursor_forged.json`: 500 for a cursor that decodes but is not a timestamp and an id.
-- `describe.ok.json`: the module's self-description.
-- `cancel.error.validation_failed.json`: 400 with details `campaign_id` `required`.
+- `run.error.internal_error.json`: 500 `internal_error`.
+- `report.job.sent.json`: a single-job report of a job that ended `bounced` (reason and error class `bounce_permanent`); the file name is the contract case, not the state.
+- `report.job.queued.json`: a single-job report of a job that is `queued`, with no reason and no error class yet.
+- `report.job.error.not_found.json`: 404 `not_found` of a report asked by job item id: the module names the selector the caller used, `job_item_id`.
+- `report.campaign.page.json`: one whole page (no next cursor, page size 200), ten items taken while the campaign was running: six sent, two bounced, one failed with `attempts_exhausted` and
+  one still queued after a `transport_4xx`.
+- `report.campaign.last_page.json`: a page that DOES name a next cursor (41 of the 42 items of a campaign, all sent, page size 41): a middle page, not a last one. The page after it was not recorded.
+- `report.campaign.empty.json`: a campaign of ten items that all reached a final state (six sent, two bounced, two failed with `attempts_exhausted`), no next cursor: not an empty campaign.
+- `report.campaign.error.cursor_malformed.json`: 400, details `cursor` `malformed`.
+- `report.campaign.error.cursor_forged.json`: 500 `internal_error` for a cursor that decodes but is not a timestamp and an id (the module answers a 500 where its documentation says 400).
+- `describe.ok.json`: the module's self-description (`send_managed`, `v1`, seven job states, twelve item reasons, seven error codes).
+- `cancel.ok.json`: the module's answer to a cancel: four cancelled, none in flight, one already terminal.
+- `cancel.error.validation_failed.json`: 400, details `campaign_id` `required`.
+
+Three things the recordings do not hold, and what the tests do about each (none of it is presented as a recording):
+
+- A recorded page that names a next cursor is not a whole campaign, and the page after it was not recorded. `TestARecordedMiddlePageIsWalkedThroughItsCursor` serves the recorded page, then a
+  tail DERIVED from it (the same page with the missing items copied from its first item under fresh ids, no next cursor) for the request that carries exactly the recorded cursor; a stub that serves
+  the first page again is refused as the same item on two pages.
+- An empty answer (a campaign the module does not know) was not asked for. `TestAnEmptyPageIsNothingKnown` DERIVES one from a recorded page by taking its content out; the recording named
+  `empty` is asserted for what its file holds, whatever that is.
+- A cancel with something left to cancel is a recording whose counts the test fills in (`TestCancelIsAPositionAndASecondCancelIsANoOp`), for the position that is not empty.
+
+## HAND-WRITTEN (none)
+
+No fixture of module 2 is hand-written any more: the record runs reached all twenty contracts. A contract added to `m2.Contracts()` before a run reaches it is hand-written until then, and this
+section names it.
+
+## One file's provenance
+
+`contract/report.campaign.empty.json` is a response the real module 2 gave to an unknown campaign (an empty campaign: no items, totals all zero), recorded by the second record run (scoped run 44219160097, 2026-11-18), where the matcher still filed it under another contract name. In the later runs the stale fixture of the `campaign empty` contract kept attracting populated pages, so the recording from that run was installed under this name by hand. It is a recording, not hand-written.

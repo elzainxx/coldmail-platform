@@ -12,7 +12,7 @@
         "completed_at": "2026-01-01T00:00:00Z",
         "attempt_count": 0,
         "account_id": "00000000-0000-4000-8000-000000000003",
-        "account_username": "sender-1-e2e-022a02af@example.test",
+        "account_username": "sender-1-e2e-42e1521f@example.test",
         "smtp_response": null,
         "error_class": null,
         "failed_at": null
@@ -24,7 +24,7 @@
         "completed_at": "2026-01-01T00:00:00Z",
         "attempt_count": 0,
         "account_id": "00000000-0000-4000-8000-000000000005",
-        "account_username": "sender-2-e2e-022a02af@example.test",
+        "account_username": "sender-2-e2e-42e1521f@example.test",
         "smtp_response": "550 5.1.1 no such user",
         "error_class": "bounce_permanent",
         "failed_at": "2026-01-01T00:00:00Z"
@@ -36,7 +36,7 @@
         "completed_at": "2026-01-01T00:00:00Z",
         "attempt_count": 0,
         "account_id": "00000000-0000-4000-8000-000000000007",
-        "account_username": "sender-3-e2e-022a02af@example.test",
+        "account_username": "sender-3-e2e-42e1521f@example.test",
         "smtp_response": null,
         "error_class": null,
         "failed_at": null
@@ -48,7 +48,7 @@
         "completed_at": "2026-01-01T00:00:00Z",
         "attempt_count": 2,
         "account_id": "00000000-0000-4000-8000-000000000007",
-        "account_username": "sender-3-e2e-022a02af@example.test",
+        "account_username": "sender-3-e2e-42e1521f@example.test",
         "smtp_response": null,
         "error_class": null,
         "failed_at": null
@@ -60,7 +60,7 @@
         "completed_at": "2026-01-01T00:00:00Z",
         "attempt_count": 0,
         "account_id": "00000000-0000-4000-8000-000000000005",
-        "account_username": "sender-2-e2e-022a02af@example.test",
+        "account_username": "sender-2-e2e-42e1521f@example.test",
         "smtp_response": null,
         "error_class": null,
         "failed_at": null
@@ -72,7 +72,7 @@
         "completed_at": "2026-01-01T00:00:00Z",
         "attempt_count": 0,
         "account_id": "00000000-0000-4000-8000-000000000007",
-        "account_username": "sender-3-e2e-022a02af@example.test",
+        "account_username": "sender-3-e2e-42e1521f@example.test",
         "smtp_response": null,
         "error_class": null,
         "failed_at": null
@@ -84,7 +84,7 @@
         "completed_at": "2026-01-01T00:00:00Z",
         "attempt_count": 0,
         "account_id": "00000000-0000-4000-8000-000000000007",
-        "account_username": "sender-3-e2e-022a02af@example.test",
+        "account_username": "sender-3-e2e-42e1521f@example.test",
         "smtp_response": "550 5.1.1 no such user",
         "error_class": "bounce_permanent",
         "failed_at": "2026-01-01T00:00:00Z"
@@ -96,7 +96,7 @@
         "completed_at": "2026-01-01T00:00:00Z",
         "attempt_count": 0,
         "account_id": "00000000-0000-4000-8000-000000000003",
-        "account_username": "sender-1-e2e-022a02af@example.test",
+        "account_username": "sender-1-e2e-42e1521f@example.test",
         "smtp_response": null,
         "error_class": null,
         "failed_at": null
@@ -108,7 +108,7 @@
         "completed_at": null,
         "attempt_count": 2,
         "account_id": "00000000-0000-4000-8000-000000000005",
-        "account_username": "sender-2-e2e-022a02af@example.test",
+        "account_username": "sender-2-e2e-42e1521f@example.test",
         "smtp_response": "451 4.7.1 try later",
         "error_class": "transport_4xx",
         "failed_at": null
@@ -120,7 +120,7 @@
         "completed_at": "2026-01-01T00:00:00Z",
         "attempt_count": 0,
         "account_id": "00000000-0000-4000-8000-000000000005",
-        "account_username": "sender-2-e2e-022a02af@example.test",
+        "account_username": "sender-2-e2e-42e1521f@example.test",
         "smtp_response": null,
         "error_class": null,
         "failed_at": null
@@ -131,8 +131,8 @@
         "provider_message_id": "AAAAAAAAAAAAAAAAA",
         "completed_at": "2026-01-01T00:00:00Z",
         "attempt_count": 0,
-        "account_id": "00000000-0000-4000-8000-000000000007",
-        "account_username": "sender-3-e2e-022a02af@example.test",
+        "account_id": "00000000-0000-4000-8000-000000000003",
+        "account_username": "sender-1-e2e-42e1521f@example.test",
         "smtp_response": null,
         "error_class": null,
         "failed_at": null
@@ -143,8 +143,8 @@
         "provider_message_id": "AAAAAAAAAAAAAAAAA",
         "completed_at": "2026-01-01T00:00:00Z",
         "attempt_count": 0,
-        "account_id": "00000000-0000-4000-8000-000000000003",
-        "account_username": "sender-1-e2e-022a02af@example.test",
+        "account_id": "00000000-0000-4000-8000-000000000007",
+        "account_username": "sender-3-e2e-42e1521f@example.test",
         "smtp_response": null,
         "error_class": null,
         "failed_at": null
@@ -168,7 +168,7 @@
   "totals_by_account": [
     {
       "account_id": "00000000-0000-4000-8000-000000000003",
-      "account_username": "sender-1-e2e-022a02af@example.test",
+      "account_username": "sender-1-e2e-42e1521f@example.test",
       "sent": 3,
       "bounced": 0,
       "failed": 0,
@@ -176,7 +176,7 @@
     },
     {
       "account_id": "00000000-0000-4000-8000-000000000005",
-      "account_username": "sender-2-e2e-022a02af@example.test",
+      "account_username": "sender-2-e2e-42e1521f@example.test",
       "sent": 2,
       "bounced": 1,
       "failed": 0,
@@ -184,7 +184,7 @@
     },
     {
       "account_id": "00000000-0000-4000-8000-000000000007",
-      "account_username": "sender-3-e2e-022a02af@example.test",
+      "account_username": "sender-3-e2e-42e1521f@example.test",
       "sent": 4,
       "bounced": 1,
       "failed": 0,

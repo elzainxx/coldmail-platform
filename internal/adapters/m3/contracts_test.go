@@ -89,7 +89,12 @@ func cases(t testing.TB) map[string]sendapitest.Case {
 	quoteN, quoteInfN := asInt(t, quoteOK, "recipient_count"), asInt(t, quoteInf, "recipient_count")
 	reportSent, reportNF := doc(t, "report.job.sent.json"), doc(t, "report.job.error.not_found.json")
 	campaignPage, campaignEmpty := doc(t, "report.campaign.page.json"), doc(t, "report.campaign.empty.json")
-	listPage, listLast := doc(t, "accounts.list.page.json"), doc(t, "accounts.list.empty.json")
+	listPage, listLast, listEmpty := doc(t, "accounts.list.page.json"), doc(t, "accounts.list.empty.json"), doc(t, "accounts.list.last_page.json")
+	listErrValidation, listErrCursor := doc(t, "accounts.list.error.validation_failed.json"), doc(t, "accounts.list.error.cursor_malformed.json")
+	createErrValidation, createErrConflict := doc(t, "accounts.create.error.validation_failed.json"), doc(t, "accounts.create.error.conflict.json")
+	runCreated, runReplay, reportQueued := doc(t, "run.created.json"), doc(t, "run.replay.json"), doc(t, "report.job.queued.json")
+	campaignLast, describeDoc, quoteFeasible := doc(t, "report.campaign.last_page.json"), doc(t, "describe.ok.json"), doc(t, "quote.feasible.json")
+	feasibleN := asInt(t, quoteFeasible, "recipient_count")
 	getOK, created, createdFailed := doc(t, "accounts.get.ok.json"), doc(t, "accounts.create.created.json"), doc(t, "accounts.create.created_failed.json")
 	dupBody, testOK, testFailed, bulkOK := doc(t, "accounts.create.error.duplicate.json"), doc(t, "accounts.test.ok.json"), doc(t, "accounts.test.failed.json"), doc(t, "accounts.bulk.ok.json")
 	bulkN := length(t, bulkOK, "results")
@@ -116,7 +121,12 @@ func cases(t testing.TB) map[string]sendapitest.Case {
 		"POST /v1/run | created": {
 			Do: run,
 			Check: func(t testing.TB, v any, err error) {
-				if r := v.(sendapi.RunResult); !r.Created || r.State != "queued" || r.JobID == "" {
+				// a job just created: the module's 202, with the job id and state the recording holds
+				r := v.(sendapi.RunResult)
+				same(t, "job_id", r.JobID, asStr(t, runCreated, "job_id"))
+				same(t, "state", r.State, asStr(t, runCreated, "state"))
+				same(t, "class", r.Class, classOf(r.State))
+				if !r.Created {
 					t.Fatalf("run = %+v", r)
 				}
 			},
@@ -125,7 +135,12 @@ func cases(t testing.TB) map[string]sendapitest.Case {
 		"POST /v1/run | replay": {
 			Do: run,
 			Check: func(t testing.TB, v any, err error) {
-				if r := v.(sendapi.RunResult); r.Created || r.State != "sent" || r.Class != sendapi.ClassTerminal {
+				// the replay of a job that already existed: the module's 200, with the state the job has now
+				r := v.(sendapi.RunResult)
+				same(t, "job_id", r.JobID, asStr(t, runReplay, "job_id"))
+				same(t, "state", r.State, asStr(t, runReplay, "state"))
+				same(t, "class", r.Class, classOf(r.State))
+				if r.Created {
 					t.Fatalf("run = %+v", r)
 				}
 			},
@@ -172,12 +187,15 @@ func cases(t testing.TB) map[string]sendapitest.Case {
 		"GET /v1/report | job queued": {
 			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) { return c.ReportJobByID(ctx, jobID) }),
 			Check: func(t testing.TB, v any, err error) {
+				// a job that has not been claimed: the module sends only the keys that are set, and the Item carries nil for every other one (what a queued job that failed an attempt
+				// carries is held by TestKeysTheRecordingsLackAreReadAndRefusedWhenBroken, which injects those keys into this recording)
 				it := v.(sendapi.Item)
-				if it.State != "queued" || it.Class != sendapi.ClassPending || it.ErrorClass == nil || *it.ErrorClass != "transport_4xx" || it.SMTPResponse == nil || it.ProviderMessageID != nil || it.AccountID != nil || it.CompletedAt != nil {
+				itemMatches(t, it, reportQueued, true)
+				if it.Class != sendapi.ClassPending {
 					t.Fatalf("item = %+v", it)
 				}
 			},
-			Mutations: []sendapitest.Mutation{set("error_class", 7, "error_class"), set("attempt_count", "1", "attempt_count"), set("smtp_response", 5, "smtp_response")},
+			Mutations: []sendapitest.Mutation{set("attempt_count", "1", "attempt_count"), del("attempt_count", "attempt_count"), del("job_id", "job_id"), set("state", "teleported", "state"), set("state", nil, "state")},
 		},
 		"GET /v1/report | job error not_found": {
 			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) { return c.ReportJob(ctx, jobItem) }), Kind: modclient.NotFound, Code: "not_found",
@@ -196,24 +214,8 @@ func cases(t testing.TB) map[string]sendapitest.Case {
 			Check: func(t testing.TB, v any, err error) {
 				p := v.(sendapi.CampaignPage)
 				pageMatches(t, p, campaignPage)
-				// the recording is a settled campaign with both outcomes in it: a sent item without error keys and a bounced one with them, and per-account totals
-				var sent, bounced int
-				for _, it := range p.Items {
-					switch it.State {
-					case "sent":
-						sent++
-						if it.SMTPResponse != nil || it.ErrorClass != nil || it.FailedAt != nil || it.ProviderMessageID == nil || it.AccountID == nil {
-							t.Fatalf("a sent item: %+v", it)
-						}
-					case "bounced":
-						bounced++
-						if it.SMTPResponse == nil || it.ErrorClass == nil || it.FailedAt == nil || it.ProviderMessageID != nil {
-							t.Fatalf("a bounced item: %+v", it)
-						}
-					}
-				}
-				if sent == 0 || bounced == 0 || len(p.ByAccount) == 0 {
-					t.Fatalf("the recording is not a campaign with both outcomes and per-account totals: %d sent, %d bounced, %d accounts", sent, bounced, len(p.ByAccount))
+				if len(p.Items) == 0 || len(p.ByAccount) == 0 {
+					t.Fatalf("the recording holds no item or no per-account total: %d items, %d accounts", len(p.Items), len(p.ByAccount))
 				}
 			},
 			Mutations: []sendapitest.Mutation{
@@ -229,24 +231,18 @@ func cases(t testing.TB) map[string]sendapitest.Case {
 				return c.ReportCampaignPage(ctx, campaign, "")
 			}),
 			Check: func(t testing.TB, v any, err error) {
-				p := v.(sendapi.CampaignPage)
-				if len(p.Items) != 2 || p.NextCursor != "" || p.Items[0].Class != sendapi.ClassPending || p.Items[1].Class != sendapi.ClassPending {
-					t.Fatalf("page = %+v", p)
-				}
+				// whatever page the recording is (see the README: it is a page with a cursor), the adapter returns exactly what it holds, the cursor included
+				pageMatches(t, v.(sendapi.CampaignPage), campaignLast)
 			},
 			Mutations: []sendapitest.Mutation{del("items.page_size", "items.page_size"), del("progress", "progress")},
 		},
 		"GET /v1/report | campaign empty": {
 			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) {
-				return c.ReportCampaign(ctx, campaign)
+				return c.ReportCampaignPage(ctx, campaign, "")
 			}),
 			Check: func(t testing.TB, v any, err error) {
-				r := v.(sendapi.CampaignReport)
-				if !r.NothingKnown() || !r.ItemsMatchTotal() || r.Progress.IsComplete || len(r.ByAccount) != 0 || len(r.Items) != length(t, campaignEmpty, "items.results") {
-					t.Fatalf("report = %+v", r)
-				}
-				same(t, "campaign_id", r.CampaignID, asStr(t, campaignEmpty, "campaign_id"))
-				same(t, "total", r.Totals.Total, asInt(t, campaignEmpty, "totals.total"))
+				// one page, held to the recording (a walk would ask the same stub again for the cursor this page names, and refuse the repeat: the walk is held by the walk tests)
+				pageMatches(t, v.(sendapi.CampaignPage), campaignEmpty)
 			},
 			Mutations: []sendapitest.Mutation{set("totals.total", "0", "totals.total")},
 		},
@@ -284,30 +280,36 @@ func cases(t testing.TB) map[string]sendapitest.Case {
 				return d, nil
 			},
 			Check: func(t testing.TB, v any, err error) {
-				if d := v.(*modclient.Describe); d.Module != "send_byo" || len(d.ErrorCodes) != 9 || d.Pricing.UnitPriceCredits != 0 || !d.Pricing.CostFieldsInert || d.Pricing.Model != "flat_subscription" {
-					t.Fatalf("describe = %+v", d)
-				}
+				d := v.(*modclient.Describe)
+				same(t, "module", d.Module, asStr(t, describeDoc, "module"))
+				same(t, "api_version", d.APIVersion, asStr(t, describeDoc, "api_version"))
+				same(t, "error codes", len(d.ErrorCodes), length(t, describeDoc, "error_codes"))
+				same(t, "unit price", d.Pricing.UnitPriceCredits, asInt(t, describeDoc, "pricing.unit_price_credits"))
+				same(t, "model", d.Pricing.Model, asStr(t, describeDoc, "pricing.model"))
+				same(t, "cost fields inert", d.Pricing.CostFieldsInert, must(t, describeDoc, "pricing.cost_fields_inert").(bool))
+				same(t, "job states", len(d.Vocabularies["job_state"]), length(t, describeDoc, "vocabularies.job_state.values"))
 			},
 			Mutations: []sendapitest.Mutation{del("module", "module"), set("module", "send_managed", "module"), set("api_version", "v2", "api_version"), del("vocabularies", "vocabularies"), del("error_codes", "error_codes")},
 		},
 
 		// ---- the feasibility quote
 		"POST /v1/quote | feasible": {
-			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) { return c.Feasibility(ctx, 5000) }),
+			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) {
+				return c.Feasibility(ctx, feasibleN)
+			}),
 			Check: func(t testing.TB, v any, err error) {
 				f := v.(m3.Feasibility)
-				if !f.Feasible || len(f.Reasons) != 0 || f.Caps != (m3.Caps{QueueDepthCap: 100000, DailySendCap: 1000, AccountCountCap: 20}) || f.Capacity.EligibleAccounts != 2 ||
-					f.Capacity.EstimatedDurationSec == nil || *f.Capacity.EstimatedDurationSec != 8335 || f.Capacity.EstimateBasis != "current_eligible_capacity" ||
-					len(f.Warnings) != 1 || f.Warnings[0].Code != "long_duration" || f.Warnings[0].ThresholdSec != 3600 || f.QueueDepthLimit() != m3.KnownLimit(100000) {
-					t.Fatalf("feasibility = %+v", f)
+				feasibilityMatches(t, f, quoteFeasible)
+				if !f.Feasible || len(f.Reasons) != 0 {
+					t.Fatalf("the recording is not a feasible quote: %+v", f)
 				}
 			},
-			Mutations: []sendapitest.Mutation{
+			Mutations: keepExisting(t, quoteFeasible, 12,
 				del("caps", "caps"), del("caps.queue_depth_cap", "caps.queue_depth_cap"), set("caps.daily_send_cap", "1000", "caps.daily_send_cap"), set("caps.queue_depth_cap", -1, "caps.queue_depth_cap"),
 				del("capacity", "capacity"), set("capacity.estimated_duration_sec", "x", "capacity.estimated_duration_sec"), del("capacity.estimate_basis", "capacity.estimate_basis"),
 				set("capacity.eligible_accounts", -2, "capacity.eligible_accounts"), del("warnings", "warnings"), set("warnings[0].threshold_sec", "x", "warnings[0].threshold_sec"),
-				set("feasible", false, "feasible"), set("recipient_count", 5001, "recipient_count"),
-			},
+				set("warnings[0].code", 5, "warnings[0].code"), set("feasible", false, "feasible"), set("recipient_count", feasibleN+1, "recipient_count"),
+			),
 		},
 		"POST /v1/quote | infeasible": {
 			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) {
@@ -335,63 +337,39 @@ func cases(t testing.TB) map[string]sendapitest.Case {
 		"GET /v1/send-byo/accounts | page": {
 			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) { return c.ListAccounts(ctx, "") }),
 			Check: func(t testing.TB, v any, err error) {
-				// the recording is a FULL page (the module's page size) with a cursor: every account of it is held to the document, and the cursor is the module's own
-				p := v.(m3.AccountPage)
-				same(t, "items", len(p.Items), length(t, listPage, "items"))
-				cursor := asStr(t, listPage, "next_cursor")
-				same(t, "next_cursor", p.NextCursor, cursor)
-				for i, a := range p.Items {
-					accountMatches(t, a, must(t, listPage, fmt.Sprintf("items[%d]", i)))
-				}
+				// every account of the recording is held to the document, and the cursor is the module's own (a full page of the module's page size, when the recording is one)
+				accountPageMatches(t, v.(m3.AccountPage), listPage)
 			},
-			Mutations: []sendapitest.Mutation{
-				del("items", "items"), del("items[0].id", "items[0].id"), set("items[1].user_id", other, "items[1].user_id"), set("items[0].created_at", "yesterday", "items[0].created_at"),
-				set("next_cursor", 5, "next_cursor"), del("items[0].status", "items[0].status"), set("items[0].status.paused", "no", "items[0].status.paused"),
-				del("items[0].verification.state", "items[0].verification.state"), set("items[0].smtp_port", "587", "items[0].smtp_port"), set("items[0].id", "not-a-uuid", "items[0].id"),
-				set("items[0].verification.verified_at", "x", "items[0].verification.verified_at"), set("items[0].from_alignment.checked_at", "x", "items[0].from_alignment.checked_at"),
-			},
+			Mutations: listMutations(t, listPage, other),
 		},
 		"GET /v1/send-byo/accounts | last page": {
 			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) { return c.ListAccounts(ctx, "") }),
 			Check: func(t testing.TB, v any, err error) {
-				p := v.(m3.AccountPage)
-				if len(p.Items) != 1 || p.NextCursor != "" || !p.Items[0].Quarantined || p.Items[0].QuarantineReason != "auth_failure" || p.Items[0].QuarantinedAt == nil ||
-					p.Items[0].FromAlignment.State != m3.AlignmentBlocked || p.Items[0].Verification.Code != m3.VerifyAuthFailed || p.Items[0].Verification.State != m3.VerificationFailed {
-					t.Fatalf("page = %+v", p)
-				}
+				accountPageMatches(t, v.(m3.AccountPage), listEmpty)
 			},
-			Mutations: []sendapitest.Mutation{
-				del("items[0].status.quarantined", "items[0].status.quarantined"), set("items[0].from_alignment.checked_at", "x", "items[0].from_alignment.checked_at"),
-				set("items[0].status.quarantined_at", "x", "items[0].status.quarantined_at"),
-			},
+			Mutations: listMutations(t, listEmpty, other),
 		},
 		"GET /v1/send-byo/accounts | empty": {
 			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) { return c.ListAccounts(ctx, "") }),
 			Check: func(t testing.TB, v any, err error) {
-				// the recording is the LAST page of the listing (no cursor), not an empty one; TestAnEmptyPageThatNamesACursorIsRefused holds the empty page
-				p := v.(m3.AccountPage)
-				same(t, "items", len(p.Items), length(t, listLast, "items"))
-				same(t, "next_cursor", p.NextCursor, "")
-				if optStr(listLast, "next_cursor") != nil {
-					t.Fatal("the recording of the last page names a cursor")
-				}
-				for i, a := range p.Items {
-					accountMatches(t, a, must(t, listLast, fmt.Sprintf("items[%d]", i)))
-				}
+				// whatever page the recording is (see the README), the adapter returns exactly what it holds; TestAnEmptyPageThatNamesACursorIsRefused holds the empty page
+				accountPageMatches(t, v.(m3.AccountPage), listLast)
 			},
-			Mutations: []sendapitest.Mutation{
-				del("items[2].status.disabled", "items[2].status.disabled"), set("items[1].from_alignment.checked_at", "x", "items[1].from_alignment.checked_at"),
-				set("items[0].user_id", other, "items[0].user_id"), set("next_cursor", 5, "next_cursor"),
-			},
+			Mutations: listMutations(t, listLast, other),
 		},
 		"GET /v1/send-byo/accounts | error validation_failed": {
 			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) { return c.ListAccounts(ctx, "") }), Kind: modclient.Refused, Code: "validation_failed", Mutations: []sendapitest.Mutation{brokenEnvelope()},
+			Check: func(t testing.TB, v any, err error) {
+				if d := detailFields(err); !slices.Equal(d, docDetails(t, listErrValidation)) {
+					t.Fatalf("details = %v, the recording says %v", d, docDetails(t, listErrValidation))
+				}
+			},
 		},
 		"GET /v1/send-byo/accounts | error cursor_malformed": {
 			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) { return c.ListAccounts(ctx, "abc") }), Kind: modclient.Refused, Code: "validation_failed", Mutations: []sendapitest.Mutation{brokenEnvelope()},
 			Check: func(t testing.TB, v any, err error) {
-				if d := detailFields(err); !slices.Equal(d, []string{"cursor/malformed"}) {
-					t.Fatalf("details = %v", d)
+				if d := detailFields(err); !slices.Equal(d, docDetails(t, listErrCursor)) {
+					t.Fatalf("details = %v, the recording says %v", d, docDetails(t, listErrCursor))
 				}
 			},
 		},
@@ -451,8 +429,8 @@ func cases(t testing.TB) map[string]sendapitest.Case {
 			}), Kind: modclient.Refused, Code: "validation_failed",
 			Mutations: []sendapitest.Mutation{brokenEnvelope()},
 			Check: func(t testing.TB, v any, err error) {
-				if d := detailFields(err); !slices.Equal(d, []string{"smtp_host/malformed", "smtp_secret/malformed"}) {
-					t.Fatalf("details = %v", d)
+				if d := detailFields(err); !slices.Equal(d, docDetails(t, createErrValidation)) {
+					t.Fatalf("details = %v, the recording says %v", d, docDetails(t, createErrValidation))
 				}
 			},
 		},
@@ -462,17 +440,9 @@ func cases(t testing.TB) map[string]sendapitest.Case {
 			}), Kind: modclient.Refused, Code: "conflict",
 			Mutations: []sendapitest.Mutation{brokenEnvelope()},
 			Check: func(t testing.TB, v any, err error) {
-				// the module names smtp_username in a duplicate's details and in nothing else: the mapping follows what the RECORDING says (it holds the opaque conflict: see the README), and
+				// the module names smtp_username in a duplicate's details and in nothing else: the mapping follows what the RECORDING says, and
 				// TestACreateConflictIsADuplicateOnlyWhenTheModuleNamesTheUsername holds the other side
-				named := false
-				if ds, ok := lookup(dupBody, "error.details"); ok {
-					for i := range ds.([]any) {
-						named = named || asStr(t, dupBody, fmt.Sprintf("error.details[%d].field", i)) == "smtp_username"
-					}
-				}
-				if errors.Is(err, m3.ErrAccountDuplicate) != named || errors.Is(err, sendapi.ErrConflictUnexplained) == named || errors.Is(err, m3.ErrActionUnavailable) {
-					t.Fatalf("a create conflict (the module names the username: %v): %v", named, err)
-				}
+				createConflictMapsAs(t, err, dupBody)
 			},
 		},
 		"POST /v1/send-byo/accounts | error conflict": {
@@ -481,9 +451,7 @@ func cases(t testing.TB) map[string]sendapitest.Case {
 			}), Kind: modclient.Refused, Code: "conflict",
 			Mutations: []sendapitest.Mutation{brokenEnvelope()},
 			Check: func(t testing.TB, v any, err error) {
-				if errors.Is(err, m3.ErrAccountDuplicate) || !errors.Is(err, sendapi.ErrConflictUnexplained) {
-					t.Fatalf("an unexplained conflict: %v", err)
-				}
+				createConflictMapsAs(t, err, createErrConflict)
 			},
 		},
 		"POST /v1/send-byo/accounts | error unprocessable": {

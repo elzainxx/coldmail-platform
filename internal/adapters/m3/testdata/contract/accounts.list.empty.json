@@ -3,10 +3,10 @@
     {
       "id": "00000000-0000-4000-8000-000000000001",
       "user_id": "00000000-0000-4000-8000-000000000002",
-      "smtp_host": "172.18.0.9",
+      "smtp_host": "192.0.2.1",
       "smtp_port": 1025,
-      "smtp_username": "sender-201-acct-aa2ffa61@example.test",
-      "from_address": "sender-201-acct-aa2ffa61@example.test",
+      "smtp_username": "sender-1-edge-08996c7e@example.test",
+      "from_address": "sender-1-edge-08996c7e@example.test",
       "from_name": "Harness",
       "has_credential": true,
       "status": {
@@ -32,10 +32,10 @@
     {
       "id": "00000000-0000-4000-8000-000000000003",
       "user_id": "00000000-0000-4000-8000-000000000002",
-      "smtp_host": "172.18.0.9",
+      "smtp_host": "192.0.2.1",
       "smtp_port": 1025,
-      "smtp_username": "sender-202-acct-aa2ffa61@example.test",
-      "from_address": "sender-202-acct-aa2ffa61@example.test",
+      "smtp_username": "sender-dup-edge-08996c7e@example.test",
+      "from_address": "sender-dup-edge-08996c7e@example.test",
       "from_name": "Harness",
       "has_credential": true,
       "status": {
@@ -61,10 +61,97 @@
     {
       "id": "00000000-0000-4000-8000-000000000004",
       "user_id": "00000000-0000-4000-8000-000000000002",
-      "smtp_host": "172.18.0.9",
+      "smtp_host": "192.0.2.1",
       "smtp_port": 1025,
-      "smtp_username": "sender-203-acct-aa2ffa61@example.test",
-      "from_address": "sender-203-acct-aa2ffa61@example.test",
+      "smtp_username": "sender-rl-edge-08996c7e@example.test",
+      "from_address": "sender-rl-edge-08996c7e@example.test",
+      "from_name": "Harness",
+      "has_credential": true,
+      "status": {
+        "paused": false,
+        "pause_reason": null,
+        "quarantined": false,
+        "disabled": false
+      },
+      "verification": {
+        "state": "verified",
+        "verified_at": "2026-01-01T00:00:00Z",
+        "verify_at": "2026-01-01T00:00:00Z",
+        "smtp_response": "235 2.7.0 Authentication successful"
+      },
+      "from_alignment": {
+        "state": "aligned",
+        "checked_at": "2026-01-01T00:00:00Z"
+      },
+      "daily_limit": 500,
+      "created_at": "2026-01-01T00:00:00Z",
+      "updated_at": "2026-01-01T00:00:00Z"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000005",
+      "user_id": "00000000-0000-4000-8000-000000000002",
+      "smtp_host": "192.0.2.1",
+      "smtp_port": 1025,
+      "smtp_username": "sender-b1-edge-08996c7e@example.test",
+      "from_address": "sender-b1-edge-08996c7e@example.test",
+      "from_name": "Harness",
+      "has_credential": true,
+      "status": {
+        "paused": false,
+        "pause_reason": null,
+        "quarantined": false,
+        "disabled": false
+      },
+      "verification": {
+        "state": "verified",
+        "verified_at": "2026-01-01T00:00:00Z",
+        "verify_at": "2026-01-01T00:00:00Z",
+        "smtp_response": "235 2.7.0 Authentication successful"
+      },
+      "from_alignment": {
+        "state": "aligned",
+        "checked_at": "2026-01-01T00:00:00Z"
+      },
+      "daily_limit": 500,
+      "created_at": "2026-01-01T00:00:00Z",
+      "updated_at": "2026-01-01T00:00:00Z"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000006",
+      "user_id": "00000000-0000-4000-8000-000000000002",
+      "smtp_host": "192.0.2.1",
+      "smtp_port": 1025,
+      "smtp_username": "sender-b2-edge-08996c7e@example.test",
+      "from_address": "sender-b2-edge-08996c7e@example.test",
+      "from_name": "Harness",
+      "has_credential": true,
+      "status": {
+        "paused": false,
+        "pause_reason": null,
+        "quarantined": false,
+        "disabled": false
+      },
+      "verification": {
+        "state": "verified",
+        "verified_at": "2026-01-01T00:00:00Z",
+        "verify_at": "2026-01-01T00:00:00Z",
+        "smtp_response": "235 2.7.0 Authentication successful"
+      },
+      "from_alignment": {
+        "state": "aligned",
+        "checked_at": "2026-01-01T00:00:00Z"
+      },
+      "daily_limit": 500,
+      "created_at": "2026-01-01T00:00:00Z",
+      "updated_at": "2026-01-01T00:00:00Z"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000007",
+      "user_id": "00000000-0000-4000-8000-000000000002",
+      "smtp_host": "192.0.2.1",
+      "smtp_port": 1025,
+      "smtp_username": "sender-capped-edge-08996c7e@example.test",
+      "from_address": "sender-capped-edge-08996c7e@example.test",
       "from_name": "Harness",
       "has_credential": true,
       "status": {

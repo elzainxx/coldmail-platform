@@ -1,150 +1,154 @@
 {
- "module": "send_managed",
- "api_version": "v1",
- "capabilities": {
-  "single_send": true,
-  "sequences": false,
-  "reply_to_per_campaign": true,
-  "open_tracking": false,
-  "click_tracking": false,
-  "content_variation": true
- },
- "pricing": {
-  "currency": "credits",
-  "model": "flat_per_recipient",
-  "models": [
-   "flat_per_recipient",
-   "flat_subscription",
-   "free"
+  "api_version": "v1",
+  "capabilities": {
+    "click_tracking": false,
+    "content_variation": true,
+    "open_tracking": false,
+    "reply_to_per_campaign": true,
+    "sequences": false,
+    "single_send": true
+  },
+  "error_codes": [
+    {
+      "code": "validation_failed",
+      "http_status": 400
+    },
+    {
+      "code": "unauthenticated",
+      "http_status": 401
+    },
+    {
+      "code": "not_found",
+      "http_status": 404
+    },
+    {
+      "code": "method_not_allowed",
+      "http_status": 405
+    },
+    {
+      "code": "conflict",
+      "http_status": 409
+    },
+    {
+      "code": "internal_error",
+      "http_status": 500
+    },
+    {
+      "code": "paused",
+      "http_status": 503
+    }
   ],
-  "unit_price_credits": 1,
-  "tiers": [
-   {
-    "id": "shared",
-    "unit_price_credits": 1,
-    "description": "Global shared SMTP pool."
-   },
-   {
-    "id": "dedicated",
-    "unit_price_credits": 1,
-    "description": "User-dedicated pool with shared fallback."
-   }
-  ],
-  "cost_fields_inert": false
- },
- "vocabularies": {
-  "job_state": {
-   "source": "db_enum",
-   "values": [
-    "queued",
-    "assigned",
-    "sending",
-    "sent",
-    "failed",
-    "bounced",
-    "cancelled"
-   ],
-   "fields": [
-    "report.state",
-    "report.items[].state"
-   ]
+  "module": "send_managed",
+  "pricing": {
+    "cost_fields_inert": false,
+    "currency": "credits",
+    "model": "flat_per_recipient",
+    "models": [
+      "flat_per_recipient",
+      "flat_subscription",
+      "free"
+    ],
+    "tiers": [
+      {
+        "description": "Global shared SMTP pool.",
+        "id": "aaaaaa",
+        "unit_price_credits": 1
+      },
+      {
+        "description": "User-dedicated pool with shared fallback.",
+        "id": "aaaaaaaaa",
+        "unit_price_credits": 1
+      }
+    ],
+    "unit_price_credits": 1
   },
-  "error_class": {
-   "source": "db_enum",
-   "values": [
-    "bounce_permanent",
-    "transport_4xx",
-    "auth_failure",
-    "throttle",
-    "timeout",
-    "unknown"
-   ],
-   "fields": [
-    "report.error_class"
-   ]
-  },
-  "detail_issue": {
-   "source": "module_constant",
-   "values": [
-    "required",
-    "malformed",
-    "out_of_range",
-    "not_found"
-   ],
-   "fields": [
-    "error.details[].issue"
-   ]
-  },
-  "pricing_model": {
-   "source": "module_constant",
-   "values": [
-    "flat_per_recipient",
-    "flat_subscription",
-    "free"
-   ],
-   "fields": [
-    "pricing.model"
-   ]
-  },
-  "pool_kind": {
-   "source": "db_enum",
-   "values": [
-    "shared",
-    "dedicated"
-   ],
-   "fields": [
-    "pool.kind"
-   ]
-  },
-  "item_reason": {
-   "source": "module_constant",
-   "values": [
-    "pool_exhausted",
-    "attempts_exhausted",
-    "bounce_permanent",
-    "cancelled",
-    "transport_4xx",
-    "auth_failure",
-    "throttle",
-    "timeout",
-    "unknown",
-    "no_eligible_account",
-    "waiting_for_capacity",
-    "dispatch_paused"
-   ],
-   "fields": [
-    "report.reason"
-   ]
+  "vocabularies": {
+    "detail_issue": {
+      "fields": [
+        "error.details[].issue"
+      ],
+      "source": "module_constant",
+      "values": [
+        "required",
+        "malformed",
+        "out_of_range",
+        "not_found"
+      ]
+    },
+    "error_class": {
+      "fields": [
+        "report.error_class",
+        "report.items.results[].error_class"
+      ],
+      "source": "db_enum",
+      "values": [
+        "bounce_permanent",
+        "transport_4xx",
+        "auth_failure",
+        "throttle",
+        "timeout",
+        "unknown"
+      ]
+    },
+    "item_reason": {
+      "fields": [
+        "report.reason",
+        "report.items.results[].reason"
+      ],
+      "source": "module_constant",
+      "values": [
+        "pool_exhausted",
+        "attempts_exhausted",
+        "bounce_permanent",
+        "cancelled",
+        "transport_4xx",
+        "auth_failure",
+        "throttle",
+        "timeout",
+        "unknown",
+        "no_eligible_account",
+        "waiting_for_capacity",
+        "dispatch_paused"
+      ]
+    },
+    "job_state": {
+      "fields": [
+        "run.state",
+        "report.state",
+        "report.items.results[].state"
+      ],
+      "source": "db_enum",
+      "values": [
+        "queued",
+        "assigned",
+        "sending",
+        "sent",
+        "failed",
+        "bounced",
+        "cancelled"
+      ]
+    },
+    "pool_kind": {
+      "fields": [
+        "quote.tier",
+        "describe.pricing.tiers[].id"
+      ],
+      "source": "db_enum",
+      "values": [
+        "shared",
+        "dedicated"
+      ]
+    },
+    "pricing_model": {
+      "fields": [
+        "describe.pricing.model"
+      ],
+      "source": "module_constant",
+      "values": [
+        "flat_per_recipient",
+        "flat_subscription",
+        "free"
+      ]
+    }
   }
- },
- "error_codes": [
-  {
-   "code": "validation_failed",
-   "http_status": 400
-  },
-  {
-   "code": "unauthenticated",
-   "http_status": 401
-  },
-  {
-   "code": "not_found",
-   "http_status": 404
-  },
-  {
-   "code": "method_not_allowed",
-   "http_status": 405
-  },
-  {
-   "code": "conflict",
-   "http_status": 409
-  },
-  {
-   "code": "internal_error",
-   "http_status": 500
-  },
-  {
-   "code": "paused",
-   "http_status": 503
-  }
- ]
 }

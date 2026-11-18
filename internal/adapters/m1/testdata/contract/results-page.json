@@ -1,52 +1,7135 @@
 {
   "job_id": "00000000-0000-4000-8000-000000000001",
+  "next_cursor": "",
   "results": [
     {
-      "api_version": "v1", "status": "valid", "reason": "accepted", "confidence": 90, "recommendation": "send",
-      "email": "", "domain": "acme.example", "flags": {"from_cache": false}, "signals": {"smtp_code": "250"},
-      "meta": {"request_id": "", "checked_at": "", "latency_ms": 0, "policy": "cold-email", "policy_version": 1,
-               "verifier_ip": null, "node_id": null, "engine_version": null, "config_fingerprint": null, "from_cache": false},
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
       "raw": null,
-      "item_id": "row-0",
+      "item_id": "aaaaaaaaaa",
       "ordinal": 0
     },
     {
-      "api_version": "v1", "status": "unknown", "reason": "dns_error", "confidence": 10, "recommendation": "review",
-      "email": "", "domain": "gone.example", "flags": {"from_cache": false}, "signals": {"failure_origin": "remote", "retry_after_hint_s": 300},
-      "meta": {"request_id": "", "checked_at": "", "latency_ms": 0, "policy": "cold-email", "policy_version": 1,
-               "verifier_ip": null, "node_id": null, "engine_version": null, "config_fingerprint": null, "from_cache": false},
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
       "raw": null,
-      "item_id": "row-1",
+      "item_id": "aaaaaaaaaaaaaaaaa",
       "ordinal": 1
     },
     {
-      "api_version": "v1", "status": "valid", "reason": "accepted", "confidence": 90, "recommendation": "send",
-      "email": "", "domain": "acme.example", "flags": {"from_cache": false}, "signals": {"smtp_code": "250"},
-      "meta": {"request_id": "", "checked_at": "", "latency_ms": 0, "policy": "cold-email", "policy_version": 1,
-               "verifier_ip": null, "node_id": null, "engine_version": null, "config_fingerprint": null, "from_cache": false},
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
       "raw": null,
-      "item_id": "row-2",
-      "ordinal": 2,
-      "duplicate_of": 0
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 2
     },
     {
-      "api_version": "v1", "status": "risky", "reason": "plausible", "confidence": 40, "recommendation": "review",
-      "email": "", "domain": "slow.example", "flags": {"from_cache": false}, "signals": {"smtp_skipped_reason": "smtp_unwired", "failure_origin": "own"},
-      "meta": {"request_id": "", "checked_at": "", "latency_ms": 0, "policy": "cold-email", "policy_version": 1,
-               "verifier_ip": null, "node_id": null, "engine_version": null, "config_fingerprint": null, "from_cache": false},
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
       "raw": null,
-      "item_id": "row-3",
+      "item_id": "aaaaaaaaaaaaaa",
       "ordinal": 3
     },
     {
-      "api_version": "v1", "status": "invalid", "reason": "invalid_syntax", "confidence": 99, "recommendation": "skip",
-      "email": "", "domain": "", "flags": {"from_cache": false}, "signals": {"syntax_valid": false},
-      "meta": {"request_id": "", "checked_at": "", "latency_ms": 0, "policy": "cold-email", "policy_version": 1,
-               "verifier_ip": null, "node_id": null, "engine_version": null, "config_fingerprint": null, "from_cache": false},
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
       "raw": null,
-      "item_id": "row-4",
+      "item_id": "aaaaaaaaaaaaaaa",
       "ordinal": 4
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 5
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 6
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 7
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 8
+    },
+    {
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaa",
+      "ordinal": 9
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 10
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 11
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 12
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 13
+    },
+    {
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaa",
+      "ordinal": 14
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 15
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 16
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 17
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 18
+    },
+    {
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaa",
+      "ordinal": 19
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 20
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 21
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 22
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 23
+    },
+    {
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaa",
+      "ordinal": 24
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 25
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 26
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 27
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 28
+    },
+    {
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaa",
+      "ordinal": 29
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 30
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 31
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 32
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 33
+    },
+    {
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaa",
+      "ordinal": 34
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 35
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 36
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 37
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 38
+    },
+    {
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaa",
+      "ordinal": 39
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 40
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 41
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 42
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 43
+    },
+    {
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaa",
+      "ordinal": 44
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 45
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 46
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 47
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 48
+    },
+    {
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaa",
+      "ordinal": 49
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 50
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 51
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 52
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 53
+    },
+    {
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaa",
+      "ordinal": 54
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 55
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 56
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 57
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 58
+    },
+    {
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaa",
+      "ordinal": 59
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 60
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 61
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 62
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 63
+    },
+    {
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaa",
+      "ordinal": 64
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 65
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 66
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 67
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 68
+    },
+    {
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaa",
+      "ordinal": 69
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 70
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 71
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 72
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 73
+    },
+    {
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaa",
+      "ordinal": 74
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 75
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 76
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 77
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 78
+    },
+    {
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaa",
+      "ordinal": 79
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 80
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 81
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 82
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 83
+    },
+    {
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaa",
+      "ordinal": 84
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 85
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 86
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 87
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 88
+    },
+    {
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaa",
+      "ordinal": 89
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 90
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 91
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 92
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 93
+    },
+    {
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaa",
+      "ordinal": 94
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 95
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 96
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 97
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 98
+    },
+    {
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaa",
+      "ordinal": 99
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 100
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 101
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 102
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 103
+    },
+    {
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaa",
+      "ordinal": 104
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 105
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 106
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 107
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 108
+    },
+    {
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaa",
+      "ordinal": 109
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 110
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 111
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 112
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 113
+    },
+    {
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaa",
+      "ordinal": 114
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 115
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 116
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 117
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 118
+    },
+    {
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaa",
+      "ordinal": 119
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 120
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 121
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 122
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 123
+    },
+    {
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaa",
+      "ordinal": 124
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 125
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 126
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 127
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 128
+    },
+    {
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaa",
+      "ordinal": 129
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 130
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 131
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 132
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 133
+    },
+    {
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaa",
+      "ordinal": 134
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 135
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 136
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 137
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 138
+    },
+    {
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaa",
+      "ordinal": 139
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 140
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 141
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 142
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 143
+    },
+    {
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaa",
+      "ordinal": 144
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 145
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 146
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 147
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 148
+    },
+    {
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaa",
+      "ordinal": 149
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 150
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 151
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 152
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 153
+    },
+    {
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaa",
+      "ordinal": 154
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 155
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 156
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 157
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 158
+    },
+    {
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaa",
+      "ordinal": 159
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 160
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 161
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 162
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 163
+    },
+    {
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaa",
+      "ordinal": 164
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 165
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 166
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 167
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 168
+    },
+    {
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaa",
+      "ordinal": 169
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 170
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 171
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 172
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 173
+    },
+    {
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaa",
+      "ordinal": 174
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 175
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 176
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 177
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 178
+    },
+    {
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaa",
+      "ordinal": 179
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 180
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 181
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 182
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 183
+    },
+    {
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaa",
+      "ordinal": 184
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 185
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 186
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 187
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 188
+    },
+    {
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaa",
+      "ordinal": 189
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 190
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 191
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 192
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 193
+    },
+    {
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaa",
+      "ordinal": 194
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 195
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 196
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 197
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 198
+    },
+    {
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaa",
+      "ordinal": 199
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 200
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 201
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 202
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 203
+    },
+    {
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaa",
+      "ordinal": 204
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 205
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 206
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 207
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 208
+    },
+    {
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaa",
+      "ordinal": 209
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 210
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 211
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "null_mx",
+      "confidence": 97,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nullmx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "null_mx": true,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaa",
+      "ordinal": 212
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "spam_trap",
+      "confidence": 95,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "trap.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_spam_trap": true
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 213
+    },
+    {
+      "api_version": "v1",
+      "status": "risky",
+      "reason": "disposable",
+      "confidence": 40,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "disposable.fixture.test",
+      "flags": {
+        "from_cache": false,
+        "is_disposable": true,
+        "is_spam_trap": false
+      },
+      "signals": {
+        "mx_found": true,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaa",
+      "ordinal": 214
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaa",
+      "ordinal": 215
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nodata.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaaaaa",
+      "ordinal": 216
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 217,
+      "duplicate_of": 10
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 218,
+      "duplicate_of": 100
+    },
+    {
+      "api_version": "v1",
+      "status": "invalid",
+      "reason": "no_mx",
+      "confidence": 96,
+      "recommendation": "skip",
+      "email": "",
+      "domain": "nomx.fixture.test",
+      "flags": {
+        "from_cache": false
+      },
+      "signals": {
+        "mx_found": false,
+        "null_mx": false,
+        "syntax_valid": true
+      },
+      "meta": {
+        "request_id": "",
+        "checked_at": "",
+        "latency_ms": 0,
+        "policy": "cold-email",
+        "policy_version": 1,
+        "verifier_ip": null,
+        "node_id": null,
+        "engine_version": null,
+        "config_fingerprint": null,
+        "from_cache": false
+      },
+      "raw": null,
+      "item_id": "aaaaaaaaaaaaaa",
+      "ordinal": 219,
+      "duplicate_of": 150
     }
-  ],
-  "next_cursor": "4"
+  ]
 }

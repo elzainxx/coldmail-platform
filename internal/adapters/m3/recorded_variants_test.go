@@ -16,38 +16,70 @@ import (
 // were not reached). Each starts from the recorded file, changes only what the property needs, and has the recording itself as its control.
 
 // A create conflict is a duplicate only when the module says so: it names smtp_username in the details (the module's create handler); the account cap and a suspension answer the same
-// code with no details, which the adapter can only call a conflict whose cause is not stated. The RECORDED conflict (the opaque one: see the README) is the control of the injection: the
-// same body with the detail added is a duplicate, and the one without it is not.
+// code with no details, which the adapter can only call a conflict whose cause is not stated. The two recordings are the two sides (the recorded duplicate names the username, the recorded
+// opaque conflict does not), and each is the control of an injection into the other: the duplicate with its details taken out is not a duplicate, the opaque conflict with the detail put
+// in is one, and a detail that names another field makes neither.
 func TestACreateConflictIsADuplicateOnlyWhenTheModuleNamesTheUsername(t *testing.T) {
-	base := sendapitest.Read(t, fixtures, "accounts.create.error.duplicate.json")
-	if _, ok := lookup(doc(t, "accounts.create.error.duplicate.json"), "error.details"); ok {
-		t.Fatal("the recording names details: this test's control (the recording is the opaque conflict) no longer holds, and the README must say what the recording is")
+	dupBody, opaqueBody := doc(t, "accounts.create.error.duplicate.json"), doc(t, "accounts.create.error.conflict.json")
+	if !namesUsername(t, dupBody) || namesUsername(t, opaqueBody) {
+		t.Fatalf("the recordings are not the two sides of this test: the duplicate names the username: %v, the opaque conflict does: %v (the README must say what each recording is)",
+			namesUsername(t, dupBody), namesUsername(t, opaqueBody))
 	}
 	create := func(body []byte) error {
 		stub := sendapitest.NewStub(t, sendapitest.Serve(409, body))
 		_, err := clientAt(t, stub.URL(), sendapitest.Token(t)).CreateAccount(ctxT(t), newAcct(t, 1))
 		return err
 	}
-	opaque := create(base)
-	wantKind(t, opaque, modclient.Refused)
-	if errors.Is(opaque, m3.ErrAccountDuplicate) || !errors.Is(opaque, sendapi.ErrConflictUnexplained) {
-		t.Fatalf("the recorded conflict: %v", opaque)
+	withDetails := func(name string, details []any) []byte {
+		return edit(t, readFixture(t, name), func(m map[string]any) {
+			if details == nil {
+				delete(sub(t, m, "error"), "details")
+				return
+			}
+			sub(t, m, "error")["details"] = details
+		})
 	}
-	named := edit(t, base, func(m map[string]any) {
-		sub(t, m, "error")["details"] = []any{map[string]any{"field": "smtp_username", "issue": "conflict"}}
-	})
-	dup := create(named)
-	wantKind(t, dup, modclient.Refused)
-	if !errors.Is(dup, m3.ErrAccountDuplicate) || errors.Is(dup, sendapi.ErrConflictUnexplained) || errors.Is(dup, m3.ErrActionUnavailable) {
-		t.Fatalf("a conflict that names the username: %v", dup)
+	username := []any{map[string]any{"field": "smtp_username", "issue": "conflict"}}
+	otherField := []any{map[string]any{"field": "daily_limit", "issue": "conflict"}}
+	for name, tc := range map[string]struct {
+		body []byte
+		dup  bool
+	}{
+		"the recorded duplicate":                       {readFixture(t, "accounts.create.error.duplicate.json"), true},
+		"the recorded opaque conflict":                 {readFixture(t, "accounts.create.error.conflict.json"), false},
+		"the duplicate with its details taken out":     {withDetails("accounts.create.error.duplicate.json", nil), false},
+		"the opaque conflict with the username put in": {withDetails("accounts.create.error.conflict.json", username), true},
+		"the duplicate naming another field":           {withDetails("accounts.create.error.duplicate.json", otherField), false},
+	} {
+		err := create(tc.body)
+		wantKind(t, err, modclient.Refused)
+		if errors.Is(err, m3.ErrAccountDuplicate) != tc.dup || errors.Is(err, sendapi.ErrConflictUnexplained) == tc.dup || errors.Is(err, m3.ErrActionUnavailable) {
+			t.Fatalf("%s: duplicate=%v, got %v", name, tc.dup, err)
+		}
 	}
-	// a detail that names another field is not a duplicate
-	other := edit(t, base, func(m map[string]any) {
-		sub(t, m, "error")["details"] = []any{map[string]any{"field": "daily_limit", "issue": "conflict"}}
-	})
-	if err := create(other); errors.Is(err, m3.ErrAccountDuplicate) || !errors.Is(err, sendapi.ErrConflictUnexplained) {
-		t.Fatalf("a conflict that names another field: %v", err)
+}
+
+// What the module answers for a campaign it knows nothing about (a stranger's, a typo) is an empty 200, and the adapter can only say that nothing is known under the id. The recordings hold
+// no such answer (they are of campaigns that exist), so it is the recorded whole-campaign page with its items and its counts taken out; the recording itself is the control: it is a campaign
+// with items, it is known, and what the walk read matches its own total.
+func TestAnEmptyCampaignIsNothingKnownAndARecordedOneIsNot(t *testing.T) {
+	read := func(body []byte) sendapi.CampaignReport {
+		stub := sendapitest.NewStub(t, sendapitest.Serve(200, body))
+		r, err := clientAt(t, stub.URL(), sendapitest.Token(t)).ReportCampaign(ctxT(t), campaign)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
 	}
+	known := read(readFixture(t, terminalCampaign(t)))
+	if known.NothingKnown() || !known.ItemsMatchTotal() || len(known.Items) == 0 {
+		t.Fatalf("the recorded campaign: %+v", known)
+	}
+	empty := read(emptyCampaignBody(t))
+	if !empty.NothingKnown() || !empty.ItemsMatchTotal() || empty.Progress.IsComplete || len(empty.Items) != 0 || len(empty.ByAccount) != 0 || empty.Pages != 1 {
+		t.Fatalf("an empty campaign: %+v", empty)
+	}
+	same(t, "campaign_id", empty.CampaignID, campaign)
 }
 
 // A page with no items names no next cursor: a cursor on an empty page would not advance (the listing would never end), so it is refused, naming the key, for the list and for an

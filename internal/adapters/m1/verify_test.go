@@ -5,7 +5,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -16,27 +15,40 @@ import (
 	"github.com/coldmail-platform/platform/internal/norm"
 )
 
-// TestVerify_SendsTheAddressAndMapsTheRecordedVerdict: POST /v1/verify with the bearer key and a body of exactly {"email": <the address as given>}; the recorded verdict decodes to
-// the fields the platform shows and charges on, and its Outcome is module 1's own words. Control: a different recorded verdict (an unknown with its origin) decodes to a different
-// Verdict and a different Outcome.
+// TestVerify_SendsTheAddressAndMapsTheRecordedVerdict: POST /v1/verify with the bearer key and a body of exactly {"email": <the address as given>}; the verdict RECORDED from the
+// real node decodes to the fields the platform shows and charges on (what an independent parse of the file says: status, reason, confidence, recommendation, domain, the cache flag,
+// and the skip token and failure origin when the file has them), and its Outcome is module 1's own words. Control: a different verdict (an unknown with its origin, written inline)
+// decodes to a different Verdict and a different Outcome.
 func TestVerify_SendsTheAddressAndMapsTheRecordedVerdict(t *testing.T) {
 	body := fixture(t, "verify-ok.json")
+	doc := recordedDoc(t, "verify-ok.json")
+	sig := obj(t, doc["signals"])
+	origin, _ := sig["failure_origin"].(string)
+	skip, _ := sig["smtp_skipped_reason"].(string)
+	want := Verdict{
+		Status: doc["status"].(string), Reason: doc["reason"].(string), Confidence: num(t, doc["confidence"]), Recommendation: doc["recommendation"].(string),
+		Domain: doc["domain"].(string), FromCache: obj(t, doc["flags"])["from_cache"].(bool), SkipReason: skip, FailureOrigin: origin,
+	}
+	if want.Status == "" || want.Reason == "" || want.Domain == "" || want.Recommendation == "" {
+		t.Fatalf("setup: the recording lacks a verdict field: %+v", want)
+	}
+	address := " Ada@" + want.Domain + " " // case and surrounding space are the caller's: the adapter sends it as given
 	f := newFakeM1(t, func(call) (int, string) { return 200, body })
 	a := f.adapter(t)
-	v, err := a.Verify(testCtx(t), " Ada@Acme.example ")
+	v, err := a.Verify(testCtx(t), address)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := Verdict{Status: "valid", Reason: "accepted", Confidence: 90, Recommendation: "send", Domain: "acme.example"}
 	if v != want {
-		t.Fatalf("Verify returned %+v, want %+v", v, want)
+		t.Fatalf("Verify returned %+v, want %+v (what the recorded file says)", v, want)
 	}
-	if o := v.Outcome(); o != (charge.Outcome{Module: "m1", State: "valid", Reason: "accepted"}) {
-		t.Fatalf("outcome %+v", o)
+	wantOutcome := charge.Outcome{Module: "m1", State: want.Status, Reason: want.Reason, FromCache: want.FromCache, SkipReason: skip, FailureOrigin: origin}
+	if o := v.Outcome(); o != wantOutcome {
+		t.Fatalf("outcome %+v, want %+v", o, wantOutcome)
 	}
 	r := f.seen()[0]
 	var sent map[string]string
-	if r.Method != http.MethodPost || r.Path != "/v1/verify" || r.Auth != "Bearer "+f.key || json.Unmarshal(r.Body, &sent) != nil || len(sent) != 1 || sent["email"] != " Ada@Acme.example " {
+	if r.Method != http.MethodPost || r.Path != "/v1/verify" || r.Auth != "Bearer "+f.key || json.Unmarshal(r.Body, &sent) != nil || len(sent) != 1 || sent["email"] != address {
 		t.Fatalf("the request was %+v (body %s), want POST /v1/verify with exactly {\"email\": the address as given}", r, r.Body)
 	}
 
@@ -117,34 +129,30 @@ func TestVerify_IsNeverRetried(t *testing.T) {
 }
 
 // TestVerify_RefusesAVerdictOffContract: a missing key, a wrong type or a value outside the closed vocabulary is a Contract error naming the key and no verdict (never a verdict
-// with a zero field that reads as an answer). Each case is paired with the recorded verdict, which is accepted.
+// with a zero field that reads as an answer). The mutations are made on the verdict RECORDED from the real node by editing its parsed tree, so each is checked to apply (a
+// mutation that touches nothing fails the test as proving nothing); the keys of the open signals bag that the recording does not have are added. Each case is paired with the
+// recorded verdict itself, which is accepted.
 func TestVerify_RefusesAVerdictOffContract(t *testing.T) {
 	good := fixture(t, "verify-ok.json")
-	mut := func(from, to string) string {
-		if !strings.Contains(good, from) {
-			t.Fatalf("setup: the recorded verdict has no %q", from)
-		}
-		return strings.Replace(good, from, to, 1)
-	}
-	if v, err := serve(t, 200, good).adapter(t).Verify(testCtx(t), "ada@acme.example"); err != nil || v.Status != "valid" {
+	address := "ada@" + recordedDoc(t, "verify-ok.json")["domain"].(string)
+	if v, err := serve(t, 200, good).adapter(t).Verify(testCtx(t), address); err != nil || v.Status != "valid" {
 		t.Fatalf("control: the recorded verdict was refused: %v", err)
 	}
-	cases := []struct{ name, body, key string }{
-		{"a status outside the four", mut(`"status": "valid"`, `"status": "fine"`), "status"},
-		{"a reason outside the vocabulary", mut(`"reason": "accepted"`, `"reason": "vibes"`), "reason"},
-		{"a recommendation outside the three", mut(`"recommendation": "send"`, `"recommendation": "yes"`), "recommendation"},
-		{"a confidence over 100", mut(`"confidence": 90`, `"confidence": 190`), "confidence"},
-		{"a confidence of the wrong type", mut(`"confidence": 90`, `"confidence": "90"`), "confidence"},
-		{"no flags.from_cache", mut(`"from_cache": false,
-    "has_typo"`, `"has_typo"`), "flags.from_cache"},
-		{"a failure origin outside the three", mut(`"mx_found": true`, `"failure_origin": "theirs", "mx_found": true`), "signals.failure_origin"},
-		{"a skip token outside the six", mut(`"mx_found": true`, `"smtp_skipped_reason": "lazy", "mx_found": true`), "signals.smtp_skipped_reason"},
-		{"no domain", mut(`"domain": "acme.example",`, ``), "domain"},
+	cases := []mutation{
+		outside("status", "fine"),
+		outside("reason", "vibes"),
+		outside("recommendation", "yes"),
+		retype("confidence", 190),
+		retype("confidence", "90"),
+		remove("flags.from_cache"),
+		add("signals.failure_origin", "theirs"),
+		add("signals.smtp_skipped_reason", "lazy"),
+		remove("domain"),
 	}
-	for _, c := range cases {
-		v, err := serve(t, 200, c.body).adapter(t).Verify(testCtx(t), "ada@acme.example")
-		if kind, key := kindAndKey(err); kind != modclient.Contract || key != c.key || v != (Verdict{}) {
-			t.Errorf("%s: got %+v kind %v key %q (%v), want no verdict and a Contract error naming %q", c.name, v, kind, key, err, c.key)
+	for _, m := range cases {
+		v, err := serve(t, 200, m.apply(t, good)).adapter(t).Verify(testCtx(t), address)
+		if kind, key := kindAndKey(err); kind != modclient.Contract || key != m.key || v != (Verdict{}) {
+			t.Errorf("%s: got %+v kind %v key %q (%v), want no verdict and a Contract error naming %q", m.name, v, kind, key, err, m.key)
 		}
 	}
 }

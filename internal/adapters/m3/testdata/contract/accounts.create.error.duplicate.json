@@ -1,7 +1,13 @@
 {
   "error": {
     "code": "conflict",
-    "message": "This action is not available for your account right now.",
+    "message": "The request conflicts with the current state.",
+    "details": [
+      {
+        "field": "smtp_username",
+        "issue": "conflict"
+      }
+    ],
     "request_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   }
 }
