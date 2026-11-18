@@ -8,7 +8,7 @@ Previous: [`phase-3-spec.md`](phase-3-spec.md) (every row CLOSED; platform code 
 
 1. The first row of the tables below whose status is not `CLOSED` is where to continue; an `IN PROGRESS` row names the repository, commit and run in its Evidence cell.
 2. Order: **Part A (M1) → Part B (M2) → Part C (M3) → Part D (platform) → Part E (housekeeping)**. A module's own CI is green before the platform pins it (`tools/modules.lock`), and the parent is re-pinned at the end (`bash tools/check-modules-lock.sh <parent>` must say OK).
-3. One `fault-proofs` dispatch per part, for new or changed gates only (`ci/faults/p3c/`; a patch whose target is a module needs the lock to name the commit it applies to).
+3. One `fault-proofs` dispatch per part, for new or changed gates only (`ci/faults/p3ca/` to `p3cd/`, one phase directory per part; a patch whose target is a module needs the lock to name the commit it applies to).
 4. After every chunk: update the row (status, repo@commit, run URL), commit, push. A `CLOSED` row cites its head (`platform@<sha>`, or the module's own `verify@<sha>`) and its runs, or `check-verified-heads` fails.
 
 ## Rulings carried into this session (the owner's; nothing here reopens them)
