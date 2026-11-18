@@ -3,5 +3,5 @@ GATE=m2-text-part-order
 TARGET=module:coldmail-send-managed
 SETUP=
 STEP=node --test plaintext.test.mjs (text/plain comes first)
-CMD=cd services/worker && node --test --test-reporter=tap test/plaintext.test.mjs
+CMD=cd services/worker && node --test --test-reporter=tap --test-name-pattern='^B3 (golden|textPartOf|structure|determinism)' test/plaintext.test.mjs
 MESSAGE=not ok

@@ -3,5 +3,5 @@ GATE=m3-text-absent-bytes
 TARGET=module:coldmail-send-byo
 SETUP=
 STEP=node --test plaintext.test.mjs (an absent text is today's bytes)
-CMD=cd services/worker && node --test --test-reporter=tap test/plaintext.test.mjs
+CMD=cd services/worker && node --test --test-reporter=tap --test-name-pattern='^C5 (golden|structure|textPartOf)' test/plaintext.test.mjs
 MESSAGE=not ok 1 - C5 golden: with text ABSENT every golden case renders byte-for-byte
