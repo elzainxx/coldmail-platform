@@ -1,0 +1,18 @@
+diff --git a/services/control/internal/pagecursor/pagecursor.go b/services/control/internal/pagecursor/pagecursor.go
+index 94840ef..a82b135 100644
+--- a/services/control/internal/pagecursor/pagecursor.go
++++ b/services/control/internal/pagecursor/pagecursor.go
+@@ -91,10 +91,11 @@ func Decode(raw, scope string) (Position, error) {
+ 	default:
+ 		return Position{}, ErrMalformed
+ 	}
+-	if _, perr := time.Parse(time.RFC3339Nano, pos.CreatedAt); perr != nil {
++	// MUTATION: the keyset position is no longer validated before it can reach SQL
++	if _, perr := time.Parse(time.RFC3339Nano, pos.CreatedAt); perr != nil && false {
+ 		return Position{}, ErrMalformed
+ 	}
+-	if !uuidRe.MatchString(pos.ID) {
++	if !uuidRe.MatchString(pos.ID) && false {
+ 		return Position{}, ErrMalformed
+ 	}
+ 	if len(parts) == 4 && parts[3] != scopeTag(scope) {

@@ -24,7 +24,9 @@ type vector struct {
 	Malformed  bool    `json:"malformed"`
 	Normalized *string `json:"normalized"`
 	Group      *string `json:"group"`
-	Why        string  `json:"why"`
+	// SyntaxOK is what module 1's REAL SyntaxLayer answered for the normalised address (format /2): present on every well-formed vector, absent on a malformed one (it never reaches the layer).
+	SyntaxOK *bool  `json:"syntax_ok"`
+	Why      string `json:"why"`
 }
 
 type vectorFile struct {
@@ -93,6 +95,45 @@ func loadVectors(t testing.TB) []vector {
 
 // normFunc is the shape of Normalize, so the checkers can be run on a deliberately broken copy.
 type normFunc func(string) (string, error)
+
+// syntaxFunc is the shape of CheckSyntax, so the checker can be run on a deliberately broken copy.
+type syntaxFunc func(string) error
+
+// checkSyntaxVector is the verdict of the syntax half for one vector: for a well-formed vector the layer passes (nil) exactly where the file says syntax_ok is true, judged over the normalised
+// string the FILE gives (never over this package's own output); a malformed vector has no syntax verdict. It returns "" when fn agrees with the file.
+func checkSyntaxVector(fn syntaxFunc, v vector) string {
+	if v.Malformed {
+		if v.SyntaxOK != nil {
+			return fmt.Sprintf("%s: a malformed vector must carry no syntax_ok (it never reaches the layer)", v.Name)
+		}
+		return ""
+	}
+	if v.SyntaxOK == nil {
+		return fmt.Sprintf("%s: a well-formed vector must carry syntax_ok", v.Name)
+	}
+	err := fn(v.normalized())
+	switch {
+	case *v.SyntaxOK && err != nil:
+		return fmt.Sprintf("%s: the file says module 1's syntax layer passes %d bytes of local part and %d of domain, the function refused it: %v", v.Name, len(localOf(v.normalized())), len(domainOf2(v.normalized())), err)
+	case !*v.SyntaxOK && err == nil:
+		return fmt.Sprintf("%s: the file says module 1's syntax layer FAILS this address (local %d bytes, domain %d bytes), the function accepted it", v.Name, len(localOf(v.normalized())), len(domainOf2(v.normalized())))
+	}
+	return ""
+}
+
+func localOf(n string) string   { l, _ := Split(n); return l }
+func domainOf2(n string) string { _, d := Split(n); return d }
+
+// checkSyntaxVectors runs every vector through the syntax half and returns every disagreement, in file order.
+func checkSyntaxVectors(fn syntaxFunc, vs []vector) []string {
+	var problems []string
+	for _, v := range vs {
+		if p := checkSyntaxVector(fn, v); p != "" {
+			problems = append(problems, p)
+		}
+	}
+	return problems
+}
 
 // checkVector is the whole verdict for one vector: malformed iff the file says so, and the normalised string byte for byte. It returns "" when fn agrees with the file.
 func checkVector(fn normFunc, v vector) string {

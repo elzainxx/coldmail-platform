@@ -1,0 +1,11 @@
+--- a/control-plane/internal/layers/cheap_layers.go
++++ b/control-plane/internal/layers/cheap_layers.go
+@@ -21,7 +21,7 @@
+ 
+ func (SyntaxLayer) Run(_ context.Context, ev *Evidence) LayerOutput {
+ 	ok := ev.LocalPart != "" && ev.Domain != "" &&
+-		len(ev.LocalPart) <= 64 && len(ev.Domain) <= 255 && // RFC 5321 length limits
++		len(ev.LocalPart) <= 65 && len(ev.Domain) <= 255 && // RFC 5321 length limits
+ 		strings.Contains(ev.Domain, ".") // a mailable domain has at least one dot
+ 	res := Pass
+ 	sev := Info

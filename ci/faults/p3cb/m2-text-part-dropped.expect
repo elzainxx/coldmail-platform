@@ -1,0 +1,7 @@
+# Phase 3 close-out, B3: a message with a plain-text alternative must carry it. The fault deletes the text/plain part from the multipart message; the structure test and the real-wire test must go red. The control is the pinned module. Node only.
+GATE=m2-text-part-dropped
+TARGET=module:coldmail-send-managed
+SETUP=
+STEP=node --test plaintext.test.mjs (the text part is in the message)
+CMD=cd services/worker && node --test --test-reporter=tap test/plaintext.test.mjs
+MESSAGE=not ok

@@ -1,0 +1,7 @@
+# Phase 3 close-out, B2: a forged or malformed cursor on a paginated route is a 400 with the envelope, never a 500 (it used to reach SQL as text and answer 500). One package validates every cursor field (timestamp, uuid, scope tag) before it can reach SQL. The fault disables the timestamp and UUID checks; TestBadCursorsAreMalformed must go red. The control is the pinned module. Go only, no database.
+GATE=m2-cursor-validation
+TARGET=module:coldmail-send-managed
+SETUP=
+STEP=go test TestBadCursorsAreMalformed (a forged cursor field is refused before any query)
+CMD=cd services/control && GOTOOLCHAIN=local go test -count=1 -v -run '^TestBadCursorsAreMalformed$' ./internal/pagecursor/
+MESSAGE=--- FAIL: TestBadCursorsAreMalformed

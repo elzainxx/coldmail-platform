@@ -1,0 +1,8 @@
+# Phase 3 close-out, A2: module 1's node becomes active ONLY after a green audit row (owner ruling OD-4; a node that never promotes itself would never probe in a real deployment, one that promotes on a red audit would serve from a node nobody checked). The decision is a conjunction (provisioning, an audit that is known and green, egress confirmed, liveness, an audit id). The fault drops the green conjunct; the table test that removes each conjunct in turn must go red on its audit_red case, saying that a red audit must not promote. The control is the pinned module. No database.
+GATE=m1-promotion-red-audit
+TARGET=module:coldmail-verify
+SETUP=
+STEP=go test TestEvaluate_ProvisioningPromotion_NeedsEveryConjunct (a red audit never promotes a node)
+CMD=cd control-plane && GOTOOLCHAIN=local go test -count=1 -v -run '^TestEvaluate_ProvisioningPromotion_NeedsEveryConjunct$' ./internal/health/
+MESSAGE=--- FAIL: TestEvaluate_ProvisioningPromotion_NeedsEveryConjunct
+MESSAGE=audit red must not promote and must not change the node

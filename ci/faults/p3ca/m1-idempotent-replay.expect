@@ -1,0 +1,8 @@
+# Phase 3 close-out, A1: module 1's bulk job creation is idempotent on a caller-supplied Idempotency-Key (owner ruling OD-6/8, a partial Tier 4): a repeat with the same key and the same request returns the ORIGINAL job, byte for byte, with Idempotent-Replayed: true, and creates nothing. The fault disables the key branch of the handler, so a repeat creates a second job; TestBulkIdempotency_ARepeatIsTheOriginalJob_ByteForByte_AndNothingIsCreatedTwice must go red naming the missing replay header and the changed body. The control is the pinned module. No database.
+GATE=m1-idempotent-replay
+TARGET=module:coldmail-verify
+SETUP=
+STEP=go test TestBulkIdempotency_ARepeatIsTheOriginalJob_ByteForByte_AndNothingIsCreatedTwice (a repeat is the original job)
+CMD=cd control-plane && GOTOOLCHAIN=local go test -count=1 -v -run '^TestBulkIdempotency_ARepeatIsTheOriginalJob_ByteForByte_AndNothingIsCreatedTwice$' ./internal/api/
+MESSAGE=--- FAIL: TestBulkIdempotency_ARepeatIsTheOriginalJob_ByteForByte_AndNothingIsCreatedTwice
+MESSAGE=a replay must say so: Idempotent-Replayed

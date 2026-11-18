@@ -99,6 +99,8 @@ var chainRelations = map[string][]string{
 	"0008": {},
 	// platform_0009 adds no relation: it replaces the CHECK suppressions_email_norm_v1 of platform.suppressions (module 1's syntax layer and IDNA's hyphen rule)
 	"0009": {},
+	// platform_0010 adds no relation: one nullable column of public.job_items (rendered_text, the optional plain-text part)
+	"0010": {},
 }
 
 // relationsThrough is the sorted union of what the listed versions add.
@@ -139,6 +141,10 @@ func downStepBefore(t *testing.T, c *pgx.Conn, v string) {
 	t.Helper()
 	when := "before down " + v
 	switch v {
+	case "0010":
+		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010"), when)
+		jobItemsTextObjects(t, c, true, when)
+		suppressionSyntaxObjects(t, c, true, when)
 	case "0009":
 		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009"), when)
 		suppressionSyntaxObjects(t, c, true, when)
@@ -188,6 +194,12 @@ func downStepAfter(t *testing.T, c *pgx.Conn, v string) {
 	t.Helper()
 	when := "after down " + v
 	switch v {
+	case "0010":
+		// the column is gone; platform_0009's CHECK and everything below it are still there
+		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009"), when)
+		jobItemsTextObjects(t, c, false, when)
+		suppressionSyntaxObjects(t, c, true, when)
+		observedVersionObjects(t, c, true, when)
 	case "0009":
 		// the CHECK of platform_0003 is back: a local part of 65 bytes and a domain with no dot are accepted again; everything of 0008 and below is still there
 		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007", "0008"), when)
@@ -478,6 +490,30 @@ func observedVersionObjects(t *testing.T, c *pgx.Conn, present bool, when string
 	lifecycleObservedVersion(t, c, present, when)
 }
 
+// jobItemsTextObjects is the CONTROL (present) and the ASSERTION (absent) of platform_0010's down: the column public.job_items.rendered_text is there, nullable, with no default, and a row of the six
+// columns module 3's test-send supplies is still accepted (the column is optional); after the down the column is gone and a statement that names it fails with 42703.
+func jobItemsTextObjects(t *testing.T, c *pgx.Conn, present bool, when string) {
+	t.Helper()
+	expect := lifecycleCounter(t, c, present, when)
+	expect("the column public.job_items.rendered_text (text, nullable, no default)", 1,
+		"SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'job_items' AND column_name = 'rendered_text' AND data_type = 'text' AND is_nullable = 'YES' AND column_default IS NULL")
+	tx, err := c.Begin(testCtx(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	a := ledgerUserA
+	ledgerSeed(t, tx)
+	const six = "INSERT INTO public.job_items (campaign_id, user_id, recipient_email, rendered_subject, rendered_body, status) VALUES ($1, $1, 'r@example.com', 's', '<p>b</p>', 'pending')"
+	ledgerExpectOK(t, tx, when+": module 3's six-column test-send INSERT (it does not name rendered_text)", six, a)
+	const withText = "INSERT INTO public.job_items (campaign_id, user_id, recipient_email, rendered_subject, rendered_body, rendered_text) VALUES ($1, $1, 'r2@example.com', 's', '<p>b</p>', 'b')"
+	if present {
+		ledgerExpectOK(t, tx, when+": a row with a plain-text part", withText, a)
+	} else {
+		ledgerExpectRefused(t, tx, when+": a row naming rendered_text", "42703", ledgerWhy{Message: "rendered_text"}, withText, a)
+	}
+}
+
 // suppressionSyntaxObjects is the CONTROL (present) and the ASSERTION (absent) of platform_0009's down, in a transaction that is ALWAYS rolled back: with the migration the CHECK
 // suppressions_email_norm_v1 refuses an address module 1's syntax layer fails (a local part of 65 bytes, a domain with no dot) and a label with "--" in its third and fourth bytes, and accepts the
 // boundary (a local part of exactly 64 bytes, the smallest dotted domain, an "xn--" label); without it (platform_0003's CHECK) all of them are accepted. The ordinary address is accepted either way.
@@ -606,7 +642,7 @@ func TestRunnerLifecycle(t *testing.T) {
 
 	// The executable expectation of the migration chain. scripts/check-migrations.sh reads this literal and fails when the
 	// newest migration is not named in it, so a migration cannot be added without extending this test.
-	wantChain := []string{"0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009"}
+	wantChain := []string{"0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010"}
 
 	dir := repoMigrationsDir(t)
 	if onDisk := chainOnDisk(t, dir); !sameStrings(onDisk, wantChain) {

@@ -70,8 +70,12 @@ type nrmVec struct {
 	Malformed  bool    `json:"malformed"`
 	Normalized *string `json:"normalized"`
 	Group      *string `json:"group"`
+	SyntaxOK   *bool   `json:"syntax_ok"` // format /2: what module 1's real syntax layer answered for the normalised address; absent on a malformed vector
 	Why        string  `json:"why"`
 }
+
+// rejected is the platform's whole address rule (norm.Validate) as the FILE states it: malformed under norm/v1, or well formed and failing module 1's syntax layer.
+func (v nrmVec) rejected() bool { return v.Malformed || (v.SyntaxOK != nil && !*v.SyntaxOK) }
 
 type nrmFile struct {
 	Format      string   `json:"format"`
@@ -155,30 +159,31 @@ type nrmDivergence struct {
 }
 
 var nrmDBDivergence = map[string]nrmDivergence{
-	// NARROWER: module 1 accepts the address, the CHECK refuses it.
-	"trim-leaves-nul-in-local":       {false, "a NUL cannot be stored in text (SQLSTATE 22021, before any CHECK)"},
-	"nul-in-local":                   {false, "a NUL cannot be stored in text (SQLSTATE 22021, before any CHECK)"},
-	"quoted-local-with-space":        {false, "the local part holds a space: [^@[:space:]]+"},
-	"quoted-local-lower":             {false, "the local part holds a space: [^@[:space:]]+"},
-	"line-feed-in-local":             {false, "the local part holds a line feed: [^@[:space:]]+"},
-	"space-in-local":                 {false, "the local part holds a space: [^@[:space:]]+"},
-	"space-in-local-upper":           {false, "the local part holds a space: [^@[:space:]]+"},
-	"space-before-at":                {false, "the local part ends with a space: [^@[:space:]]+"},
-	"tab-in-local":                   {false, "the local part holds a tab: [^@[:space:]]+"},
-	"domain-empty-label-inside":      {false, "an empty label: split_part(email, '@', 2) !~ '\\.\\.'"},
-	"domain-empty-label-leading":     {false, "a leading dot: the domain must start with [a-z0-9]"},
-	"domain-empty-punycode-label":    {false, "the domain becomes .com, a leading dot"},
-	"domain-leading-dot-only-label":  {false, "a leading dot: the domain must start with [a-z0-9]"},
-	"local-4096-bytes":               {false, "over 254 bytes: octet_length(email) <= 254"},
-	"domain-253-bytes":               {false, "the address is over 254 bytes: octet_length(email) <= 254"},
-	"domain-254-bytes":               {false, "the address is over 254 bytes: octet_length(email) <= 254"},
-	"domain-300-bytes":               {false, "the address is over 254 bytes: octet_length(email) <= 254"},
-	"address-255-bytes":              {false, "one byte over 254: octet_length(email) <= 254"},
-	"multibyte-local-over-254-bytes": {false, "260 bytes: octet_length(email) <= 254 counts bytes, not characters"},
-	// WIDER: module 1 refuses the address, the CHECK cannot see why.
-	"domain-hyphens-in-positions-three-and-four": {true, "IDNA's CheckHyphens (no -- in positions three and four) has no SQL equivalent in the CHECK"},
-	"domain-invalid-punycode-short":              {true, "xn--a is not valid punycode: the CHECK only sees [a-z0-9.-]"},
-	"domain-punycode-of-ascii-garbage":           {true, "xn--zzzzzzzz is not valid punycode: the CHECK only sees [a-z0-9.-]"},
+	// STRICTER: the platform's validator (norm.Validate: norm/v1 and module 1's syntax layer) accepts the address, the CHECK (platform_0009) refuses it. The table never holds an address the validator
+	// would not have produced, so every entry here is a refusal the writer must be ready for (SQLSTATE 23514, constraint suppressions_email_norm_v1; 22021 for a NUL).
+	"trim-leaves-nul-in-local":             {false, "a NUL cannot be stored in text (SQLSTATE 22021, before any CHECK)"},
+	"nul-in-local":                         {false, "a NUL cannot be stored in text (SQLSTATE 22021, before any CHECK)"},
+	"quoted-local-with-space":              {false, "the local part holds a space: [^@[:space:]]+ (an address with white space in it is not mailable and is not stored)"},
+	"quoted-local-lower":                   {false, "the local part holds a space: [^@[:space:]]+"},
+	"line-feed-in-local":                   {false, "the local part holds a line feed: [^@[:space:]]+"},
+	"space-in-local":                       {false, "the local part holds a space: [^@[:space:]]+"},
+	"space-in-local-upper":                 {false, "the local part holds a space: [^@[:space:]]+"},
+	"space-before-at":                      {false, "the local part ends with a space: [^@[:space:]]+"},
+	"tab-in-local":                         {false, "the local part holds a tab: [^@[:space:]]+"},
+	"domain-empty-label-inside":            {false, "an empty label: no two dots in a row in the domain"},
+	"domain-empty-label-leading":           {false, "a leading dot: the domain must start with [a-z0-9]"},
+	"domain-empty-punycode-label":          {false, "the domain becomes .com, a leading dot"},
+	"domain-leading-dot-only-label":        {false, "a leading dot: the domain must start with [a-z0-9]"},
+	"domain-253-bytes":                     {false, "the address is over 254 bytes: octet_length(email) <= 254 (the layer allows a 255-byte domain, the table caps the whole address)"},
+	"domain-254-bytes":                     {false, "the address is over 254 bytes: octet_length(email) <= 254"},
+	"syntax-domain-254-ascii":              {false, "the address is over 254 bytes: octet_length(email) <= 254"},
+	"syntax-domain-255-ascii":              {false, "the address is over 254 bytes: octet_length(email) <= 254"},
+	"syntax-domain-255-after-trailing-dot": {false, "the address is over 254 bytes: octet_length(email) <= 254"},
+	"syntax-domain-leading-dot":            {false, "a leading dot: the domain must start with [a-z0-9] (module 1's layer only asks for a dot)"},
+	"syntax-domain-double-dot":             {false, "an empty label: no two dots in a row in the domain"},
+	// WIDER: the validator refuses the address, the CHECK cannot see why (SQL cannot decode punycode); the writer validates first, so no address of this kind is ever offered to the table.
+	"domain-invalid-punycode-short":    {true, "xn--a is not valid punycode: the CHECK only sees [a-z0-9.-]"},
+	"domain-punycode-of-ascii-garbage": {true, "xn--zzzzzzzz is not valid punycode: the CHECK only sees [a-z0-9.-]"},
 }
 
 // nrmDBOutcome is what the database did with one insert.
@@ -203,7 +208,7 @@ func nrmDBProblems(v nrmVec, got string, gotErr error, o nrmDBOutcome, div map[s
 	} else if gotErr == nil && got != v.normalized() {
 		add("the normaliser returned %q, the file says %q", got, v.normalized())
 	}
-	want := !v.Malformed
+	want := !v.rejected()
 	d, diverges := div[v.Name]
 	if diverges {
 		want = d.dbAccepts
@@ -212,9 +217,9 @@ func nrmDBProblems(v nrmVec, got string, gotErr error, o nrmDBOutcome, div map[s
 	case o.accepted != want && diverges:
 		add("the divergence table says the database %s it (%s), the database %s it", verb(want), d.why, verb(o.accepted))
 	case o.accepted != want && o.accepted:
-		add("the database ACCEPTED %q, which norm/v1 refuses and the divergence table does not list", o.inserted)
+		add("the database ACCEPTED %q, which the platform's address rule (norm/v1 and module 1's syntax layer) refuses and the divergence table does not list", o.inserted)
 	case o.accepted != want:
-		add("the database REFUSED %q (SQLSTATE %s, constraint %q), which norm/v1 accepts and the divergence table does not list", o.inserted, o.state, o.constraint)
+		add("the database REFUSED %q (SQLSTATE %s, constraint %q), which the platform's address rule accepts and the divergence table does not list", o.inserted, o.state, o.constraint)
 	}
 	if o.accepted && o.stored != o.inserted {
 		add("the database stored %q, not the string inserted %q", o.stored, o.inserted)
@@ -292,7 +297,7 @@ func TestNormAgreement_Database(t *testing.T) {
 		} else {
 			refused++
 		}
-		if _, ok := nrmDBDivergence[v.Name]; ok && o.accepted != !v.Malformed { // the database did the opposite of the default: the divergence is real
+		if _, ok := nrmDBDivergence[v.Name]; ok && o.accepted != !v.rejected() { // the database did the opposite of the default: the divergence is real
 			divergent[v.Name] = true
 		}
 	}
@@ -310,7 +315,7 @@ func TestNormAgreement_Database(t *testing.T) {
 			t.Errorf("nrmDBDivergence names %q, which is not a vector of the file", name)
 			continue
 		}
-		if d := nrmDBDivergence[name]; d.dbAccepts == !v.Malformed {
+		if d := nrmDBDivergence[name]; d.dbAccepts == !v.rejected() {
 			t.Errorf("nrmDBDivergence lists %q with the database's default behaviour (accepts=%t): it is no divergence", name, d.dbAccepts)
 		}
 		if !divergent[name] {
@@ -588,6 +593,17 @@ func nrmM1Problems(vs []nrmVec, sub []int, a nrmM1Answer) []string {
 		case shouldDup && got != want:
 			add("%s (item %d, group %q): module 1 says it duplicates item %d (%s), the file says item %d (%s)", v.Name, idx, v.group(), got, vs[got].Name, want, vs[want].Name)
 		}
+		// module 1's syntax layer (Phase 3 close-out A5): a row that is checked (the first of its group) is answered invalid/invalid_syntax exactly when the file says the layer fails the address; a
+		// repeat carries the first row's verdict and is not judged again here
+		if !shouldDup && !isDup {
+			failed := a.status[idx] == "invalid" && a.reason[idx] == "invalid_syntax"
+			switch want := v.SyntaxOK != nil && !*v.SyntaxOK; {
+			case want && !failed:
+				add("%s (item %d): the file says module 1's syntax layer FAILS this address, module 1 answered %s/%s instead of invalid/invalid_syntax", v.Name, idx, a.status[idx], a.reason[idx])
+			case !want && failed:
+				add("%s (item %d): the file says module 1's syntax layer PASSES this address, module 1 answered invalid/invalid_syntax", v.Name, idx)
+			}
+		}
 	}
 	return p
 }
@@ -614,6 +630,9 @@ func nrmSimulatedM1(vs []nrmVec, sub []int, normalized map[int]string, refused m
 			a.counts.enqueued++
 		}
 		a.status[idx], a.reason[idx] = "unknown", "dns_error"
+		if vs[idx].SyntaxOK != nil && !*vs[idx].SyntaxOK {
+			a.status[idx], a.reason[idx] = "invalid", "invalid_syntax"
+		}
 	}
 	return a
 }
@@ -702,7 +721,7 @@ func TestM1Live_NormAgreement(t *testing.T) {
 	if problems := nrmM1Problems(vs, sub, ans); len(problems) != 0 {
 		t.Errorf("%d disagreement(s) between module 1 and the vector file:\n  %s", len(problems), strings.Join(problems, "\n  "))
 	}
-	t.Logf("NOTE %d well-formed first rows were answered invalid/invalid_syntax by module 1's syntax layer after normalising (printed, not asserted: a local part over 64 bytes, a domain over 255 bytes or with no dot); the platform charges them, row M1-10", syntaxLayer)
+	t.Logf("NOTE %d well-formed first rows were answered invalid/invalid_syntax by module 1's syntax layer after normalising, exactly the rows whose syntax_ok is false (asserted above): the platform never sends them (row P-08), module 1 would charge them (row M1-10)", syntaxLayer)
 
 	t.Run("the comparison is clean on the answer the file implies and red on every corruption of it", func(t *testing.T) { nrmCheckM1ComparisonIsRed(t, vs, sub) })
 }
@@ -799,6 +818,34 @@ func nrmCheckM1ComparisonIsRed(t *testing.T, vs []nrmVec, sub []int) {
 		name, mention string
 		ans           nrmM1Answer
 	}{"two groups merged", "the file says it is the first of its group", merged})
+	// module 1's syntax layer: an address the file says it fails, answered as something else; an address the file says it passes, answered invalid_syntax
+	synFail := firstIndex(vs, sub, func(v nrmVec) bool { return !v.Malformed && v.SyntaxOK != nil && !*v.SyntaxOK })
+	synPass, seenGroup := -1, map[string]bool{} // the first row of its group that passes the layer: a repeat is not judged again, so it could not be the victim of this control
+	for _, idx := range sub {
+		v := vs[idx]
+		if v.Malformed {
+			continue
+		}
+		if !seenGroup[v.group()] && v.SyntaxOK != nil && *v.SyntaxOK && synPass < 0 {
+			synPass = idx
+		}
+		seenGroup[v.group()] = true
+	}
+	if synFail < 0 || synPass < 0 {
+		t.Fatal("setup: the submitted list holds no vector that fails module 1's syntax layer, or none that passes it")
+	}
+	missed := nrmSimulatedM1(vs, sub, norms, refused)
+	missed.status[synFail], missed.reason[synFail] = "unknown", "dns_error"
+	cases = append(cases, struct {
+		name, mention string
+		ans           nrmM1Answer
+	}{"module 1 passing an address its syntax layer fails", "syntax layer FAILS this address", missed})
+	overreach := nrmSimulatedM1(vs, sub, norms, refused)
+	overreach.status[synPass], overreach.reason[synPass] = "invalid", "invalid_syntax"
+	cases = append(cases, struct {
+		name, mention string
+		ans           nrmM1Answer
+	}{"module 1 failing an address its syntax layer passes", "syntax layer PASSES this address", overreach})
 	// the counts
 	counts := nrmSimulatedM1(vs, sub, norms, refused)
 	counts.counts.duplicate++

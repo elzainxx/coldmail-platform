@@ -1,0 +1,7 @@
+# Phase 3 close-out, B2: a cursor minted for another route, user, campaign or account gets the same 400 as a malformed one and returns nothing of the other's data (the scope tag inside a cursor is a mix-up check). The fault removes the scope check; TestCursorOfAnotherScopeIsRefusedAsWrongScope must go red. The control is the pinned module. Go only, no database.
+GATE=m2-cursor-scope
+TARGET=module:coldmail-send-managed
+SETUP=
+STEP=go test TestCursorOfAnotherScopeIsRefusedAsWrongScope (a cursor of another scope is refused)
+CMD=cd services/control && GOTOOLCHAIN=local go test -count=1 -v -run '^TestCursorOfAnotherScopeIsRefusedAsWrongScope$' ./internal/pagecursor/
+MESSAGE=--- FAIL: TestCursorOfAnotherScopeIsRefusedAsWrongScope

@@ -121,9 +121,15 @@ jobs:
           go-version-file: go.mod
           cache: false
 
+      # Phase 3 close-out: module 2's worker (Node) has legs of its own (the reconnect and the plain-text part), and its engines field asks for Node 24: the same version as the web workflow's.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: web/.node-version
+
       - name: Toolchain (printed so a run says what it ran on)
         run: |
           go version
+          node --version
           psql --version
           git --version
           tar --version | head -n 1

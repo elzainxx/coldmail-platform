@@ -1,0 +1,7 @@
+# Phase 3 close-out, B3: with a plain-text alternative the worker builds multipart/alternative with the text/plain part FIRST and the text/html part last (RFC 2046: least to most faithful). The fault swaps the two parts; the structure test and the real-wire test must go red. The control is the pinned module. Node only.
+GATE=m2-text-part-order
+TARGET=module:coldmail-send-managed
+SETUP=
+STEP=node --test plaintext.test.mjs (text/plain comes first)
+CMD=cd services/worker && node --test --test-reporter=tap test/plaintext.test.mjs
+MESSAGE=not ok

@@ -1,0 +1,12 @@
+diff --git a/services/worker/src/reconnect.js b/services/worker/src/reconnect.js
+index a826b32..ca0a142 100644
+--- a/services/worker/src/reconnect.js
++++ b/services/worker/src/reconnect.js
+@@ -144,6 +144,7 @@ export async function superviseConnection(o) {
+     } catch (e) {
+       if (stopping()) break;
+       failures++;
++      if (failures >= 30) break; // MUTATION: the old give-up limit is back
+       const delay = backoffDelayMs(failures, getDials(), rand);
+       if (shouldLogFailure(failures)) {
+         log(`control unreachable or register refused (${e && e.message ? e.message : "error"}); ${failures} consecutive failed attempt(s); next attempt in ${delay} ms; the worker keeps retrying until it is shut down`);

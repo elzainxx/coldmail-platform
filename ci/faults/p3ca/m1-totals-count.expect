@@ -1,0 +1,8 @@
+# Phase 3 close-out, A1: GET /v1/jobs/{id} carries totals (submitted, settled, pending, duplicates, malformed, by_status) computed with counts and complete from ONE snapshot, and they must equal what the results listing holds row by row. The fault makes settled one too large; the test that compares the totals with the results in flight and after completion must go red naming the totals. The control is the pinned module. No database.
+GATE=m1-totals-count
+TARGET=module:coldmail-verify
+SETUP=
+STEP=go test TestJobStatus_TotalsEqualTheResultsRowByRow_InFlightAndAfterCompletion (the totals are the results, counted)
+CMD=cd control-plane && GOTOOLCHAIN=local go test -count=1 -v -run '^TestJobStatus_TotalsEqualTheResultsRowByRow_InFlightAndAfterCompletion$' ./internal/api/
+MESSAGE=--- FAIL: TestJobStatus_TotalsEqualTheResultsRowByRow_InFlightAndAfterCompletion
+MESSAGE=in flight: submitted

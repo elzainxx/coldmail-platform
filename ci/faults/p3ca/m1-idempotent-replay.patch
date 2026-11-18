@@ -1,0 +1,11 @@
+--- a/control-plane/internal/api/api.go
++++ b/control-plane/internal/api/api.go
+@@ -509,7 +509,7 @@
+ 	// asserts it stays that way.
+ 	var res queue.BulkResult
+ 	var err error
+-	if hasIdemKey {
++	if false && hasIdemKey {
+ 		// KEYED (0019): scoped to the AUTHENTICATED caller (callerID, from the credential), never to anything in the body. A repeat with the same
+ 		// request is the ORIGINAL job (res.Replayed); the same key with another request creates nothing and is a 409.
+ 		res, err = s.bulk.SubmitBulkRowsKeyed(r.Context(), bulkRows(req), s.defPolicy, req.CallerRef, ownerUserID, queue.IdemInput{CallerID: callerID, Key: idemKey})

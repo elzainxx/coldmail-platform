@@ -1,0 +1,8 @@
+# Phase 3 close-out, A5: the platform's address rule is norm/v1 plus module 1's syntax layer exactly as module 1 implements it; the shared vector file carries syntax_ok per vector, produced by running module 1's REAL SyntaxLayer, and module 1's own test runs every vector through the layer. The fault moves the local part limit from 64 to 65 bytes; TestNormVectors_SharedFile_EveryVectorThroughNormalize must go red naming the vectors at the boundary (local-65-bytes, syntax-local-65-ascii). The control is the pinned module. No database.
+GATE=m1-syntax-rule
+TARGET=module:coldmail-verify
+SETUP=
+STEP=go test TestNormVectors_SharedFile_EveryVectorThroughNormalize (module 1's syntax layer over the shared file)
+CMD=cd control-plane && GOTOOLCHAIN=local go test -count=1 -v -run '^TestNormVectors_SharedFile_EveryVectorThroughNormalize$' ./internal/hash/
+MESSAGE=--- FAIL: TestNormVectors_SharedFile_EveryVectorThroughNormalize
+MESSAGE=syntax-local-65-ascii: syntax_ok = false in the file, the syntax rule says true

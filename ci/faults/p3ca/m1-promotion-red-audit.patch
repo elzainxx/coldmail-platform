@@ -1,0 +1,11 @@
+--- a/control-plane/internal/health/decide.go
++++ b/control-plane/internal/health/decide.go
+@@ -296,7 +296,7 @@
+ 		//    answers its liveness probe. Anything less leaves it provisioning: no audit this cycle, a red one, a green on the wrong IP, a node that
+ 		//    does not answer. Whether the row was recorded AFTER this boot's registration, and that it is green, is re-checked by the store in the
+ 		//    same statement that writes the promotion (Store.SettleProvisioningNode), so a stale row can never promote even if this decision were wrong.
+-		case n.Status == LifecycleProvisioning && n.AuditKnown && n.AuditGreen && n.EgressConfirmed && n.Live && n.AuditID != "":
++		case n.Status == LifecycleProvisioning && n.AuditKnown && n.EgressConfirmed && n.Live && n.AuditID != "":
+ 			a.To, a.Apply, a.Reason, a.AuditID = LifecycleActive, true, "audit_promote", n.AuditID
+ 			res.Alerts = append(res.Alerts, Alert{Kind: "promoted", Severity: "warn", NodeID: n.NodeID, Detail: "provisioning→active (green audit on the configured egress IP; self-promotion, OD-4)"})
+ 		}

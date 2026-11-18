@@ -32,6 +32,7 @@ public.job_items|recipient_email|text|NOT NULL|no|m2,m3|copied into jobs.recipie
 public.job_items|rendered_subject|text|NOT NULL|no|m2,m3|copied into jobs.rendered_subject TEXT NOT NULL; written by J4.
 public.job_items|rendered_body|text|NOT NULL|no|m2,m3|copied into jobs.rendered_body TEXT NOT NULL; written by J4.
 public.job_items|reply_to|text|NULL|no|m2,m3|copied into jobs.reply_to TEXT (nullable); J4 omits it, so it must stay nullable or defaulted.
+public.job_items|rendered_text|text|NULL|no|m2|OPTIONAL plain-text alternative of rendered_body (Phase 3 close-out B3/C5): NULL, '' or white space only means no plain-text part and the message is the single HTML part it has always been; a real text makes the module build multipart/alternative (text/plain first). Read by J2 (module 2), copied into jobs.rendered_text (nullable, 1 MiB cap on the module side); module 3's J4 omits it, so it must stay nullable.
 public.job_items|status|text|NOT NULL|yes|m3|WRITTEN by J4 as the literal 'pending'; never read by any module (M2's tests insert it too). Must accept 'pending'; the platform owns the rest of the vocabulary.
 public.job_items|created_at|timestamp with time zone|NOT NULL|yes|platform|used by no module and no module test. Defaulted because J4 omits it.
 

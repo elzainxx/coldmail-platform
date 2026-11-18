@@ -29,6 +29,19 @@ func TestNorm_Vectors(t *testing.T) {
 			if p := checkVector(Normalize, v); p != "" {
 				t.Error(p)
 			}
+			if p := checkSyntaxVector(CheckSyntax, v); p != "" {
+				t.Error(p)
+			}
+			// the whole rule in one call: Validate accepts exactly the vectors that are well formed AND pass the layer
+			in, err := v.raw()
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, verr := Validate(in)
+			wantOK := !v.Malformed && v.SyntaxOK != nil && *v.SyntaxOK
+			if (verr == nil) != wantOK || (verr == nil && got != v.normalized()) || (verr != nil && (got != "" || !Rejected(verr))) {
+				t.Errorf("Validate = %q, %v; the file says accepted=%v with %q", got, verr, wantOK, v.normalized())
+			}
 		})
 	}
 	if len(vs) < 80 {
@@ -40,10 +53,10 @@ func TestNorm_Vectors(t *testing.T) {
 // here a pass over nothing.
 func TestNorm_VectorFileShape(t *testing.T) {
 	f, raw := readVectorFile(t)
-	if f.Format != "coldmail-norm-vectors/1" || f.Scheme != "norm/v1" {
-		t.Errorf("format %q scheme %q, want coldmail-norm-vectors/1 and norm/v1", f.Format, f.Scheme)
+	if f.Format != "coldmail-norm-vectors/2" || f.Scheme != "norm/v1" {
+		t.Errorf("format %q scheme %q, want coldmail-norm-vectors/2 and norm/v1", f.Format, f.Scheme)
 	}
-	for _, need := range []string{"module 1's REAL function", "Hasher.Normalize", "NOT produced by the platform's implementation"} {
+	for _, need := range []string{"module 1's REAL function", "Hasher.Normalize", "never by the platform's implementation", "layers.SyntaxLayer", "syntax_ok"} {
 		if !strings.Contains(f.GeneratedBy, need) {
 			t.Errorf("generated_by does not say %q: the header must say how the expectations were obtained", need)
 		}
@@ -59,7 +72,7 @@ func TestNorm_VectorFileShape(t *testing.T) {
 	}
 
 	names := map[string]bool{}
-	var malformed, accepted, b64, nul int
+	var malformed, accepted, b64, nul, syntaxOK, syntaxFail int
 	groups := map[string]int{}
 	for _, v := range f.Vectors {
 		if names[v.Name] {
@@ -90,12 +103,19 @@ func TestNorm_VectorFileShape(t *testing.T) {
 		}
 		if v.Malformed {
 			malformed++
-			if v.Normalized != nil || v.Group != nil {
-				t.Errorf("%s: a malformed vector has no normalized string and no group", v.Name)
+			if v.Normalized != nil || v.Group != nil || v.SyntaxOK != nil {
+				t.Errorf("%s: a malformed vector has no normalized string, no group and no syntax_ok", v.Name)
 			}
 			continue
 		}
 		accepted++
+		if v.SyntaxOK == nil {
+			t.Errorf("%s: a well-formed vector needs syntax_ok (format /2)", v.Name)
+		} else if *v.SyntaxOK {
+			syntaxOK++
+		} else {
+			syntaxFail++
+		}
 		if v.Normalized == nil || *v.Normalized == "" || !utf8.ValidString(*v.Normalized) {
 			t.Errorf("%s: a well-formed vector needs a non-empty, valid UTF-8 normalized string", v.Name)
 		}
@@ -113,6 +133,10 @@ func TestNorm_VectorFileShape(t *testing.T) {
 	if len(f.Vectors) < 80 || malformed < 30 || accepted < 50 || len(groups) < 40 || big < 5 || b64 < 5 || nul < 3 {
 		t.Errorf("the file is too thin: %d vectors (floor 80), %d malformed (30), %d well-formed (50), %d groups (40), %d groups of three or more (5), %d with input_b64 (5), %d with a NUL (3)",
 			len(f.Vectors), malformed, accepted, len(groups), big, b64, nul)
+	}
+
+	if syntaxOK < 100 || syntaxFail < 15 {
+		t.Errorf("the syntax half is too thin: %d vectors pass module 1's layer (floor 100), %d fail it (floor 15)", syntaxOK, syntaxFail)
 	}
 
 	// The boundary of every rule has a vector, by name: the list below is the coverage the owner asked for, and a vector deleted from the file is a red line here.
@@ -134,6 +158,7 @@ func TestNorm_VectorFileShape(t *testing.T) {
 		"local-64-bytes", "local-65-bytes", "label-63-bytes", "label-64-bytes", "domain-253-bytes", "domain-254-bytes", "address-254-bytes", "address-255-bytes", // lengths
 		"invalid-utf8-local-ff", "invalid-utf8-local-fe", "invalid-utf8-in-domain", "invalid-utf8-only", "utf16le-encoded-address", // bytes that are not UTF-8
 		"not-an-address-first", "not-an-address-second", // a malformed text repeated
+		"syntax-local-1-byte", "syntax-local-65-ascii", // module 1's syntax layer: the local part limit, both sides (the full list is in the file)
 	}
 	for _, name := range required {
 		if !names[name] {

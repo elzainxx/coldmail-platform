@@ -111,12 +111,12 @@ fi
 # ── the outage sub-stage (M1N-4b) and the floor, against stubs ──
 # What is stubbed: docker compose (DC), docker, sleep. Every scenario is a few assignments that the stub reads: PH_RCn / PH_PASSn (the exit status of phase n and whether its log has a PASS line),
 # STOP_RC, NO_CONTAINER, RUNNING (State.Running after the stop), M1_GONE (1: m1n's health endpoint no longer answers), FX_UP (the control: the fixture answers the same probe), UP_RC, READY,
-# NOAUDIT, AUDIT, PROMO. Each reject case asserts the sentence the stage dies with.
+# NOAUDIT, AUDIT, PROMO (1: the node promotes itself; 0: it stays provisioning), STALE (1: the promoting audit row is older than the registration), NOID (1: the node names no promoting audit row). Each reject case asserts the sentence the stage dies with.
 outage_run() { # label function scenario
   W="$T/o-$1"; mkdir -p "$W"
   ( set -u; WORK="$W"; PLATFORM_DIR=/x; . "$T/env.sh"; . "$HERE/m1node.sh"
     M1N_NODE_ID=harness-node-1; M1N_READY_SECS=3
-    PH_RC1=0; PH_RC2=0; PH_RC3=0; PH_PASS1=1; PH_PASS2=1; PH_PASS3=1; STOP_RC=0; NO_CONTAINER=0; RUNNING=false; M1_GONE=1; FX_UP=1; UP_RC=0; READY=1; NOAUDIT=0; AUDIT=green; PROMO=1
+    PH_RC1=0; PH_RC2=0; PH_RC3=0; PH_PASS1=1; PH_PASS2=1; PH_PASS3=1; STOP_RC=0; NO_CONTAINER=0; RUNNING=false; M1_GONE=1; FX_UP=1; UP_RC=0; READY=1; NOAUDIT=0; AUDIT=green; PROMO=1; STALE=0; NOID=0
     eval "${3:-}"
     DC() {
       case "$1" in
@@ -147,12 +147,16 @@ outage_run() { # label function scenario
         exec)
           local sql="${@: -1}"
           case "$sql" in
+            *"select status || '|' || coalesce(port25_open"*) [ "$PROMO" = 1 ] && echo "active|true" || echo "provisioning|false";;
+            *"select 'node row: status="*) [ "$PROMO" = 1 ] && echo "node row: status=active port25_open=true audit_status=green promoted_by_audit_id=audit-9 registered_at=x" || echo "node row: status=provisioning port25_open=false audit_status=green promoted_by_audit_id=null registered_at=x";;
+            *"a.audited_at >= n.registered_at"*) [ "$STALE" = 1 ] && echo false || echo true;;
+            *"select audit_status from verify.node_audits where id"*) echo green;;
+            *"select coalesce(promoted_by_audit_id"*) [ "$NOID" = 1 ] && echo "" || echo audit-9;;
+            *"select id::text from verify.node_audits"*) echo audit-9;;
             *"from verify.node_audits"*)
               if [ ! -f "$W/audits" ]; then echo 3 > "$W/audits"; echo 3
               elif [ "$NOAUDIT" = 1 ]; then echo 3; else echo 4; fi;;
             *"coalesce(audit_status"*) echo "$AUDIT";;
-            *"with u as (update"*) echo "$PROMO";;
-            *"select 'node row"*) echo "node row after the restart and the promotion: status=active port25_open=true";;
           esac;;
       esac
     }
@@ -183,7 +187,8 @@ verdict "m1n_outage_stop: the control: a probe that cannot reach the fixture pro
 out="$(outage_run startok m1n_outage_start)"; rc=$?
 verdict "m1n_outage_start: a module that comes back, is ready, re-audits and is promoted" 0 "the restarted control plane audited the node again at boot (3 -> 4 audit rows)" "$out" "$rc"
 verdict "m1n_outage_start: ... and says it is ready over the private network" 0 "m1n is back: /readyz answers ready=true over the private network" "$out" "$rc"
-verdict "m1n_outage_start: ... and shows the promoted node row" 0 "status=active port25_open=true" "$out" "$rc"
+verdict "m1n_outage_start: ... and shows the node promoted by itself, naming the audit row" 0 "promoted by the green audit row audit-9" "$out" "$rc"
+verdict "m1n_outage_start: ... and the harness ran no UPDATE (the stub answers no such statement)" 0 "no UPDATE was run by the harness" "$out" "$rc"
 out="$(outage_run upfail m1n_outage_start 'UP_RC=1')"; rc=$?
 verdict "m1n_outage_start: a start that never becomes healthy dies with the module's log" 1 "m1n did not become healthy again after the restart (its log tail is above)" "$out" "$rc"
 verdict "m1n_outage_start: ... and prints the log tail before it dies" 1 "a log line of m1n" "$out" "$rc"
@@ -194,7 +199,11 @@ verdict "m1n_outage_start: no new audit row is a NOTE, not a failure (the node k
 out="$(outage_run red m1n_outage_start 'AUDIT=red')"; rc=$?
 verdict "m1n_outage_start: a node whose audit is not green is not put back in service" 1 "the node's audit status is 'red', not green" "$out" "$rc"
 out="$(outage_run nopromo m1n_outage_start 'PROMO=0')"; rc=$?
-verdict "m1n_outage_start: a promotion that changes no row is red" 1 "the promotion UPDATE after the restart changed no row" "$out" "$rc"
+verdict "m1n_outage_start: a node that never promotes itself is red (the harness does not do it for it)" 1 "the node did not promote itself to active with port25_open=true within 90 s after the restart" "$out" "$rc"
+out="$(outage_run stale m1n_outage_start 'STALE=1')"; rc=$?
+verdict "m1n_outage_start: a node promoted by an audit row older than its registration is red (a stale active is never trusted)" 1 "is older than the node's registration after the restart" "$out" "$rc"
+out="$(outage_run noid m1n_outage_start 'NOID=1')"; rc=$?
+verdict "m1n_outage_start: a node that is active but names no promoting audit row is red" 1 "names no audit row" "$out" "$rc"
 
 out="$(outage_run whole m1n_outage)"; rc=$?
 verdict "m1n_outage: the whole sub-stage on a good run" 0 "M1N-4b OK in" "$out" "$rc"

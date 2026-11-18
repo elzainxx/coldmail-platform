@@ -1,0 +1,13 @@
+diff --git a/services/worker/src/assemble.js b/services/worker/src/assemble.js
+index f85558c..ee18a94 100644
+--- a/services/worker/src/assemble.js
++++ b/services/worker/src/assemble.js
+@@ -136,7 +136,7 @@ function serializeAlternative(msg, headerLines) {
+   return [
+     ...headerLines,
+     "",
+-    ...part("text/plain", msg.text),
++    // MUTATION: the text part is dropped
+     ...part("text/html", msg.body),
+     `--${msg.boundary}--`,
+   ].join("\r\n");

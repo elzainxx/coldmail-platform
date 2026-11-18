@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // The syntax half of the address rule (syntax.go). The shared vector file pins module 1's REAL answers (TestNorm_Vectors reads `syntax_ok`); the tests here pin the boundaries of the layer by
@@ -151,5 +152,75 @@ func TestSyntaxReasons_AreClosedDistinctAndDocumented(t *testing.T) {
 	}
 	if len(SyntaxReasons()) != 4 {
 		t.Errorf("%d syntax reasons, want 4 (the set is additive: raise this number with the new word)", len(SyntaxReasons()))
+	}
+}
+
+// TestNorm_SyntaxVectorCheckerDetectsBrokenCopies: the syntax half of the vector check has its paired control. The real CheckSyntax agrees with module 1's layer on every vector of the file; each
+// broken copy below (a limit moved by one, a limit counted in characters, the dot rule dropped or made stricter) is reported by name by the check. A checker that cannot fail would prove nothing.
+func TestNorm_SyntaxVectorCheckerDetectsBrokenCopies(t *testing.T) {
+	vs := loadVectors(t)
+	if p := checkSyntaxVectors(CheckSyntax, vs); len(p) != 0 {
+		t.Fatalf("the real CheckSyntax disagrees with module 1's layer on %d vector(s), first: %s", len(p), p[0])
+	}
+	mk := func(maxLocal, maxDomain int, runes, needDot, trimDot bool) syntaxFunc {
+		return func(n string) error {
+			l, d := Split(n)
+			ll, dl := len(l), len(d)
+			if runes {
+				ll, dl = utf8.RuneCountInString(l), utf8.RuneCountInString(d)
+			}
+			switch {
+			case l == "" || d == "":
+				return &SyntaxError{Reason: ReasonPartEmpty}
+			case ll > maxLocal:
+				return &SyntaxError{Reason: ReasonLocalTooLong}
+			case dl > maxDomain:
+				return &SyntaxError{Reason: ReasonDomainTooLong}
+			case needDot && !strings.Contains(strings.TrimPrefix(d, "."), "."):
+				return &SyntaxError{Reason: ReasonDomainNoDot}
+			case !needDot && !strings.Contains(d, "."):
+				return &SyntaxError{Reason: ReasonDomainNoDot}
+			}
+			_ = trimDot
+			return nil
+		}
+	}
+	if p := checkSyntaxVectors(mk(64, 255, false, false, false), vs); len(p) != 0 {
+		t.Fatalf("the unbroken copy disagrees with the file (%d problems, first: %s): the mutants below prove nothing", len(p), p[0])
+	}
+	for _, m := range []struct {
+		name string
+		fn   syntaxFunc
+		want string
+	}{
+		{"local limit 65", mk(65, 255, false, false, false), "syntax-local-65-ascii"},
+		{"local limit 63", mk(63, 255, false, false, false), "syntax-local-64-ascii"},
+		{"local limit counted in characters", mk(64, 255, true, false, false), "syntax-local-65-bytes-mixed"},
+		{"domain limit 256", mk(64, 256, false, false, false), "syntax-domain-256-ascii"},
+		{"domain limit 254", mk(64, 254, false, false, false), "syntax-domain-255-ascii"},
+		{"a leading dot does not count as the dot", mk(64, 255, false, true, false), "syntax-domain-leading-dot"},
+		{"no dot rule", func(n string) error {
+			if err := mk(64, 255, false, false, false)(n); err != nil {
+				if r, _ := SyntaxReasonOf(err); r == ReasonDomainNoDot {
+					return nil
+				}
+				return err
+			}
+			return nil
+		}, "syntax-domain-no-dot"},
+	} {
+		m := m
+		t.Run(m.name, func(t *testing.T) {
+			problems := checkSyntaxVectors(m.fn, vs)
+			found := false
+			for _, p := range problems {
+				if strings.HasPrefix(p, m.want+":") {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("the syntax check did not report %q for this broken copy (%d problems: %v)", m.want, len(problems), problems)
+			}
+		})
 	}
 }

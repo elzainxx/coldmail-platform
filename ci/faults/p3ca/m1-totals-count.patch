@@ -1,0 +1,11 @@
+--- a/control-plane/internal/api/job_input.go
++++ b/control-plane/internal/api/job_input.go
+@@ -89,7 +89,7 @@
+ 	}
+ 	return map[string]any{
+ 		"submitted":  t.Submitted,
+-		"settled":    t.Settled,
++		"settled":    t.Settled + 1,
+ 		"pending":    t.Pending,
+ 		"duplicates": t.Duplicates,
+ 		"malformed":  t.Malformed,

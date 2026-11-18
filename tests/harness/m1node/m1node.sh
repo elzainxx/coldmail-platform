@@ -6,7 +6,7 @@
 #   m1n_run       the four stages below, each with its own banner and its own printed evidence, so ONE run says exactly which one broke:
 #     M1N-1  m1n_stage1   the fixtures alone: DNS, the ipify HTTPS endpoint and the SMTP fixture on the second internal network, checked from a SEPARATE container on that network
 #     M1N-2  m1n_stage2   the node alone: its resolver and hostname, its audit (each of the three steps, then the JSON), then POST /v1/verify DIRECTLY on the node for every recipe
-#     M1N-3  m1n_stage3   module 1's control plane wired to the node: boot log, the first audit row, the promotion (SQL), a synchronous verify that shows a node verdict
+#     M1N-3  m1n_stage3   module 1's control plane wired to the node: boot log, the first audit row, the node's SELF-promotion (no SQL since the Phase 3 close-out), a synchronous verify that shows a node verdict
 #     M1N-4  m1n_stage4   the integration tests (tests/harness/m1_node_test.go, TestM1Node_*): one bulk job holding one address per recipe, the cache, a control per recipe family
 #     M1N-4b m1n_outage   the OUTAGE proof (Phase 3, B12; tests/harness/m1_node_outage_test.go): a job in flight, the control plane stopped, the platform's calls and books while it is down, the
 #                         control plane started again, the job completed exactly once; three test phases in three processes with the stop and the start between them, then m1n_floor counts all of them
@@ -199,6 +199,25 @@ m1n_stage2() {
   echo "  M1N-2 OK in $((SECONDS - t0)) s: the node's audit is green and it answers every recipe as the table says"
 }
 
+# m1n_wait_self_promoted <when>: the node row becomes active with port25_open=true BY ITSELF, from the latest green audit row (nodes.promoted_by_audit_id names that row); the harness only reads. Up to 90 s: the
+# control plane audits and promotes in its first watcher cycle (the cadence is 0 here, so there is exactly that one cycle per boot).
+m1n_wait_self_promoted() {
+  local when="$1" i=0 st aid pid
+  while [ $i -lt 90 ]; do
+    st="$(m1n_psql "select status || '|' || coalesce(port25_open::text, 'null') from verify.nodes where id = '$M1N_NODE_ID'")"
+    [ "$st" = "active|true" ] && break
+    i=$((i+1)); sleep 1
+  done
+  m1n_psql "select 'node row: status=' || status || ' port25_open=' || coalesce(port25_open::text, 'null') || ' audit_status=' || coalesce(audit_status, '') || ' promoted_by_audit_id=' || coalesce(promoted_by_audit_id::text, 'null') || ' registered_at=' || registered_at::text from verify.nodes where id = '$M1N_NODE_ID'" | m1n_show
+  [ "$st" = "active|true" ] || { DC logs --no-color --tail 60 m1n 2>&1 | grep -i -E 'node|audit|promot|watcher' | cut -c1-260 | m1n_show; die "the node did not promote itself to active with port25_open=true within 90 s $when (status|port25_open = '$st'): module 1's own watcher must do it from a green audit row, the harness runs no SQL"; }
+  aid="$(m1n_psql "select id::text from verify.node_audits where node_id = '$M1N_NODE_ID' and audit_status = 'green' order by audited_at desc limit 1")"
+  pid="$(m1n_psql "select coalesce(promoted_by_audit_id::text, '') from verify.nodes where id = '$M1N_NODE_ID'")"
+  [ -n "$pid" ] || die "the node is active but names no audit row (nodes.promoted_by_audit_id is empty) $when: it was promoted by something other than module 1's promotion"
+  [ "$(m1n_psql "select (a.audited_at >= n.registered_at)::text from verify.node_audits a, verify.nodes n where a.id = '$pid' and n.id = '$M1N_NODE_ID'")" = true ] || die "the audit row that promoted the node ($pid) is older than the node's registration $when: a stale audit promoted it"
+  [ "$(m1n_psql "select audit_status from verify.node_audits where id = '$pid'")" = green ] || die "the audit row that promoted the node ($pid) is not green $when"
+  echo "  the node is active with port25_open=true, promoted by the green audit row $pid (the latest green row is $aid), $when: no UPDATE was run by the harness"
+}
+
 # ── M1N-3: module 1's control plane wired ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 m1n_stage3() {
   STAGE=m1n-wired; banner "M1N-3" "module 1's control plane wired to the node: boot, first audit row, promotion, a synchronous verify with a node verdict"
@@ -218,10 +237,8 @@ m1n_stage3() {
   m1n_psql "select 'node row: id=' || id || ' status=' || status || ' port25_open=' || coalesce(port25_open::text, 'null') || ' audit_status=' || coalesce(audit_status, '') || ' base_url_set=' || (base_url <> '')::text from verify.nodes where id = '$M1N_NODE_ID'" | m1n_show
   m1n_psql "select 'latest audit: ' || audit_status || ' current_host_ip=' || coalesce(host(current_host_ip), '') || ' warnings=' || warnings::text from verify.node_audits where node_id = '$M1N_NODE_ID' order by audited_at desc limit 1" | m1n_show
   [ "$a" = green ] || die "the node's first audit row is '${a:-missing}', not green (a red boot audit quarantines the node for good with the watcher loop off): the audit row and the node's own audit are printed above and in M1N-2"
-  m1n_step M1N-3.4 "the promotion: nothing in module 1's code moves a node from provisioning to active or sets port25_open ([U6]); the harness does it in SQL, after the final start"
-  [ "$(m1n_psql "select status from verify.nodes where id = '$M1N_NODE_ID'")" = provisioning ] || echo "     NOTE: the node was not 'provisioning' after boot ([U6] differs from the research): $(m1n_psql "select status from verify.nodes where id = '$M1N_NODE_ID'")"
-  [ "$(m1n_psql "with u as (update verify.nodes set status = 'active', port25_open = true where id = '$M1N_NODE_ID' and audit_status = 'green' returning 1) select count(*) from u")" = 1 ] || die "the promotion UPDATE changed no row"
-  m1n_psql "select 'node row now: status=' || status || ' port25_open=' || port25_open::text from verify.nodes where id = '$M1N_NODE_ID'" | m1n_show
+  m1n_step M1N-3.4 "the promotion is module 1's own (Phase 3 close-out A2, owner ruling OD-4): the node is 'provisioning' with port25_open=false at registration and becomes 'active' only because a green audit row recorded after the registration says so; the harness runs no UPDATE"
+  m1n_wait_self_promoted "after the boot"
   m1n_step M1N-3.5 "a synchronous POST /v1/verify through module 1 for an address nobody else uses: it must carry a node verdict (meta.node_id, meta.verifier_ip), not smtp_unwired / no_eligible_node"
   out="$(printf '{"email":"gate-sync@valid.fixture.test"}' | DC exec -T -e K="$M1_KEY" m1n sh -c 'curl -sS -m 40 -X POST -H "Authorization: Bearer $K" -H "Content-Type: application/json" --data-binary @- http://localhost:8080/v1/verify')" || die "the synchronous verify call failed"
   printf '%s\n' "$out" | cut -c1-1500 | m1n_show
@@ -231,7 +248,7 @@ m1n_stage3() {
   m1n_step M1N-3.6 "the SMTP fixture's view of that one verification (the target and the nx- probe, both from the node)"
   m1n_fx '/api/smtp/sessions?domain=valid.fixture.test' | tr '}' '\n' | grep gate-sync | m1n_show
   [ "$(m1n_fx '/api/smtp/sessions?domain=valid.fixture.test' | grep -o 'gate-sync@valid.fixture.test' | wc -l | tr -d ' ')" = 1 ] || die "the SMTP fixture did not see exactly one RCPT for gate-sync@valid.fixture.test"
-  echo "  M1N-3 OK in $((SECONDS - t0)) s: module 1 is wired, the node is active, and a synchronous verify returns a node verdict"
+  echo "  M1N-3 OK in $((SECONDS - t0)) s: module 1 is wired, the node promoted itself after a green audit, and a synchronous verify returns a node verdict"
 }
 
 # ── M1N-4: the tests ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -319,8 +336,7 @@ m1n_outage_start() {
   else echo "     NOTE: no new audit row within 30 s of the restart ($n0 rows): the node row keeps its last green audit and is promoted from that"; fi
   a="$(m1n_psql "select coalesce(audit_status, '') from verify.nodes where id = '$M1N_NODE_ID'")"
   [ "$a" = green ] || die "after the restart the node's audit status is '${a:-missing}', not green: the promotion that puts the node back in service needs it"
-  [ "$(m1n_psql "with u as (update verify.nodes set status = 'active', port25_open = true where id = '$M1N_NODE_ID' and audit_status = 'green' returning 1) select count(*) from u")" = 1 ] || die "the promotion UPDATE after the restart changed no row: the node row is missing"
-  m1n_psql "select 'node row after the restart and the promotion: status=' || status || ' port25_open=' || port25_open::text from verify.nodes where id = '$M1N_NODE_ID'" | m1n_show
+  m1n_wait_self_promoted "after the restart (module 1 re-registered the node as provisioning at boot and promoted it again from the audit it recorded after that: a stale active is never trusted)"
 }
 
 m1n_outage() {

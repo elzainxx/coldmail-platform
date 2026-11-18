@@ -1,0 +1,13 @@
+diff --git a/services/control/internal/pagecursor/pagecursor.go b/services/control/internal/pagecursor/pagecursor.go
+index 94840ef..02df994 100644
+--- a/services/control/internal/pagecursor/pagecursor.go
++++ b/services/control/internal/pagecursor/pagecursor.go
+@@ -97,7 +97,7 @@ func Decode(raw, scope string) (Position, error) {
+ 	if !uuidRe.MatchString(pos.ID) {
+ 		return Position{}, ErrMalformed
+ 	}
+-	if len(parts) == 4 && parts[3] != scopeTag(scope) {
++	if len(parts) == 4 && parts[3] != scopeTag(scope) && false { // MUTATION: the scope binding is not checked
+ 		return Position{}, ErrWrongScope
+ 	}
+ 	return pos, nil
