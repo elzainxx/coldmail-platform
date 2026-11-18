@@ -18,7 +18,7 @@ import (
 )
 
 // TestSubmit_SendsTheItemsShapeWithTheBearerKey: POST /v1/verify/bulk with `Authorization: Bearer <key>`, a JSON body that is exactly {"items":[{item_id, address}...]} (no
-// `addresses` key: module 1 refuses both), and the recorded 202 decodes to the job id and the counts, which are the plan's expected ones. Control: the stand-in answers 401 to any
+// `addresses` key: module 1 refuses both), and the 202 (the recording, its counts set to what the plan predicts) decodes to the recorded job id and those counts. Control: the stand-in answers 401 to any
 // other credential, so a client that sent the wrong header would be seen; and one with the wrong key is (a Refused error that is not an orphan: module 1 said no).
 func TestSubmit_SendsTheItemsShapeWithTheBearerKey(t *testing.T) {
 	var key string
@@ -26,7 +26,7 @@ func TestSubmit_SendsTheItemsShapeWithTheBearerKey(t *testing.T) {
 		if c.Auth != "Bearer "+key {
 			return 401, fixture(t, "submit-error-unauthenticated.json")
 		}
-		return 202, fixture(t, "submit-accepted.json")
+		return 202, acceptedFor(t, threeRowPlan().Expected())
 	})
 	key = f.key
 	a := f.adapter(t)
@@ -35,8 +35,8 @@ func TestSubmit_SendsTheItemsShapeWithTheBearerKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if id != testJob || counts != (SubmitCounts{Total: 3, Enqueued: 2, Duplicate: 1}) {
-		t.Fatalf("Submit returned %q %+v", id, counts)
+	if recID, _ := recordedCounts(t, "submit-accepted.json"); id != recID || id != testJob || counts != plan.Expected() || counts == (SubmitCounts{}) {
+		t.Fatalf("Submit returned %q %+v, want the recorded job id %q and the plan's counts %+v", id, counts, testJob, plan.Expected())
 	}
 	calls := f.seen()
 	if len(calls) != 1 {
@@ -102,8 +102,8 @@ func TestSubmit_AnUnconfirmedOutcomeIsAnOrphanPossibilityAndIsNeverRetried(t *te
 		{"a reset connection", reset, modclient.Unavailable, true},
 		{"a 200 where the route answers 202", reply(200, fixture(t, "submit-accepted.json")), modclient.Contract, true},
 		{"a 202 that is not JSON", reply(202, `accepted`), modclient.Contract, true},
-		{"a 202 with a job id that is not a uuid", reply(202, strings.Replace(fixture(t, "submit-accepted.json"), testJob, "J-42", 1)), modclient.Contract, true},
-		{"a 202 that does not say accepted", reply(202, strings.Replace(fixture(t, "submit-accepted.json"), `"accepted"`, `"queued"`, 1)), modclient.Contract, true},
+		{"a 202 with a job id that is not a uuid", reply(202, mustReplace(t, fixture(t, "submit-accepted.json"), testJob, "J-42")), modclient.Contract, true},
+		{"a 202 that does not say accepted", reply(202, mustReplace(t, fixture(t, "submit-accepted.json"), `"accepted"`, `"queued"`)), modclient.Contract, true},
 		{"a 202 with no job id", reply(202, `{"status":"accepted","counts":{"total":3,"enqueued":2,"duplicate":1,"malformed":0}}`), modclient.Contract, true},
 
 		{"400 validation_failed (module 1 refused)", reply(400, fixture(t, "submit-error-validation.json")), modclient.Refused, false},
@@ -194,7 +194,8 @@ func TestSubmit_AnUnconfirmedOutcomeIsAnOrphanPossibilityAndIsNeverRetried(t *te
 
 // TestSubmit_ACountThatDisagreesWithThePlanIsAContractError: module 1 confirmed the job but its counts are not what the plan predicted (for example it judged a row malformed that
 // norm/v1 accepted: the two implementations have drifted), or they do not add up, or one is negative. Submit returns no value and a *MismatchError that carries the job id (the job
-// EXISTS), is a Contract error, names the counts key, and is NOT an orphan. Control: the recorded 202 (which equals the prediction) is accepted.
+// EXISTS), is a Contract error, names the counts key, and is NOT an orphan. The recording itself is one of the cases: it is the 202 of a raw submission that held two malformed rows,
+// which a plan never sends, so a plan predicting none of them disagrees with it. Control: the recording with its counts set to the prediction is accepted.
 func TestSubmit_ACountThatDisagreesWithThePlanIsAContractError(t *testing.T) {
 	body := func(total, enq, dup, mal int) string {
 		b, _ := json.Marshal(map[string]any{"job_id": testJob, "status": "accepted", "counts": map[string]int{"total": total, "enqueued": enq, "duplicate": dup, "malformed": mal}})
@@ -218,9 +219,30 @@ func TestSubmit_ACountThatDisagreesWithThePlanIsAContractError(t *testing.T) {
 			t.Errorf("%s: got %q %+v kind %v key %q (%v), want no value and a MismatchError for job %s, a Contract error naming %q", c.name, id, counts, kind, key, err, testJob, c.key)
 		}
 	}
-	f := serve(t, 202, fixture(t, "submit-accepted.json"))
+	// the recording as it is: its counts are whatever the real run produced, and the plan's prediction must differ from them or this case proves nothing
+	_, rec := recordedCounts(t, "submit-accepted.json")
+	want := threeRowPlan().Expected()
+	wantKey := ""
+	for _, k := range []struct {
+		name      string
+		got, want int
+	}{{"counts.total", rec.Total, want.Total}, {"counts.enqueued", rec.Enqueued, want.Enqueued}, {"counts.duplicate", rec.Duplicate, want.Duplicate}, {"counts.malformed", rec.Malformed, want.Malformed}} {
+		if k.got != k.want {
+			wantKey = k.name
+			break
+		}
+	}
+	if wantKey == "" {
+		t.Fatalf("the recorded counts %+v equal the plan's prediction %+v: the case would prove nothing", rec, want)
+	}
+	_, _, rerr := serve(t, 202, fixture(t, "submit-accepted.json")).adapter(t).Submit(testCtx(t), threeRowPlan())
+	var me *MismatchError
+	if kind, key := kindAndKey(rerr); !errors.As(rerr, &me) || me.JobID != testJob || kind != modclient.Contract || key != wantKey {
+		t.Errorf("the recorded 202: got kind %v key %q (%v), want a MismatchError naming %q", kind, key, rerr, wantKey)
+	}
+	f := serve(t, 202, acceptedFor(t, want))
 	if _, _, err := f.adapter(t).Submit(testCtx(t), threeRowPlan()); err != nil {
-		t.Fatalf("control: the recorded 202 was refused: %v", err)
+		t.Fatalf("control: the recording with the plan's counts was refused: %v", err)
 	}
 }
 
@@ -244,8 +266,9 @@ func TestSubmitRaw_AppliesModule1sLimitsAndChecksNothingAgainstAPrediction(t *te
 		t.Fatalf("%d request(s) for refused lists", f.count())
 	}
 	id, counts, err := a.SubmitRaw(testCtx(t), []Item{{"a", "ada@acme.example"}})
-	if err != nil || id != testJob || counts != (SubmitCounts{Total: 3, Enqueued: 2, Duplicate: 1}) {
-		t.Fatalf("control: %q %+v %v (the counts are the module's, not compared with the one row sent)", id, counts, err)
+	recID, recCounts := recordedCounts(t, "submit-accepted.json")
+	if err != nil || id != recID || counts != recCounts || counts.Total == 1 {
+		t.Fatalf("control: %q %+v %v, want the recording's %q %+v (the counts are the module's, not compared with the one row sent: it says %d rows)", id, counts, err, recID, recCounts, recCounts.Total)
 	}
 }
 
@@ -264,4 +287,13 @@ func TestOrphanError_IsATypedWrapper(t *testing.T) {
 	if errors.Is(plain, ErrOrphanPossible) {
 		t.Fatal("control: a plain modclient error claims an orphan")
 	}
+}
+
+// mustReplace replaces the one occurrence of old in s and fails the test when there is not exactly one: a mutation that touched nothing proves nothing.
+func mustReplace(t testing.TB, s, old, new string) string {
+	t.Helper()
+	if n := strings.Count(s, old); n != 1 {
+		t.Fatalf("setup: %q occurs %d time(s) in the fixture, want exactly 1", old, n)
+	}
+	return strings.Replace(s, old, new, 1)
 }

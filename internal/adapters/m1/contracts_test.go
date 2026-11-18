@@ -27,10 +27,10 @@ import (
 type contractRun func(t *testing.T, status int, body string) (summary string, err error)
 
 type contractExpect struct {
-	run     contractRun
-	summary string         // success: what the recorded body must decode to
-	kind    modclient.Kind // error: the class the adapter must give it (0 for a success)
-	code    string         // error: the module's code the typed error must carry
+	run       contractRun
+	summarize func(t *testing.T, body string) string // success: what the recorded body says, read WITHOUT the adapter (a generic JSON parse), in the format run returns
+	kind      modclient.Kind                         // error: the class the adapter must give it (0 for a success)
+	code      string                                 // error: the module's code the typed error must carry
 }
 
 func runVerify(t *testing.T, status int, body string) (string, error) {
@@ -43,6 +43,16 @@ func runVerify(t *testing.T, status int, body string) (string, error) {
 
 func runSubmit(t *testing.T, status int, body string) (string, error) {
 	id, c, err := serve(t, status, body).adapter(t).Submit(testCtx(t), threeRowPlan())
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s %d/%d/%d/%d", id, c.Total, c.Enqueued, c.Duplicate, c.Malformed), nil
+}
+
+// runSubmitRaw is the call the recorded 202 is decoded with: the recording is that of a raw submission (two of its three rows malformed), which a plan never sends and
+// Submit would refuse as a count that disagrees with its prediction (TestSubmit_ACountThatDisagreesWithThePlanIsAContractError).
+func runSubmitRaw(t *testing.T, status int, body string) (string, error) {
+	id, c, err := serve(t, status, body).adapter(t).SubmitRaw(testCtx(t), []Item{{"a", "ada@acme.example"}, {"b", "bob@acme.example"}, {"c", "cyd@acme.example"}})
 	if err != nil {
 		return "", err
 	}
@@ -65,25 +75,60 @@ func runResults(t *testing.T, status int, body string) (string, error) {
 	return fmt.Sprintf("%d rows next=%q", len(rows), next), nil
 }
 
+// The summaries below read a body with encoding/json into generic maps, so they share no code with the adapter's decoding.
+func docOf(t *testing.T, body string) map[string]any {
+	t.Helper()
+	var doc map[string]any
+	if err := json.NewDecoder(strings.NewReader(body)).Decode(&doc); err != nil {
+		t.Fatal(err)
+	}
+	return doc
+}
+
+func verifySummary(t *testing.T, body string) string {
+	d := docOf(t, body)
+	return fmt.Sprintf("%s/%s %d %s %s", d["status"], d["reason"], num(t, d["confidence"]), d["recommendation"], d["domain"])
+}
+
+func submitSummary(t *testing.T, body string) string {
+	d := docOf(t, body)
+	c := obj(t, d["counts"])
+	return fmt.Sprintf("%s %d/%d/%d/%d", d["job_id"], num(t, c["total"]), num(t, c["enqueued"]), num(t, c["duplicate"]), num(t, c["malformed"]))
+}
+
+func statusSummary(t *testing.T, body string) string {
+	d := docOf(t, body)
+	c := obj(t, d["counts"])
+	return fmt.Sprintf("%s complete=%t %d/%d/%d paused=%t", d["status"], d["complete"], num(t, c["total"]), num(t, c["settled"]), num(t, c["pending"]), d["processing_paused"])
+}
+
+func resultsSummary(t *testing.T, body string) string {
+	d := docOf(t, body)
+	return fmt.Sprintf("%d rows next=%q", len(d["results"].([]any)), d["next_cursor"])
+}
+
 func contractKey(route, c string) string { return route + " | " + c }
 
 // contractTable is what every entry of Contracts() is exercised with. A contract with no entry here, and an entry with no contract, are both red (TestContracts_EveryFixtureDecodes...).
 func contractTable() map[string]contractExpect {
 	return map[string]contractExpect{
-		contractKey(tplVerify, "ok"):                {run: runVerify, summary: "valid/accepted 90 send acme.example"},
-		contractKey(tplSubmit, "accepted"):          {run: runSubmit, summary: testJob + " 3/2/1/0"},
+		contractKey(tplVerify, "ok"):                {run: runVerify, summarize: verifySummary},
+		contractKey(tplSubmit, "accepted"):          {run: runSubmitRaw, summarize: submitSummary},
 		contractKey(tplSubmit, "validation_failed"): {run: runSubmit, kind: modclient.Refused, code: "validation_failed"},
 		contractKey(tplSubmit, "unauthenticated"):   {run: runSubmit, kind: modclient.Refused, code: "unauthenticated"},
 		contractKey(tplSubmit, "payload_too_large"): {run: runSubmit, kind: modclient.Refused, code: "payload_too_large"},
 		contractKey(tplSubmit, "paused"):            {run: runSubmit, kind: modclient.Paused, code: "paused"},
 		contractKey(tplSubmit, "unavailable"):       {run: runSubmit, kind: modclient.Unavailable, code: "unavailable"},
 		contractKey(tplSubmit, "internal_error"):    {run: runSubmit, kind: modclient.Internal, code: "internal_error"},
-		contractKey(tplStatus, "running"):           {run: runStatus, summary: "running complete=false 3/1/2 paused=false"},
-		contractKey(tplStatus, "complete"):          {run: runStatus, summary: "complete complete=true 3/3/0 paused=false"},
+		contractKey(tplStatus, "running"):           {run: runStatus, summarize: statusSummary},
+		contractKey(tplStatus, "complete"):          {run: runStatus, summarize: statusSummary},
 		contractKey(tplStatus, "not_found"):         {run: runStatus, kind: modclient.NotFound, code: "not_found"},
-		contractKey(tplResults, "page"):             {run: runResults, summary: `5 rows next="4"`},
-		contractKey(tplResults, "empty_page"):       {run: runResults, summary: `0 rows next=""`},
+		contractKey(tplStatus, "unauthenticated"):   {run: runStatus, kind: modclient.Refused, code: "unauthenticated"},
+		contractKey(tplResults, "page"):             {run: runResults, summarize: resultsSummary},
+		contractKey(tplResults, "empty_page"):       {run: runResults, summarize: resultsSummary},
 		contractKey(tplResults, "bad_cursor"):       {run: runResults, kind: modclient.Refused, code: "validation_failed"},
+		contractKey(tplResults, "unauthenticated"):  {run: runResults, kind: modclient.Refused, code: "unauthenticated"},
+		contractKey(tplResults, "not_found"):        {run: runResults, kind: modclient.NotFound, code: "not_found"},
 	}
 }
 
@@ -109,8 +154,9 @@ func TestContracts_EveryFixtureDecodesThroughTheAdaptersRealPath(t *testing.T) {
 		body := fixture(t, c.Fixture)
 		summary, err := exp.run(t, c.Status, body)
 		if exp.kind == 0 {
-			if err != nil || summary != exp.summary {
-				t.Errorf("%s: got %q, %v, want %q", key, summary, err, exp.summary)
+			want := exp.summarize(t, body)
+			if err != nil || summary != want || summary == "" {
+				t.Errorf("%s: got %q, %v, want what the file says: %q", key, summary, err, want)
 			}
 			// control: the wrong shape is refused by the same call
 			if _, cerr := exp.run(t, c.Status, `{"unexpected":true}`); modclient.KindOf(cerr) != modclient.Contract {
@@ -451,7 +497,11 @@ func TestContracts_AMutatedFixtureIsRefusedNamingTheKey(t *testing.T) {
 			retype("results[0]", []any{1}),
 		},
 		contractKey(tplResults, "empty_page"): {
-			remove("job_id"), remove("next_cursor"), retype("results", nil), remove("results"),
+			remove("job_id"), remove("next_cursor"), retype("next_cursor", 7), retype("results", nil), remove("results"),
+			remove("results[0].ordinal"), retype("results[0].ordinal", "0"), remove("results[7].item_id"), retype("results[7].item_id", 7),
+			remove("results[0].status"), outside("results[0].status", "maybe"), remove("results[3].reason"), outside("results[3].reason", "vibes"),
+			remove("results[5].flags"), remove("results[5].flags.from_cache"), retype("results[5].flags.from_cache", 0), remove("results[9].signals"),
+			outside("results[219].reason", "vibes"), remove("results[219].ordinal"),
 		},
 	}
 	total := 0
@@ -486,7 +536,7 @@ func TestContracts_AMutatedFixtureIsRefusedNamingTheKey(t *testing.T) {
 		// control: an unlisted key retyped is tolerated (module 1's changes are additive; the adapter reads only what it lists)
 		if key == contractKey(tplVerify, "ok") {
 			tolerated := mutation{path: "signals.mx_found", op: "set", to: "yes"}.apply(t, base)
-			if summary, err := exp.run(t, c.Status, tolerated); err != nil || summary != exp.summary {
+			if summary, err := exp.run(t, c.Status, tolerated); err != nil || summary != exp.summarize(t, base) {
 				t.Errorf("control: a retyped key the adapter does not read broke the decode: %q %v", summary, err)
 			}
 		}
@@ -495,6 +545,76 @@ func TestContracts_AMutatedFixtureIsRefusedNamingTheKey(t *testing.T) {
 		t.Fatalf("only %d mutation(s) ran: the instrument covers too little", total)
 	}
 	t.Logf("%d mutated fixture(s) refused, each naming its key", total)
+}
+
+// TestContracts_AnErrorEnvelopeIsReadByItsStatusAndOnlyWhenWellFormed: for EVERY error contract (the three recorded in run 44211659227 that the first suite did not declare, GET
+// /v1/jobs/{id} 401 and GET /v1/jobs/{id}/results 401 and 404, among them), a mutated recording is read for what it is. With the code removed the body is no longer module 1's
+// envelope: a 4xx is a Contract error (never the class its status would give, never an answer) and a 5xx keeps the class of its status, with no code and Enveloped false; with the
+// code replaced by a word module 1 may add later the class stays that of the status (an unknown code is data) and the word is carried, except that a 503 is Paused ONLY for the
+// code `paused`. And the envelope served with the success status of its own route is a Contract error: an error body is never read as an answer. Each mutation is paired with
+// the unmutated recording, which gives the class the table expects.
+func TestContracts_AnErrorEnvelopeIsReadByItsStatusAndOnlyWhenWellFormed(t *testing.T) {
+	table := contractTable()
+	successStatus := map[string]int{} // route -> the status of its first success contract
+	for _, c := range Contracts() {
+		if _, ok := successStatus[c.Route]; !ok && c.Status >= 200 && c.Status < 300 {
+			successStatus[c.Route] = c.Status
+		}
+	}
+	checked := 0
+	for _, c := range Contracts() {
+		key := contractKey(c.Route, c.Case)
+		exp := table[key]
+		if exp.kind == 0 {
+			continue
+		}
+		checked++
+		base := fixture(t, c.Fixture)
+		if _, err := exp.run(t, c.Status, base); modclient.KindOf(err) != exp.kind {
+			t.Errorf("%s control: the unmutated recording gave %v, want %v", key, err, exp.kind)
+		}
+
+		// the code removed
+		_, err := exp.run(t, c.Status, remove("error.code").apply(t, base))
+		wantKind := modclient.Contract
+		if c.Status >= 500 {
+			wantKind = modclient.Internal
+			if c.Status == 503 {
+				wantKind = modclient.Unavailable
+			}
+		}
+		if e := asModclient(err); e == nil || e.Kind != wantKind || e.Code != "" || e.Enveloped {
+			t.Errorf("%s: with the code removed got %v, want a %v error with no code and no envelope", key, err, wantKind)
+		}
+
+		// the code replaced by a word module 1 may add later
+		_, err = exp.run(t, c.Status, retype("error.code", "some_new_code").apply(t, base))
+		wantKind = exp.kind
+		if c.Status == 503 {
+			wantKind = modclient.Unavailable // paused is the one code that changes a class
+		}
+		if e := asModclient(err); e == nil || e.Kind != wantKind || e.Code != "some_new_code" || !e.Enveloped {
+			t.Errorf("%s: with an unknown code got %v, want a %v error that carries the code", key, err, wantKind)
+		}
+
+		// the envelope where the answer should be
+		ok, found := successStatus[c.Route]
+		if !found {
+			t.Errorf("%s: the route has no success contract to compare with", key)
+			continue
+		}
+		if _, err := exp.run(t, ok, base); modclient.KindOf(err) != modclient.Contract {
+			t.Errorf("%s: the envelope served as the route's success (HTTP %d) gave %v, want a Contract error: an error body must never be read as an answer", key, ok, err)
+		}
+	}
+	if checked < 11 {
+		t.Fatalf("only %d error contract(s) checked", checked)
+	}
+	for _, want := range []string{contractKey(tplStatus, "unauthenticated"), contractKey(tplResults, "unauthenticated"), contractKey(tplResults, "not_found")} {
+		if table[want].kind == 0 {
+			t.Errorf("the recorded contract %q is not an error entry of the table", want)
+		}
+	}
 }
 
 // TestContracts_EveryVocabValueIsAcceptedAndASiblingIsRefused: for every set a contract publishes, the adapter accepts each value of it in the place it maps from, and refuses the same
@@ -557,7 +677,7 @@ func TestContracts_EveryVocabValueIsAcceptedAndASiblingIsRefused(t *testing.T) {
 			return err
 		}},
 		"submit_status": {"status", func(v string) error {
-			b := strings.Replace(fixture(t, "submit-accepted.json"), `"accepted"`, `"`+v+`"`, 1)
+			b := mustReplace(t, acceptedFor(t, threeRowPlan().Expected()), `"accepted"`, `"`+v+`"`)
 			_, _, err := serve(t, 202, b).adapter(t).Submit(testCtx(t), threeRowPlan())
 			return err
 		}},

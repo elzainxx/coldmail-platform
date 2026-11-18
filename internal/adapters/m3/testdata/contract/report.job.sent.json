@@ -1,9 +1,11 @@
 {
- "job_id": "0d3e5f70-8192-4a3b-8c4d-5e6f708192a3",
- "state": "sent",
- "attempt_count": 1,
- "provider_message_id": "<job-1@mail.example.test>",
- "completed_at": "2026-11-17T12:00:01.123456Z",
- "account_id": "7e8f9a0b-1c2d-4e3f-8a4b-5c6d7e8f9a0b",
- "account_username": "sender-1@example.test"
+  "account_id": "00000000-0000-4000-8000-000000000001",
+  "account_username": "sender-2-e2e-022a02af@example.test",
+  "attempt_count": 0,
+  "completed_at": "2026-01-01T00:00:00.000000Z",
+  "error_class": "bounce_permanent",
+  "failed_at": "2026-01-01T00:00:00.000000Z",
+  "job_id": "00000000-0000-4000-8000-000000000002",
+  "smtp_response": "550 5.1.1 no such user",
+  "state": "bounced"
 }

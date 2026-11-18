@@ -1,8 +1,22 @@
 {
-  "job_id": "00000000-0000-7000-8000-00000000000a",
-  "status": "accepted",
-  "counts": {"total": 3, "enqueued": 2, "duplicate": 1, "malformed": 0},
-  "malformed_rows": [],
+  "counts": {
+    "duplicate": 0,
+    "enqueued": 1,
+    "malformed": 2,
+    "total": 3
+  },
+  "job_id": "00000000-0000-4000-8000-000000000001",
+  "malformed_rows": [
+    {
+      "ordinal": 1,
+      "item_id": "00"
+    },
+    {
+      "ordinal": 2,
+      "item_id": "00"
+    }
+  ],
   "malformed_rows_truncated": false,
-  "processing_paused": false
+  "processing_paused": false,
+  "status": "accepted"
 }

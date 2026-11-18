@@ -2,7 +2,7 @@
  "items": [
   {
    "id": "7e8f9a0b-1c2d-4e3f-8a4b-5c6d7e8f9a0d",
-   "user_id": "2f6d1c1e-7a4b-4c55-9f0e-5b7a3c9d8e21",
+   "user_id": "00000000-0000-4000-8000-000000000002",
    "smtp_host": "smtp.example.test",
    "smtp_port": 587,
    "smtp_username": "sender-3@example.test",

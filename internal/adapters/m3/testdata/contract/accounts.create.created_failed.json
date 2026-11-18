@@ -1,32 +1,29 @@
 {
- "id": "7e8f9a0b-1c2d-4e3f-8a4b-5c6d7e8f9a0c",
- "user_id": "2f6d1c1e-7a4b-4c55-9f0e-5b7a3c9d8e21",
- "smtp_host": "smtp.example.test",
- "smtp_port": 465,
- "smtp_username": "sender-2@example.test",
- "from_address": "sender-2@example.test",
- "from_name": null,
- "has_credential": true,
- "status": {
-  "paused": false,
-  "pause_reason": null,
-  "quarantined": false,
-  "disabled": false
- },
- "verification": {
-  "state": "failed",
-  "verify_at": "2026-11-17T12:05:01Z",
-  "code": "verify_auth_failed",
-  "smtp_response": "535 5.7.8 Username and Password not accepted"
- },
- "from_alignment": {
-  "state": "unaligned_warned",
-  "checked_at": "2026-11-17T12:05:00Z",
-  "last_attempt_at": "2026-11-17T12:05:00Z",
-  "message": "The From address is not confirmed to match the sending server.",
-  "acknowledged_at": "2026-11-17T12:05:00Z"
- },
- "daily_limit": 200,
- "created_at": "2026-11-17T12:05:00Z",
- "updated_at": "2026-11-17T12:05:01Z"
+  "id": "00000000-0000-4000-8000-000000000001",
+  "user_id": "00000000-0000-4000-8000-000000000002",
+  "smtp_host": "172.18.0.9",
+  "smtp_port": 1025,
+  "smtp_username": "sender-f-fail-022a02af@example.test",
+  "from_address": "sender-f-fail-022a02af@example.test",
+  "from_name": "Harness",
+  "has_credential": true,
+  "status": {
+    "paused": false,
+    "pause_reason": null,
+    "quarantined": false,
+    "disabled": false
+  },
+  "verification": {
+    "state": "failed",
+    "verify_at": "2026-01-01T00:00:00Z",
+    "code": "verify_auth_failed",
+    "smtp_response": "535 5.7.8 Authentication credentials invalid"
+  },
+  "from_alignment": {
+    "state": "aligned",
+    "checked_at": "2026-01-01T00:00:00Z"
+  },
+  "daily_limit": 500,
+  "created_at": "2026-01-01T00:00:00Z",
+  "updated_at": "2026-01-01T00:00:00Z"
 }

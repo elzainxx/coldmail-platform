@@ -13,7 +13,7 @@
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 T="$(mktemp -d)" || exit 2; trap 'rm -rf "$T"' EXIT
-MIN=50; cases=0; ok=0; bad=0
+MIN=55; cases=0; ok=0; bad=0
 verdict() { # label want-rc want-substring out rc [forbidden-substring]
   local label="$1" want="$2" sub="$3" out="$4" rc="$5" forbid="${6:-}" n f=0
   cases=$((cases+1))
@@ -268,6 +268,20 @@ EOF
 out="$( WORK="$T"; . "$T/env.sh"; . "$HERE/stage.sh"; m2w_evidence "$ph/evidence.log" )"; rc=$?
 verdict "m2w_evidence: the outage test's own lines are shown" 0 "m2_worker_outage_test.go:120: NOTE outage phase1 live" "$out" "$rc" "NOTE not mine"
 verdict "m2w_evidence: ... so are its helper file's lines and the verdict line" 0 "m2_worker_outage_helpers_test.go:300: NOTE outage control phase 2" "$out" "$rc" "NOTE not mine"
+
+# the contract edge-case test (B6c): its own lines are shown too, and it is one of the tests whose PASS line the stage requires
+cat > "$ph/edge.log" <<'EOF'
+    m2_worker_contract_edge_test.go:210: NOTE edge run conflict: Run of item B answered kind refused, HTTP 409, code conflict
+    m2_worker_contract_edge_test.go:300: NOTE edge describe: GET /v1/describe answered 200
+    some_other_test.go:5: NOTE not mine
+--- PASS: TestM2Worker_ContractEdgeCases (21.40s)
+EOF
+out="$( WORK="$T"; . "$T/env.sh"; . "$HERE/stage.sh"; m2w_evidence "$ph/edge.log" )"; rc=$?
+verdict "m2w_evidence: the contract edge test's own lines are shown" 0 "m2_worker_contract_edge_test.go:210: NOTE edge run conflict" "$out" "$rc" "NOTE not mine"
+verdict "m2w_evidence: ... and its verdict line" 0 "--- PASS: TestM2Worker_ContractEdgeCases" "$out" "$rc" "NOTE not mine"
+printf '%s\n' "$all" | grep -v ContractEdgeCases > "$T/pass-no-edge.log"
+out="$(pass_run "$T/pass-no-edge.log")"; rc=$?
+verdict "m2w_require_pass: the contract edge test has no PASS line" 1 "TestM2Worker_ContractEdgeCases has no '--- PASS' line" "$out" "$rc"
 
 # the lists and the wiring: three outage tests, all in the list the PASS lines and the floor are built from, and the scope run leaves them out of its ordinary run and runs the sub-stage
 n3="$( . "$HERE/stage.sh"; k=0; for t in "${M2W_OUTAGE_TESTS[@]}"; do for u in "${M2W_TESTS[@]}"; do [ "$t" = "$u" ] && k=$((k+1)); done; done; echo "${#M2W_OUTAGE_TESTS[@]} outage tests, $k of them in M2W_TESTS" )"

@@ -21,17 +21,19 @@ func TestStatus_ReadsTheRecordedStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := JobStatus{JobID: testJob, Status: "complete", Complete: true, Counts: JobCounts{Total: 3, Settled: 3, Pending: 0}}
-	if got != want {
-		t.Fatalf("Status returned %+v, want %+v", got, want)
+	want := recordedStatus(t, "job-complete.json") // what the file says, read without the adapter
+	if got != want || got.JobID != testJob || !got.Complete || got.Status != "complete" || got.Counts.Pending != 0 || got.Counts.Settled != got.Counts.Total {
+		t.Fatalf("Status returned %+v, want %+v (a finished job: complete, everything settled)", got, want)
 	}
 	if r := f.seen()[0]; r.Method != http.MethodGet || r.Path != "/v1/jobs/"+testJob || r.Auth != "Bearer "+f.key {
 		t.Fatalf("the request was %+v", r)
 	}
 	body = strings.Replace(fixture(t, "job-running.json"), `"processing_paused": false`, `"processing_paused": true`, 1)
 	ctl, err := a.Status(testCtx(t), testJob)
-	if err != nil || ctl.Complete || ctl.Counts.Pending != 2 || !ctl.ProcessingPaused || ctl.Status != "running" {
-		t.Fatalf("control: %+v, %v", ctl, err)
+	wantCtl := recordedStatus(t, "job-running.json")
+	wantCtl.ProcessingPaused = true // the one value the test changed in the recording
+	if err != nil || ctl != wantCtl || ctl.Complete || ctl.Counts.Pending == 0 || ctl.Counts.Pending != ctl.Counts.Total-ctl.Counts.Settled || ctl.Status != "running" || ctl == got {
+		t.Fatalf("control: %+v, %v, want %+v (a running job: not complete, pending = total - settled, paused as sent, and not the finished one)", ctl, err, wantCtl)
 	}
 }
 
@@ -82,7 +84,10 @@ func TestJobRoutes_ANonUUIDIDIsRefusedBeforeAnyRequest(t *testing.T) {
 		return 200, completeBody(3)
 	})
 	a := f.adapter(t)
-	for _, id := range []string{"", "J1", "019a…", testJob + "0", testJob[:35], strings.Replace(testJob, "7", "g", 1), "../" + testJob, testJob + "/results", "00000000_0000_7000_8000_00000000000a", "{" + testJob + "}"} {
+	for _, id := range []string{"", "J1", "019a…", testJob + "0", testJob[:35], "g" + testJob[1:], "../" + testJob, testJob + "/results", "00000000_0000_7000_8000_00000000000a", "{" + testJob + "}"} {
+		if validJobID(id) {
+			t.Fatalf("setup: %q is a uuid, so the case proves nothing", id)
+		}
 		if _, err := a.Status(testCtx(t), id); modclient.KindOf(err) != modclient.Invalid {
 			t.Errorf("Status(%q): got %v, want an Invalid error", id, err)
 		}

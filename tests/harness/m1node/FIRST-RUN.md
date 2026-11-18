@@ -226,3 +226,29 @@ What a failure usually means:
 - **phase 2 `a TCP connection to module 1 was accepted`**: the stage's stop did not take; the stage checks that before it runs phase 2, so this line should never be the first sign.
 - **phase 3 `kind contract`, `refused` or `not found` right after the restart**: not an outage symptom: the module answered, and wrongly; the line says which call.
 - **phase 3 never completes (`not complete 4m0s after the restart`)**: the stranded batch was not reclaimed (the lease margin did not take: look for `TM_QUEUE_LEASE_MARGIN_SECONDS` in the `m1n` environment and `queue drainer: reclaimed N expired lease(s)` in its log), or the node row's reset to `provisioning` reached a row that needed the node.
+
+## B6c, the contract edge cases (`m1_node_contract_edge_test.go`): what to look for
+
+`TestM1Node_ContractEdgeCases` makes module 1 give the answers of its contracts that the end-to-end tests do not reach, so that the drift gate (`TestM1Node_ZContractDrift`, the last test of the binary) compares a REAL response with the recorded fixture of each. Every call goes through a client whose options carry the session's observer: the stack's adapters, and one raw `modclient.Client` over the same URL and the same tenant key for the requests the adapter refuses before it sends them. The test asserts the module's own status, error code and the details it names, and each case has its control. It runs in the ordinary run (stage M1N-4), so the stage floor is now 19 (16 in the ordinary run, 3 outage phases). It is not in `tests/floors-harness.txt` (build tag `m1node`). Written for a runner, NOT YET RUN.
+
+The control plane now starts with `TM_QUEUE_BULK_MAX_ADDRESSES=500` (docker-compose.m1node.yml; the variable `H_M1N_BULK_CAP` defaults to 500 and the test reads the same value as `HARNESS_M1NODE_BULK_CAP`): module 1's built-in cap is 100,000 rows, which would make its 413 a 100,000-row upload. Nothing else of this stack submits more than 220 rows.
+
+| Look for | Meaning | First run |
+|---|---|---|
+| `NOTE EDGE POST /v1/verify ok: a fresh address at the node-backed recipe answered valid/accepted (confidence 90, recommendation send, from_cache=false), the same address again valid/accepted from_cache=true; the control, a malformed address, was never sent (no_at)` | the synchronous verify, from the node and then from the cache; `verify-ok.json` was hand-written (the first record run never reached the route), so its differences from the real body (keys of `signals` and `meta`) are the first thing the drift gate may print | **NOT YET RUN** |
+| `NOTE EDGE POST /v1/verify/bulk validation_failed: an empty items list and two rows sharing one item_id were each answered HTTP 400 validation_failed with the details named (items:required; items[0].item_id and items[1].item_id: duplicate); module 1 holds N job(s) of the tenant before and after; the control, a valid two-row submission, was accepted (HTTP 202) and completed` | the refusal is made before anything is stored | **NOT YET RUN** |
+| `NOTE EDGE POST /v1/verify/bulk payload_too_large: 501 rows against the control plane's cap of 500 were answered HTTP 413 payload_too_large (items: out_of_range) and stored nothing (N job(s) before and after); the control, two rows of the same submission, was accepted` | the cap and the 413 | **NOT YET RUN**; a 202 here means the cap did not take (look for `TM_QUEUE_BULK_MAX_ADDRESSES` in the `m1n` environment) |
+| `NOTE EDGE GET /v1/jobs/{id}/results empty_page: read <t> after the submission of a two-row job whose rows wait out the fixture's DNS silence, the page had 0 rows and no cursor and the job was not complete; the control, after completion: 2 rows and no cursor; a page of 1 row with a cursor, then the last page of 1 row and no cursor` | the empty page, the last page and a page with a cursor; `<t>` should be a few milliseconds, far below the 2 s a silent name takes | **NOT YET RUN**; `gave 1 row(s)` instead of 0 means a row settled in under 2 s: the fixture's silence did not hold for the two names `edgeslow00` and `edgeslow01` |
+| the drift gate's own lines (`contract drift gate: N of 17 contracts matched ...`) | with these four cases and the end-to-end tests, 14 of the 17 contracts should be exercised; the other three are allowed with a reason | **NOT YET RUN** |
+
+Not made to happen, so allowed with a reason in `m1DriftNotElicited` (the reasons are in `zz_m1_node_contract_drift_test.go`):
+
+- **`POST /v1/verify/bulk` paused (503):** module 1 answers it only with its front-door kill switch pulled in reject mode, an environment variable read once at boot; it would take a second control plane, or a restart of this one, with that variable, and one control plane has to serve everything else.
+- **`POST /v1/verify/bulk` unavailable (503):** only a control plane started without its database, pepper or queue key answers it; this stack's is always fully wired.
+- **`POST /v1/verify/bulk` internal_error (500):** only a failing database write inside the submission answers it; a fault would have to be injected into tables the whole binary shares.
+
+What a failure usually means:
+
+- **`... a 400 must store nothing`**: module 1 stored a job although it answered 400 (the validation order changed).
+- **`the details [...] do not name items: required`** (or another pair): module 1 answered the right status and code but names other fields: the fixture and the adapter's reading of the details need a look.
+- **a difference from the drift gate under `POST /v1/verify`**: read it as the first comparison of the hand-written fixture with a real body; refresh the fixture from a record run (`CONTRACT_RECORD=1`), do not loosen the gate.

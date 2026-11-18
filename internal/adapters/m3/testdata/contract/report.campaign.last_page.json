@@ -1,5 +1,5 @@
 {
- "campaign_id": "5a1c9e30-7d2b-4f6a-9b8e-1c3d5e7f9a02",
+ "campaign_id": "00000000-0000-4000-8000-000000000001",
  "dispatch_paused": false,
  "totals": {
   "total": 5,
@@ -47,7 +47,7 @@
  },
  "totals_by_account": [
   {
-   "account_id": "7e8f9a0b-1c2d-4e3f-8a4b-5c6d7e8f9a0b",
+   "account_id": "00000000-0000-4000-8000-000000000003",
    "account_username": "sender-1@example.test",
    "sent": 1,
    "bounced": 1,

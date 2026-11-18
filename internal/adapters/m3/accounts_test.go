@@ -59,7 +59,7 @@ func TestLongRoutesGetTheirOwnBudget(t *testing.T) {
 	}{
 		"create": {good("accounts.create.created.json"), 201, func(c *m3.Client) error { _, err := c.CreateAccount(ctxT(t), newAcct(t, 1)); return err }},
 		"test":   {good("accounts.test.ok.json"), 200, func(c *m3.Client) error { _, err := c.TestAccount(ctxT(t), acct1, false); return err }},
-		"bulk":   {good("accounts.bulk.ok.json"), 200, func(c *m3.Client) error { _, err := c.BulkAddAccounts(ctxT(t), batch(t, 5)); return err }},
+		"bulk":   {good("accounts.bulk.ok.json"), 200, func(c *m3.Client) error { _, err := c.BulkAddAccounts(ctxT(t), batch(t, bulkRows(t))); return err }},
 	}
 	for name, l := range longs {
 		s := newStack(t, slowReply(delay, l.code, l.body), opts)
@@ -245,15 +245,15 @@ func TestTheSecretIsSentOnceAndPrintedNever(t *testing.T) {
 	}
 	// bulk: the tenant once at the top, never in a row
 	s3 := newStack(t, replyFixture(200, "accounts.bulk.ok.json", t), modclient.Options{})
-	if _, err := s3.client(t, userA).BulkAddAccounts(ctxT(t), batch(t, 5)); err != nil {
+	if _, err := s3.client(t, userA).BulkAddAccounts(ctxT(t), batch(t, bulkRows(t))); err != nil {
 		t.Fatal(err)
 	}
 	var bulk struct {
 		UserID   string           `json:"user_id"`
 		Accounts []map[string]any `json:"accounts"`
 	}
-	if err := json.Unmarshal(s3.stub.Requests()[0].Body, &bulk); err != nil || bulk.UserID != userA || len(bulk.Accounts) != 5 {
-		t.Fatalf("the bulk body: %v %+v", err, bulk)
+	if err := json.Unmarshal(s3.stub.Requests()[0].Body, &bulk); err != nil || bulk.UserID != userA || len(bulk.Accounts) != bulkRows(t) {
+		t.Fatalf("the bulk body: %v user %s, %d accounts", err, bulk.UserID, len(bulk.Accounts))
 	}
 	for i, row := range bulk.Accounts {
 		if _, ok := row["user_id"]; ok || row["smtp_secret"] == "" || row["smtp_secret"] == nil {
@@ -298,23 +298,39 @@ func leaks(s string) []string {
 // unrecognised bucket and drops the text: nowhere in the returned value (printed any way, or as JSON), nor in the error of a refused answer, is there a piece of it. The control runs the same
 // check on a naive mapping that carries the code, and the check catches it.
 func TestAnInternalReasonNeverReachesACaller(t *testing.T) {
-	body := string(sendapitest.Read(t, fixtures, "accounts.bulk.ok.json"))
-	if got := leaks(body); len(got) != 5 {
-		t.Fatalf("the fixture does not carry the internal text it must: %v", got)
+	// The recorded bulk answer holds the module's fixed words and no internal text (the harness did not provoke an infrastructure failure), so the batch under test is the RECORDED one with
+	// the rows the recording lacks appended: a row whose code is the raw reason of an infrastructure failure, error text included, as the module's create path can emit it.
+	recorded := sendapitest.Read(t, fixtures, "accounts.bulk.ok.json")
+	first := bulkRows(t) // the index of the first appended row
+	raw := "account_write_error: dial tcp 203.0.113.9:5432: connect: connection refused"
+	body := string(edit(t, recorded, func(m map[string]any) {
+		rows := m["results"].([]any)
+		rows = append(rows, map[string]any{"row": len(rows) + 1, "status": "rejected", "code": raw})
+		m["results"] = rows
+	}))
+	if got := leaks(string(recorded)); len(got) != 0 {
+		t.Fatalf("the recording itself carries internal text: %v", got)
 	}
+	if got := leaks(body); len(got) != 5 {
+		t.Fatalf("the batch under test does not carry the internal text it must: %v", got)
+	}
+	n := first + 1
 	s := newStack(t, reply(200, body), modclient.Options{})
-	res, err := s.client(t, userA).BulkAddAccounts(ctxT(t), batch(t, 5))
+	res, err := s.client(t, userA).BulkAddAccounts(ctxT(t), batch(t, n))
 	if err != nil {
 		t.Fatal(err)
 	}
+	// the recorded rows are still held to the recording
+	only := m3.BulkResult{RequestID: res.RequestID, Rows: res.Rows[:first]}
+	bulkMatches(t, only, doc(t, "accounts.bulk.ok.json"))
 	b, _ := json.Marshal(res)
 	for name, out := range map[string]string{"%+v": fmt.Sprintf("%+v", res), "%#v": fmt.Sprintf("%#v", res), "json": string(b), "dump": reflectDump(res)} {
 		if got := leaks(out); len(got) != 0 {
 			t.Fatalf("the value (%s) carries %v", name, got)
 		}
 	}
-	if res.Rows[4].Reason != m3.RejectUnrecognised {
-		t.Fatalf("the infrastructure failure row: %+v", res.Rows[4])
+	if res.Rows[first].Reason != m3.RejectUnrecognised {
+		t.Fatalf("the infrastructure failure row: %+v", res.Rows[first])
 	}
 	// the control: a mapping that carried the code would be caught by the same check
 	naive := fmt.Sprintf("%+v", struct{ Reason string }{"account_write_error: dial tcp 203.0.113.9:5432: connect: connection refused"})
@@ -322,12 +338,12 @@ func TestAnInternalReasonNeverReachesACaller(t *testing.T) {
 		t.Fatalf("the check does not catch a naive mapping: %v", got)
 	}
 	// an answer that is refused (one row missing) is an error that names a key and carries none of the text either
-	bad, err := sendapitest.Mutate([]byte(body), "results[4]", sendapitest.Delete, nil)
+	bad, err := sendapitest.Mutate([]byte(body), fmt.Sprintf("results[%d]", first), sendapitest.Delete, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	s2 := newStack(t, reply(200, string(bad)), modclient.Options{})
-	_, err = s2.client(t, userA).BulkAddAccounts(ctxT(t), batch(t, 5))
+	_, err = s2.client(t, userA).BulkAddAccounts(ctxT(t), batch(t, n))
 	if ce := wantKind(t, err, modclient.Contract); ce.Key != "results" || len(leaks(fmt.Sprintf("%v %+v %#v", err, err, err))) != 0 {
 		t.Fatalf("the refused answer: %v", err)
 	}
@@ -337,14 +353,14 @@ func TestAnInternalReasonNeverReachesACaller(t *testing.T) {
 		"from_alignment_warning_unacknowledged": m3.RejectAlignmentWarning, "tx_begin_error: a secret thing": m3.RejectUnrecognised, "": m3.RejectUnrecognised, "VALIDATION_FAILED": m3.RejectUnrecognised,
 		"unique_violation:accounts_pkey": m3.RejectUnrecognised, "account_write_error": m3.RejectUnrecognised,
 	} {
-		b2, err := sendapitest.Mutate([]byte(body), "results[4].code", sendapitest.Set, code)
+		b2, err := sendapitest.Mutate([]byte(body), fmt.Sprintf("results[%d].code", first), sendapitest.Set, code)
 		if err != nil {
 			t.Fatal(err)
 		}
 		s := newStack(t, reply(200, string(b2)), modclient.Options{})
-		r, err := s.client(t, userA).BulkAddAccounts(ctxT(t), batch(t, 5))
-		if err != nil || r.Rows[4].Reason != want {
-			t.Fatalf("%q: %v %+v", code, err, r.Rows[4])
+		r, err := s.client(t, userA).BulkAddAccounts(ctxT(t), batch(t, n))
+		if err != nil || r.Rows[first].Reason != want {
+			t.Fatalf("%q: %v %+v", code, err, r.Rows[first])
 		}
 		if reflectDump(r) != "" && strings.Contains(reflectDump(r), "secret thing") {
 			t.Fatalf("%q: the module's text was carried", code)
@@ -393,7 +409,7 @@ func TestBulkRefusesWhatCannotBeSentBeforeAnyCall(t *testing.T) {
 func TestAccountIDsAndCursorsAreCheckedBeforeTheNetwork(t *testing.T) {
 	s := newStack(t, moduleStub(t), modclient.Options{})
 	c := s.client(t, userA)
-	for _, bad := range []string{"", "x", strings.ToUpper(acct1), acct1 + "/test", "../" + acct1} {
+	for _, bad := range []string{"", "x", strings.ToUpper(userB), acct1 + "/test", "../" + acct1} {
 		if _, err := c.GetAccount(ctxT(t), bad); modclient.KindOf(err) != modclient.Invalid {
 			t.Fatalf("get %q: %v", bad, err)
 		}
@@ -580,7 +596,7 @@ func tenantModule(t testing.TB) handler {
 				sendapitest.JSON(w, 200, good("accounts.list.last_page.json"))
 				return
 			}
-			sendapitest.JSON(w, 200, good("accounts.list.empty.json"))
+			sendapitest.JSON(w, 200, `{"items":[],"next_cursor":null}`)
 		case strings.HasSuffix(p, "/events"):
 			if owner {
 				sendapitest.JSON(w, 200, good("accounts.events.page.json"))
@@ -689,7 +705,7 @@ func TestCrossTenantMatrixAsTheModuleAnswers(t *testing.T) {
 					t.Fatalf("details %v: %+v", d, v)
 				}
 			}},
-		{"bulk add for an unknown tenant", func(c *m3.Client) (any, error) { return c.BulkAddAccounts(ctx, batch(t, 5)) }, ok,
+		{"bulk add for an unknown tenant", func(c *m3.Client) (any, error) { return c.BulkAddAccounts(ctx, batch(t, bulkRows(t))) }, ok,
 			func(t testing.TB, v any, err error) {
 				wantKind(t, err, modclient.Refused)
 				if d := detailFields(err); len(d) != 1 || d[0] != "user_id/not_found" || !isZero(v) {
@@ -732,7 +748,7 @@ func TestFeasibilityBeyondTheRecordedBodies(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := newStack(t, reply(200, string(body)), modclient.Options{})
-	f, err := s.client(t, userA).Feasibility(ctxT(t), 150000)
+	f, err := s.client(t, userA).Feasibility(ctxT(t), asInt(t, doc(t, "quote.infeasible.json"), "recipient_count"))
 	if err != nil || f.Feasible || len(f.Reasons) != 1 || f.Reasons[0].Code != m3.InfeasibleUnrecognised || strings.Contains(reflectDump(f), "zzz") {
 		t.Fatalf("an unknown reason: %v %+v", err, f)
 	}

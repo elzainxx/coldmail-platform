@@ -93,3 +93,41 @@ times), `floor: 3 TestM3Adapter_Outage tests declared, each run live and passed`
 Ordinary tests (stage 6): about 4 to 5 minutes (B9 1.5, suspension 0.7, pagination 0.8, account list 1 to 2, cross-tenant 0.8, the three outage phases' controls 3 s each). The sub-stage `9b-adapter`: about 3 minutes
 (workers 0.5, phase 1 0.5, stop 0.3, phase 2 0.3, start 0.5, workers 0.5, phase 3 1). That is more than the 4 minutes asked for: the account-list test is the one to drop first, and the pagination test shortens
 by lowering the item count (it needs more than 44 to put a boundary one item short of the end at the largest size below 45).
+
+## B6c: `TestM3Adapter_ContractEdgeCases` (the contract drift gate's edge cases)
+
+`m3_adapter_e2e_edge_test.go`, one test, one tenant (`edge`), about 1 to 1.5 minutes; it brings the count of tests of the binary up by one (the floor rises by 1 for it; `TestM3Adapter_ZContractDrift` is the coordinator's). Every call
+goes through a client whose options carry the drift session's observer (the adapters of `m3aEnv`, its module client `e.mc` for the raw calls the adapter never lets the platform ask for, an adapter built over a random
+token), so each real answer is compared by `TestM3Adapter_ZContractDrift`, which runs after it (`zz_`). A step that finds another answer than the one it asked for reports the module's own answer (kind, HTTP status,
+code, details, request id) and the next step still runs. The steps lower four dials of module 3 (`quote_long_duration_warn_sec`, `bulk_add_max_rows`, `account_count_cap_per_user`, `dispatch_mode`) for ONE call each and
+put the original back at once (deferred, so a step that dies restores too); each logs `NOTE m3a dial <key>: <old> -> {"v":..} for one step`.
+
+| NOTE line (prefix `NOTE m3a edge`) | Contract reached | Expected |
+|---|---|---|
+| `describe: module send_byo api v1, N capabilities, M vocabularies, K error codes` | `GET /v1/describe` ok | the module's self-description decodes |
+| `quote: 100 recipients, threshold 60 s: feasible true, projection N s, warnings [{long_duration N 60}]` | `POST /v1/quote` feasible (a feasible quote WITH its warning: the module's default threshold is 172800 s, the hand-written fixture's warning needs a long projection, so the dial is lowered) | one long_duration warning; the control quote with the dial restored has none |
+| `create validation_failed: HTTP 400 code validation_failed details [{from_address malformed}]` | `POST /v1/send-byo/accounts` error validation_failed | 400; the same account with a good address is created (control) |
+| `create duplicate: HTTP 409 code conflict details [{smtp_username conflict}]` | `... error duplicate` | 409 with the detail naming smtp_username |
+| `create conflict: HTTP 409 code conflict details [] at a cap of N accounts` | `... error conflict` (the account cap: the generic 409 with no detail) | no detail; with the cap restored the same create succeeds (control) |
+| `list cursor_malformed`, `list validation_failed` | `GET /v1/send-byo/accounts` errors | 400 with details {cursor, malformed} and {user_id, required} |
+| `list pages: limit=2 over 3 accounts: a page of 2 with a next cursor, then a last page of 1 with none` | `GET /v1/send-byo/accounts` page and last page | as written |
+| `events: limit=1 over N event(s): a page of 1 with a next cursor, then a page of 1` | `GET /v1/send-byo/accounts/{id}/events` page | a next cursor on the first page |
+| `test rate_limited: account_test_rate_limit_per_day 5; 4 click(s) accepted after the create, then HTTP 429 rate_limited` | `POST /v1/send-byo/accounts/{id}/test` error rate_limited | the create is one of the five; 4 clicks, then 429 (a count one off is noted, not asserted) |
+| `bulk validation_failed: HTTP 400 ... details [{accounts required}]`, `bulk batch_too_large: HTTP 422 code unprocessable details [{accounts out_of_range}]` | `POST /v1/send-byo/accounts/bulk` errors | 400 and 422; the refused batch creates nothing; the same two rows with the dial restored are created (control) |
+| `run unauthenticated: HTTP 401 code unauthenticated` | `POST /v1/run` error unauthenticated (an adapter over a random token) | 401, no job created |
+| `run validation_failed: HTTP 400 ... details [{job_item_id required}, {user_id required}]` | `POST /v1/run` error validation_failed (an empty body, raw) | 400 |
+| `run paused: HTTP 503 code paused ... (the module's Paused kind: wait, do not page)` | `POST /v1/run` error paused (`dispatch_mode` at `refuse_new` for the one call) | 503, no job created; the same Run with the rung restored is accepted and the item is sent (control) |
+| `held queue: 5 items run ...; after N s the report says total=5 ... pending=5` | the five items the sink answers 451 | all queued with attempt_count >= 1, transport_4xx, a 451 text |
+| `job queued: state queued attempt_count 1 error_class transport_4xx smtp_response "451 ..." account -` | `GET /v1/report` job queued | no account (a requeue clears it) |
+| `campaign pages: 5 queued items at page size 2: pages of [2,2,1], the last with no next cursor` | `GET /v1/report` campaign page and last page | 3 pages |
+| `campaign cursor_malformed: HTTP 400 code validation_failed details [{cursor malformed}]`, `campaign cursor_forged: HTTP 500 code internal_error` | `GET /v1/report` campaign errors | the 500 is research m3-api 6 (read, not run): a base64 cursor that is not a timestamp and an id reaches a SQL cast |
+| `end: tenant X (N accounts) suspended through module 3's operator route` | (cleanup) | X's queued items are never claimed again |
+
+Allowlisted (`zz_m3_adapter_contract_drift_test.go`, each with its reason): `POST /v1/run` error internal_error, `POST /v1/send-byo/accounts` error unprocessable, `POST /v1/send-byo/accounts/{id}/test` unavailable.
+
+Matching pitfalls to read the drift report with (the coordinator's matcher, not changed here):
+- `accounts.create.error.duplicate.json` was RECORDED from the generic 409 of a suspended user's create ("This action is not available for your account right now.", no details), not from a duplicate; this test now produces a
+  real duplicate (409 with `details: [{smtp_username, conflict}]`), so expect `KeyAdded error.details` against that fixture until it is re-recorded. The generic 409s (the cap, a suspended user) fit `duplicate` and `conflict`
+  equally and the matcher gives the second distinct one to `conflict`.
+- `quote.ok.json` was recorded from a feasible quote with an empty `warnings`; the `feasible` contract's body is a feasible quote WITH a warning, which is what the quote step now produces.
+- the two 400 contracts of the account list (`validation_failed`, `cursor_malformed`) have the same shape and tie: each of the two real answers lands on one of them.

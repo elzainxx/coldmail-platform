@@ -1,22 +1,22 @@
 {
- "cost": 0,
- "currency": "credits",
- "unit_price_credits": 0,
- "tier": "shared",
- "recipient_count": 50,
- "feasible": true,
- "reasons": [],
- "caps": {
-  "queue_depth_cap": 100000,
-  "daily_send_cap": 500,
-  "account_count_cap": 20
- },
- "capacity": {
-  "eligible_accounts": 1,
-  "daily_capacity_remaining": 500,
-  "effective_concurrency": 3,
-  "estimated_duration_sec": 85,
-  "estimate_basis": "current_eligible_capacity"
- },
- "warnings": []
+  "capacity": {
+    "daily_capacity_remaining": 1500,
+    "effective_concurrency": 3,
+    "eligible_accounts": 3,
+    "estimate_basis": "current_eligible_capacity",
+    "estimated_duration_sec": 4
+  },
+  "caps": {
+    "account_count_cap": 20,
+    "daily_send_cap": 1500,
+    "queue_depth_cap": 100000
+  },
+  "cost": 0,
+  "currency": "credits",
+  "feasible": true,
+  "reasons": [],
+  "recipient_count": 12,
+  "tier": "shared",
+  "unit_price_credits": 0,
+  "warnings": []
 }

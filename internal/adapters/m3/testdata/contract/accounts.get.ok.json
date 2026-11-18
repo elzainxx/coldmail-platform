@@ -1,31 +1,29 @@
 {
- "id": "7e8f9a0b-1c2d-4e3f-8a4b-5c6d7e8f9a0b",
- "user_id": "2f6d1c1e-7a4b-4c55-9f0e-5b7a3c9d8e21",
- "smtp_host": "smtp.example.test",
- "smtp_port": 587,
- "smtp_username": "sender-1@example.test",
- "from_address": "sender-1@example.test",
- "from_name": "Sender One",
- "has_credential": true,
- "status": {
-  "paused": false,
-  "pause_reason": null,
-  "quarantined": false,
-  "disabled": false
- },
- "verification": {
-  "state": "verified",
-  "verified_at": "2026-11-17T12:00:01Z",
-  "verify_at": "2026-11-17T12:00:01Z",
-  "smtp_response": "235 2.7.0 Authentication successful"
- },
- "from_alignment": {
-  "state": "aligned",
-  "checked_at": "2026-11-17T12:00:00Z",
-  "last_attempt_at": "2026-11-17T12:00:00Z",
-  "message": "The From address matches the sending server."
- },
- "daily_limit": 500,
- "created_at": "2026-11-17T12:00:00Z",
- "updated_at": "2026-11-17T12:00:01Z"
+  "id": "00000000-0000-4000-8000-000000000001",
+  "user_id": "00000000-0000-4000-8000-000000000002",
+  "smtp_host": "172.18.0.9",
+  "smtp_port": 1025,
+  "smtp_username": "sender-1-cta-fa7b504b@example.test",
+  "from_address": "sender-1-cta-fa7b504b@example.test",
+  "from_name": "Harness",
+  "has_credential": true,
+  "status": {
+    "paused": false,
+    "pause_reason": null,
+    "quarantined": false,
+    "disabled": false
+  },
+  "verification": {
+    "state": "verified",
+    "verified_at": "2026-01-01T00:00:00Z",
+    "verify_at": "2026-01-01T00:00:00Z",
+    "smtp_response": "235 2.7.0 Authentication successful"
+  },
+  "from_alignment": {
+    "state": "aligned",
+    "checked_at": "2026-01-01T00:00:00Z"
+  },
+  "daily_limit": 500,
+  "created_at": "2026-01-01T00:00:00Z",
+  "updated_at": "2026-01-01T00:00:00Z"
 }

@@ -40,6 +40,25 @@ func call(f func(ctx context.Context, c *m2.Client) (any, error)) func(t testing
 	}
 }
 
+// callT is call for a case that reads what it asks for out of the recorded fixture (an id, a count): the function is given the test.
+func callT(f func(t testing.TB, ctx context.Context, c *m2.Client) (any, error)) func(t testing.TB, url, token string) (any, error) {
+	return func(t testing.TB, url, token string) (any, error) {
+		_, c := clientAt(t, url, token)
+		return f(t, sendapitest.Ctx(t), c)
+	}
+}
+
+// firstDetail is the `field` of the first detail of a recorded error body.
+func firstDetail(t testing.TB, name string) string {
+	t.Helper()
+	d, _ := at(t, rec(t, name), "error", "details").([]any)
+	if len(d) == 0 {
+		t.Fatalf("%s has no details", name)
+	}
+	f, _ := d[0].(map[string]any)["field"].(string)
+	return f
+}
+
 func del(path, key string) sendapitest.Mutation {
 	return sendapitest.Mutation{Path: path, Op: sendapitest.Delete, WantKey: key}
 }
@@ -54,18 +73,24 @@ func cases() map[string]sendapitest.Case {
 	run := call(func(ctx context.Context, c *m2.Client) (any, error) { return c.Run(ctx, jobItem) })
 	return map[string]sendapitest.Case{
 		"POST /v1/quote | ok": {
-			Do: call(func(ctx context.Context, c *m2.Client) (any, error) { return c.Quote(ctx, 3) }),
+			// the count asked is the count the recording answers for: read from the file, never typed here
+			Do: callT(func(t testing.TB, ctx context.Context, c *m2.Client) (any, error) {
+				return c.Quote(ctx, atInt(t, "quote.ok.json", "recipient_count"))
+			}),
 			Check: func(t testing.TB, v any, err error) {
-				if q := v.(sendapi.Quote); q.Cost != 3 || q.UnitPriceCredits != 1 || q.Tier != "shared" || q.Feasible != nil {
+				q := v.(sendapi.Quote)
+				if q.RecipientCount != atInt(t, "quote.ok.json", "recipient_count") || q.Cost != atInt(t, "quote.ok.json", "cost") || q.UnitPriceCredits != atInt(t, "quote.ok.json", "unit_price_credits") ||
+					q.Tier != atStr(t, "quote.ok.json", "tier") || q.Currency != atStr(t, "quote.ok.json", "currency") || q.Feasible != nil {
 					t.Fatalf("quote = %+v", q)
 				}
 			},
-			Mutations: []sendapitest.Mutation{del("cost", "cost"), set("cost", "3", "cost"), set("recipient_count", 4, "recipient_count"), set("cost", 4, "cost"), del("unit_price_credits", "unit_price_credits")},
+			Mutations: []sendapitest.Mutation{del("cost", "cost"), set("cost", "3", "cost"), set("recipient_count", -1, "recipient_count"), set("cost", 999999, "cost"), del("unit_price_credits", "unit_price_credits")},
 		},
 		"POST /v1/run | created": {
 			Do: run,
 			Check: func(t testing.TB, v any, err error) {
-				if r := v.(sendapi.RunResult); !r.Created || r.State != "queued" || r.JobID == "" {
+				r := v.(sendapi.RunResult)
+				if !r.Created || r.State != atStr(t, "run.created.json", "state") || r.Class != classOf(r.State) || r.JobID != atStr(t, "run.created.json", "job_id") {
 					t.Fatalf("run = %+v", r)
 				}
 			},
@@ -74,7 +99,9 @@ func cases() map[string]sendapitest.Case {
 		"POST /v1/run | replay": {
 			Do: run,
 			Check: func(t testing.TB, v any, err error) {
-				if r := v.(sendapi.RunResult); r.Created || r.State != "sent" || r.Class != sendapi.ClassTerminal {
+				// a replay carries the state the job has NOW, whatever the recording caught it in: it is read from the file and mapped, never assumed to be queued
+				r := v.(sendapi.RunResult)
+				if r.Created || r.State != atStr(t, "run.replay.json", "state") || r.Class != classOf(r.State) || r.JobID != atStr(t, "run.replay.json", "job_id") {
 					t.Fatalf("run = %+v", r)
 				}
 			},
@@ -85,8 +112,8 @@ func cases() map[string]sendapitest.Case {
 		"POST /v1/run | error not_found": {
 			Do: run, Kind: modclient.NotFound, Code: "not_found", Mutations: []sendapitest.Mutation{brokenEnvelope()},
 			Check: func(t testing.TB, v any, err error) {
-				if f, ok := sendapi.NotFoundField(err); !ok || f != "job_item_id" {
-					t.Fatalf("NotFoundField = %q %v", f, ok)
+				if f, ok := sendapi.NotFoundField(err); !ok || f != firstDetail(t, "run.error.not_found.json") {
+					t.Fatalf("NotFoundField = %q %v, the recording names %q", f, ok, firstDetail(t, "run.error.not_found.json"))
 				}
 			},
 		},
@@ -105,7 +132,8 @@ func cases() map[string]sendapitest.Case {
 			Do: call(func(ctx context.Context, c *m2.Client) (any, error) { return c.ReportJob(ctx, jobItem) }),
 			Check: func(t testing.TB, v any, err error) {
 				it := v.(sendapi.Item)
-				if it.State != "sent" || it.JobItemID != jobItem || it.Reason != nil || it.ErrorClass != nil || it.ProviderMessageID == nil || it.CompletedAt == nil || it.CompletedAt.Nanosecond() == 0 {
+				checkItem(t, it, rec(t, "report.job.sent.json"), "report.job.sent")
+				if it.JobItemID != jobItem || it.JobID != atStr(t, "report.job.sent.json", "job_id") {
 					t.Fatalf("item = %+v", it)
 				}
 			},
@@ -118,7 +146,8 @@ func cases() map[string]sendapitest.Case {
 			Do: call(func(ctx context.Context, c *m2.Client) (any, error) { return c.ReportJobByID(ctx, jobID) }),
 			Check: func(t testing.TB, v any, err error) {
 				it := v.(sendapi.Item)
-				if it.State != "queued" || it.Class != sendapi.ClassPending || it.Reason == nil || *it.Reason != "transport_4xx" || it.ProviderMessageID != nil || it.CompletedAt != nil {
+				checkItem(t, it, rec(t, "report.job.queued.json"), "report.job.queued")
+				if it.JobID != atStr(t, "report.job.queued.json", "job_id") {
 					t.Fatalf("item = %+v", it)
 				}
 			},
@@ -128,17 +157,21 @@ func cases() map[string]sendapitest.Case {
 			Do: call(func(ctx context.Context, c *m2.Client) (any, error) { return c.ReportJob(ctx, jobItem) }), Kind: modclient.NotFound, Code: "not_found",
 			Mutations: []sendapitest.Mutation{brokenEnvelope()},
 			Check: func(t testing.TB, v any, err error) {
-				if f, ok := sendapi.NotFoundField(err); !ok || f != "job_id" {
-					t.Fatalf("NotFoundField = %q %v", f, ok)
+				// the module names the selector the caller used (a report asked by job item id says job_item_id): the recording settled what the research could only infer
+				if f, ok := sendapi.NotFoundField(err); !ok || f != firstDetail(t, "report.job.error.not_found.json") || f != "job_item_id" {
+					t.Fatalf("NotFoundField = %q %v, the recording names %q", f, ok, firstDetail(t, "report.job.error.not_found.json"))
 				}
 			},
 		},
 		"GET /v1/report | campaign page": {
-			Do: call(func(ctx context.Context, c *m2.Client) (any, error) { return c.ReportCampaignPage(ctx, campaign, "") }),
+			Do: callT(func(t testing.TB, ctx context.Context, c *m2.Client) (any, error) {
+				return c.ReportCampaignPage(ctx, atStr(t, "report.campaign.page.json", "campaign_id"), "")
+			}),
 			Check: func(t testing.TB, v any, err error) {
 				p := v.(sendapi.CampaignPage)
-				if len(p.Items) != 3 || p.NextCursor == "" || p.Totals.Total != 5 || p.Totals.Cancelled != 1 || p.ByAccount != nil || p.Items[2].Reason == nil || *p.Items[2].Reason != "attempts_exhausted" {
-					t.Fatalf("page = %+v", p)
+				checkPage(t, p, "report.campaign.page.json")
+				if p.ByAccount != nil {
+					t.Fatalf("module 2 has no per-account totals: %+v", p.ByAccount)
 				}
 			},
 			Mutations: []sendapitest.Mutation{
@@ -150,19 +183,26 @@ func cases() map[string]sendapitest.Case {
 			},
 		},
 		"GET /v1/report | campaign last page": {
-			Do: call(func(ctx context.Context, c *m2.Client) (any, error) { return c.ReportCampaignPage(ctx, campaign, "") }),
+			Do: callT(func(t testing.TB, ctx context.Context, c *m2.Client) (any, error) {
+				return c.ReportCampaignPage(ctx, atStr(t, "report.campaign.last_page.json", "campaign_id"), "")
+			}),
 			Check: func(t testing.TB, v any, err error) {
-				p := v.(sendapi.CampaignPage)
-				if len(p.Items) != 2 || p.NextCursor != "" || p.Items[0].Class != sendapi.ClassPending || p.Items[1].Class != sendapi.ClassTerminal {
-					t.Fatalf("page = %+v", p)
-				}
+				checkPage(t, v.(sendapi.CampaignPage), "report.campaign.last_page.json")
 			},
 			Mutations: []sendapitest.Mutation{del("items.page_size", "items.page_size"), del("progress", "progress")},
 		},
 		"GET /v1/report | campaign empty": {
-			Do: call(func(ctx context.Context, c *m2.Client) (any, error) { return c.ReportCampaign(ctx, campaign) }),
+			// the file under this name is a RECORDING of a campaign the module knows (ten items, one still queued), not of an empty answer: what is asserted is what the file says, and the
+			// empty answer is derived from a recording and tested in TestAnEmptyPageIsNothingKnown
+			Do: callT(func(t testing.TB, ctx context.Context, c *m2.Client) (any, error) {
+				return c.ReportCampaign(ctx, atStr(t, "report.campaign.empty.json", "campaign_id"))
+			}),
 			Check: func(t testing.TB, v any, err error) {
-				if r := v.(sendapi.CampaignReport); !r.NothingKnown() || !r.ItemsMatchTotal() || r.Progress.IsComplete {
+				r := v.(sendapi.CampaignReport)
+				n := int64(len(at(t, rec(t, "report.campaign.empty.json"), "items", "results").([]any)))
+				total := atInt(t, "report.campaign.empty.json", "totals", "total")
+				if r.Pages != 1 || int64(len(r.Items)) != n || r.Totals.Total != total || r.ItemsMatchTotal() != (n == total) || r.NothingKnown() != (n == 0 && total == 0) ||
+					r.Progress.IsComplete != at(t, rec(t, "report.campaign.empty.json"), "progress", "is_complete") {
 					t.Fatalf("report = %+v", r)
 				}
 			},
@@ -211,9 +251,13 @@ func cases() map[string]sendapitest.Case {
 		},
 
 		"POST /v1/cancel | ok": {
-			Do: call(func(ctx context.Context, c *m2.Client) (any, error) { return c.Cancel(ctx, campaign) }),
+			Do: callT(func(t testing.TB, ctx context.Context, c *m2.Client) (any, error) {
+				return c.Cancel(ctx, atStr(t, "cancel.ok.json", "campaign_id"))
+			}),
 			Check: func(t testing.TB, v any, err error) {
-				if p := v.(m2.CancelPosition); p.Cancelled != 2 || p.InFlight != 1 || p.AlreadyTerminal != 0 || p.CampaignID != campaign {
+				p := v.(m2.CancelPosition)
+				c, f, a := atInt(t, "cancel.ok.json", "cancelled"), atInt(t, "cancel.ok.json", "in_flight"), atInt(t, "cancel.ok.json", "already_terminal")
+				if p.Cancelled != c || p.InFlight != f || p.AlreadyTerminal != a || p.CampaignID != atStr(t, "cancel.ok.json", "campaign_id") || p.Empty() != (c == 0 && f == 0 && a == 0) {
 					t.Fatalf("position = %+v", p)
 				}
 			},
@@ -396,48 +440,120 @@ func TestCheckVocabulariesAgainstModule2sDescribe(t *testing.T) {
 	}
 }
 
-// Recorded pages to settlement, offline: the two recorded pages of a campaign are walked through the real client (the first page names a cursor, the second does not) and classified
-// against the platform's charge table. The result is what the table says: the sent item is charged m2_accepted (M2-01), the bounced item m2_bounced (M2-02), the item that failed with
-// attempts_exhausted is free (M2-03), the item that waited for capacity is not yet, the cancelled one is free (M2-08), and nothing is unmapped.
+// Recorded pages to settlement, offline: a recorded campaign report is walked through the real client and classified against the platform's charge table, and the result is compared
+// with what the table says of each item of the FILE (its state and reason, read with encoding/json), item by item and in order: sent is charged m2_accepted (M2-01), bounced m2_bounced
+// (M2-02), a failed item is free (M2-03 attempts_exhausted, M2-04 any other), a cancelled one is free (M2-08), an item still queued, assigned or sending is not yet, and nothing is
+// unmapped. The walk crosses a page boundary: the recorded page (one page of ten) is cut in two at its middle, the first half naming a cursor, so the cursor path runs over real items.
+// Both recorded reports are exercised: the one with failures and bounces and the one with cancellations.
 func TestRecordedPagesSettleAsTheChargeTableSays(t *testing.T) {
-	page1 := string(sendapitest.Read(t, fixtures, "report.campaign.page.json"))
-	page2 := string(sendapitest.Read(t, fixtures, "report.campaign.last_page.json"))
-	s := newStack(t, func(w http.ResponseWriter, r *http.Request, _ int) {
-		if r.URL.Query().Get("cursor") == "" {
-			sendapitest.JSON(w, 200, page1)
-			return
+	wantRule := func(state, reason string) (string, charge.Kind, string) {
+		switch {
+		case state == "sent":
+			return "M2-01", charge.Charge, "m2_accepted"
+		case state == "bounced":
+			return "M2-02", charge.Charge, "m2_bounced"
+		case state == "failed" && reason == "attempts_exhausted":
+			return "M2-03", charge.Free, ""
+		case state == "failed":
+			return "M2-04", charge.Free, ""
+		case state == "cancelled":
+			return "M2-08", charge.Free, ""
 		}
-		sendapitest.JSON(w, 200, page2)
-	}, modclient.Options{})
-	c := s.client(t, userA)
-	rep, err := c.ReportCampaign(ctxT(t), campaign)
-	if err != nil || rep.Pages != 2 || len(rep.Items) != 5 || !rep.ItemsMatchTotal() {
-		t.Fatalf("%v %+v", err, rep)
+		return "", 0, "" // not final
 	}
-	got, err := c.Classify(rep.Items)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got.Unmapped) != 0 || len(got.NotYet) != 1 || len(got.Settle) != 4 || got.NotYet[0].State != "queued" {
-		t.Fatalf("%+v", got)
-	}
-	want := []struct {
-		rule string
-		kind charge.Kind
-		unit string
-	}{{"M2-01", charge.Charge, "m2_accepted"}, {"M2-02", charge.Charge, "m2_bounced"}, {"M2-03", charge.Free, ""}, {"M2-08", charge.Free, ""}}
-	for i, w := range want {
-		d := charge.Decide(got.Settle[i].Outcome)
-		if d.Rule != w.rule || d.Kind != w.kind || d.Unit != w.unit {
-			t.Fatalf("settle item %d is decided by %s as %s %q, want %s %s %q", i, d.Rule, d.Kind, d.Unit, w.rule, w.kind, w.unit)
-		}
-	}
-	// control: the attempt count the module reports (3 for the exhausted item, 0 for the first-try send) reaches no decision
-	for _, it := range rep.Items {
-		changed := it
-		changed.AttemptCount += 5
-		if c.Profile().Outcome(changed) != c.Profile().Outcome(it) {
-			t.Fatal("the attempt count changes the outcome")
-		}
+	for _, name := range []string{"report.campaign.page.json", "report.campaign.last_page.json", "report.campaign.empty.json"} {
+		t.Run(name, func(t *testing.T) {
+			doc := rec(t, name)
+			results := at(t, doc, "items", "results").([]any)
+			if len(results) < 2 {
+				t.Fatalf("%s has %d item(s): nothing to cut in two", name, len(results))
+			}
+			half := len(results) / 2
+			cut := func(from, to int, next any) string {
+				body := sendapitest.Read(t, fixtures, name)
+				var err error
+				if body, err = sendapitest.Mutate(body, "items.results", sendapitest.Set, results[from:to]); err != nil {
+					t.Fatal(err)
+				}
+				if body, err = sendapitest.Mutate(body, "items.next_cursor", sendapitest.Set, next); err != nil {
+					t.Fatal(err)
+				}
+				return string(body)
+			}
+			const cursor = "AAAA" // opaque to the adapter, passed back verbatim; the stub only tells the two pages apart by it
+			first, second := cut(0, half, cursor), cut(half, len(results), nil)
+			s := newStack(t, func(w http.ResponseWriter, r *http.Request, _ int) {
+				switch r.URL.Query().Get("cursor") {
+				case "":
+					sendapitest.JSON(w, 200, first)
+				case cursor:
+					sendapitest.JSON(w, 200, second)
+				default:
+					sendapitest.JSON(w, 500, sendapitest.Envelope("internal_error"))
+				}
+			}, modclient.Options{})
+			c := s.client(t, userA)
+			rep, err := c.ReportCampaign(ctxT(t), atStr(t, name, "campaign_id"))
+			if err != nil || rep.Pages != 2 || len(rep.Items) != len(results) {
+				t.Fatalf("%v pages=%d items=%d, the file has %d", err, rep.Pages, len(rep.Items), len(results))
+			}
+			got, err := c.Classify(rep.Items)
+			if err != nil || len(got.Unmapped) != 0 {
+				t.Fatalf("%v %+v", err, got)
+			}
+			var wantSettle, wantNotYet []string
+			for i, r := range results {
+				it := r.(map[string]any)
+				id, state := it["job_item_id"].(string), it["state"].(string)
+				reason := ""
+				if rp := optStr(it["reason"]); rp != nil {
+					reason = *rp
+				}
+				if rule, _, _ := wantRule(state, reason); rule == "" {
+					wantNotYet = append(wantNotYet, id)
+				} else {
+					wantSettle = append(wantSettle, id)
+				}
+				_ = i
+			}
+			var gotSettle, gotNotYet []string
+			for _, si := range got.Settle {
+				gotSettle = append(gotSettle, si.ItemRef)
+			}
+			for _, ny := range got.NotYet {
+				gotNotYet = append(gotNotYet, ny.JobItemID)
+			}
+			if !reflect.DeepEqual(gotSettle, wantSettle) || !reflect.DeepEqual(gotNotYet, wantNotYet) {
+				t.Fatalf("settle %v not yet %v, the file says settle %v not yet %v", gotSettle, gotNotYet, wantSettle, wantNotYet)
+			}
+			for _, si := range got.Settle {
+				var src map[string]any
+				for _, r := range results {
+					if r.(map[string]any)["job_item_id"] == si.ItemRef {
+						src = r.(map[string]any)
+					}
+				}
+				reason := ""
+				if rp := optStr(src["reason"]); rp != nil {
+					reason = *rp
+				}
+				rule, kind, unit := wantRule(src["state"].(string), reason)
+				if d := charge.Decide(si.Outcome); d.Rule != rule || d.Kind != kind || d.Unit != unit {
+					t.Fatalf("%s (%v) is decided by %s as %s %q, want %s %s %q", si.ItemRef, src["state"], d.Rule, d.Kind, d.Unit, rule, kind, unit)
+				}
+			}
+			// control: the attempt count the module reports reaches no decision (a failed item reports 2 here, a first-try send 0)
+			for _, it := range rep.Items {
+				changed := it
+				changed.AttemptCount += 5
+				if c.Profile().Outcome(changed) != c.Profile().Outcome(it) {
+					t.Fatal("the attempt count changes the outcome")
+				}
+			}
+			// control: the walk really was two pages, so the second half was read through the cursor and not by luck
+			if reqs := s.stub.Requests(); len(reqs) != 2 || reqs[1].Query.Get("cursor") != cursor {
+				t.Fatalf("requests: %+v", reqs)
+			}
+		})
 	}
 }

@@ -14,7 +14,9 @@ import (
 // (internal/adapters/m2/testdata/contract). The file is named zz_ so that this test is the last of the binary.
 var m2Drift = contractcheck.NewSession(m2ad.Contracts(), m2ad.ContractFixtures(), "testdata/contract", m2DriftNotElicited)
 
-// m2DriftNotElicited: module|route|case -> why the harness cannot make module 2 give that answer. EMPTY until the first runner run says which contracts are not reached.
+// m2DriftNotElicited: module|route|case -> why the harness cannot make module 2 give that answer. EMPTY ON PURPOSE (B6c): the ten contracts the first record run did not reach are each made by a call the real
+// module answers in TestM2Worker_ContractEdgeCases (m2_worker_contract_edge_test.go): run validation_failed, unauthenticated, conflict, paused and internal_error, report job queued, report campaign cursor_malformed
+// and cursor_forged, describe ok and cancel validation_failed. An entry here for a contract that WAS exercised is itself red (stale), so none is kept "just in case".
 var m2DriftNotElicited = map[string]string{}
 
 // TestM2Worker_ZContractDrift is the gate itself.

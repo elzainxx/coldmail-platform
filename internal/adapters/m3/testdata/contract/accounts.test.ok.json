@@ -1,10 +1,9 @@
 {
- "verification": {
-  "state": "verified",
-  "smtp_response": "235 2.7.0 Authentication successful"
- },
- "from_alignment": {
-  "state": "aligned",
-  "message": "The From address matches the sending server."
- }
+  "from_alignment": {
+    "state": "aligned"
+  },
+  "verification": {
+    "smtp_response": "235 2.7.0 Authentication successful",
+    "state": "verified"
+  }
 }

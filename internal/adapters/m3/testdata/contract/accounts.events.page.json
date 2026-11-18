@@ -2,8 +2,8 @@
  "items": [
   {
    "id": "3c4d5e6f-7081-4293-a4b5-c6d7e8f90a1b",
-   "account_id": "7e8f9a0b-1c2d-4e3f-8a4b-5c6d7e8f9a0b",
-   "user_id": "2f6d1c1e-7a4b-4c55-9f0e-5b7a3c9d8e21",
+   "account_id": "00000000-0000-4000-8000-000000000001",
+   "user_id": "00000000-0000-4000-8000-000000000002",
    "actor": "user",
    "action": "created",
    "from_flags": null,
@@ -19,8 +19,8 @@
   },
   {
    "id": "3c4d5e6f-7081-4293-a4b5-c6d7e8f90a1c",
-   "account_id": "7e8f9a0b-1c2d-4e3f-8a4b-5c6d7e8f9a0b",
-   "user_id": "2f6d1c1e-7a4b-4c55-9f0e-5b7a3c9d8e21",
+   "account_id": "00000000-0000-4000-8000-000000000001",
+   "user_id": "00000000-0000-4000-8000-000000000002",
    "actor": "system",
    "action": "paused",
    "from_flags": {

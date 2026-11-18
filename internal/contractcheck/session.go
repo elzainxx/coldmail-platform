@@ -271,6 +271,7 @@ func (s *Session) finishCompare(t TB, res MatchResult, total, dropped int) {
 	}
 	w := &logWriter{t: t}
 	cov.Print(w)
+	logNearestMisses(t, res)
 	t.Logf("contract drift gate: %d responses observed (%d distinct kept)", total, len(res.Matched)+countObs(res.Undeclared))
 	for _, l := range tieLines {
 		t.Logf("note: %s", l)
@@ -278,6 +279,19 @@ func (s *Session) finishCompare(t TB, res MatchResult, total, dropped int) {
 	for _, l := range gapLines {
 		t.Logf("note: %s", l)
 	}
+}
+
+// logNearestMisses prints, for each unexercised contract that has observed responses of its module, route and status, how far its fixture is from the closest of them, and how many
+// of the unexercised contracts have one. It prints nothing when every contract was exercised.
+func logNearestMisses(t TB, res MatchResult) {
+	t.Helper()
+	if len(res.Unexercised) == 0 {
+		return
+	}
+	for _, nm := range res.NearestMisses {
+		t.Logf("%s", nm)
+	}
+	t.Logf("contract drift gate: %d of %d unexercised contracts have a nearest miss among the observed responses of their module, route and status", len(res.NearestMisses), len(res.Unexercised))
 }
 
 func countObs(us []UndeclaredCall) int {
@@ -331,6 +345,7 @@ func (s *Session) finishRecord(t TB, res MatchResult, total, dropped int) {
 	for _, rc := range res.Unexercised {
 		t.Logf("still unexercised: %s", keyOf(rc))
 	}
+	logNearestMisses(t, res)
 	if dropped > 0 {
 		t.Logf("%d distinct observations were dropped after the cap of %d", dropped, MaxObservations)
 	}

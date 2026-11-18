@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -21,12 +22,14 @@ import (
 	"github.com/coldmail-platform/platform/internal/modclient"
 )
 
-// These tests are unit tests: they decode RECORDED SHAPES (testdata/contract, hand-written from the module's code, to be replaced by recordings in Phase 3 B6) served by in-process
-// stand-ins. Module 1 itself is never mocked in the harness, where the live tests drive this adapter against the real module.
+// These tests are unit tests: they decode the fixtures of testdata/contract (seven RECORDED from the real module in run 44211659227 and normalised by contractcheck.Normalise, the rest
+// hand-written from the module's code: see testdata/README.md) served by in-process stand-ins. Module 1 itself is never mocked in the harness, where the live tests drive this adapter against the real module.
 
 const (
-	// testJob is a job id of the shape module 1 mints (a uuid), obviously synthetic.
-	testJob = "00000000-0000-7000-8000-00000000000a"
+	// testJob is the job id of every recorded fixture: contractcheck.Normalise rewrites each uuid of a recording to 00000000-0000-4000-8000-00000000000N by order of first
+	// appearance, and a job answer's job_id is the first uuid of its body, so it is N = 1 in every recorded job fixture. The hand-written fixtures use the same id, so one
+	// constant serves them all (the adapter refuses an answer about another job).
+	testJob = "00000000-0000-4000-8000-000000000001"
 	// testAddr stands for an address that must never appear in an error string.
 	testAddr = "jane.private@leak-check.example"
 )
@@ -191,4 +194,94 @@ func kindAndKey(err error) (modclient.Kind, string) {
 		return 0, ""
 	}
 	return e.Kind, e.Key
+}
+
+// ---- values derived from the recorded fixtures ------------------------------------------------------------------------------------------------------------
+//
+// A recorded fixture holds real values (a job of 220 rows, counts of 3/1/0/2) that the hand-written ones did not. Tests that serve one never repeat those values as literals: they
+// parse the fixture with encoding/json into generic maps (a decoder independent of the adapter's own) and compare what the adapter decoded with what that parse says.
+
+// recordedDoc is a fixture of testdata/contract as a generic JSON document.
+func recordedDoc(t testing.TB, name string) map[string]any {
+	t.Helper()
+	dec := json.NewDecoder(strings.NewReader(fixture(t, name)))
+	var doc map[string]any
+	if err := dec.Decode(&doc); err != nil {
+		t.Fatalf("%s: %v", name, err)
+	}
+	return doc
+}
+
+// num reads an integer out of a generic document.
+func num(t testing.TB, v any) int {
+	t.Helper()
+	f, ok := v.(float64)
+	if !ok || f != float64(int(f)) {
+		t.Fatalf("%v is not an integer", v)
+	}
+	return int(f)
+}
+
+func obj(t testing.TB, v any) map[string]any {
+	t.Helper()
+	m, ok := v.(map[string]any)
+	if !ok {
+		t.Fatalf("%v is not an object", v)
+	}
+	return m
+}
+
+// recordedCounts is the counts object of a recorded 202.
+func recordedCounts(t testing.TB, name string) (jobID string, c SubmitCounts) {
+	t.Helper()
+	doc := recordedDoc(t, name)
+	cm := obj(t, doc["counts"])
+	return doc["job_id"].(string), SubmitCounts{Total: num(t, cm["total"]), Enqueued: num(t, cm["enqueued"]), Duplicate: num(t, cm["duplicate"]), Malformed: num(t, cm["malformed"])}
+}
+
+// recordedStatus is what a recorded job answer says, read without the adapter.
+func recordedStatus(t testing.TB, name string) JobStatus {
+	t.Helper()
+	doc := recordedDoc(t, name)
+	cm := obj(t, doc["counts"])
+	return JobStatus{
+		JobID: doc["job_id"].(string), Status: doc["status"].(string), Complete: doc["complete"].(bool), ProcessingPaused: doc["processing_paused"].(bool),
+		Counts: JobCounts{Total: num(t, cm["total"]), Settled: num(t, cm["settled"]), Pending: num(t, cm["pending"])},
+	}
+}
+
+// acceptedFor is the recorded 202 with its counts replaced by c and its malformed_rows list emptied: the recording's shape, keys and job id, with the numbers a given plan predicts.
+// (The recording itself is that of a raw submission that held two malformed rows, which a plan never sends.)
+func acceptedFor(t testing.TB, c SubmitCounts) string {
+	t.Helper()
+	doc := recordedDoc(t, "submit-accepted.json")
+	doc["counts"] = map[string]any{"total": c.Total, "enqueued": c.Enqueued, "duplicate": c.Duplicate, "malformed": c.Malformed}
+	doc["malformed_rows"] = []any{}
+	b, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+// recordedRows is the results of a recorded page as generic objects, in order.
+func recordedRows(t testing.TB, name string) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	for _, r := range recordedDoc(t, name)["results"].([]any) {
+		out = append(out, obj(t, r))
+	}
+	return out
+}
+
+// withoutResults is a recorded page with its results emptied: the same job id and next_cursor, an empty array (the shape of a page with nothing on it).
+func withoutResults(t testing.TB, name string) string {
+	t.Helper()
+	doc := recordedDoc(t, name)
+	doc["results"] = []any{}
+	b, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }

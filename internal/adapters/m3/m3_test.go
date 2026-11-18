@@ -259,7 +259,7 @@ func TestNewAdapterRefusesAnotherModulesClient(t *testing.T) {
 // For refuses what cannot be a tenant before any network call: the all-zero system user, an empty id, an upper-case or malformed one. The control builds a client for a real tenant.
 func TestForRefusesWhatIsNotATenant(t *testing.T) {
 	s := newStack(t, nil, modclient.Options{})
-	for id, is := range map[string]error{"": tenant.ErrBadID, tenant.SystemUserID: tenant.ErrSystemUser, strings.ToUpper(userA): tenant.ErrBadID, "tenant-1": tenant.ErrBadID} {
+	for id, is := range map[string]error{"": tenant.ErrBadID, tenant.SystemUserID: tenant.ErrSystemUser, strings.ToUpper(userB): tenant.ErrBadID, "tenant-1": tenant.ErrBadID} {
 		c, err := s.a.For(id)
 		if c != nil {
 			t.Fatalf("%q: a client came back", id)
@@ -374,7 +374,7 @@ func TestEveryCallCarriesItsTenant(t *testing.T) {
 		"get":         func() error { _, err := c.GetAccount(ctx, acct1); return err },
 		"create":      func() error { _, err := c.CreateAccount(ctx, newAcct(t, 1)); return err },
 		"test":        func() error { _, err := c.TestAccount(ctx, acct1, false); return err },
-		"bulk":        func() error { _, err := c.BulkAddAccounts(ctx, batch(t, 5)); return err },
+		"bulk":        func() error { _, err := c.BulkAddAccounts(ctx, batch(t, bulkRows(t))); return err },
 		"events":      func() error { _, err := c.AccountEvents(ctx, acct1, ""); return err },
 	}
 	for name, step := range steps {
@@ -604,7 +604,7 @@ func TestSuspensionRefusesToAnswerFromAnythingElse(t *testing.T) {
 	}
 	f := &fakeReader{state: m3admin.SuspensionState{User: userA}}
 	a := adapterWith(t, f)
-	for id, is := range map[string]error{"": tenant.ErrBadID, tenant.SystemUserID: tenant.ErrSystemUser, strings.ToUpper(userA): tenant.ErrBadID, "u1": tenant.ErrBadID} {
+	for id, is := range map[string]error{"": tenant.ErrBadID, tenant.SystemUserID: tenant.ErrSystemUser, strings.ToUpper(userB): tenant.ErrBadID, "u1": tenant.ErrBadID} {
 		got, err := a.Suspension(ctxT(t), id)
 		if !errors.Is(err, is) || modclient.KindOf(err) != modclient.Invalid || !isZero(got) {
 			t.Fatalf("%q: %v %+v", id, err, got)

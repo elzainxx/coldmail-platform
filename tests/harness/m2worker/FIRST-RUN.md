@@ -241,12 +241,45 @@ the hard case (a crash in the middle of a send: the worker's unacknowledged outc
 restores them: a phase 1 that fails undoes its scene (cancel, sink reset, dials), a phase 2 that fails leaves the stage to die; (5) the scratch schema `harness_outage` stays in the database after the run (the stack is torn down with its volume); (6) the full run runs the three tests control-only unless the lead adds the one line
 `[ "$M2W_ON" = 1 ] && m2w_outage` to `run.sh` after `m2w_require_pass`; until then only the scoped run proves the outage, and `tests/floors-harness.txt` must still count the three tests.
 
+## 11. The contract edge cases (B6c): NOT YET RUN, what to look for
+
+The contract drift gate (`zz_m2_worker_contract_drift_test.go`, the last test of the binary) is red for every contract of `internal/adapters/m2` that no real response was matched to, unless its allowlist says why the harness cannot elicit it. The first record run
+reached 10 of the 20 contracts. `TestM2Worker_ContractEdgeCases` (`m2_worker_contract_edge_test.go`, in `M2W_TESTS`, so the stage requires its PASS line; it sorts before `zz_` and runs among the other tests) makes the real module give the other ten, each by a call the module
+itself answers, so `m2DriftNotElicited` is EMPTY (an entry for an exercised contract would be red). Every call goes through a client whose options carry the session's observer (`newM2eEnv`'s module client, the adapter built over it, and a second client with a random token built with the
+same options), asserts the module's own answer (kind, HTTP status, error code, and the detail where there is one) and fails loudly with what it got instead; nothing prints a credential. Each refusal has a PAIRED CONTROL (the same call with correct input succeeds). Only answers a
+contract declares are elicited: another route or status would be an "undeclared dependency" of the gate.
+
+| Contract | How the real module is made to answer it | Line to look for (after `NOTE edge `) |
+|---|---|---|
+| `GET /v1/report` job queued | `dispatch_mode` set to `accept_and_defer` through the operator API (intake open, dispatch deferred), then Run of item A (202 queued) and its single report: queued, class pending, reason `dispatch_paused`, no error class. Nothing can take the job, so there is no race | `job queued:` |
+| `POST /v1/run` error conflict (409) | still at `accept_and_defer`: Run of item B, which belongs to a second campaign of the same user, while A (campaign one) is queued; reported as `ErrBackpressure`; module 2 holds no job for B | `run conflict:` |
+| `POST /v1/run` error paused (503) | `dispatch_mode` `refuse_new`: Run of item C answers kind `paused`, HTTP 503, code `paused`; module 2 holds no job for C. Control: with `serving` restored the same Run is a new job, A and C are sent, and Run of B is a new job (its 409 was the active campaign) | `run paused:`, `control pause and conflict:` |
+| `POST /v1/run` error unauthenticated (401) | an adapter built over a client with a random token (`randomHex`, never printed): Run of A. Control: Run of A with the right token is the 200 replay of A's job | `run unauthenticated:`, `control unauthenticated:` |
+| `POST /v1/run` error validation_failed (400) | the observed module client (the adapter validates ids itself and would not send it): body with the job item id and `user_id` empty; details `user_id/required`; no job for D. Control: the same body with the user id is 202 and D is sent | `run validation_failed:`, `control validation_failed:` |
+| `POST /v1/run` error internal_error (500) | the module's per-user campaign-start advisory lock (`pg_advisory_xact_lock(hashtext('send_managed.campaign_start:' || user id))`, taken before it writes anything) is held by a superuser transaction while Run of E waits; at the module's 10 s database deadline it answers 500 (`advisory_lock_failed` in its log). The lock is released by the rollback and the SAME Run of E is then a new job | `run internal_error:` (the wait is printed: about 10 s), `control internal_error:` |
+| `POST /v1/cancel` error validation_failed (400) | the observed module client: `campaign_id` empty; details `campaign_id/required`. Control: Cancel of a campaign the module does not know answers 200 with all zeros | `cancel validation_failed:`, `control cancel:` |
+| `GET /v1/report` campaign error cursor_malformed (400) | page size 1 over finished campaign one (four items): the cursor `not base64 !`; reported as `ErrBadCursor`, detail `cursor/malformed` | `cursor_malformed:` |
+| `GET /v1/report` campaign error cursor_forged (500) | the cursor base64url(`not-a-time|<an id>`): well formed, so the module's SQL casts it and fails; the 500 is reported as `ErrBadCursor` (the module's documentation promises a 400). Control: the genuine next cursor of page one gives page two | `cursor_forged:`, `control cursor:` |
+| `GET /v1/describe` ok | the adapter's `Describe` | `describe:` |
+
+At the end the test reads `dispatch_mode` back (it must be `serving`, and a cleanup restores it even when the test fails) and asserts the sink holds exactly one message for each of the five items (A, C, D, E, B): the refused and failed runs and the replays sent nothing. The test touches no money (module 2
+does not need it). It adds about 30 s to the stage (the lock wait is 10 s of it).
+
+What to read when the gate is red afterwards (`TestM2Worker_ZContractDrift`): `contract drift:` lines are real differences between an answer of the real module and the recorded fixture of its contract; `contract ... was never exercised` means a call above answered something that fitted another contract better (the `nearest miss`
+lines name the paths) or the test did not reach it. Known before the first run: the recorded `report.campaign.empty.json` in the tree holds a POPULATED page (it was recorded before the matcher learnt to keep a populated page from an empty-page contract): the empty page of the cross-tenant read of B11 (an empty 200)
+will be compared with it, and the fixture should be recorded again from that answer.
+
+Risks, in the order they would bite: (1) the internal error is a lock wait: it needs the module's deadline of 10 s (`dbCtx` in `platformapi/server.go` at the pinned commit; the client's own timeout is 20 s) and the module to take the lock before it writes; if the pinned module answered 200 or waited longer the test fails
+at `Run of item E while its campaign-start lock is held`, naming what came back; (2) the three `dispatch_mode` steps change a global dial of module 2 for a few seconds: nothing else runs then (tests of the binary are serial and the others clean up first), and a failed test restores it in a cleanup; (3) `accept_and_defer` makes the
+single-job report say `dispatch_paused`: the job-queued fixture in the tree (`transport_4xx`, one attempt) is hand-written, so the first run may print differences of VALUE for that case only if a vocabulary check disagrees (`dispatch_paused` is in the item_reason vocabulary); (4) the second campaign's item B is
+added to the tenant's items so that the sink view knows its address, which is why the final sink check covers five items.
+
 ## What is in this directory
 
 | File | What |
 |---|---|
-| `stage.sh` | sourced by run.sh: the credentials (`m2w_mint`), stage 5c, the evidence and PASS-line checks, the log secret check, the outage sub-stage (`m2w_outage`), the scoped run (`m2w_scope_run`); all guarded by `M2W_ON`. `M2W_TESTS` lists the twelve tests whose PASS lines are required (nine ordinary, three outage phases) |
-| `stage-selftest.sh` | run by the `gates` workflow (no Docker, no keys): 57 cases for `m2w_mint`, `m2w_require_pass` (its test list is read from `stage.sh`, so a test added there is covered), `m2w_secret_leak` and the outage sub-stage (`m2w_outage` and its parts under stand-ins for docker compose and docker), each asserting the reason it fails for, plus a control that the verdict function itself reports a wrong expectation |
+| `stage.sh` | sourced by run.sh: the credentials (`m2w_mint`), stage 5c, the evidence and PASS-line checks, the log secret check, the outage sub-stage (`m2w_outage`), the scoped run (`m2w_scope_run`); all guarded by `M2W_ON`. `M2W_TESTS` lists the fourteen tests whose PASS lines are required (nine ordinary, the contract edge cases, the contract drift gate, three outage phases) |
+| `stage-selftest.sh` | run by the `gates` workflow (no Docker, no keys): 60 cases for `m2w_mint`, `m2w_require_pass` (its test list is read from `stage.sh`, so a test added there is covered), `m2w_secret_leak` and the outage sub-stage (`m2w_outage` and its parts under stand-ins for docker compose and docker), each asserting the reason it fails for, plus a control that the verdict function itself reports a wrong expectation |
 | `FIRST-RUN.md` | this file |
 
 The tests are `tests/harness/m2_worker_test.go`, `m2_worker_e2e_test.go` and their helper files (build tag `harness && m2worker`); the compose override is `tests/harness/docker-compose.m2worker.yml` (merged, with `--profile m2worker`, only when the stage is on). No module source is modified, and the workflow uploads no artifact

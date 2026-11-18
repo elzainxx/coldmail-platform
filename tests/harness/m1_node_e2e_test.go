@@ -1029,6 +1029,60 @@ func TestM1Node_E2EChecksBite(t *testing.T) {
 	if m1eShape([]int{100, 100, 20}) != "100+100+20" || m1eShape(make([]int, 9)) != "8 x 0, last 0" {
 		t.Fatal("the page shape rendering is wrong")
 	}
+
+	// the contract edge cases (m1_node_contract_edge_test.go): the helpers of that test, and the allowlist of the drift test
+	oversize := m1xRows("edge-cap", "nomx.fixture.test", 501)
+	seenID := map[string]bool{}
+	for _, r := range oversize {
+		if seenID[r.ItemID] || strings.TrimSpace(r.ItemID) == "" {
+			t.Fatalf("the oversize rows repeat or blank an item_id (%q): the module would answer 400, not 413", r.ItemID)
+		}
+		seenID[r.ItemID] = true
+		if _, err := norm.Normalize(r.Address); err != nil {
+			t.Fatalf("the oversize row %q has an address that fails norm/v1: a 413 must be the only thing wrong with the request", r.ItemID)
+		}
+	}
+	if len(oversize) != 501 {
+		t.Fatalf("m1xRows made %d row(s), want 501", len(oversize))
+	}
+	refusal := func(status int, code string, details ...modclient.Detail) error {
+		return &modclient.Error{Kind: modclient.Refused, Module: modclient.M1, Route: "m1.submit", Status: status, Code: code, Details: details}
+	}
+	items413 := modclient.Detail{Field: "items", Issue: "out_of_range"}
+	if p := m1xRefusal("x", refusal(413, "payload_too_large", items413), 413, "payload_too_large", items413); len(p) != 0 {
+		t.Fatalf("the control: a 413 payload_too_large naming items:out_of_range is what the edge test expects, got %v", p)
+	}
+	for _, c := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"no error at all (the oversize request was accepted)", nil, "no error"},
+		{"another status", refusal(400, "payload_too_large", items413), "HTTP status 400"},
+		{"another code", refusal(413, "validation_failed", items413), `module error code "validation_failed"`},
+		{"details that do not name the field", refusal(413, "payload_too_large", modclient.Detail{Field: "addresses", Issue: "out_of_range"}), "do not name items"},
+		{"details that do not name the issue", refusal(413, "payload_too_large", modclient.Detail{Field: "items", Issue: "required"}), "out_of_range"},
+		{"an error of another kind", &modclient.Error{Kind: modclient.Internal, Status: 500, Code: "internal_error"}, "kind internal"},
+	} {
+		if p := m1xRefusal("x", c.err, 413, "payload_too_large", items413); !m1eContains(p, c.want) {
+			t.Fatalf("%s: the refusal check said %v, want a line containing %q", c.name, p, c.want)
+		}
+	}
+	declared := map[string]bool{}
+	for _, rc := range m1ad.Contracts() {
+		declared[string(rc.Module)+"|"+rc.Route+"|"+rc.Case] = true
+	}
+	for key, why := range m1DriftNotElicited {
+		if !declared[key] {
+			t.Fatalf("the drift test allows %q, which names no contract of module 1: an allowlist entry for a contract that does not exist is red at Finish", key)
+		}
+		if len(strings.TrimSpace(why)) < 40 {
+			t.Fatalf("the allowlist reason for %q is %q: a reason says what would have to happen in the module", key, why)
+		}
+	}
+	if len(m1DriftNotElicited) != 3 {
+		t.Fatalf("the drift test allows %d contract(s), the edge test is written for the three that need module 1 to fail on its own (paused, unavailable, internal_error)", len(m1DriftNotElicited))
+	}
 }
 
 // m1ePageItemsForTest and m1ePageInputsForTest are the pagination rows and their inputs, for the pure test.

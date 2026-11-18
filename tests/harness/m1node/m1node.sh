@@ -38,6 +38,7 @@ M1N_TESTS=(
   TestM1Node_E2ECrossTenant
   TestM1Node_E2EChecksBite
   TestM1Node_OutageChecksBite
+  TestM1Node_ContractEdgeCases
   TestM1Node_ZContractDrift
 )
 # the three phases of the outage proof: each runs in a process of its own, in this order, between the stop and the start of the control plane (m1n_outage). The ordinary run of stage M1N-4

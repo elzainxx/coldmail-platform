@@ -118,6 +118,9 @@ type MatchResult struct {
 	Undeclared []UndeclaredCall
 	// Unexercised are the contracts no observation was assigned to, in contract order.
 	Unexercised []modclient.RouteContract
+	// NearestMisses has one entry, in contract order, for each unexercised contract of which at least one observation of the same module, route and status exists: how far its
+	// fixture is from the closest of them. A contract nothing of its module, route and status was observed for has none (it was never called).
+	NearestMisses []NearestMiss
 	// Contracts and Observations are the sizes of the two inputs.
 	Contracts    int
 	Observations int
@@ -125,7 +128,10 @@ type MatchResult struct {
 	undeclaredObs [][]Observation // the observations behind each Undeclared entry (record mode prints one of them; never reported)
 }
 
-type rank struct{ diffs, oneSided int }
+// rank orders the contracts that could take an observation. Agreement about what is exercised comes FIRST: a position that tells nothing on one side only (a fixture whose items are
+// empty against a live body that has items, or the reverse) is a worse fit than any number of differences, because a fixture that says nothing fits every body with zero differences
+// and would otherwise take the observations of a populated contract and hide their real differences behind an "unexercised" line. Differences come second.
+type rank struct{ oneSided, diffs int }
 
 // scored is one candidate contract for an observation, with the report that scored it.
 type scored struct {
@@ -135,10 +141,10 @@ type scored struct {
 }
 
 func (a rank) less(b rank) bool {
-	if a.diffs != b.diffs {
-		return a.diffs < b.diffs
+	if a.oneSided != b.oneSided {
+		return a.oneSided < b.oneSided
 	}
-	return a.oneSided < b.oneSided
+	return a.diffs < b.diffs
 }
 
 // oneSidedGaps counts the positions that tell nothing on one side only: a live empty page against a fixture that has elements fits worse than against a fixture that is an empty
@@ -220,14 +226,15 @@ func compareObservation(rc modclient.RouteContract, fixture []byte, ferr error, 
 	return rep
 }
 
-// Match assigns every observation to the contract of the same module, route and status that fits it best: the one with the fewest differences from Compare against the
-// contract's fixture (read from fixtures under dir), then the fewest positions that tell nothing on one side only, then the first by contract order that no observation has been
-// assigned to yet, then the first. The route of a contract is its "METHOD /template": it fits an observation whose method and path (as sent) fit the template, or whose route
+// Match assigns every observation to the contract of the same module, route and status that fits it best: the one with the fewest positions that tell nothing on one side only
+// (an empty array, an empty map or a null in the fixture where the live body has content, or the reverse; see rank), then the fewest differences from Compare against the contract's
+// fixture (read from fixtures under dir), then the first by contract order that no observation has been assigned to yet, then the first. The route of a contract is its "METHOD /template": it fits an observation whose method and path (as sent) fit the template, or whose route
 // label it names. Contracts of one route differ by case (a page and an empty page), so several can fit one observation; the others are listed in Matched.Tied.
 //
 // The observations are put in a canonical order first, so the result does not depend on the order they arrived in. An observation no contract fits by route and status is
 // Undeclared (grouped, with no body); a contract no observation was assigned to is Unexercised. Match reads fixtures but never fails: a fixture that cannot be read is a
-// difference in the report of every observation assigned to its contract.
+// difference in the report of every observation assigned to its contract. For every unexercised contract that has observed responses of its module, route and status, the result
+// holds a NearestMiss: how far its fixture is from the closest of them.
 func Match(contracts []modclient.RouteContract, fixtures fs.FS, dir string, obs []Observation) MatchResult {
 	res := MatchResult{Contracts: len(contracts), Observations: len(obs)}
 	sorted := append([]Observation(nil), obs...)
@@ -248,6 +255,7 @@ func Match(contracts []modclient.RouteContract, fixtures fs.FS, dir string, obs 
 	}
 	cache := &fixtureCache{fsys: fixtures, dir: dir, data: map[int][]byte{}, errs: map[int]error{}}
 	assigned := make([]int, len(contracts))
+	tracks := make([]missTrack, len(contracts))
 	type groupKey struct {
 		module        modclient.Module
 		method, path  string
@@ -286,7 +294,9 @@ func Match(contracts []modclient.RouteContract, fixtures fs.FS, dir string, obs 
 		for _, i := range cands {
 			fx, ferr := cache.load(i, contracts[i])
 			rep := compareObservation(contracts[i], fx, ferr, o)
-			all = append(all, scored{i, rep, rank{len(rep.Diffs), oneSidedGaps(rep)}})
+			sc := scored{i, rep, rank{oneSidedGaps(rep), len(rep.Diffs)}}
+			all = append(all, sc)
+			tracks[i].offer(sc)
 		}
 		best := all[0].rk
 		for _, s := range all[1:] {
@@ -319,9 +329,90 @@ func Match(contracts []modclient.RouteContract, fixtures fs.FS, dir string, obs 
 	for i, rc := range contracts {
 		if assigned[i] == 0 {
 			res.Unexercised = append(res.Unexercised, rc)
+			if tracks[i].seen > 0 {
+				res.NearestMisses = append(res.NearestMisses, NearestMiss{Contract: rc, Observed: tracks[i].seen, Misses: missesOf(tracks[i].rep)})
+			}
 		}
 	}
 	return res
+}
+
+// missTrack follows, for one contract, the closest of the observations that could have been assigned to it (same module, route and status), whether or not it was.
+type missTrack struct {
+	seen  int
+	total int
+	rep   Report
+}
+
+// offer notes one candidate: the closest is the one with the fewest differences plus one-sided gaps; of equal ones the first in canonical order stays.
+func (m *missTrack) offer(s scored) {
+	m.seen++
+	if t := s.rk.oneSided + s.rk.diffs; m.seen == 1 || t < m.total {
+		m.total, m.rep = t, s.rep
+	}
+}
+
+// Miss is one way a fixture misses an observation: a path and the name of a difference Kind, or GapFixture / GapLive for a position that tells nothing on that side only. It
+// names no value.
+type Miss struct {
+	Path string
+	Kind string
+}
+
+// NearestMiss says how far the fixture of an unexercised contract is from the closest observed response of its module, route and status: the responses were there, but each was
+// assigned to another contract that fitted it better, or none fitted. It is how a real difference that hides behind an "unexercised" line becomes visible.
+type NearestMiss struct {
+	Contract modclient.RouteContract
+	// Observed is the number of observed responses of the contract's module, route and status.
+	Observed int
+	// Misses are the differences, then the positions that tell nothing on one side only, of the closest one.
+	Misses []Miss
+}
+
+// MaxMissesListed is how many misses a NearestMiss line names before it says how many more there are.
+const MaxMissesListed = 8
+
+// String is the line the reports print: paths and kinds only, never a value.
+func (n NearestMiss) String() string {
+	c := ""
+	if n.Contract.Case != "" {
+		c = " case=" + n.Contract.Case
+	}
+	head := fmt.Sprintf("nearest miss: %s %s%s: %d differences against the closest of %d observed responses", n.Contract.Module, n.Contract.Route, c, len(n.Misses), n.Observed)
+	if len(n.Misses) == 0 {
+		return head + ": none (every observed response was assigned to another contract that fitted at least as well)"
+	}
+	parts := make([]string, 0, MaxMissesListed+1)
+	for i, m := range n.Misses {
+		if i == MaxMissesListed {
+			parts = append(parts, fmt.Sprintf("and %d more", len(n.Misses)-MaxMissesListed))
+			break
+		}
+		parts = append(parts, m.Path+" "+m.Kind)
+	}
+	return head + ": " + strings.Join(parts, ", ")
+}
+
+// missesOf lists a report's differences and then its one-sided gaps (in the order the report has them), each as a path and a kind.
+func missesOf(rep Report) []Miss {
+	var out []Miss
+	for _, d := range rep.Diffs {
+		out = append(out, Miss{Path: d.Path, Kind: string(d.Kind)})
+	}
+	sides := map[string][]string{}
+	var order []string
+	for _, g := range rep.Gaps {
+		if _, ok := sides[g.Path]; !ok {
+			order = append(order, g.Path)
+		}
+		sides[g.Path] = append(sides[g.Path], g.Side)
+	}
+	for _, p := range order {
+		if len(sides[p]) == 1 {
+			out = append(out, Miss{Path: p, Kind: "Gap" + strings.ToUpper(sides[p][0][:1]) + sides[p][0][1:]})
+		}
+	}
+	return out
 }
 
 // redactPath keeps the segments of a path that some contract of the module names as a literal and replaces every other segment with {}: the path of an undeclared call is

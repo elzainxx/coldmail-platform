@@ -244,6 +244,14 @@ verdict "the outage phases are run by an anchored name with the guard variable t
 verdict "m1n_run runs the stages in the order: tests, outage, floor, exposure, leak scan" 0 "m1n_stage4 m1n_outage m1n_floor m1n_exposure m1n_secret_leak" "$(sed -n '/^m1n_run() {/,/^}/p' "$HERE/m1node.sh" | grep -oE '^  m1n_[a-z0-9_]+' | tr -d ' ' | tr '\n' ' ' | grep -o 'm1n_stage4 m1n_outage m1n_floor m1n_exposure m1n_secret_leak')" 0
 margin="$(sed -n 's/^ *TM_QUEUE_LEASE_MARGIN_SECONDS: "\([0-9]*\)".*/\1/p' "$HARNESS/docker-compose.m1node.yml")"
 verdict "the control plane's lease margin is set low enough for the outage proof and above zero (the module refuses 0)" 0 "ok" "$([ -n "$margin" ] && [ "$margin" -gt 0 ] && [ "$margin" -le 30 ] && echo ok || echo "margin '${margin:-unset}'")" 0
+cap_cp="$(sed -n 's/^ *TM_QUEUE_BULK_MAX_ADDRESSES: "\${H_M1N_BULK_CAP:-\([0-9]*\)}".*/\1/p' "$HARNESS/docker-compose.m1node.yml")"
+cap_test="$(sed -n 's/^ *HARNESS_M1NODE_BULK_CAP: "\${H_M1N_BULK_CAP:-\([0-9]*\)}".*/\1/p' "$HARNESS/docker-compose.m1node.yml")"
+cap_ok() { [ -n "$1" ] && [ "$1" = "$2" ] && [ "$1" -ge 300 ] && [ "$1" -le 5000 ]; }
+verdict "the control plane's cap of rows per submission and the edge test's copy of it are one value, above the 220 rows of the pagination test and low enough to cross in one request" 0 "ok" "$(cap_ok "$cap_cp" "$cap_test" && echo ok || echo "control plane '${cap_cp:-unset}', test '${cap_test:-unset}'")" 0
+verdict "the cap check bites: a cap below the pagination test's 220 rows, a cap the test does not share and an empty one are each refused (the control)" 0 "all three refused" "$(! cap_ok 100 100 && ! cap_ok 500 600 && ! cap_ok "" "" && echo "all three refused" || echo "one of them was accepted")" 0
+verdict "the edge test reads the cap from the variable the compose file sets (and the compose file sets it for the test container)" 0 "HARNESS_M1NODE_BULK_CAP" "$(grep -q 'm1xEnvCap *= "HARNESS_M1NODE_BULK_CAP"' "$HARNESS/m1_node_contract_edge_test.go" && grep -q 'HARNESS_M1NODE_BULK_CAP:' "$HARNESS/docker-compose.m1node.yml" && echo HARNESS_M1NODE_BULK_CAP || echo "the test and the compose file disagree on the cap variable")" 0
+first_zz="$(ls "$HARNESS"/*_test.go | xargs -n1 basename | grep -E '^(m1_node|zz_m1_node)' | sort | tail -1)"
+verdict "the contract drift test is the last test file of module 1's tests (the edge test and every other m1_node test file sort before it)" 0 "zz_m1_node_contract_drift_test.go" "$first_zz" 0
 
 echo "selftest: $cases cases, $ok behaved as expected, $bad did not"
 [ "$cases" -ge "$MIN" ] || { echo "selftest: RED — $cases cases ran, floor is $MIN"; exit 1; }

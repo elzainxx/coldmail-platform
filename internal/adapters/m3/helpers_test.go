@@ -16,15 +16,25 @@ import (
 	"github.com/coldmail-platform/platform/internal/modclient"
 )
 
-// The tenants and ids of the tests: synthetic, none a secret, none the all-zero system user.
+// The recorded fixtures were normalised by contractcheck.Normalise: every uuid of a file becomes 00000000-0000-4000-8000-00000000000N, N counting by first appearance in THAT file, every
+// timestamp 2026-01-01T00:00:00Z, every request id a run of "a". The tests name the ids after that rule and TestRecordedFixturesCarryTheNormalisedIDs holds the files to it, so a
+// recording that is numbered differently fails there, naming the file, instead of failing a dozen tests for a reason that is not theirs.
 const (
-	userA    = "2f6d1c1e-7a4b-4c55-9f0e-5b7a3c9d8e21"
+	norm1 = "00000000-0000-4000-8000-000000000001"
+	norm2 = "00000000-0000-4000-8000-000000000002"
+	norm3 = "00000000-0000-4000-8000-000000000003"
+)
+
+// The tenants and ids of the tests: synthetic, none a secret, none the all-zero system user. An account fixture names its account first and its tenant second (norm1, norm2), a campaign
+// report names its campaign first, and the hand-written fixtures that remain use the same values, so one tenant serves every fixture.
+const (
+	userA    = norm2
 	userB    = "9c1e7a3b-5d2f-4a6c-8b0e-1f3d5a7c9e42"
-	campaign = "5a1c9e30-7d2b-4f6a-9b8e-1c3d5e7f9a02"
+	campaign = norm1
 	jobItem  = "a1b2c3d4-0000-4000-8000-000000000001"
 	jobID    = "0d3e5f70-8192-4a3b-8c4d-5e6f708192a3"
-	acct1    = "7e8f9a0b-1c2d-4e3f-8a4b-5c6d7e8f9a0b"
-	acct2    = "7e8f9a0b-1c2d-4e3f-8a4b-5c6d7e8f9a0c"
+	acct1    = norm1
+	acct2    = norm3
 	fixtures = "testdata/contract"
 )
 

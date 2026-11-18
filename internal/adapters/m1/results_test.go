@@ -2,6 +2,7 @@ package m1
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"strconv"
 	"strings"
@@ -44,11 +45,81 @@ func TestResults_ReadsTheRecordedPage(t *testing.T) {
 		t.Fatal("control: two different elements decoded to the same Row: the decoder returns something that does not depend on its input")
 	}
 
-	empty := fixture(t, "results-empty.json")
+	// control: a page with nothing on it (the recorded last page with its results emptied: the recording's job id and next_cursor, an empty array) decodes to no rows
+	empty := withoutResults(t, "results-empty.json")
 	g := newFakeM1(t, func(call) (int, string) { return 200, empty })
 	rows, next, err = g.adapter(t).Results(testCtx(t), testJob, "4", 0)
 	if err != nil || len(rows) != 0 || next != "" {
-		t.Fatalf("control: the recorded empty last page gave %+v %q %v", rows, next, err)
+		t.Fatalf("control: an empty last page gave %+v %q %v", rows, next, err)
+	}
+}
+
+// TestResults_ReadsTheRecordedLastPage: the page RECORDED from the real module (results-empty.json: the last page of a job, whatever its case name says: it holds every row and no
+// next cursor) decodes row for row to what an independent parse of the same file says: ordinal, item_id, status, reason, the duplicate_of of the rows that repeat an address (a
+// pointer to the value, 0 included), the cache flag, the skip token and the failure origin, and the page's next cursor; and the rows are one per ordinal, in order. Paired control:
+// the same comparison over a copy of the recording with one row changed fails, so it is a comparison that can see a difference.
+func TestResults_ReadsTheRecordedLastPage(t *testing.T) {
+	read := func(body string) ([]Row, string, error) {
+		return serve(t, 200, body).adapter(t).Results(testCtx(t), testJob, "", 0)
+	}
+	// differences says where the decoded rows differ from the generic rows of the same body
+	differences := func(rows []Row, want []map[string]any) []string {
+		var out []string
+		if len(rows) != len(want) {
+			return []string{fmt.Sprintf("%d row(s), the file has %d", len(rows), len(want))}
+		}
+		for i, w := range want {
+			sig := w["signals"].(map[string]any)
+			origin, _ := sig["failure_origin"].(string)
+			skip, _ := sig["smtp_skipped_reason"].(string)
+			r := rows[i]
+			var dup *int
+			if d, ok := w["duplicate_of"]; ok {
+				n := num(t, d)
+				dup = &n
+			}
+			switch {
+			case r.Ordinal != num(t, w["ordinal"]) || r.Ordinal != i:
+				out = append(out, fmt.Sprintf("row %d: ordinal %d", i, r.Ordinal))
+			case r.ItemID != w["item_id"].(string):
+				out = append(out, fmt.Sprintf("row %d: item_id %q", i, r.ItemID))
+			case r.Status != w["status"].(string) || r.Reason != w["reason"].(string):
+				out = append(out, fmt.Sprintf("row %d: %s/%s", i, r.Status, r.Reason))
+			case !reflect.DeepEqual(r.DuplicateOf, dup):
+				out = append(out, fmt.Sprintf("row %d: duplicate_of differs", i))
+			case r.FromCache != w["flags"].(map[string]any)["from_cache"].(bool) || r.FailureOrigin != origin || r.SkipReason != skip:
+				out = append(out, fmt.Sprintf("row %d: provenance differs", i))
+			}
+		}
+		return out
+	}
+	body := fixture(t, "results-empty.json")
+	want := recordedRows(t, "results-empty.json")
+	rows, next, err := read(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := differences(rows, want); len(d) != 0 {
+		t.Fatalf("the decoded rows differ from the recording: %v", d)
+	}
+	if wantNext := recordedDoc(t, "results-empty.json")["next_cursor"].(string); next != wantNext {
+		t.Fatalf("next cursor %q, the file says %q", next, wantNext)
+	}
+	if len(want) < 2 {
+		t.Fatalf("the recording holds %d row(s): too few to say anything about paging", len(want))
+	}
+
+	// control: one row of the recording changed (its reason, to another word of the vocabulary) is a difference the comparison reports
+	mutated := strings.Replace(body, `"reason": "no_mx"`, `"reason": "null_mx"`, 1)
+	if mutated == body {
+		t.Fatal("control setup: the recording has no no_mx row to change")
+	}
+	mrows, _, err := read(mutated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := differences(mrows, want); len(d) != 1 || !strings.Contains(d[0], "row 0") {
+		t.Fatalf("control: one changed row gave %v, want exactly that row reported", d)
 	}
 }
 

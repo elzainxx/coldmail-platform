@@ -3,6 +3,7 @@ package m3_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -80,20 +81,35 @@ func detailFields(err error) []string {
 	return out
 }
 
-func cases() map[string]sendapitest.Case {
+func cases(t testing.TB) map[string]sendapitest.Case {
 	run := call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) { return c.Run(ctx, jobItem) })
-	other := "9c1e7a3b-5d2f-4a6c-8b0e-1f3d5a7c9e42"
+	other := userB
+	// what the recordings say, read from the recordings: the recipient counts the quotes were asked for, and the documents the checks hold the decoded values to
+	quoteOK, quoteInf := doc(t, "quote.ok.json"), doc(t, "quote.infeasible.json")
+	quoteN, quoteInfN := asInt(t, quoteOK, "recipient_count"), asInt(t, quoteInf, "recipient_count")
+	reportSent, reportNF := doc(t, "report.job.sent.json"), doc(t, "report.job.error.not_found.json")
+	campaignPage, campaignEmpty := doc(t, "report.campaign.page.json"), doc(t, "report.campaign.empty.json")
+	listPage, listLast := doc(t, "accounts.list.page.json"), doc(t, "accounts.list.empty.json")
+	getOK, created, createdFailed := doc(t, "accounts.get.ok.json"), doc(t, "accounts.create.created.json"), doc(t, "accounts.create.created_failed.json")
+	dupBody, testOK, testFailed, bulkOK := doc(t, "accounts.create.error.duplicate.json"), doc(t, "accounts.test.ok.json"), doc(t, "accounts.test.failed.json"), doc(t, "accounts.bulk.ok.json")
+	bulkN := length(t, bulkOK, "results")
 	return map[string]sendapitest.Case{
 		// ---- the shared four routes and describe, with module 3's profile
 		"POST /v1/quote | ok": {
-			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) { return c.Quote(ctx, 50) }),
+			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) { return c.Quote(ctx, quoteN) }),
 			Check: func(t testing.TB, v any, err error) {
-				if q := v.(sendapi.Quote); q.Cost != 0 || q.UnitPriceCredits != 0 || q.Tier != "shared" || q.Feasible == nil || !*q.Feasible || len(q.InfeasibleReasons) != 0 {
+				q := v.(sendapi.Quote)
+				same(t, "recipient_count", q.RecipientCount, quoteN)
+				same(t, "cost", q.Cost, asInt(t, quoteOK, "cost"))
+				same(t, "unit_price_credits", q.UnitPriceCredits, asInt(t, quoteOK, "unit_price_credits"))
+				same(t, "currency", q.Currency, asStr(t, quoteOK, "currency"))
+				same(t, "tier", q.Tier, asStr(t, quoteOK, "tier"))
+				if q.Feasible == nil || *q.Feasible != must(t, quoteOK, "feasible").(bool) || len(q.InfeasibleReasons) != length(t, quoteOK, "reasons") {
 					t.Fatalf("quote = %+v", q)
 				}
 			},
 			Mutations: []sendapitest.Mutation{
-				del("cost", "cost"), set("recipient_count", 51, "recipient_count"), del("feasible", "feasible"), set("feasible", "yes", "feasible"), del("reasons", "reasons"),
+				del("cost", "cost"), set("recipient_count", quoteN+1, "recipient_count"), del("feasible", "feasible"), set("feasible", "yes", "feasible"), del("reasons", "reasons"),
 				set("unit_price_credits", "0", "unit_price_credits"),
 			},
 		},
@@ -139,15 +155,18 @@ func cases() map[string]sendapitest.Case {
 		"GET /v1/report | job sent": {
 			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) { return c.ReportJob(ctx, jobItem) }),
 			Check: func(t testing.TB, v any, err error) {
+				// the recording is a settled item that failed at the recipient: the keys the module omits until set are all here, and every one of them is carried
 				it := v.(sendapi.Item)
-				if it.State != "sent" || it.JobItemID != jobItem || it.Reason != nil || it.ErrorClass != nil || it.ProviderMessageID == nil || it.CompletedAt == nil || it.CompletedAt.Nanosecond() == 0 ||
-					it.AccountID == nil || it.AccountUsername == nil || it.SMTPResponse != nil {
-					t.Fatalf("item = %+v", it)
+				itemMatches(t, it, reportSent, true)
+				same(t, "job item id", it.JobItemID, jobItem)
+				if it.ErrorClass == nil || it.FailedAt == nil || it.SMTPResponse == nil || it.AccountID == nil || it.AccountUsername == nil || it.CompletedAt == nil {
+					t.Fatalf("the recording's optional keys were not carried: %+v", it)
 				}
 			},
 			Mutations: []sendapitest.Mutation{
 				del("attempt_count", "attempt_count"), set("state", "teleported", "state"), set("completed_at", "soon", "completed_at"), del("job_id", "job_id"),
-				set("provider_message_id", 7, "provider_message_id"), set("account_username", 7, "account_username"),
+				set("account_username", 7, "account_username"), set("error_class", 7, "error_class"), set("failed_at", "yesterday", "failed_at"), set("smtp_response", 5, "smtp_response"),
+				set("account_id", 5, "account_id"),
 			},
 		},
 		"GET /v1/report | job queued": {
@@ -164,7 +183,8 @@ func cases() map[string]sendapitest.Case {
 			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) { return c.ReportJob(ctx, jobItem) }), Kind: modclient.NotFound, Code: "not_found",
 			Mutations: []sendapitest.Mutation{brokenEnvelope()},
 			Check: func(t testing.TB, v any, err error) {
-				if f, ok := sendapi.NotFoundField(err); !ok || f != "job_id" {
+				// the module names the selector the caller sent (here the job item id), as the recording says
+				if f, ok := sendapi.NotFoundField(err); !ok || f != asStr(t, reportNF, "error.details[0].field") || f != "job_item_id" {
 					t.Fatalf("NotFoundField = %q %v", f, ok)
 				}
 			},
@@ -175,9 +195,25 @@ func cases() map[string]sendapitest.Case {
 			}),
 			Check: func(t testing.TB, v any, err error) {
 				p := v.(sendapi.CampaignPage)
-				if len(p.Items) != 3 || p.NextCursor == "" || p.Totals.Total != 5 || p.Totals.Cancelled != 0 || len(p.ByAccount) != 1 || p.Items[0].AccountID == nil || p.Items[1].SMTPResponse == nil ||
-					p.Items[1].FailedAt == nil || p.Items[2].AccountID != nil {
-					t.Fatalf("page = %+v", p)
+				pageMatches(t, p, campaignPage)
+				// the recording is a settled campaign with both outcomes in it: a sent item without error keys and a bounced one with them, and per-account totals
+				var sent, bounced int
+				for _, it := range p.Items {
+					switch it.State {
+					case "sent":
+						sent++
+						if it.SMTPResponse != nil || it.ErrorClass != nil || it.FailedAt != nil || it.ProviderMessageID == nil || it.AccountID == nil {
+							t.Fatalf("a sent item: %+v", it)
+						}
+					case "bounced":
+						bounced++
+						if it.SMTPResponse == nil || it.ErrorClass == nil || it.FailedAt == nil || it.ProviderMessageID != nil {
+							t.Fatalf("a bounced item: %+v", it)
+						}
+					}
+				}
+				if sent == 0 || bounced == 0 || len(p.ByAccount) == 0 {
+					t.Fatalf("the recording is not a campaign with both outcomes and per-account totals: %d sent, %d bounced, %d accounts", sent, bounced, len(p.ByAccount))
 				}
 			},
 			Mutations: []sendapitest.Mutation{
@@ -205,9 +241,12 @@ func cases() map[string]sendapitest.Case {
 				return c.ReportCampaign(ctx, campaign)
 			}),
 			Check: func(t testing.TB, v any, err error) {
-				if r := v.(sendapi.CampaignReport); !r.NothingKnown() || !r.ItemsMatchTotal() || r.Progress.IsComplete || len(r.ByAccount) != 0 {
+				r := v.(sendapi.CampaignReport)
+				if !r.NothingKnown() || !r.ItemsMatchTotal() || r.Progress.IsComplete || len(r.ByAccount) != 0 || len(r.Items) != length(t, campaignEmpty, "items.results") {
 					t.Fatalf("report = %+v", r)
 				}
+				same(t, "campaign_id", r.CampaignID, asStr(t, campaignEmpty, "campaign_id"))
+				same(t, "total", r.Totals.Total, asInt(t, campaignEmpty, "totals.total"))
 			},
 			Mutations: []sendapitest.Mutation{set("totals.total", "0", "totals.total")},
 		},
@@ -271,13 +310,20 @@ func cases() map[string]sendapitest.Case {
 			},
 		},
 		"POST /v1/quote | infeasible": {
-			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) { return c.Feasibility(ctx, 150000) }),
+			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) {
+				return c.Feasibility(ctx, quoteInfN)
+			}),
 			Check: func(t testing.TB, v any, err error) {
 				f := v.(m3.Feasibility)
-				if f.Feasible || len(f.Reasons) != 1 || f.Reasons[0].Code != m3.InfeasibleExceedsQueueCap || f.Reasons[0].Limit == nil || *f.Reasons[0].Limit != 100000 || f.Reasons[0].Requested == nil ||
-					*f.Reasons[0].Requested != 150000 || f.Reasons[0].CapName != "queue_depth_cap" || f.Capacity.EstimatedDurationSec != nil || f.Capacity.EstimateBasis != "" || len(f.Warnings) != 0 {
+				// what the recording says: not feasible, one reason, the cap the module named and the count asked, no projection
+				if f.Feasible || len(f.Reasons) != 1 || f.Reasons[0].Code != m3.InfeasibleExceedsQueueCap || f.Reasons[0].Limit == nil || *f.Reasons[0].Limit != asInt(t, quoteInf, "reasons[0].limit") ||
+					f.Reasons[0].Requested == nil || *f.Reasons[0].Requested != quoteInfN || f.Reasons[0].CapName != asStr(t, quoteInf, "reasons[0].cap_name") ||
+					f.Capacity.EstimatedDurationSec != nil || f.Capacity.EstimateBasis != "" || len(f.Warnings) != 0 {
 					t.Fatalf("feasibility = %+v", f)
 				}
+				same(t, "queue depth cap", f.Caps.QueueDepthCap, asInt(t, quoteInf, "caps.queue_depth_cap"))
+				same(t, "queue depth limit", f.QueueDepthLimit(), m3.KnownLimit(asInt(t, quoteInf, "caps.queue_depth_cap")))
+				same(t, "eligible accounts", f.Capacity.EligibleAccounts, asInt(t, quoteInf, "capacity.eligible_accounts"))
 			},
 			Mutations: []sendapitest.Mutation{
 				set("feasible", true, "feasible"), del("reasons[0].code", "reasons[0].code"), set("reasons[0].limit", "x", "reasons[0].limit"), set("reasons[0].limit", -1, "reasons[0].limit"),
@@ -289,17 +335,20 @@ func cases() map[string]sendapitest.Case {
 		"GET /v1/send-byo/accounts | page": {
 			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) { return c.ListAccounts(ctx, "") }),
 			Check: func(t testing.TB, v any, err error) {
+				// the recording is a FULL page (the module's page size) with a cursor: every account of it is held to the document, and the cursor is the module's own
 				p := v.(m3.AccountPage)
-				if len(p.Items) != 2 || p.NextCursor == "" || p.Items[0].ID != acct1 || p.Items[0].Verification.State != m3.VerificationVerified || p.Items[0].FromAlignment.State != m3.AlignmentAligned ||
-					p.Items[0].FromName == nil || p.Items[1].FromName != nil || !p.Items[1].Paused || p.Items[1].PauseReason != "daily_limit" || p.Items[0].PauseReason != "" || p.Items[1].SMTPPort != 465 || p.Items[0].CreatedAt.IsZero() {
-					t.Fatalf("page = %+v", p)
+				same(t, "items", len(p.Items), length(t, listPage, "items"))
+				cursor := asStr(t, listPage, "next_cursor")
+				same(t, "next_cursor", p.NextCursor, cursor)
+				for i, a := range p.Items {
+					accountMatches(t, a, must(t, listPage, fmt.Sprintf("items[%d]", i)))
 				}
 			},
 			Mutations: []sendapitest.Mutation{
 				del("items", "items"), del("items[0].id", "items[0].id"), set("items[1].user_id", other, "items[1].user_id"), set("items[0].created_at", "yesterday", "items[0].created_at"),
 				set("next_cursor", 5, "next_cursor"), del("items[0].status", "items[0].status"), set("items[0].status.paused", "no", "items[0].status.paused"),
 				del("items[0].verification.state", "items[0].verification.state"), set("items[0].smtp_port", "587", "items[0].smtp_port"), set("items[0].id", "not-a-uuid", "items[0].id"),
-				set("items[0].verification.verified_at", "x", "items[0].verification.verified_at"), set("items[0].from_alignment.message", 3, "items[0].from_alignment.message"),
+				set("items[0].verification.verified_at", "x", "items[0].verification.verified_at"), set("items[0].from_alignment.checked_at", "x", "items[0].from_alignment.checked_at"),
 			},
 		},
 		"GET /v1/send-byo/accounts | last page": {
@@ -319,11 +368,21 @@ func cases() map[string]sendapitest.Case {
 		"GET /v1/send-byo/accounts | empty": {
 			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) { return c.ListAccounts(ctx, "") }),
 			Check: func(t testing.TB, v any, err error) {
-				if p := v.(m3.AccountPage); len(p.Items) != 0 || p.Items == nil || p.NextCursor != "" {
-					t.Fatalf("page = %+v", p)
+				// the recording is the LAST page of the listing (no cursor), not an empty one; TestAnEmptyPageThatNamesACursorIsRefused holds the empty page
+				p := v.(m3.AccountPage)
+				same(t, "items", len(p.Items), length(t, listLast, "items"))
+				same(t, "next_cursor", p.NextCursor, "")
+				if optStr(listLast, "next_cursor") != nil {
+					t.Fatal("the recording of the last page names a cursor")
+				}
+				for i, a := range p.Items {
+					accountMatches(t, a, must(t, listLast, fmt.Sprintf("items[%d]", i)))
 				}
 			},
-			Mutations: []sendapitest.Mutation{set("next_cursor", "abc", "next_cursor")},
+			Mutations: []sendapitest.Mutation{
+				del("items[2].status.disabled", "items[2].status.disabled"), set("items[1].from_alignment.checked_at", "x", "items[1].from_alignment.checked_at"),
+				set("items[0].user_id", other, "items[0].user_id"), set("next_cursor", 5, "next_cursor"),
+			},
 		},
 		"GET /v1/send-byo/accounts | error validation_failed": {
 			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) { return c.ListAccounts(ctx, "") }), Kind: modclient.Refused, Code: "validation_failed", Mutations: []sendapitest.Mutation{brokenEnvelope()},
@@ -340,13 +399,13 @@ func cases() map[string]sendapitest.Case {
 			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) { return c.GetAccount(ctx, acct1) }),
 			Check: func(t testing.TB, v any, err error) {
 				a := v.(m3.Account)
-				if a.ID != acct1 || a.UserID != userA || !a.HasCredential || a.SMTPHost != "smtp.example.test" || a.Verification.SMTPResponse == nil || a.FromAlignment.Message == nil || a.DailyLimit != 500 || a.UpdatedAt.Before(a.CreatedAt) {
-					t.Fatalf("account = %+v", a)
-				}
+				accountMatches(t, a, getOK)
+				same(t, "id", a.ID, acct1)
+				same(t, "user_id", a.UserID, userA)
 			},
 			Mutations: []sendapitest.Mutation{
 				del("id", "id"), set("user_id", other, "user_id"), set("id", acct2, "id"), del("status", "status"), set("from_name", 5, "from_name"), set("created_at", "x", "created_at"), set("daily_limit", "5", "daily_limit"),
-				set("from_alignment.last_attempt_at", 5, "from_alignment.last_attempt_at"),
+				set("from_alignment.checked_at", 5, "from_alignment.checked_at"),
 			},
 		},
 		"GET /v1/send-byo/accounts/{id} | error not_found": {
@@ -358,8 +417,11 @@ func cases() map[string]sendapitest.Case {
 			}),
 			Check: func(t testing.TB, v any, err error) {
 				a := v.(m3.Account)
-				if a.ID != acct1 || a.UserID != userA || a.Verification.State != m3.VerificationVerified || a.Verification.Code != m3.VerifyNone || a.FromAlignment.State != m3.AlignmentAligned {
-					t.Fatalf("account = %+v", a)
+				accountMatches(t, a, created)
+				same(t, "id", a.ID, acct1)
+				same(t, "user_id", a.UserID, userA)
+				if a.Verification.State != m3.VerificationVerified || a.Verification.Code != m3.VerifyNone {
+					t.Fatalf("the recording is not a create that verified: %+v", a.Verification)
 				}
 			},
 			Mutations: []sendapitest.Mutation{
@@ -372,14 +434,15 @@ func cases() map[string]sendapitest.Case {
 				return c.CreateAccount(ctx, newAcct(t, 2))
 			}),
 			Check: func(t testing.TB, v any, err error) {
+				// a create whose credential check failed is still a created account, with the reason the module gave
 				a := v.(m3.Account)
-				if a.ID != acct2 || a.FromName != nil || a.Verification.State != m3.VerificationFailed || a.Verification.Code != m3.VerifyAuthFailed || a.FromAlignment.State != m3.AlignmentWarned ||
-					a.FromAlignment.AcknowledgedAt == nil || a.Verification.VerifiedAt != nil || a.Verification.VerifyAt == nil || a.SMTPPort != 465 {
-					t.Fatalf("account = %+v", a)
+				accountMatches(t, a, createdFailed)
+				if a.Verification.State != m3.VerificationFailed || a.Verification.Code != m3.VerifyAuthFailed || a.Verification.VerifiedAt != nil || a.Verification.VerifyAt == nil || a.Verification.SMTPResponse == nil {
+					t.Fatalf("the recording is not a create whose credential check failed: %+v", a.Verification)
 				}
 			},
 			Mutations: []sendapitest.Mutation{
-				set("verification.verify_at", "x", "verification.verify_at"), set("from_alignment.acknowledged_at", "x", "from_alignment.acknowledged_at"), set("verification.code", 7, "verification.code"),
+				set("verification.verify_at", "x", "verification.verify_at"), set("from_alignment.checked_at", "x", "from_alignment.checked_at"), set("verification.code", 7, "verification.code"),
 			},
 		},
 		"POST /v1/send-byo/accounts | error validation_failed": {
@@ -399,8 +462,16 @@ func cases() map[string]sendapitest.Case {
 			}), Kind: modclient.Refused, Code: "conflict",
 			Mutations: []sendapitest.Mutation{brokenEnvelope()},
 			Check: func(t testing.TB, v any, err error) {
-				if !errors.Is(err, m3.ErrAccountDuplicate) || errors.Is(err, sendapi.ErrConflictUnexplained) || errors.Is(err, m3.ErrActionUnavailable) {
-					t.Fatalf("a duplicate: %v", err)
+				// the module names smtp_username in a duplicate's details and in nothing else: the mapping follows what the RECORDING says (it holds the opaque conflict: see the README), and
+				// TestACreateConflictIsADuplicateOnlyWhenTheModuleNamesTheUsername holds the other side
+				named := false
+				if ds, ok := lookup(dupBody, "error.details"); ok {
+					for i := range ds.([]any) {
+						named = named || asStr(t, dupBody, fmt.Sprintf("error.details[%d].field", i)) == "smtp_username"
+					}
+				}
+				if errors.Is(err, m3.ErrAccountDuplicate) != named || errors.Is(err, sendapi.ErrConflictUnexplained) == named || errors.Is(err, m3.ErrActionUnavailable) {
+					t.Fatalf("a create conflict (the module names the username: %v): %v", named, err)
 				}
 			},
 		},
@@ -432,8 +503,9 @@ func cases() map[string]sendapitest.Case {
 			}),
 			Check: func(t testing.TB, v any, err error) {
 				r := v.(m3.TestResult)
-				if r.Verification.State != m3.VerificationVerified || r.Verification.Code != m3.VerifyNone || r.Verification.SMTPResponse == nil || r.Alignment.State != m3.AlignmentAligned || r.Alignment.NotStored || r.Alignment.Message == nil {
-					t.Fatalf("result = %+v", r)
+				testMatches(t, r, testOK)
+				if r.Verification.State != m3.VerificationVerified || r.Verification.Code != m3.VerifyNone || r.Alignment.NotStored {
+					t.Fatalf("the recording is not a click that verified: %+v", r)
 				}
 			},
 			Mutations: []sendapitest.Mutation{
@@ -447,14 +519,14 @@ func cases() map[string]sendapitest.Case {
 			}),
 			Check: func(t testing.TB, v any, err error) {
 				r := v.(m3.TestResult)
-				if r.Verification.State != m3.VerificationFailed || r.Verification.Code != m3.VerifyAuthFailed || r.Alignment.State != m3.AlignmentWarned || !r.Alignment.NotStored {
-					t.Fatalf("result = %+v", r)
-				}
-				if strings.Contains(reflectDump(r), "from_gate_write_error") {
-					t.Fatal("the internal reason slug was carried")
+				testMatches(t, r, testFailed)
+				if r.Verification.State != m3.VerificationFailed || r.Verification.Code != m3.VerifyAuthFailed {
+					t.Fatalf("the recording is not a click whose credential failed: %+v", r)
 				}
 			},
-			Mutations: []sendapitest.Mutation{set("from_alignment.error", 5, "from_alignment.error"), set("verification.code", 5, "verification.code")},
+			Mutations: []sendapitest.Mutation{
+				set("verification.code", 5, "verification.code"), set("verification.smtp_response", 5, "verification.smtp_response"), set("from_alignment.state", 5, "from_alignment.state"),
+			},
 		},
 		"POST /v1/send-byo/accounts/{id}/test | unavailable": {
 			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) {
@@ -493,33 +565,25 @@ func cases() map[string]sendapitest.Case {
 		},
 		"POST /v1/send-byo/accounts/bulk | ok": {
 			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) {
-				return c.BulkAddAccounts(ctx, batch(t, 5))
+				return c.BulkAddAccounts(ctx, batch(t, bulkN))
 			}),
 			Check: func(t testing.TB, v any, err error) {
+				// a mixed batch (bulkMatches fails on one that is not): every row, created or rejected, is held to the recording
 				r := v.(m3.BulkResult)
-				if len(r.Rows) != 5 || r.RequestID == "" {
-					t.Fatalf("result = %+v", r)
+				bulkMatches(t, r, bulkOK)
+				var dup, invalid bool
+				for _, x := range r.Rows {
+					dup = dup || x.Reason == m3.RejectDuplicate
+					invalid = invalid || x.Reason == m3.RejectValidation
 				}
-				if x := r.Rows[0]; !x.Created || x.AccountID != acct1 || x.Verification != m3.VerificationVerified || x.Alignment != m3.AlignmentAligned || x.SMTPResponse == nil || x.AlignmentMessage == nil {
-					t.Fatalf("row 1 = %+v", x)
-				}
-				if x := r.Rows[1]; !x.Created || x.Verification != m3.VerificationFailed || x.VerifyCode != m3.VerifyAuthFailed || x.Alignment != m3.AlignmentWarned {
-					t.Fatalf("row 2 = %+v", x)
-				}
-				if x := r.Rows[2]; x.Created || x.Reason != m3.RejectDuplicate || len(x.Fields) != 1 || x.Fields[0] != (m3.FieldIssue{Field: "smtp_username", Issue: "conflict"}) {
-					t.Fatalf("row 3 = %+v", x)
-				}
-				if x := r.Rows[3]; x.Created || x.Reason != m3.RejectValidation || len(x.Fields) != 1 {
-					t.Fatalf("row 4 = %+v", x)
-				}
-				if x := r.Rows[4]; x.Created || x.Reason != m3.RejectUnrecognised || len(x.Fields) != 0 || x.AccountID != "" {
-					t.Fatalf("row 5 = %+v", x)
+				if !dup || !invalid {
+					t.Fatalf("the recording holds no duplicate row or no validation row: %+v", r.Rows)
 				}
 			},
 			Mutations: []sendapitest.Mutation{
-				del("results", "results"), del("results[0].status", "results[0].status"), set("results[1].status", "maybe", "results[1].status"), del("results[4]", "results"), set("results[2].row", 9, "results[2].row"),
+				del("results", "results"), del("results[0].status", "results[0].status"), set("results[1].status", "maybe", "results[1].status"), del(fmt.Sprintf("results[%d]", bulkN-1), "results"), set("results[2].row", 9, "results[2].row"),
 				set("results[0].account_id", "x", "results[0].account_id"), set("results[0].verification", 5, "results[0].verification"), del("request_id", "request_id"),
-				set("results[3].details[0].field", 5, "results[3].details[0].field"), del("results[0].row", "results[0].row"), set("results[2].status", "created", "results[2].account_id"),
+				set("results[1].details[0].field", 5, "results[1].details[0].field"), del("results[0].row", "results[0].row"), set("results[2].status", "created", "results[2].account_id"),
 			},
 		},
 		"POST /v1/send-byo/accounts/bulk | error batch_too_large": {
@@ -580,7 +644,7 @@ func cases() map[string]sendapitest.Case {
 // vocabulary, an unreadable timestamp, another tenant's account, a contradictory verdict) is refused with the key it names. The unmutated body is the control of the mutations, through the
 // same server and call.
 func TestContractsOfModule3(t *testing.T) {
-	sendapitest.Suite{Dir: fixtures, Contracts: m3.Contracts(), Cases: cases()}.Run(t)
+	sendapitest.Suite{Dir: fixtures, Contracts: m3.Contracts(), Cases: cases(t)}.Run(t)
 }
 
 // No rot: the files of testdata/contract and the contracts name each other exactly once, and the contracts are the shared ones plus module 3's own. The controls: a stray file, a missing file
@@ -825,7 +889,7 @@ func TestAWordOutsideAClosedSetIsUnrecognisedNotCarried(t *testing.T) {
 	} {
 		fixture, id := "accounts.get.ok.json", acct1
 		if tc.path == "verification.code" {
-			fixture, id = "accounts.create.created_failed.json", acct2
+			fixture, id = "accounts.create.created_failed.json", acct1
 		}
 		a := mutate(fixture, id, tc.path, word)
 		if got := tc.got(a); got != tc.want {

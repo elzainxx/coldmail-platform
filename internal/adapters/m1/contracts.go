@@ -139,9 +139,12 @@ func Contracts() []modclient.RouteContract {
 		{Module: m1, Route: tplStatus, Case: "running", Fixture: "job-running.json", Status: http.StatusOK, Shape: jobShape, Vocab: set("job_status")},
 		{Module: m1, Route: tplStatus, Case: "complete", Fixture: "job-complete.json", Status: http.StatusOK, Shape: jobShape, Vocab: set("job_status")},
 		{Module: m1, Route: tplStatus, Case: "not_found", Fixture: "status-error-not-found.json", Status: http.StatusNotFound, Shape: errorShape},
+		{Module: m1, Route: tplStatus, Case: "unauthenticated", Fixture: "status-error-unauthenticated.json", Status: http.StatusUnauthorized, Shape: errorShape},
 
 		{Module: m1, Route: tplResults, Case: "page", Fixture: "results-page.json", Status: http.StatusOK, Shape: resultsShape, Vocab: rowVocab()},
 		{Module: m1, Route: tplResults, Case: "empty_page", Fixture: "results-empty.json", Status: http.StatusOK, Shape: resultsShape, Vocab: rowVocab()},
 		{Module: m1, Route: tplResults, Case: "bad_cursor", Fixture: "results-error-bad-cursor.json", Status: http.StatusBadRequest, Shape: errorShape},
+		{Module: m1, Route: tplResults, Case: "unauthenticated", Fixture: "results-error-unauthenticated.json", Status: http.StatusUnauthorized, Shape: errorShape},
+		{Module: m1, Route: tplResults, Case: "not_found", Fixture: "results-error-not-found.json", Status: http.StatusNotFound, Shape: errorShape},
 	}
 }

@@ -1,13 +1,7 @@
 {
- "error": {
-  "code": "conflict",
-  "message": "The request conflicts with the current state.",
-  "details": [
-   {
-    "field": "smtp_username",
-    "issue": "conflict"
-   }
-  ],
-  "request_id": "req_0123456789abcdef0123456789abcdef"
- }
+  "error": {
+    "code": "conflict",
+    "message": "This action is not available for your account right now.",
+    "request_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
 }

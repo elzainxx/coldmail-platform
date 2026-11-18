@@ -1,8 +1,12 @@
 {
-  "job_id": "00000000-0000-7000-8000-00000000000a",
-  "status": "complete",
-  "complete": true,
   "caller_ref": "",
-  "counts": {"total": 3, "settled": 3, "pending": 0},
-  "processing_paused": false
+  "complete": true,
+  "counts": {
+    "pending": 0,
+    "settled": 1,
+    "total": 1
+  },
+  "job_id": "00000000-0000-4000-8000-000000000001",
+  "processing_paused": false,
+  "status": "complete"
 }

@@ -285,7 +285,11 @@ func TestEveryCallCarriesItsTenant(t *testing.T) {
 	s := newStack(t, h, modclient.Options{})
 	c := s.client(t, userA)
 	ctx := ctxT(t)
-	if _, err := c.Quote(ctx, 3); err != nil {
+	// the ids and the count the recordings answer for are read from the recordings
+	count := atInt(t, "quote.ok.json", "recipient_count")
+	reportID := atStr(t, "report.campaign.last_page.json", "campaign_id")
+	cancelID := atStr(t, "cancel.ok.json", "campaign_id")
+	if _, err := c.Quote(ctx, count); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := c.Run(ctx, jobItem); err != nil {
@@ -294,10 +298,10 @@ func TestEveryCallCarriesItsTenant(t *testing.T) {
 	if _, err := c.ReportJob(ctx, jobItem); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.ReportCampaign(ctx, campaign); err != nil {
+	if _, err := c.ReportCampaign(ctx, reportID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.Cancel(ctx, campaign); err != nil {
+	if _, err := c.Cancel(ctx, cancelID); err != nil {
 		t.Fatal(err)
 	}
 	reqs := s.stub.Requests()
@@ -315,7 +319,7 @@ func TestEveryCallCarriesItsTenant(t *testing.T) {
 	// control: the same check names a client for another tenant, cancel included
 	other := s.client(t, userB)
 	before := len(s.stub.Requests())
-	if _, err := other.Cancel(ctx, campaign); err != nil {
+	if _, err := other.Cancel(ctx, cancelID); err != nil {
 		t.Fatal(err)
 	}
 	if problems := sendapitest.CheckTenancy(s.stub.Requests()[before:], userA); len(problems) != 1 || !strings.Contains(problems[0], userB) {
@@ -326,36 +330,51 @@ func TestEveryCallCarriesItsTenant(t *testing.T) {
 // ---- cancel -------------------------------------------------------------------------------------------------------------------
 
 // Cancel is a position, not a delta: a second call answers the same numbers, the partition (cancelled, in flight, already terminal) is what the caller asserts and not the split, and a
-// cancel the module answers with all zeros is Empty (an unknown or foreign campaign cannot be told from nothing to cancel). The control reads the same numbers for the real campaign.
+// cancel the module answers with all zeros is Empty (an unknown or foreign campaign cannot be told from nothing to cancel). The recorded answer is read for what it says (the real
+// module answered {0, 0, 0} to the recording run's cancel); a position with something in it is that recording with its counts filled in, since the real run did not catch one.
 func TestCancelIsAPositionAndASecondCancelIsANoOp(t *testing.T) {
-	body := string(sendapitest.Read(t, fixtures, "cancel.ok.json"))
-	s := newStack(t, func(w http.ResponseWriter, r *http.Request, _ int) {
-		if r.Method != http.MethodPost {
-			sendapitest.JSON(w, 405, sendapitest.Envelope("method_not_allowed"))
-			return
+	id := atStr(t, "cancel.ok.json", "campaign_id")
+	recorded := string(sendapitest.Read(t, fixtures, "cancel.ok.json"))
+	filled := recorded
+	for path, n := range map[string]int{"cancelled": 2, "in_flight": 1, "already_terminal": 0} {
+		b, err := sendapitest.Mutate([]byte(filled), path, sendapitest.Set, n)
+		if err != nil {
+			t.Fatal(err)
 		}
-		sendapitest.JSON(w, 200, body)
-	}, modclient.Options{})
+		filled = string(b)
+	}
+	post := func(body string) handler {
+		return func(w http.ResponseWriter, r *http.Request, _ int) {
+			if r.Method != http.MethodPost {
+				sendapitest.JSON(w, 405, sendapitest.Envelope("method_not_allowed"))
+				return
+			}
+			sendapitest.JSON(w, 200, body)
+		}
+	}
+	s := newStack(t, post(filled), modclient.Options{})
 	c := s.client(t, userA)
-	first, err := c.Cancel(ctxT(t), campaign)
+	first, err := c.Cancel(ctxT(t), id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := c.Cancel(ctxT(t), campaign)
+	second, err := c.Cancel(ctxT(t), id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first != second || first.Cancelled != 2 || first.InFlight != 1 || first.AlreadyTerminal != 0 || first.CampaignID != campaign || first.Empty() {
+	if first != second || first.Cancelled != 2 || first.InFlight != 1 || first.AlreadyTerminal != 0 || first.CampaignID != id || first.Empty() {
 		t.Fatalf("first %+v second %+v", first, second)
 	}
 	reqs := s.stub.Requests()
 	if len(reqs) != 2 || reqs[0].Method != http.MethodPost || reqs[0].Path != "/v1/cancel" {
 		t.Fatalf("requests: %+v", reqs)
 	}
-	zero := newStack(t, reply(200, `{"campaign_id":"`+campaign+`","cancelled":0,"in_flight":0,"already_terminal":0}`), modclient.Options{})
-	p, err := zero.client(t, userA).Cancel(ctxT(t), campaign)
-	if err != nil || !p.Empty() || p.CampaignID != campaign {
-		t.Fatalf("a foreign campaign: %v %+v", err, p)
+	// the recorded answer as it is: Empty exactly when the file says all zeros
+	zero := newStack(t, post(recorded), modclient.Options{})
+	p, err := zero.client(t, userA).Cancel(ctxT(t), id)
+	wantEmpty := atInt(t, "cancel.ok.json", "cancelled") == 0 && atInt(t, "cancel.ok.json", "in_flight") == 0 && atInt(t, "cancel.ok.json", "already_terminal") == 0
+	if err != nil || p.Empty() != wantEmpty || p.CampaignID != id || p.Cancelled != atInt(t, "cancel.ok.json", "cancelled") {
+		t.Fatalf("the recorded answer: %v %+v", err, p)
 	}
 	for _, partial := range []string{`"cancelled":1,"in_flight":0,"already_terminal":0`, `"cancelled":0,"in_flight":1,"already_terminal":0`, `"cancelled":0,"in_flight":0,"already_terminal":1`} {
 		e := newStack(t, reply(200, `{"campaign_id":"`+campaign+`",`+partial+`}`), modclient.Options{})
@@ -512,7 +531,7 @@ func TestPollCadenceIsTheDocumentedGuidance(t *testing.T) {
 		t.Fatalf("the report page size is %d", size)
 	}
 	s := newStack(t, reply(200, string(sendapitest.Read(t, fixtures, "report.campaign.last_page.json"))), modclient.Options{})
-	if _, err := s.client(t, userA).ReportCampaign(ctxT(t), campaign); err != nil {
+	if _, err := s.client(t, userA).ReportCampaign(ctxT(t), atStr(t, "report.campaign.last_page.json", "campaign_id")); err != nil {
 		t.Fatal(err)
 	}
 	if got := s.stub.Requests()[0].Query.Get("page_size"); got != "200" {

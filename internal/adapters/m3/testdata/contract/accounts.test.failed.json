@@ -1,12 +1,10 @@
 {
- "verification": {
-  "state": "failed",
-  "smtp_response": "535 5.7.8 Username and Password not accepted",
-  "code": "verify_auth_failed"
- },
- "from_alignment": {
-  "state": "unaligned_warned",
-  "message": "The From address is not confirmed to match the sending server.",
-  "error": "from_gate_write_error"
- }
+  "from_alignment": {
+    "state": "aligned"
+  },
+  "verification": {
+    "code": "verify_auth_failed",
+    "smtp_response": "535 5.7.8 Authentication credentials invalid",
+    "state": "failed"
+  }
 }

@@ -121,6 +121,9 @@ services:
       # only when the lease is older than its TTL (the client deadline plus this margin, default 120 s: 150 s here) AND a reclaim sweep runs (once per TTL). With 5 s the TTL is 35 s, still above
       # the 30 s deadline (the module refuses a TTL at or below it), so a stranded batch is picked up within about a minute of the restart and the proof stays inside its time budget.
       TM_QUEUE_LEASE_MARGIN_SECONDS: "5"
+      # The contract edge test (TestM1Node_ContractEdgeCases) needs module 1's 413 payload_too_large, which the built-in cap of 100,000 rows would make a 100,000-row upload. The dial lowers the cap
+      # (a request over it is refused before anything is stored; below, the same variable gives the test its value). 500 is above the 220 rows of the pagination test and every other job here.
+      TM_QUEUE_BULK_MAX_ADDRESSES: "${H_M1N_BULK_CAP:-500}"
     volumes:
       - ${H_WORK:?}/m1fx/cp-resolv.conf:/etc/resolv.conf:ro
     healthcheck:
@@ -153,6 +156,7 @@ services:
       HARNESS_M1NODE_NODE_IP: "${H_FX_PREFIX:?}.3"
       HARNESS_M1NODE_SMTP_IP: "${H_FX_PREFIX:?}.2"
       HARNESS_ADMIN_DATABASE_URL: postgres://supabase_admin:${H_PG_SUPERPASS:?}@postgres:5432/postgres
+      HARNESS_M1NODE_BULK_CAP: "${H_M1N_BULK_CAP:-500}"   # the cap the control plane was started with (TM_QUEUE_BULK_MAX_ADDRESSES above): the edge test submits one row more
       HARNESS_PLATFORM_APP_PASSWORD: ${H_PLATFORM_APP_PASSWORD:?}   # the end-to-end tests (m1_node_e2e_test.go) run the platform's money core and tenant resolver as the platform_app login, like the service
     volumes:
       - ${H_WORK:?}/out:/h:ro
