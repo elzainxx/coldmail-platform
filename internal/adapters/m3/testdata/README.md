@@ -109,7 +109,7 @@ record run reached these responses (record run 44395876225 produced the other 46
 - `run.error.internal_error.json`: a 500 on run needs a fault inside module 3, which the harness does not provoke.
 - `accounts.test.unavailable.json`: the test button answers `unavailable` only when its credential check cannot run (`verify_error`, `verification_unavailable`), which needs the module's own verifier
   to fail; the harness has a worker and cannot make it. (The other half of that answer, a From check that cannot get an answer from DNS, does happen since the From gate runs in the adapter tests against a
-  fixture DNS that answers SERVFAIL on command, and is recorded as `accounts.test.indeterminate.json`.) The file is allowlisted for the drift gate.
+  fixture DNS that answers SERVFAIL on command, and is recorded as `accounts.test.indeterminate.json`.) The drift gate now counts the contract as exercised: the host guard's connect-time refusal (`verify_host_not_allowed`, the test button of an account whose host the module refuses to dial) has the same structure, and the matcher decides by structure; the file stays hand-written until a record run takes that answer (it would then hold a `failed` state under the name `unavailable`, a shape family like the others).
 - `accounts.events.page.json`: a page with a next cursor and a PAUSE event (`pause_reason` `daily_limit`). The contract matcher gives a live body to the fixture it differs from least, and a page of this
   module never carries a pause reason (the harness does not pause an account) or a cursor (a page of 200), so every populated page lands on `accounts.events.last_page.json` (or, for a page of one event, on
   the empty one) and this case stays unexercised: the file is allowlisted for the drift gate.

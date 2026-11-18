@@ -1,7 +1,7 @@
-# Phase 3 close-out, B1: module 2's worker reconnects to its Control FOREVER with a capped exponential backoff (it used to give up after about 30 attempts, so an outage longer than that needed the worker started again). The suite fails a dialer 200 times and then lets it succeed: the worker must still be running, register and answer a job. The fault brings the limit back (after 30 failures the loop breaks); the test must go red saying that the worker exited and a reconnect limit is back. The control is the pinned module. Node only, no network.
+# Phase 3 close-out, B1: module 2's worker reconnects to its Control FOREVER with a capped exponential backoff (it used to give up after about 30 attempts, so an outage longer than that needed the worker started again). The suite fails a dialer 200 times and then lets it succeed: the worker must still be running, register and answer a job. The fault brings the limit back (after 30 failures the loop breaks); the test must go red saying that the worker exited and a reconnect limit is back. The control is the pinned module. Node only, no network; the worker's test identity (secrets/dev/certs, which the module's own CI makes with tools/gen-certs.sh and which a git archive never holds) is generated first, at run time, in the scratch copy; a timeout keeps a hung test from holding the runner for the job's 30 minutes (the first dispatches did).
 GATE=m2-worker-reconnect-limit
 TARGET=module:coldmail-send-managed
 SETUP=
 STEP=node --test reconnect.test.mjs (a dialer that fails 200 times, then works: the worker is still there)
-CMD=cd services/worker && node --test --test-reporter=tap test/reconnect.test.mjs
+CMD=bash tools/gen-certs.sh && cd services/worker && timeout 600 node --test --test-reporter=tap test/reconnect.test.mjs
 MESSAGE=worker exited after 30 dial attempts

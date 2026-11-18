@@ -80,7 +80,7 @@ times), `floor: 3 TestM3Adapter_Outage tests declared, each run live and passed`
 - The module 3 error cases the contracts list but this harness cannot produce: `rate_limited` (429) on the test
   button (the limits are 5 per account and 20 per user per day and the tests stay under them on purpose), a slow create that leaves the account `unverified` or answers 500 with the row created (no sink mode delays
   AUTH), a junk cursor that answers 500, a bulk add that times out, a `paused` rung (`503`) and the account routes that are not covered by the adapter (patch, delete, the lifecycle verbs, test-send).
-- Module 3 has no cancel: nothing here cancels a campaign (open decision 1 of the spec).
+- Module 3 had no cancel when this was written: nothing here cancels a campaign (open decision 1 of the spec). Since the Phase 3 close-out module 3 has `POST /v1/cancel` and `m3_adapter_closeout_cancel_test.go` drives it; this file stays the record of the first run.
 - `failed` is produced by account exhaustion only (a tenant whose only account failed verification): module 3's other `failed` cause, an enforced campaign expiry, is off (`campaign_expiry_mode` is `shadow`).
 - A sink that drops a connection, throttles or greylists as a real provider does is not available: the sink rejects (550), defers (451), holds the final reply and refuses AUTH, and that is what is used.
 - Assumptions of the research that the first run settles (each is asserted, so a wrong one fails with a sentence naming it): the 404 `details` of Run and of the two single-job reports name `job_item_id` and `job_id`;

@@ -69,7 +69,7 @@ Head at close: `main` @ `a6709c9` — all six workflows green: [harness 43731666
 | Criterion | Evidence |
 |---|---|
 | A trivial end-to-end call passes: platform → each module's `describe` (and health), service token, CI-private network, modules not public | harness [43731666838](https://github.com/elzainxx/coldmail-platform/actions/runs/43731666838): `PROBE SUMMARY checks=42 pass=42 fail=0 not_applicable=1` from the `platform-probe` container on the private network — platform and each module's health and readiness; `describe` for M2 and M3 with the service token **and** the paired no-token / wrong-token calls that must be 401; for M1 (no `describe`) the authenticated-404 / unauthenticated-401 / wrong-key-401 triple, and a printed `NOT-APPLICABLE m1.describe`. The three modules were built from `11903d1` / `02a71fc` / `d6ac497` (the pins), each re-checked at HEAD; the network is `internal=true` and no container has a host port binding (two instruments, F10) |
-| The module has no `describe` or a different shape → flagged, no verbs added to the modules | F1 (M1 has none), F5 (M2/M3 differ by design); no module was modified |
+| The module has no `describe` or a different shape → flagged, no verbs added to the modules | F1 (M1 had none; since the Phase 3 close-out, A1, it has one), F5 (M2/M3 differ by design); no module was modified |
 | Every gate proven to fail on an injected fault | the table above: 16 branches, a red run per gate read down to the failing step, a green run after each revert |
 | The harness prints what it did not check | the `NOT CHECKED` block at the end of the same harness run, plus each gate's own `NOT CHECKED:` line |
 | Status table says P0 done with the final head and the green run | `Docs/coldmail-platform-build-plan.md` |

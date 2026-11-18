@@ -59,7 +59,7 @@ func TestM3Adapter_SMTPHostGuard(t *testing.T) {
 	// ---- add time: every spelling of a refused destination ----
 	d := func(a, b, c, x int) string { return fmt.Sprintf("%d.%d.%d.%d", a, b, c, x) } // built at run time: the repository's gate reads literals
 	for _, h := range []struct{ what, host string }{
-		{"loopback", d(127, 0, 0, 1)}, {"localhost", "localhost"}, {"the cloud metadata address", d(169, 254, 169, 254)}, {"IPv6 loopback", "[::1]"}, {"loopback written as a decimal", "2130706433"},
+		{"loopback", d(127, 0, 0, 1)}, {"localhost", "localhost"}, {"the cloud metadata address", d(169, 254, 169, 254)}, {"IPv6 loopback", "::1"}, {"loopback written as a decimal", "2130706433"},
 	} {
 		before := e.userAccounts(t, tn.UserID)
 		_, err := tn.C.CreateAccount(ctx, e.newAccount("refused", tn, h.host))
@@ -73,6 +73,19 @@ func TestM3Adapter_SMTPHostGuard(t *testing.T) {
 			t.Errorf("CreateAccount with %s was refused and module 3 holds %d account(s) of the tenant (%d before): a refused create makes nothing", h.what, after, before)
 		}
 		t.Logf("NOTE m3a host guard add time: %s refused: HTTP %d %s %v (request %s), no account made", h.what, me.Status, me.Code, me.Details, me.RequestID)
+	}
+	// the bracketed spelling of an IPv6 literal is not a host module 3 accepts at all (its shape rule takes an address bare, as net.ParseIP reads it): a malformed host, refused before the guard looks, and
+	// still nothing is created. The first run of this test took it for a guard case (the record run 44395876225 and the harness run 44409643316 said {smtp_host, malformed}).
+	{
+		before := e.userAccounts(t, tn.UserID)
+		_, err := tn.C.CreateAccount(ctx, e.newAccount("bracketed", tn, "[::1]"))
+		var me *modclient.Error
+		if !errors.As(err, &me) || me.Kind != modclient.Refused || me.Status != 400 || me.Code != "validation_failed" || m3.MaybeApplied(err) ||
+			!slices.Equal(me.Details, []modclient.Detail{{Field: "smtp_host", Issue: "malformed"}}) {
+			t.Errorf("CreateAccount with the bracketed IPv6 loopback answered %v (details %v), want the module's 400 validation_failed naming {smtp_host, malformed}, a refusal and not an open outcome", err, detailsOf(err))
+		} else if after := e.userAccounts(t, tn.UserID); after != before {
+			t.Errorf("CreateAccount with the bracketed IPv6 loopback was refused and module 3 holds %d account(s) of the tenant (%d before): a refused create makes nothing", after, before)
+		}
 	}
 	// the control of the refusals: the same call for the sink's name is the one the controls made, and a name that does not resolve at add time is allowed (judged again at every connect)
 	goneAcct := e.newAccount("gone", tn, "no-such-host.invalid")

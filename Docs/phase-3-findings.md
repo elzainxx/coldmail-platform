@@ -15,7 +15,7 @@ Everything below this addendum is the record of Phase 3 as it ended (`platform@5
 | `adapters/m1` | 1,312 | 86 | 20 | **9** (13) |
 | `adapters/sendapi` (modules 2 and 3 share it) | 1,270 | 60 | shared | 13 (11) |
 | `adapters/m2` | 90 | 22 | 20 | 1 (2) |
-| `adapters/m3` | 1,546 | 44 | 49 | **2** (9) |
+| `adapters/m3` | 1,548 | 47 | 49 | **2** (9) |
 
   The 35 forced cases are **25**. Module 1 grew by 308 lines (describe and its vocabulary check, the idempotent submission, the totals) and lost four special cases; the shared body grew by the cancel and the cause mapping that module 3 now offers (and took over module 2's two cancel cases, SA-F12 and SA-F13); module 3's adapter lost its whole prediction layer (`PreCheckRun`, `RunFacts`, `ExplainConflict`, its own host rule) and seven special cases because the module now says what it used to leave to guessing.
 - **The 13 module 1 special cases (section 4 and 5), each removed or kept:**
