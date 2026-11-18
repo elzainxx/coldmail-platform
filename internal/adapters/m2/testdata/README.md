@@ -5,12 +5,25 @@ names each file once (`Route`, `Case`, `Fixture`, `Status`, the `Shape` the adap
 it through the adapter's real code, refuse a file no contract names and a contract whose file is missing, and refuse mutated copies (a required key removed, a key's type changed, a state
 outside the vocabulary).
 
-Nineteen of the twenty files are recordings and one is a recording that was then edited by hand (named in the last section). The test `TestReadmeNamesTheRecordedAndHandWrittenFixtures` holds this list to the directory: a file named in the wrong section, in both or in neither is a failure.
+All twenty files are recordings. The test `TestReadmeNamesTheRecordedAndHandWrittenFixtures` holds this list to the directory: a file named in the wrong section, in both or in neither is a failure.
 
-## RECORDED (19 files, from the real module)
+## RECORDED (20 files, from the real module)
 
 Recorded from module 2 running as a real service with a real worker and a controllable SMTP sink, by the contract drift sessions in record mode on the runner, 2026-11-18: the full record run
-44225747596 and the scoped record run 44225754836 (an earlier scoped run, 44211663760, recorded the first ten). They are normalised by `contractcheck.Normalise`: uuids become
+44225747596 and the scoped record run 44225754836 (an earlier scoped run, 44211663760, recorded the first ten), then the Phase 3 close-out's full record run 44395876225 at module 2 `dc2b532`
+(the pin after the close-out's B1 to B4). Which file comes from which (each is a byte-for-byte copy of what that run printed, checked against the log):
+
+- run 44395876225 (module 2 `dc2b532`, twelve files): `cancel.error.validation_failed`, `describe.ok` (the one that now carries `capabilities.plain_text_alternative: true`, the module's own answer, no longer an edit of
+  an older recording), `report.campaign.empty`, `report.campaign.error.cursor_malformed`, `report.job.queued`, `run.created`, `run.error.conflict`, `run.error.internal_error`, `run.error.not_found`,
+  `run.error.paused`, `run.error.unauthenticated`, `run.error.validation_failed`;
+- the earlier runs (seven files): `cancel.ok`, `quote.ok`, `report.campaign.last_page`, `report.campaign.page`, `report.job.error.not_found`, `report.job.sent`, `run.replay`. Run 44395876225 recorded the same
+  routes and cases again (the recorder keeps the answer with the fewest gaps, then the most positions, then the shortest body), with other counts, ids or states (a cancel that cancelled none where the earlier
+  one cancelled four, a quote for five where the earlier was for ten, a middle page of one item where the earlier held 41): the same shape, a different instance. The earlier recording was kept because it holds the
+  richer case the tests were written against (they read every number from the file, so either would pass, and neither is edited);
+- `report.campaign.error.cursor_forged` (from run 44225747596, module 2 `bffd424`): module 2 answers a forged cursor with a 400 since `dc2b532` (the close-out's B2), so no run can record the old 500 again. The file
+  stays because the shared contract it belongs to is still answered by module 3 and its shape is still checked; the harness's allowlist names this contract for module 2 with that reason.
+
+They are normalised by `contractcheck.Normalise`: uuids become
 `00000000-0000-4000-8000-0000000000NN` by first appearance, instants `2026-01-01T00:00:00Z`, provider ids a run of `A`, request ids a run of `a` (`TestRecordedFixturesAreNormalised` pins that).
 The tests read what each file says (an id, a count, a state, a cursor) from the file and never from a constant, so a re-recording changes no test. What the files hold, as of this recording:
 
@@ -29,9 +42,10 @@ The tests read what each file says (an id, a count, a state, a cursor) from the 
 - `report.campaign.page.json`: one whole page (no next cursor, page size 200), ten items taken while the campaign was running: six sent, two bounced, one failed with `attempts_exhausted` and
   one still queued after a `transport_4xx`.
 - `report.campaign.last_page.json`: a page that DOES name a next cursor (41 of the 42 items of a campaign, all sent, page size 41): a middle page, not a last one. The page after it was not recorded.
-- `report.campaign.empty.json`: a campaign of ten items that all reached a final state (six sent, two bounced, two failed with `attempts_exhausted`), no next cursor: not an empty campaign.
+- `report.campaign.empty.json`: a campaign of five items on one page (page size 200, no next cursor): one sent and four `cancelled` (reason `cancelled`), all final, `progress.is_complete` true: not an empty campaign.
 - `report.campaign.error.cursor_malformed.json`: 400, details `cursor` `malformed`.
 - `report.campaign.error.cursor_forged.json`: 500 `internal_error` for a cursor that decodes but is not a timestamp and an id (the module answers a 500 where its documentation says 400).
+- `describe.ok.json`: the module's self-description (`send_managed`, `v1`, seven job states, twelve item reasons, seven error codes, `capabilities.plain_text_alternative` true).
 - `cancel.ok.json`: the module's answer to a cancel: four cancelled, none in flight, one already terminal.
 - `cancel.error.validation_failed.json`: 400, details `campaign_id` `required`.
 
@@ -44,12 +58,11 @@ Three things the recordings do not hold, and what the tests do about each (none 
   `empty` is asserted for what its file holds, whatever that is.
 - A cancel with something left to cancel is a recording whose counts the test fills in (`TestCancelIsAPositionAndASecondCancelIsANoOp`), for the position that is not empty.
 
-## HAND-WRITTEN (1 file)
+## HAND-WRITTEN (none)
 
-- `describe.ok.json`: the module's self-description (`send_managed`, `v1`, seven job states, twelve item reasons, seven error codes), RECORDED by the runs above and then EDITED BY HAND for the Phase 3 close-out (B3): `capabilities.plain_text_alternative: true` was added. The lead re-records it from the real module at the new pin, and then it is a recording again.
-
+No fixture of module 2 is hand-written: the record runs reached all twenty contracts (the describe fixture was edited by hand for a while during the close-out, with `capabilities.plain_text_alternative: true` added, and is the module's own recorded answer since run 44395876225).
 A contract added to `m2.Contracts()` before a run reaches it is hand-written until then, and this section names it.
 
 ## One file's provenance
 
-`contract/report.campaign.empty.json` is a response the real module 2 gave to an unknown campaign (an empty campaign: no items, totals all zero), recorded by the second record run (scoped run 44219160097, 2026-11-18), where the matcher still filed it under another contract name. In the later runs the stale fixture of the `campaign empty` contract kept attracting populated pages, so the recording from that run was installed under this name by hand. It is a recording, not hand-written.
+`contract/report.campaign.empty.json` was, until the close-out, a response module 2 gave to an unknown campaign (no items, totals zero) that had been installed under this name by hand because the matcher then filed that answer under another contract name. Run 44395876225 recorded this contract natively (the page of a campaign whose items were cancelled), the file is that recording byte for byte, and the old installation is gone. The name stays a shape family, not a promise about the content.

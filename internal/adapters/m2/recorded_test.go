@@ -18,12 +18,12 @@ import (
 )
 
 // Every fixture under testdata/contract is a RECORDING of the real module 2 (the contract drift sessions of 2026-11-18: full record run 44225747596 and scoped record run
-// 44225754836), normalised by the harness: uuids become 00000000-0000-4000-8000-0000000000NN by first appearance, instants 2026-01-01T00:00:00Z, provider ids a run of A. The tests
+// 44225754836, and the Phase 3 close-out re-record, run 44395876225), normalised by the harness: uuids become 00000000-0000-4000-8000-0000000000NN by first appearance, instants 2026-01-01T00:00:00Z, provider ids a run of A. The tests
 // therefore never hard-code a value out of a recording (an id, a count, a state, a cursor): they READ it from the fixture, through encoding/json, which is a different path from the
 // adapter's decoding, and compare what the adapter returned with what the file says. They do not assume what a file name says about its content either (what a recording of a
 // "page" holds is read from the page), and they do not assume that one recorded page is a whole campaign: see campaignPages.
 var recordedFixtures = []string{
-	"cancel.error.validation_failed.json", "cancel.ok.json", "quote.ok.json",
+	"cancel.error.validation_failed.json", "cancel.ok.json", "describe.ok.json", "quote.ok.json",
 	"report.campaign.empty.json", "report.campaign.error.cursor_forged.json", "report.campaign.error.cursor_malformed.json", "report.campaign.last_page.json", "report.campaign.page.json",
 	"report.job.error.not_found.json", "report.job.queued.json", "report.job.sent.json",
 	"run.created.json", "run.error.conflict.json", "run.error.internal_error.json", "run.error.not_found.json", "run.error.paused.json", "run.error.unauthenticated.json",
@@ -450,7 +450,7 @@ func TestReadmeNamesTheRecordedAndHandWrittenFixtures(t *testing.T) {
 			return []string{"the README has no RECORDED and HAND-WRITTEN sections"}
 		}
 		var out []string
-		for _, run := range []string{"44225747596", "44225754836", "2026-11-18"} {
+		for _, run := range []string{"44225747596", "44225754836", "44395876225", "2026-11-18"} {
 			if !strings.Contains(doc, run) {
 				out = append(out, "the README does not cite "+run)
 			}
@@ -492,6 +492,10 @@ func TestReadmeNamesTheRecordedAndHandWrittenFixtures(t *testing.T) {
 	oneRun := strings.ReplaceAll(string(readme), "44225754836", "0")
 	if p := problems(oneRun, files); len(p) == 0 {
 		t.Fatal("a README that omits a recording run passed")
+	}
+	noCloseout := strings.ReplaceAll(string(readme), "44395876225", "0")
+	if p := problems(noCloseout, files); len(p) == 0 {
+		t.Fatal("a README that omits the close-out recording run passed")
 	}
 	if p := problems("nothing", files); len(p) == 0 {
 		t.Fatal("an empty README passed")
