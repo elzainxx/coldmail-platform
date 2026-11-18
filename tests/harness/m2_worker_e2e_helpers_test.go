@@ -63,13 +63,19 @@ type m2eEnv struct {
 func newM2eEnv(t *testing.T, r *m2wRun) *m2eEnv {
 	t.Helper()
 	cfg := config.Config{M2URL: r.m2URL, M2ServiceToken: r.token, ModuleTimeout: 20 * time.Second, ModuleRetries: 2, ModuleRetryBackoff: 250 * time.Millisecond}
-	ad, err := m2.FromConfig(cfg)
-	if err != nil {
+	if _, err := m2.FromConfig(cfg); err != nil { // the way the service builds its adapter: the configuration must be accepted as it stands
 		t.Fatalf("m2.FromConfig refused the harness configuration (%s): %s", modclient.KindOf(err), r.scrub(err.Error()))
 	}
-	mc, err := modclient.New(modclient.M2, r.m2URL, r.token, nil, modclient.FromConfig(cfg))
+	// the adapter the tests drive is built over the same options with the contract drift session's observer added (zz_m2_worker_contract_drift_test.go): every response module 2 gives it is compared with its recorded fixture
+	opts := modclient.FromConfig(cfg)
+	opts.Observe = m2Drift.Observer()
+	mc, err := modclient.New(modclient.M2, r.m2URL, r.token, nil, opts)
 	if err != nil {
 		t.Fatalf("modclient.New: %s", r.scrub(err.Error()))
+	}
+	ad, err := m2.NewAdapter(mc)
+	if err != nil {
+		t.Fatalf("m2.NewAdapter: %s", r.scrub(err.Error()))
 	}
 	pool := mnyPool(t, requireEnv(t, envAdminURL))
 	res, err := tenant.NewResolver(pool, config.Secret(randomHex(t, 32)))

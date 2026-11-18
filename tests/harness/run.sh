@@ -15,6 +15,7 @@
 #   5c m2-worker module 2's REAL worker (Phase 3, B8; part of `full` since FULL_INCLUDES names it, and the only stage of its scope otherwise): its credentials minted in stage 2 with module 2's own tools, its box row seeded before it starts, a heartbeat awaited; module 2 really sends (sent, bounced, failed/attempts_exhausted, cancelled) to the controllable sink (tests/harness/m2worker/stage.sh)
 #   scope        H_SCOPE=m2worker runs stages 1-4b, then only module 2's Control, its worker, the sink, the TestM2Worker tests and the exposure check (m2w_scope_run); H_SCOPE=full (the default) runs everything except the dormant stages
 #   9b m3-outage module 3 stopped while an entitlement expires: the platform retries, claims no convergence it did not see, converges when module 3 is back
+#   9b-adapter   module 3's Domain A API stopped in the middle of a campaign of the adapter's (Phase 3, B12; tests/harness/m3adapter/outage.sh): three test phases with the stop and the start between them, nothing settled or invented, the campaign completes exactly once
 #   9c leader    TWO platform instances on one database: exactly one holds the leader lock and runs the loops (the other runs none); dated entitlements expire exactly once; the leader is killed, the other takes over; the killed one comes back as the standby
 #   4b first admin   the documented platform-migrate create-first-admin, as postgres, on the real auth schema; a second run refused
 #  10  ledger    the balance invariant: the live ledger trigger is intact (a rolled-back exercise through the ledger leaves no drift and no overdrawn reserve)
@@ -66,6 +67,7 @@ mask() { [ "${GITHUB_ACTIONS:-}" = true ] && echo "::add-mask::$1"; return 0; }
 lockpin() { tr -d '\r' < "$LOCK" | awk -v r="$1" '/^[[:space:]]*#/ || NF==0 {next} $1==r {print $2}'; }
 . "$HERE/m2worker/stage.sh"   # module 2's real worker (Phase 3, chunk B8): functions only (m2w_mint, m2w_stage_5c, m2w_evidence, m2w_require_pass, m2w_secret_leak, m2w_scope_run, m2w_not_checked)
 . "$HERE/m1node/m1node.sh"   # module 1's real verifier node, its fixtures and a wired control plane (Phase 3, chunk B7): functions only (m1n_mint, m1n_stage1..4, m1n_exposure, m1n_run, m1n_run_scope, m1n_not_checked)
+. "$HERE/m3adapter/outage.sh"   # module 3's adapter outage proof (Phase 3, chunk B12): functions only (m3a_evidence, m3a_outage and the steps it calls); called once, after stage 9b
 
 # ── 1. pins ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 STAGE=pins; banner 1 "the modules are exactly the pinned commits"
@@ -273,6 +275,8 @@ echo "  ---- the live module-3 proof: the test's own log lines ----"; grep -E " 
 echo "  ---- the live module-1 proof: the test's own log lines ----"; grep -E " m1_bulk_settle_test.go:[0-9]+: " "$WORK/h-run.log" | sed 's/^/  | /' | head -80
 # module 2's real worker (Phase 3, B8): the test's own log lines, among them the sink's per-recipient counts, the timings and the job rows
 [ "$M2W_ON" = 1 ] && m2w_evidence "$WORK/h-run.log"
+# module 3's adapter (Phase 3, B9 to B11 and the control-only runs of the three B12 phases): the tests' own NOTE lines (counts, ledger rows, sink counters, positions), tests/harness/m3adapter/FIRST-RUN.md says what to look for
+echo "  ---- module 3's adapter: the test's own NOTE lines ----"; m3a_evidence "$WORK/h-run.log" 400
 # a failure must name itself: the tail above is only the end of the run, so print every failing test with its context
 [ "$trc" = 0 ] || { echo "  ---- failing tests (with context) ----"; grep -n -B1 -A12 -e '--- FAIL' "$WORK/h-run.log" | sed 's/^/  | /' | head -200; }
 # a compiled test binary prints no `ok <pkg>` line (go test does); the floor gate reads one, so write it from the binary's own exit status
@@ -281,6 +285,7 @@ printf "$t\n" >> "$WORK/h-run.log"; printf "ok  \t$GO_PKG\t0.000s\n" >> "$WORK/h
 [ "$trc" = 0 ] || die "the integration tests failed (exit $trc)"
 # the live module-1 test must be among the tests that PASSED in the log the run itself produced (a binary built without it, or a -run that skipped it, would leave the rest green)
 grep -q '^--- PASS: TestM1Live_BulkJobSettlesItemByItem ' "$WORK/h-run.log" || die "TestM1Live_BulkJobSettlesItemByItem (a real module-1 bulk job settled item by item, compared with the module's own report) has no '--- PASS' line in the run log: it did not run, or did not pass"
+[ "$M2W_ON" = 1 ] && m2w_outage   # (only when module 2's real worker is on) B12: module 2's API stopped in the middle of a campaign and started again, three phases (tests/harness/m2worker/stage.sh; proven in scope m2worker, run 44206820889); it puts module 2 and its worker back before the stages that follow
 [ "$M2W_ON" = 1 ] && m2w_require_pass "$WORK/h-run.log"   # (only when module 2's real worker is on) every TestM2Worker_* test has a '--- PASS' line (module 2 really sent, bounced, exhausted and cancelled)
 bash "$PLATFORM_DIR/scripts/check-test-floors.sh" --floors "$PLATFORM_DIR/tests/floors-harness.txt" --go-run-log "$WORK/h-run.log" --go-list-log "$WORK/h-list.log" || die "the harness test-count floor"
 [ "$M2W_ON" = 1 ] && m2w_secret_leak   # (only when module 2's real worker is on) none of module 2's credentials of this run, nor the sink password, is in the logs of m2, m2-worker or smtp-ctl
@@ -341,6 +346,7 @@ echo "  3. module 3 is back and the platform converged: $(syncrow)"
 code="$(DC exec -T platform wget -S -q -O /dev/null --header "Authorization: Bearer $M3_ADMIN_KEY" --post-data '{}' "http://m3:8080/v1/admin/users/$OU/suspend" 2>&1 | awk '/HTTP\//{print $2; exit}')"
 [ "$code" = 422 ] || die "module 3 itself does not hold the user as suspended: a repeated suspend answered '$code', want 422 (already suspended)"
 echo "  module 3 itself confirms it: a repeated suspend answers 422 (already suspended)"
+m3a_outage
 
 # ── 9c. one loop runner ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 # Phase 2 close-out D9 (finding F36): TWO platform instances on one database (the service `platform` is the instance `platform-1`, the service `platform-2` the instance `platform-2`), both serving HTTP. The expiry and reconcile loops

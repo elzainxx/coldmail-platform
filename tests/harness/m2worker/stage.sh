@@ -28,6 +28,7 @@ M2W_TESTS=(
   TestM2Worker_AdapterPaginationAcrossPageBoundaries
   TestM2Worker_AdapterCrossTenantReadsAndCancelAreRefused
   TestM2Worker_AdapterCancelSettlesFreeAndReleasesTheReserve
+  TestM2Worker_ZContractDrift
   TestM2Worker_OutagePhase1Start
   TestM2Worker_OutagePhase2Down
   TestM2Worker_OutagePhase3Resume

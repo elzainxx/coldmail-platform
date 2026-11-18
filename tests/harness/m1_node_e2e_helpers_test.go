@@ -69,7 +69,7 @@ type m1eStack struct {
 
 func newM1eStack(t *testing.T) *m1eStack {
 	t.Helper()
-	return newM1eStackWith(t, config.Secret(randomHex(t, 32)), modclient.Options{Timeout: 30 * time.Second})
+	return newM1eStackWith(t, config.Secret(randomHex(t, 32)), modclient.Options{Timeout: 30 * time.Second, Observe: m1Drift.Observer()})
 }
 
 // newM1eStackWith is the stack with a given key secret and the dials of the adapters it makes. The outage tests (m1_node_outage_test.go) run in three separate processes and rebuild the

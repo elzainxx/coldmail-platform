@@ -85,7 +85,7 @@ out="$(leak_run empty "" M1_PEPPER)"; rc=$?
 verdict "m1n_secret_leak: an empty credential is refused (a scan with nothing to look for)" 1 "M1_PEPPER is empty" "$out" "$rc"
 
 # ── consistency of the files ──
-srcs=("$HARNESS"/m1_node*_test.go)   # every file of the module-1 node tests: the tests, their helpers and the end-to-end tests of B9-B11
+srcs=("$HARNESS"/m1_node*_test.go "$HARNESS"/zz_m1_node*_test.go)   # every file of the module-1 node tests: the tests, their helpers, the end-to-end tests of B9-B11 and the contract drift gate (zz_: the last test of the binary)
 in_go="$(grep -ho '^func TestM1Node_[A-Za-z0-9_]*' "${srcs[@]}" | sed 's/^func //' | sort | tr '\n' ' ')"
 in_sh="$( ( WORK=/x; . "$T/env.sh"; HERE="$HARNESS"; PLATFORM_DIR=/x; . "$HERE/m1node/m1node.sh"; printf '%s\n' "${M1N_TESTS[@]}" "${M1N_OUTAGE_TESTS[@]}" ) | sort | tr '\n' ' ')"
 verdict "M1N_TESTS and M1N_OUTAGE_TESTS together are exactly the set of TestM1Node_ functions of the m1_node*_test.go files" 0 "same" "$([ -n "$in_go" ] && [ "$in_go" = "$in_sh" ] && echo same || printf 'go: %s\nsh: %s' "$in_go" "$in_sh")" 0

@@ -38,6 +38,7 @@ M1N_TESTS=(
   TestM1Node_E2ECrossTenant
   TestM1Node_E2EChecksBite
   TestM1Node_OutageChecksBite
+  TestM1Node_ZContractDrift
 )
 # the three phases of the outage proof: each runs in a process of its own, in this order, between the stop and the start of the control plane (m1n_outage). The ordinary run of stage M1N-4
 # excludes them by name (M1N_OUTAGE_SKIP, -test.skip): a phase needs the state of the one before and a module that is up or down at the right moment. Their PASS lines are required by name

@@ -75,6 +75,10 @@ on:
           - m1node
           - m2worker
         default: full
+      contract_record:
+        description: 'Record mode of the contract drift gate: the sessions PRINT the real responses as CONTRACT-FIXTURE blocks (the lead commits them as the fixtures) instead of failing on a difference. Leave off for every normal run.'
+        type: boolean
+        default: false
   schedule:
     - cron: '41 5 * * 1'
 
@@ -143,4 +147,5 @@ jobs:
           H_MODULES_ROOT: ${{ github.workspace }}
           H_WORK: ${{ runner.temp }}/harness
           H_SCOPE: ${{ inputs.scope || 'full' }}      # only a dispatch carries the input; every other trigger runs the full harness
+          H_CONTRACT_RECORD: ${{ inputs.contract_record && '1' || '' }}      # record mode of the contract drift gate (a dispatch with contract_record); empty on every other trigger
         run: bash coldmail-platform/tests/harness/run.sh

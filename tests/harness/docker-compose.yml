@@ -394,6 +394,7 @@ services:
       HARNESS_M3_URL: http://m3:8080
       HARNESS_M3_TOKEN: ${H_M3_TOKEN:?}
       HARNESS_M3_ADMIN_KEY: ${H_M3_ADMIN_KEY:?}
+      CONTRACT_RECORD: ${H_CONTRACT_RECORD:-}      # "1" only in a dispatch with contract_record: the contract drift sessions then PRINT the recorded fixtures (CONTRACT-FIXTURE blocks) instead of failing on a difference (internal/contractcheck)
       HARNESS_SINK_URL: http://smtp-sink:8025
       HARNESS_SINK_PASSWORD: ${H_SINK_PASSWORD:?}
       HARNESS_CTL_URL: http://smtp-ctl:8025      # the controllable sink's control API (the hostile-sink test); its SMTP port is 1025 on the same host

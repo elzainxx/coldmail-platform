@@ -95,11 +95,14 @@ func m1bOrdinals(role m1bRole) []int {
 	return out
 }
 
+// m1bObserve is the observer of the contract drift session of the m1node binary (zz_m1_node_contract_drift_test.go sets it in init): nil everywhere else, where no session exists.
+var m1bObserve func(modclient.Observation)
+
 func m1bClient(t *testing.T) *m1results.Adapter {
 	t.Helper()
 	base := m3lBaseURL(t, m1bEnvURL)
 	key := strings.TrimSpace(requireEnv(t, m1bEnvKey))
-	c, err := m1results.New(base, config.Secret(key), nil, modclient.Options{Timeout: 30 * time.Second})
+	c, err := m1results.New(base, config.Secret(key), nil, modclient.Options{Timeout: 30 * time.Second, Observe: m1bObserve})
 	if err != nil {
 		t.Fatalf("cannot build the module 1 client from %s / %s: %v", m1bEnvURL, m1bEnvKey, err) // New's errors never carry the URL or the key
 	}

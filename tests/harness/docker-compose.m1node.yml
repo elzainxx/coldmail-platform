@@ -148,6 +148,7 @@ services:
       HARNESS_M1_URL: http://m1n:8080
       HARNESS_M1_KEY: ${H_M1_CALLER_KEY:?}
       HARNESS_M1NODE_FX_URL: http://fx:8025
+      CONTRACT_RECORD: ${H_CONTRACT_RECORD:-}      # "1" only in a dispatch with contract_record: see docker-compose.yml
       HARNESS_M1NODE_NODE_ID: harness-node-1
       HARNESS_M1NODE_NODE_IP: "${H_FX_PREFIX:?}.3"
       HARNESS_M1NODE_SMTP_IP: "${H_FX_PREFIX:?}.2"
