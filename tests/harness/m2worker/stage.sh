@@ -11,7 +11,10 @@
 #   m2w_evidence        stage 6: prints the test's own log lines (the sink's per-recipient counts, the timings, the report snapshots): the first-run review reads them
 #   m2w_require_pass    stage 6: every TestM2Worker_* test has a `--- PASS` line in the log the run itself produced (a binary built without one, or a -run that skipped it, would leave the rest green)
 #   m2w_secret_leak     after the tests: none of this run's credentials appears in the logs of m2, m2-worker or smtp-ctl (a workflow log is public)
-#   m2w_scope_run       H_SCOPE=m2worker: Postgres + migrations + module 2 + its worker + the sink + only the TestM2Worker tests, then the exposure check; ends the run
+#   m2w_outage          the OUTAGE sub-stage (Phase 3, chunk B12): module 2's platform API container is stopped in the middle of a campaign (phase 1 -> stop -> phase 2 -> start -> phase 3, three `go test` invocations of the
+#                       same binary), and nothing is invented while it is down or lost or done twice when it is back. m2w_scope_run calls it after the ordinary tests; the FULL run calls it only where run.sh does (one line
+#                       after m2w_require_pass: `[ "$M2W_ON" = 1 ] && m2w_outage`, which the lead adds)
+#   m2w_scope_run       H_SCOPE=m2worker: Postgres + migrations + module 2 + its worker + the sink + only the TestM2Worker tests (the outage phases run in m2w_outage), then the exposure check; ends the run
 # Nothing here prints a credential: no `set -x`, no environment dump, and a failing check names a file and a number, never a value.
 
 M2W_SYSTEM_USER="00000000-0000-0000-0000-000000000000"      # the reserved user module 2 requires in public.users (platform_0001 inserts it); send_managed.boxes.user_id references it
@@ -25,6 +28,16 @@ M2W_TESTS=(
   TestM2Worker_AdapterPaginationAcrossPageBoundaries
   TestM2Worker_AdapterCrossTenantReadsAndCancelAreRefused
   TestM2Worker_AdapterCancelSettlesFreeAndReleasesTheReserve
+  TestM2Worker_OutagePhase1Start
+  TestM2Worker_OutagePhase2Down
+  TestM2Worker_OutagePhase3Resume
+)
+# The three phases of the outage proof (B12; tests/harness/m2_worker_outage_test.go). They are in M2W_TESTS (the PASS-line list and the stage's floor count them) but they are NOT part of the ordinary run of
+# m2w_scope_run: each is its own `go test -test.run '^Name$'` of the same binary, with module 2's container stopped and started between them (m2w_outage). The order here IS the order they run in.
+M2W_OUTAGE_TESTS=(
+  TestM2Worker_OutagePhase1Start
+  TestM2Worker_OutagePhase2Down
+  TestM2Worker_OutagePhase3Resume
 )
 
 m2w_psql_su() { DC exec -T postgres psql -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -tAc "$1"; }
@@ -97,7 +110,7 @@ m2w_stage_5c() {
 # ── stage 6 helpers ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 m2w_evidence() {
   echo "  ---- module 2's real worker: the test's own log lines (the sink's per-recipient counts, timings, snapshots) ----"
-  grep -E " m2_worker(_e2e)?(_helpers)?_test.go:[0-9]+: |^--- (PASS|FAIL|SKIP): TestM2Worker_" "$1" | sed 's/^/  | /' | head -700
+  grep -E " m2_worker(_e2e|_outage)?(_helpers)?_test.go:[0-9]+: |^--- (PASS|FAIL|SKIP): TestM2Worker_" "$1" | sed 's/^/  | /' | head -700
 }
 
 m2w_require_pass() {
@@ -121,6 +134,151 @@ m2w_secret_leak() {
   echo "  no credential of this run (operator key, worker token, service token, SMTP password) appears in the logs of m2, m2-worker or smtp-ctl"
 }
 
+# ── the outage sub-stage (Phase 3, chunk B12) ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+# Module 2's platform API container `m2` is STOPPED in the middle of a campaign and STARTED again; between the stop and the start the platform's adapter is asked everything it polls with, and after the start the
+# campaign completes exactly once. Three phases, three `go test` invocations of the SAME compiled binary (each a fresh container; HARNESS_M2_OUTAGE=1 makes the tests do their real work, without it they run only
+# their paired controls), the state between them in harness_outage.m2 (tests/harness/m2_worker_outage_helpers_test.go):
+#     phase 1  TestM2Worker_OutagePhase1Start   a job in flight; what is final is settled; the books, module 2's job rows and the sink are recorded
+#     STOP     m2w_outage_stop                  docker compose stop m2 (graceful: the send in flight reports, the Control exits), then PROOF that it is gone: the container is exited AND a request from a container
+#                                               on the private network gets no HTTP answer; the sink, the worker and Postgres keep running
+#     phase 2  TestM2Worker_OutagePhase2Down    every read and write against the stopped module fails typed with no value; nothing is settled or invented; the platform's /readyz handler answers 200
+#     START    m2w_outage_start / _worker       docker compose up --wait m2, then a request over the private network until /readyz answers 200 (bounded: the stage dies with the module's logs if it never does); the worker
+#                                               is waited for (a heartbeat newer than the start) and started again if it had exited (its own reconnect budget is about 30 s: it exits "for the orchestrator", which here is this stage)
+#     phase 3  TestM2Worker_OutagePhase3Resume  poll to completion, every item exactly once, one message per sent item, one ledger entry per charged item, books closed, replays write and send nothing
+# Failure sentences (each has a case in stage-selftest.sh): "module 2 could not be stopped", "module 2 did not stop", "module 2 still answers", "the probe from the private network did not run",
+# "module 2 did not become healthy again", "module 2 never became ready over the private network", "module 2's worker never heartbeated", "has no '--- PASS' line in its own log",
+# "wrote no 'NOTE outage phaseN live' line", "the platform's /readyz answered".
+# The sub-stage's evidence is its own logs ($WORK/outage-p1.log .. p3.log), printed per phase; the floor counts the three PASS lines (m2w_scope_run appends them to the run log).
+
+# one request from a container on the private network (the test container's image, busybox wget; no credential is sent) to module 2's readiness route: prints wget's own text, returns wget's own status
+m2w_outage_probe() { DC run --rm -T --no-deps --entrypoint wget harness-tests -q -T 3 -O /dev/null http://m2:8080/readyz 2>&1; }
+
+# the state of a compose service's container ("running", "exited", ...); empty when there is none
+m2w_outage_state() { local cid; cid="$(DC ps -a -q "$1" 2>/dev/null | head -1)"; [ -n "$cid" ] || return 0; docker inspect -f '{{.State.Status}}' "$cid" 2>/dev/null; }
+
+# m2w_outage_gone: the container m2 is exited AND a request over the private network gets no HTTP answer (a refusal or an unresolvable name: both are "gone"). A probe that did not run at all proves nothing and is red.
+m2w_outage_gone() {
+  local cid st out rc i=0 tries="${M2W_OUTAGE_STOP_TRIES:-15}"
+  while :; do
+    cid="$(DC ps -a -q m2 2>/dev/null | head -1)"
+    st=""; [ -z "$cid" ] || st="$(docker inspect -f '{{.State.Status}} {{.State.ExitCode}}' "$cid" 2>/dev/null)"
+    case "$st" in "exited "*|"dead "*) break;; esac
+    i=$((i+1)); [ "$i" -lt "$tries" ] || die "module 2 did not stop: the container m2 is '${st:-not found}' after $tries checks following docker compose stop (a graceful stop waits for the send in flight to report, then the Control exits; its logs are below)"
+    sleep "${M2W_OUTAGE_SLEEP:-2}"
+  done
+  out="$(m2w_outage_probe)"; rc=$?
+  [ "$rc" != 0 ] || die "module 2 still answers: a request from a container on the private network to http://m2:8080/readyz succeeded although the container m2 is '$st'"
+  case "$out" in
+    *"server returned error"*) die "module 2 still answers over the private network (an HTTP error, so something listens at the name m2): $(printf '%s' "$out" | head -2 | tr '\n' ' ')";;
+    *"Connection refused"*|*"bad address"*|*"can't connect"*|*"timed out"*|*"nreachable"*) ;;
+    *) die "the probe from the private network did not run, so 'gone' was not proven (wget printed: $(printf '%s' "$out" | head -3 | tr '\n' ' '))";;
+  esac
+  echo "  module 2 is gone: container m2 is '$st' (status, exit code) and a request from a container on the private network gets: $(printf '%s\n' "$out" | grep -m1 'wget:' || printf '%s\n' "$out" | head -1)"
+}
+
+m2w_outage_stop() {
+  local s st
+  echo "  $(date -u +%T) stopping module 2: docker compose stop m2 (SIGTERM: the Control stops claiming, the send in flight reports, then it exits; grace period 90 s)"
+  DC stop m2 >/dev/null 2>&1 || die "module 2 could not be stopped (docker compose stop m2 failed)"
+  m2w_outage_gone
+  for s in postgres smtp-ctl m2-worker; do
+    st="$(m2w_outage_state "$s")"
+    [ "$st" = running ] || die "stopping module 2 took $s down with it (it is '${st:-not found}'): the outage proof leaves Postgres, the sink and the worker running"
+  done
+  echo "  postgres, smtp-ctl and m2-worker are still running: only module 2's Control is down"
+}
+
+# the running platform service (a full run only) answers /readyz 200 while module 2 is stopped; in the scope there is no platform service and phase 2 asks the platform's readiness handler in process
+m2w_outage_platform_ready() {
+  local code
+  if [ -z "$(DC ps -q platform 2>/dev/null)" ]; then
+    echo "  the platform service is not part of this run (scope m2worker): phase 2 asks the platform's own /readyz handler (internal/httpapi) in process"
+    return 0
+  fi
+  code="$(DC exec -T platform wget -q -S -O /dev/null http://127.0.0.1:8080/readyz 2>&1 | awk '/HTTP\//{print $2; exit}')"
+  [ "$code" = 200 ] || die "the platform's /readyz answered '${code:-nothing}' while module 2 is stopped, want 200: the platform's readiness follows its database, never a module"
+  echo "  the running platform service answers /readyz 200 while module 2 is stopped"
+}
+
+# start module 2 and wait for it over the private network, the way stage 9b waits for module 3 (compose's own health wait, then a bounded loop); dies with the module's logs when it never comes back
+m2w_outage_start() {
+  local out i=0 tries="${M2W_OUTAGE_READY_TRIES:-60}"
+  echo "  $(date -u +%T) starting module 2 again: docker compose up -d --wait m2, then /readyz over the private network"
+  DC up -d --wait --wait-timeout 240 m2 >/dev/null 2>&1 || { DC logs --no-color --tail=80 m2 2>&1 | sed 's/^/     | m2: /'; die "module 2 did not become healthy again after the start (its logs are above)"; }
+  while :; do
+    out="$(m2w_outage_probe)" && break
+    i=$((i+1))
+    if [ "$i" -ge "$tries" ]; then
+      DC logs --no-color --tail=80 m2 2>&1 | sed 's/^/     | m2: /'
+      die "module 2 never became ready over the private network: $tries requests from a container on the network to http://m2:8080/readyz failed, the last said: $(printf '%s' "$out" | head -2 | tr '\n' ' ') (its logs are above)"
+    fi
+    sleep "${M2W_OUTAGE_SLEEP:-2}"
+  done
+  echo "  module 2 is back: healthy by its own check, and a request from a container on the private network gets HTTP 200 on /readyz (after $i failed probe(s))"
+}
+
+# the worker after the module is back: a heartbeat newer than now (the Control must see it register again). A worker that exited while the Control was away (its own reconnect budget is about 30 attempts: module 2's design is
+# "exit non-zero for the orchestrator to restart us", and the orchestrator here is this stage) is started again; one that is still running has reconnected by itself.
+m2w_outage_worker() {
+  local t0 st i=0 tries="${M2W_OUTAGE_HB_TRIES:-45}" how="it had never stopped and reconnected by itself" code
+  t0="$(m2w_psql_su "select clock_timestamp()")"; [ -n "$t0" ] || die "could not read the database clock"
+  while :; do
+    st="$(m2w_outage_state m2-worker)"
+    if [ "$st" != running ]; then
+      code="$(docker inspect -f '{{.State.ExitCode}}' "$(DC ps -a -q m2-worker 2>/dev/null | head -1)" 2>/dev/null)"
+      how="it had exited ('${st:-not found}', exit code ${code:-?}) after its reconnect budget ran out, as module 2's worker is designed to, and this stage started it again"
+      DC up -d m2-worker >/dev/null 2>&1 || die "module 2's worker could not be started again"
+    fi
+    [ "$(m2w_psql_su "select count(*) from send_managed.boxes where id = '$M2_WORKER_ID' and status = 'active' and last_heartbeat_at > '$t0'")" = 1 ] && break
+    i=$((i+1))
+    if [ "$i" -ge "$tries" ]; then
+      DC logs --no-color --tail=60 m2-worker 2>&1 | sed 's/^/     | m2-worker: /'
+      die "module 2's worker never heartbeated after $t0 following the module's return ($tries checks; its logs are above): the Control does not accept it again"
+    fi
+    sleep "${M2W_OUTAGE_SLEEP:-2}"
+  done
+  echo "  module 2's worker is registered and heartbeating again: $how"
+}
+
+# the log of one phase: the test's own evidence lines and its verdict line
+m2w_outage_evidence() {
+  grep -E " m2_worker_outage(_helpers)?_test.go:[0-9]+: |^--- (PASS|FAIL|SKIP): TestM2Worker_" "$1" | sed 's/^/  | /' | head -200
+}
+
+# a phase counts only when ITS OWN log has the column-0 PASS line and the line only a live run writes: without HARNESS_M2_OUTAGE=1 the test passes on its controls alone, and that PASS must never stand in for the phase
+m2w_outage_require_phase() {   # <test name> <phase number> <log>
+  grep -q "^--- PASS: $1 " "$3" || die "$1 has no '--- PASS' line in its own log: phase $2 of module 2's outage proof did not run, or did not pass"
+  grep -q "NOTE outage phase$2 live: " "$3" || die "$1 passed but wrote no 'NOTE outage phase$2 live' line: it ran control-only (HARNESS_M2_OUTAGE=1 did not reach the test container), so phase $2 was NOT run against the stack"
+}
+
+# one phase: a fresh test container running ONE test of the compiled binary with the outage variable set
+m2w_outage_phase() {   # <test name> <phase number>
+  local log="$WORK/outage-p$2.log" rc
+  echo "  $(date -u +%T) phase $2: $1 (a fresh test container, HARNESS_M2_OUTAGE=1)"
+  DC run --rm -T -e HARNESS_M2_OUTAGE=1 harness-tests -test.v -test.count=1 -test.timeout=10m -test.run "^$1\$" > "$log" 2>&1; rc=$?
+  m2w_outage_evidence "$log"
+  if [ "$rc" != 0 ]; then
+    echo "  ---- $1 failed (exit $rc): the end of its log ----"; tail -120 "$log" | sed 's/^/  | /'
+    die "$1 failed (exit $rc): phase $2 of module 2's outage proof"
+  fi
+  m2w_outage_require_phase "$1" "$2" "$log"
+}
+
+m2w_outage() {
+  local t0=$SECONDS
+  STAGE=m2-outage; banner "6b-m2" "module 2 is stopped in the middle of a campaign and started again: the platform neither invents nor loses anything (three phases, one stage)"
+  [ -f "$WORK/out/harness.test" ] || die "the compiled harness test binary is missing ($WORK/out/harness.test): the outage proof runs its three phases from it"
+  echo "  phases (one go test -test.run per phase, a fresh container each, state in harness_outage.m2): ${M2W_OUTAGE_TESTS[*]}"
+  m2w_outage_phase "${M2W_OUTAGE_TESTS[0]}" 1
+  m2w_outage_stop
+  m2w_outage_platform_ready
+  m2w_outage_phase "${M2W_OUTAGE_TESTS[1]}" 2
+  m2w_outage_start
+  m2w_outage_worker
+  m2w_outage_phase "${M2W_OUTAGE_TESTS[2]}" 3
+  echo "  module 2's outage proof: all three phases ran live and passed in $((SECONDS - t0)) s (stop -> gone -> phase 2 -> start -> ready -> phase 3); the same flow with the module up is TestM2Worker_AdapterEndToEndSettlesItemByItem"
+}
+
 # ── H_SCOPE=m2worker ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 # Postgres, the four migration chains (stage 4 ran), module 2 and its worker, the sink, and only the TestM2Worker tests; no module 1, no module 3, no platform service, no probe, no outage stages.
 # Called by run.sh after stage 4b; it never returns (it exits with the run's own status, the EXIT trap tears the stack down).
@@ -131,15 +289,20 @@ m2w_scope_run() {
   m2w_stage_5c
 
   STAGE=tests; banner 6 "scope m2worker: the TestM2Worker_* tests, compiled on the runner and run inside the network"
-  local re='^TestM2Worker_' trc lrc t
+  local re='^TestM2Worker_' skip='^TestM2Worker_OutagePhase' trc lrc t
   ( cd "$PLATFORM_DIR" && CGO_ENABLED=0 GOTOOLCHAIN=local go test -tags "$TEST_TAGS" -c -o "$WORK/out/harness.test" ./tests/harness ) || die "the harness test binary (tags: $TEST_TAGS) did not compile"
   DC run --rm -T harness-tests -test.list "$re" > "$WORK/h-list.log" 2>&1; lrc=$?
   [ "$lrc" = 0 ] || { cat "$WORK/h-list.log"; die "listing the TestM2Worker tests failed ($lrc)"; }
   for t in "${M2W_TESTS[@]}"; do grep -qx "$t" "$WORK/h-list.log" || die "$t is not among the declared tests of the harness binary"; done
-  DC run --rm -T harness-tests -test.v -test.count=1 -test.timeout=30m -test.run "$re" > "$WORK/h-run.log" 2>&1; trc=$?
+  # the ordinary run leaves the three outage phases out (-test.skip): each is its own invocation between a stop and a start of module 2 (m2w_outage); their PASS lines join this log before the floor reads it
+  DC run --rm -T harness-tests -test.v -test.count=1 -test.timeout=30m -test.run "$re" -test.skip "$skip" > "$WORK/h-run.log" 2>&1; trc=$?
   sed 's/^/  | /' "$WORK/h-run.log" | tail -60
   m2w_evidence "$WORK/h-run.log"
   [ "$trc" = 0 ] || { echo "  ---- failing tests (with context) ----"; grep -n -B1 -A14 -e '--- FAIL' "$WORK/h-run.log" | sed 's/^/  | /' | head -240; }
+  if [ "$trc" = 0 ]; then
+    m2w_outage
+    grep -h '^--- PASS: TestM2Worker_OutagePhase' "$WORK/outage-p1.log" "$WORK/outage-p2.log" "$WORK/outage-p3.log" >> "$WORK/h-run.log" || die "the outage phases left no PASS line to count"
+  fi
   if [ "$trc" = 0 ]; then t="ok  \t$GO_PKG\t0.000s"; else t="FAIL\t$GO_PKG\t0.000s"; fi
   printf "$t\n" >> "$WORK/h-run.log"; printf "ok  \t$GO_PKG\t0.000s\n" >> "$WORK/h-list.log"
   [ "$trc" = 0 ] || die "the TestM2Worker tests failed (exit $trc)"
@@ -177,10 +340,13 @@ m2w_not_checked() {   # `m2w_not_checked correction` (the full run) first says t
   cat <<'EOF'
   - Module 2 REALLY sends here: ONE worker (so one job at a time: a held send stalls everything behind it) to the controllable sink (tests/harness/sink), which accepts, rejects (550) or defers (451) named recipients at RCPT TO
     and holds the final reply. Proven end to end: sent, bounced (a 550 at RCPT TO), failed/attempts_exhausted (two 451 deferrals with the attempt cap and the backoff ladder shortened) and cancelled (a held campaign cancelled mid-flight),
-    each observed through module 2's own report and the sink's independent counters. NOT exercised: a second worker, a worker that dies mid-send or loses its stream (reclaim), a Control restart, an account that fails AUTH (535: the
+    each observed through module 2's own report and the sink's independent counters. NOT exercised: a second worker, a worker that dies mid-send or loses its stream (reclaim), a Control CRASH (the outage proof below stops it gracefully), an account that fails AUTH (535: the
     quarantine path) or a pool with several accounts (routing, fairness, daily limits), the throttle class (a rate-limit text in a 4xx), a reply that never comes (the 30 s operation timeout), the real public internet (the sink's address is
     private: the worker skips certificate validation for private ranges only, and module 2's production rule is the opposite), variation of the message body (switched on by default; the sink is read for recipients and ids, not for body bytes),
     a campaign of more than a handful of items, and the platform's job engine (the test calls module 2's routes itself).
+  - The OUTAGE proof (m2w_outage) stops module 2's Control with `docker compose stop` (SIGTERM, a graceful drain: the send in flight reports, nothing is left in doubt) once, while ONE campaign of ten items is in flight, and starts it again.
+    NOT exercised: a SIGKILL of the Control in the middle of a send (the worker's unacknowledged outcome buffer and the Control's startup rescan are what keep that exactly-once; here the worker has nothing buffered and, after about 30 s without
+    a Control, exits and is started again by the stage), an outage longer than the worker's buffer TTL, a stop that outlives the drain window, two outages in a row, and the platform's job engine (the test plays its poll-and-settle step).
   - the dials of module 2 that make the run take seconds (job_max_failed_attempts 2, retry_backoff_schedule [1,1,1] with a ceiling of 1 s, send_delay_min_sec / send_delay_max_sec 0, concurrency_per_user_default 1,
     dispatch_tick_interval_ms 250) are set through module 2's admin API for the run and restored afterwards: the module's DEFAULT cadence (a retry ladder of 30 s, 120 s and 600 s, six attempts) is not what ran.
 EOF

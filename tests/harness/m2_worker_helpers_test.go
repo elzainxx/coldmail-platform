@@ -649,6 +649,14 @@ func (r *m2wRun) account(t *testing.T, tn *m2wTenant) m2wAccount {
 // stores something else is a defect this must see).
 func (r *m2wRun) setDials(t *testing.T) {
 	t.Helper()
+	prior := r.readDials(t)
+	t.Cleanup(func() { r.restoreDials(t, prior) }) // restore: module 2's config is global, and nothing of a later test or stage may inherit a dial of this one
+	r.putDials(t)
+}
+
+// readDials reads the current value of every dial this run sets (an unknown key is a 404: the dial must exist at the pinned module 2).
+func (r *m2wRun) readDials(t *testing.T) map[string]json.RawMessage {
+	t.Helper()
 	prior := map[string]json.RawMessage{}
 	for _, d := range m2wDials {
 		status, body := r.admin(t, http.MethodGet, "/v1/admin/config/"+d.Key, nil)
@@ -661,16 +669,24 @@ func (r *m2wRun) setDials(t *testing.T) {
 		}
 		prior[d.Key] = row.Value
 	}
-	t.Cleanup(func() { // restore: module 2's config is global, and nothing of a later test or stage may inherit a dial of this one
-		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.ctx), 60*time.Second)
-		defer cancel()
-		for _, d := range m2wDials {
-			status, body, err := r.doCtx(ctx, r.m2URL, http.MethodPut, "/v1/admin/config/"+d.Key, r.adminKey, map[string]json.RawMessage{"value": prior[d.Key]})
-			if err != nil || status != http.StatusOK {
-				t.Errorf("restoring the dial %s to %s failed (HTTP %d, %v): %s", d.Key, prior[d.Key], status, err, r.snip(body, 300))
-			}
+	return prior
+}
+
+// restoreDials puts every dial back to the value readDials read. It never aborts the test (a failed restore is reported with t.Errorf): it runs from a cleanup.
+func (r *m2wRun) restoreDials(t *testing.T, prior map[string]json.RawMessage) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.ctx), 60*time.Second)
+	defer cancel()
+	for _, d := range m2wDials {
+		status, body, err := r.doCtx(ctx, r.m2URL, http.MethodPut, "/v1/admin/config/"+d.Key, r.adminKey, map[string]json.RawMessage{"value": prior[d.Key]})
+		if err != nil || status != http.StatusOK {
+			t.Errorf("restoring the dial %s to %s failed (HTTP %d, %v): %s", d.Key, prior[d.Key], status, err, r.snip(body, 300))
 		}
-	})
+	}
+}
+
+// putDials writes this run's dials, reads each back and compares (a PUT that answers 200 and stores something else is a defect this must see).
+func (r *m2wRun) putDials(t *testing.T) {
+	t.Helper()
 	for _, d := range m2wDials {
 		status, body := r.admin(t, http.MethodPut, "/v1/admin/config/"+d.Key, map[string]json.RawMessage{"value": json.RawMessage(d.Value)})
 		r.expect(t, "PUT /v1/admin/config/"+d.Key, status, body, http.StatusOK, "")
