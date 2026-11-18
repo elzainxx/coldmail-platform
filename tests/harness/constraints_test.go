@@ -1054,6 +1054,17 @@ func TestConstraints_Suppressions(t *testing.T) {
 	const ins = "INSERT INTO platform.suppressions (user_id, email, source) VALUES ($1, $2, $3)"
 	const norm = "suppressions_email_norm_v1"
 	long := func(n int) string { return strings.Repeat("a", n-len("@e.com")) + "@e.com" } // an address of exactly n characters
+	// an address of exactly n bytes that module 1's syntax layer accepts (platform_0009): a 64-byte local part and a dotted domain of the rest (labels of 50 bytes, none empty)
+	longOK := func(n int) string {
+		left := n - 64 - 1
+		var labels []string
+		for left > 53 {
+			labels = append(labels, strings.Repeat("b", 50))
+			left -= 51
+		}
+		labels = append(labels, strings.Repeat("c", left))
+		return strings.Repeat("a", 64) + "@" + strings.Join(labels, ".")
+	}
 
 	t.Run("accepted: the forms norm/v1 produces", func(t *testing.T) {
 		for _, e := range []string{
@@ -1062,7 +1073,9 @@ func TestConstraints_Suppressions(t *testing.T) {
 			"a@xn--bcher-kva.example",      // the punycode of an IDN domain
 			"\u00fc@example.com",           // a lower-case u-umlaut, precomposed (NFC)
 			"a1@a-b.example", "a@123.example",
-			long(254), // the boundary: exactly 254 bytes (all ASCII here)
+			longOK(254),                        // the boundary: exactly 254 bytes (a 64-byte local part and a dotted domain: the longest address module 1's syntax layer lets through under this limit)
+			strings.Repeat("a", 64) + "@e.com", // the longest local part module 1's syntax layer accepts
+			"a@a.b",                            // the smallest dotted domain
 		} {
 			e := e
 			t.Run(fmt.Sprintf("%.40q", e), func(t *testing.T) { ledgerExpectOK(t, tx, "control: accepted form", ins, a, e, "unsubscribe") })
@@ -1086,6 +1099,12 @@ func TestConstraints_Suppressions(t *testing.T) {
 			{"an empty label in the domain (two dots)", "a@example..com"},
 			{"a label that ends with a hyphen", "a@a-.example"}, {"a label that starts with a hyphen", "a@example.-com"},
 			{"within 254 CHARACTERS but over 254 BYTES (two-byte letters in the local part)", strings.Repeat("ü", 130) + "@e.com"},
+			// module 1's syntax layer and IDNA's hyphen rule (platform_0009)
+			{"a local part of 65 bytes (module 1's layer allows 64)", strings.Repeat("a", 65) + "@example.com"},
+			{"a local part of 33 two-byte letters (66 bytes)", strings.Repeat("ü", 33) + "@example.com"},
+			{"a domain with no dot", "a@localhost"},
+			{"a label with -- in its third and fourth bytes", "a@ab--cd.example"},
+			{"the same label as the second one", "a@example.ab--cd"},
 		} {
 			c := c
 			t.Run(c.why, func(t *testing.T) {
@@ -1095,12 +1114,13 @@ func TestConstraints_Suppressions(t *testing.T) {
 		ledgerExpectOK(t, tx, "control: the same user takes a normalised address", ins, b, "ok@example.com", "unsubscribe")
 	})
 
-	// Single-label domains (a@b, a@localhost) are ACCEPTED: the owner's ruling (OD-11, Docs/phase-2-spec.md Part A row 9), not a gap. The database refuses only an EMPTY label (a@b..c).
-	t.Run("single-label domains are accepted (the owner's ruling OD-11); an empty label is not", func(t *testing.T) {
-		for _, e := range []string{"a@b", "a@localhost"} {
-			ledgerExpectOK(t, tx, "control: the single-label domain of "+e, ins, a, e, "manual")
-		}
+	// Single-label domains (a@b, a@localhost) were ACCEPTED under the owner's ruling OD-11 (Docs/phase-2-spec.md Part A row 9) and are REFUSED since the Phase 3 close-out (OD-9, platform_0009): the platform's
+	// address rule is norm/v1 plus module 1's syntax layer, which fails a domain with no dot, and suppressions store what that rule returns. The ruling is superseded, not forgotten: the refusal of an
+	// empty label (a@b..c) is unchanged, and so is the acceptance of everything norm/v1 produces that the layer passes.
+	t.Run("single-label domains are refused (OD-9 supersedes OD-11); a dotted one is accepted, an empty label is not", func(t *testing.T) {
 		for _, c := range []struct{ why, email string }{
+			{"a single-label domain (a@b)", "a@b"},
+			{"a single-label domain (a@localhost)", "a@localhost"},
 			{"an empty label after a single-letter one (a@b..c)", "a@b..c"},
 			{"a single-label domain with a trailing dot", "a@b."},
 		} {
@@ -1109,6 +1129,8 @@ func TestConstraints_Suppressions(t *testing.T) {
 				ledgerExpectRefused(t, tx, c.why, "23514", ledgerWhy{Constraint: norm}, ins, b, c.email, "manual")
 			})
 		}
+		ledgerExpectOK(t, tx, "control: the smallest dotted domain", ins, a, "a@b.c", "manual")
+		ledgerExpectOK(t, tx, "control: a punycode label may carry -- in its third and fourth bytes", ins, a, "a@xn--bcher-kva.example", "manual")
 	})
 
 	t.Run("the source vocabulary", func(t *testing.T) {
