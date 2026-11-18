@@ -631,12 +631,49 @@ func TestAnotherTenantsAccountIsNeverReturned(t *testing.T) {
 // basis) is accepted with a nil duration; the count is bounded before anything is sent.
 func TestFeasibilityBeyondTheRecordedBodies(t *testing.T) {
 	infeasible := sendapitest.Read(t, fixtures, "quote.infeasible.json")
-	body, err := sendapitest.Mutate(infeasible, "reasons[0].code", sendapitest.Set, "brand_new_reason_zzz")
+	rec := doc(t, "quote.infeasible.json")
+	count, nReasons := asInt(t, rec, "recipient_count"), length(t, rec, "reasons")
+	if nReasons == 0 {
+		t.Fatal("the recorded infeasible quote holds no reason: the subject is empty")
+	}
+	// the control: the recording itself, every reason of which the adapter knows (so that an Unrecognised below is the mutation's doing)
+	control, err := newStack(t, reply(200, string(infeasible)), modclient.Options{}).client(t, userA).Feasibility(ctxT(t), count)
+	if err != nil || len(control.Reasons) != nReasons {
+		t.Fatalf("the recorded quote: %v %+v", err, control)
+	}
+	for i, r := range control.Reasons {
+		if r.Code == m3.InfeasibleUnrecognised {
+			t.Fatalf("the recorded reason %d is read as unrecognised: %+v", i, r)
+		}
+	}
+	// each recorded reason in turn, with a code the adapter does not know: still an infeasible quote, the reason is the Unrecognised word with the cause the module named (read from the
+	// recording) and none of the module's text, and the other reasons are read as they were
+	for i := 0; i < nReasons; i++ {
+		body, err := sendapitest.Mutate(infeasible, fmt.Sprintf("reasons[%d].code", i), sendapitest.Set, "brand_new_reason_zzz")
+		if err != nil {
+			t.Fatal(err)
+		}
+		f, err := newStack(t, reply(200, string(body)), modclient.Options{}).client(t, userA).Feasibility(ctxT(t), count)
+		if err != nil || f.Feasible || len(f.Reasons) != nReasons || f.Reasons[i].Code != m3.InfeasibleUnrecognised || f.Reasons[i].Cause != sendapi.Cause(asStr(t, rec, fmt.Sprintf("reasons[%d].cause", i))) || strings.Contains(reflectDump(f), "zzz") {
+			t.Fatalf("an unknown reason at %d: %v %+v", i, err, f)
+		}
+		for j, r := range f.Reasons {
+			if j != i && r.Code != control.Reasons[j].Code {
+				t.Fatalf("the unknown reason at %d changed the reading of reason %d: %+v", i, j, f)
+			}
+		}
+	}
+	// the same beside a second, known reason: a quote of both caps (built from the recording: it holds the queue cap's reason only) whose first reason has a code the adapter does not know
+	both, nBoth := bothCapsQuote(t)
+	if f, err := newStack(t, reply(200, string(both)), modclient.Options{}).client(t, userA).Feasibility(ctxT(t), nBoth); err != nil || len(f.Reasons) != 2 || f.Reasons[0].Code != m3.InfeasibleCampaignCap || f.Reasons[1].Code != m3.InfeasibleExceedsQueueCap {
+		t.Fatalf("the control (both caps, every code known): %v %+v", err, f)
+	}
+	unknown, err := sendapitest.Mutate(both, "reasons[0].code", sendapitest.Set, "brand_new_reason_zzz")
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := newStack(t, reply(200, string(body)), modclient.Options{})
-	f, err := s.client(t, userA).Feasibility(ctxT(t), asInt(t, doc(t, "quote.infeasible.json"), "recipient_count"))
+	s := newStack(t, reply(200, string(unknown)), modclient.Options{})
+	f, err := s.client(t, userA).Feasibility(ctxT(t), nBoth)
 	if err != nil || f.Feasible || len(f.Reasons) != 2 || f.Reasons[0].Code != m3.InfeasibleUnrecognised || f.Reasons[0].Cause != sendapi.CauseCampaignCap || f.Reasons[1].Code != m3.InfeasibleExceedsQueueCap || strings.Contains(reflectDump(f), "zzz") {
 		t.Fatalf("an unknown reason: %v %+v", err, f)
 	}

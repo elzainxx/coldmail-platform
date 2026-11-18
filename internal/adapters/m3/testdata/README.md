@@ -9,28 +9,50 @@ Ids and times are synthetic or normalised, addresses are in the documentation, p
 
 ## Recorded
 
-These 33 files are RECORDED from the real module 3 in the harness (full record run 44225747596, 2026-11-18, the third record run of `platform` Phase 3 B6) and normalised by
-`contractcheck.Normalise`: every uuid of a file becomes `00000000-0000-4000-8000-00000000000N` (N counting by first appearance in that file), every timestamp `2026-01-01T00:00:00Z`, every
-request id a run of `a`.
+These 46 files are RECORDINGS of the real module 3 in the harness, normalised by `contractcheck.Normalise`: every uuid of a file becomes `00000000-0000-4000-8000-00000000000N` (N counting by first
+appearance in that file), every timestamp `2026-01-01T00:00:00Z`, every request id a run of `a`. They come from two full record runs, both of 2026-11-18:
 
-The file a recording is filed under is the harness's classification of the answer it saw, not a promise about what the answer holds. Read from the files themselves, these are not what their
-names suggest (the matcher that files them is not part of this package, and none of this was changed here):
+- Record run 44395876225 (the Phase 3 close-out D1 run: module 3 at its close-out pin, the From gate on in the adapter tests) recorded 46 files of the 49 in the directory (the three that are hand-written
+  below are the ones it did not reach). The file is what that run recorded for 42 of them: 18 are files the run CHANGED (seven earlier recordings whose shape changed: `accounts.create.created.json`,
+  `accounts.create.created_failed.json`, `accounts.get.ok.json`, `accounts.list.page.json`, `accounts.list.empty.json`, `accounts.test.ok.json`, `report.job.queued.json`; and eleven files that were
+  hand-written before: `accounts.create.error.unprocessable.json`, `accounts.events.last_page.json`, `accounts.test.indeterminate.json`, `cancel.ok.json`, `describe.ok.json`, `quote.ok.json`,
+  `quote.infeasible.json`, `report.campaign.page.json`, `report.campaign.last_page.json`, `report.campaign.empty.json`, `run.error.conflict.json`); two were hand-written and the module answered
+  exactly what they held (`cancel.error.validation_failed.json`, `quote.feasible.json`), so they are recordings now; and 22 were already recordings of the earlier run and came out byte for byte the same.
+- Record run 44225747596 (the third record run of `platform` Phase 3 B6) recorded the earlier files. Four of them keep their recording of that run, because the answer of the new run had the same shape
+  (only values differed): `accounts.bulk.ok.json`, `accounts.create.error.validation_failed.json`, `report.job.error.not_found.json`, `report.job.sent.json`.
+
+The file a recording is filed under is the harness's classification of the answer it saw, not a promise about what the answer holds. The harness files an answer under the contract of its route and status
+that the answer's shape fits best (`contractcheck.Match`: the nearest fixture, and on a tie the first contract nothing was filed under yet) and, for each contract, keeps the observation with the fewest positions
+that tell nothing, then the most positions, then the SHORTEST body (`contractcheck`'s pick). A contract case name is therefore a SHAPE FAMILY (`ok`, `failed`, `last page`, `empty`: the family of answers of one
+shape), and the real module's answer of that shape can hold another state than the name says. Read from the files themselves, these are not what their names suggest (the matcher that files them is not part of
+this package, and none of this was changed here; `TestReadmeClaimsAboutFilesWhoseContentDiffersFromTheirNameAreTrue` holds each claim below to the file):
 
 - `report.job.sent.json` is a BOUNCED item (550 at the recipient), not a sent one.
-- `report.campaign.last_page.json` is a page with a cursor (2 of 5 items, all queued, page size 2), not a last page; `report.campaign.empty.json` is a page with a cursor (44 of 45 items, page
-  size 44), not an empty campaign. `report.campaign.page.json` is the one that is a whole campaign in one page (12 items, no cursor).
-- `accounts.list.last_page.json` is an EMPTY listing and `accounts.list.empty.json` is a last page of six accounts (the two names are the other way round); `accounts.list.page.json` is a full
-  page of 200 accounts with a cursor.
+- `report.campaign.last_page.json` is a page with a cursor (2 of 5 items, all queued, page size 2), not a last page; `report.campaign.empty.json` is a page with a cursor (1 of 45 items, a sent one, page size 1),
+  not an empty campaign. `report.campaign.page.json` is the one that is a whole campaign in one page (12 items, no cursor).
+- `accounts.list.last_page.json` is an EMPTY listing and `accounts.list.empty.json` is a last page of ONE account (a quarantined one); `accounts.list.page.json` is a page of two accounts with a cursor.
 - `accounts.list.error.validation_failed.json` names the cursor (`cursor` / `malformed`) and `accounts.list.error.cursor_malformed.json` names the tenant (`user_id` / `required`): the
   two names are the other way round.
-- `quote.ok.json` and `quote.feasible.json` are the same feasible quote for 100 recipients; the second carries the `long_duration` warning (170 s against a threshold of 60 s), the first has none.
-- `accounts.test.failed.json` is a failed credential with an ALIGNED From address (no warning, no `error` key); `accounts.test.ok.json` carries no alignment message.
+- `accounts.get.ok.json` is a QUARANTINED account (reason `auth_failure`, with its instant) whose credential check shows verified and whose From verdict is aligned, not a healthy one: there is no recording
+  of a healthy account.
+- `accounts.create.created.json` is a create whose credential verified and whose From verdict is `unaligned_warned` and already acknowledged (`acknowledged_at` is set); `accounts.create.created_failed.json`
+  is a create whose credential check failed with `verify_connect_failed` and an empty provider text (not `verify_auth_failed`), with the same warned and acknowledged From verdict.
+- `accounts.test.ok.json` is a click whose credential check FAILED (`verify_tls_failed`, an empty provider text) with an aligned From address, not a click that verified: there is no recording of a click
+  that verified. `accounts.test.failed.json` is a failed credential (`verify_auth_failed`, the provider's text) with an ALIGNED From address (no warning, no `error` key). `accounts.test.indeterminate.json`
+  is the TLS failure with a From check that could not get an answer from DNS (`from_dns_unavailable`).
+- `quote.ok.json` is a feasible quote for 0 recipients (campaign size cap 2, no warning, a projection of 0 s) and `quote.feasible.json` one for 100 recipients that carries the `long_duration` warning (170 s
+  against a threshold of 60 s). `quote.infeasible.json` is a quote for ONE recipient that is infeasible for ONE reason, the queue depth cap (a cap of 3 that already holds 3): the campaign size cap (50000)
+  is not hit, so there is no recording of a quote that names the campaign cap or of one with two reasons.
+- `run.error.conflict.json` is the 409 of the queue cap alone (`current` 3, `limit` 3), not one that names two causes.
 - `accounts.create.error.duplicate.json` is a real duplicate (it names `smtp_username` in `details`), and `accounts.create.error.conflict.json` is the module's opaque 409 (no details).
+- `accounts.events.last_page.json` is the three events of an account that was created, verified and quarantined by an enforced health action (a last page, no cursor). Its ids are numbered by first
+  appearance in THE FILE, which opens with the event's own id: the event is `...01`, its account `...02` and its tenant `...03` (in an account file the account is `...01` and the tenant `...02`), so the
+  contract case builds its client for the tenant the file holds.
 
 The tests do not hard-code what these files say. They read it from the file (an independent parse of the document, field by field), name ids after the normalisation (`norm1`, `norm2`),
 and where a test needs a KIND of answer they pick the recording by what it holds (a whole campaign in one page, a listing with accounts in it) and fail naming the files when none holds it.
-What the recordings lack is built FROM the recordings (an empty campaign, a stranger's quote, an acknowledgment instant, a provider message id, the test button's `error` key, a bulk batch with an
-internal reason), and each such test has the recording itself as its control.
+What the recordings lack is built FROM the recordings (a healthy account, a paused one, a created account with each verification code, a click that verified, a quote that breaks both caps, an empty
+campaign, a stranger's quote, an injected provider text or acknowledgment instant, a bulk batch with an internal reason), and each such test has the recording itself as its control.
 
 - `run.created.json`
 - `run.replay.json`
@@ -38,11 +60,21 @@ internal reason), and each such test has the recording itself as its control.
 - `run.error.unauthenticated.json`
 - `run.error.not_found.json`
 - `run.error.paused.json`
+- `run.error.conflict.json`
 - `report.job.sent.json`
 - `report.job.queued.json`
 - `report.job.error.not_found.json`
+- `report.campaign.page.json`
+- `report.campaign.last_page.json`
+- `report.campaign.empty.json`
 - `report.campaign.error.cursor_malformed.json`
 - `report.campaign.error.cursor_forged.json`
+- `cancel.ok.json`
+- `cancel.error.validation_failed.json`
+- `describe.ok.json`
+- `quote.ok.json`
+- `quote.feasible.json`
+- `quote.infeasible.json`
 - `accounts.list.page.json`
 - `accounts.list.last_page.json`
 - `accounts.list.empty.json`
@@ -55,8 +87,10 @@ internal reason), and each such test has the recording itself as its control.
 - `accounts.create.error.validation_failed.json`
 - `accounts.create.error.duplicate.json`
 - `accounts.create.error.conflict.json`
+- `accounts.create.error.unprocessable.json`
 - `accounts.test.ok.json`
 - `accounts.test.failed.json`
+- `accounts.test.indeterminate.json`
 - `accounts.test.error.rate_limited.json`
 - `accounts.test.error.conflict.json`
 - `accounts.test.error.not_found.json`
@@ -65,44 +99,24 @@ internal reason), and each such test has the recording itself as its control.
 - `accounts.bulk.error.conflict.json`
 - `accounts.bulk.error.validation_failed.json`
 - `accounts.events.empty.json`
+- `accounts.events.last_page.json`
 
 ## Hand-written
 
-These 16 files are hand-written (the first four from the module's code, the other twelve for the Phase 3 close-out, see below) (`Docs/history/p3-research/m3-api.md`, checked against the module at the pinned commit), to be replaced by a recording when the
-harness reaches them. The record runs did not reach these responses:
+These 3 files are hand-written (`Docs/history/p3-research/m3-api.md`, checked against the module at the pinned commit), to be replaced by a recording when the harness reaches them. Neither
+record run reached these responses (record run 44395876225 produced the other 46):
 
 - `run.error.internal_error.json`: a 500 on run needs a fault inside module 3, which the harness does not provoke.
-- `accounts.create.error.unprocessable.json`: the 422 that refuses an unacknowledged From-gate warning (`from_alignment_warning_unacknowledged`) exists only when the From-gate verdict is a
-  warning. The record runs had the gate off; since the Phase 3 close-out (D2) the module 3 adapter tests run it in `enforce` against a fixture DNS and `TestM3Adapter_FromGatePassWarnBlock` makes the
-  module answer it, so the next record run replaces this file with the recording.
-- `accounts.test.unavailable.json`: the test button answers `unavailable` only when its credential check cannot run (`verify_error`, `verification_unavailable`) and `indeterminate` only when
-  the From check cannot get an answer from DNS. The record runs had a worker and no From gate, so neither happened. Since the Phase 3 close-out (D2) the `indeterminate` half happens (the From-gate is on and the
-  fixture DNS answers SERVFAIL on command: see `accounts.test.indeterminate.json` below); the `unavailable` half still cannot (it needs the module's own verifier to fail), so this file is allowlisted for the drift gate.
-- `accounts.events.page.json`: a page with a next cursor and a PAUSE event (`pause_reason` `daily_limit`), hand-written. The first record run observed only empty listings. Since D3 populated listings are observed, but the
-  contract matcher gives a live body to the fixture it differs from least, and a page of this module never carries a pause reason (the harness does not pause an account) or a cursor (a page of 200), so every
-  populated page lands on `accounts.events.last_page.json` below (or, for a page of one event, on the empty one) and this case stays unexercised: it is allowlisted for the drift gate.
+- `accounts.test.unavailable.json`: the test button answers `unavailable` only when its credential check cannot run (`verify_error`, `verification_unavailable`), which needs the module's own verifier
+  to fail; the harness has a worker and cannot make it. (The other half of that answer, a From check that cannot get an answer from DNS, does happen since the From gate runs in the adapter tests against a
+  fixture DNS that answers SERVFAIL on command, and is recorded as `accounts.test.indeterminate.json`.) The file is allowlisted for the drift gate.
+- `accounts.events.page.json`: a page with a next cursor and a PAUSE event (`pause_reason` `daily_limit`). The contract matcher gives a live body to the fixture it differs from least, and a page of this
+  module never carries a pause reason (the harness does not pause an account) or a cursor (a page of 200), so every populated page lands on `accounts.events.last_page.json` (or, for a page of one event, on
+  the empty one) and this case stays unexercised: the file is allowlisted for the drift gate.
 
-Ten more are hand-written for the Phase 3 close-out (module 3 at the pin `8855a52`, the lead re-records every one from the real module and then moves it to the list above): the two files of the new route `POST /v1/cancel` (`cancel.ok.json`, `cancel.error.validation_failed.json`), a 409 of run that names its causes (`run.error.conflict.json`: another campaign active and the queue cap, the cap with `current` and `limit`; it REPLACES the recording of the unexplained 409, which an older module would answer), and seven RECORDINGS that were edited by hand to what the new module answers: `quote.ok.json`, `quote.feasible.json` (`caps.campaign_size_cap` added), `quote.infeasible.json` (a quote of 100001 recipients now holds a `campaign_cap` reason beside the queue cap, each with `cause`, `current` and `limit`), `report.campaign.page.json`, `report.campaign.last_page.json`, `report.campaign.empty.json` (`totals.cancelled` added) and `describe.ok.json` (`capabilities.plain_text_alternative`, `cancelled` last in `job_state`, the vocabulary `run_conflict_cause`, the three new `quote_reason_code` values; its `schemas` still say what the module said before C6). Where a file is a recording that was edited, nothing but the additions named here was changed.
-
-One more is hand-written for the Phase 3 close-out D3 (account events, owner decision OD-10): `accounts.events.last_page.json`, the LAST page (no next cursor) of the three events an account that was created, verified and quarantined by an enforced health action has: `created` (actor user, no flags before), `verified` (actor user, the outcome in the reason, no flags at all) and `quarantine` (actor system, flags before and after, reason `auth_failure`). It is written from the module's code (platformapi/account_create.go and dispatch/verify.go write the first two, dispatch/account_effect.go the third) and is the case a populated listing of the harness lands on; the lead re-records it from the first record run that has `TestM3Adapter_AccountEventsOfAnEnforcedHealthAction` in it and moves it to the list above.
-
-Another one is hand-written for the Phase 3 close-out D2 (module 3's From-gate on in the harness): `accounts.test.indeterminate.json`, the test button's answer when the credential check RAN (here it failed: `verify_tls_failed`, no provider text) but the From check could not get an answer from DNS (`from_alignment` state `indeterminate`, code `from_dns_unavailable`). It is written from the module's code (platformapi/account_test_button.go: a check that cannot run answers `{state: indeterminate, code}`) and is a case of its own because `accounts.test.unavailable.json` is the other way round (the credential check could not run) and a live body that shares only the From half would tie with it. The lead re-records it from the first record run that has `TestM3Adapter_FromGatePassWarnBlock` in it and moves it to the list above. The bulk-add contract now reads a row's `verification` and `from_alignment_state` with the test button's two sets (`test_verification_state`, `test_alignment_state`, which add `unavailable` and `indeterminate` to the account's own), the sets the adapter maps those two keys with.
-
-They use the same normalised ids as the recordings (`00000000-0000-4000-8000-000000000001` for the first, `...02` for the tenant of an account file) so that one tenant serves every file. Their request ids and cursors are the normalised forms too (a run of `a`): contractcheck's no-rot check reads a long opaque run as secret-shaped.
+They use the same normalised ids as the recordings of the account files (`00000000-0000-4000-8000-000000000001` for the first, `...02` for the tenant) so that one tenant serves every account file. Their request ids
+and cursors are the normalised forms too (a run of `a`): contractcheck's no-rot check reads a long opaque run as secret-shaped.
 
 - `run.error.internal_error.json`
-- `accounts.create.error.unprocessable.json`
 - `accounts.test.unavailable.json`
 - `accounts.events.page.json`
-- `accounts.events.last_page.json`
-- `accounts.test.indeterminate.json`
-- `describe.ok.json`
-- `quote.ok.json`
-- `quote.feasible.json`
-- `quote.infeasible.json`
-- `run.error.conflict.json`
-- `report.campaign.page.json`
-- `report.campaign.last_page.json`
-- `report.campaign.empty.json`
-- `cancel.ok.json`
-- `cancel.error.validation_failed.json`

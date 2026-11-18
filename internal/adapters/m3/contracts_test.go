@@ -23,14 +23,18 @@ import (
 	"github.com/coldmail-platform/platform/internal/modclient"
 )
 
-func clientAt(t testing.TB, url, token string) *m3.Client {
+func clientAt(t testing.TB, url, token string) *m3.Client { return clientFor(t, url, token, userA) }
+
+// clientFor is the tenant's client at a server: the contracts whose recording names a tenant of its own (the events page: the harness numbers the ids of that file by first appearance, and
+// there the account comes before its tenant) build their client for the tenant the recording holds.
+func clientFor(t testing.TB, url, token, user string) *m3.Client {
 	t.Helper()
 	mc := sendapitest.ModClient(t, modclient.M3, url, token, modclient.Options{})
 	a, err := m3.NewAdapter(mc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := a.For(userA)
+	c, err := a.For(user)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,6 +103,9 @@ func cases(t testing.TB) map[string]sendapitest.Case {
 	getOK, created, createdFailed := doc(t, "accounts.get.ok.json"), doc(t, "accounts.create.created.json"), doc(t, "accounts.create.created_failed.json")
 	dupBody, testOK, testFailed, bulkOK := doc(t, "accounts.create.error.duplicate.json"), doc(t, "accounts.test.ok.json"), doc(t, "accounts.test.failed.json"), doc(t, "accounts.bulk.ok.json")
 	bulkN := length(t, bulkOK, "results")
+	// the recorded events page names its own account and tenant (numbered by first appearance in THAT file, the event's id first): the client is built for the tenant the file holds
+	eventsLast := doc(t, "accounts.events.last_page.json")
+	eventsTenant, eventsAccount := asStr(t, eventsLast, "items[0].user_id"), asStr(t, eventsLast, "items[0].account_id")
 	return map[string]sendapitest.Case{
 		// ---- the shared four routes and describe, with module 3's profile
 		"POST /v1/quote | ok": {
@@ -219,8 +226,8 @@ func cases(t testing.TB) map[string]sendapitest.Case {
 		"GET /v1/report | job queued": {
 			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) { return c.ReportJobByID(ctx, jobID) }),
 			Check: func(t testing.TB, v any, err error) {
-				// a job that has not been claimed: the module sends only the keys that are set, and the Item carries nil for every other one (what a queued job that failed an attempt
-				// carries is held by TestKeysTheRecordingsLackAreReadAndRefusedWhenBroken, which injects those keys into this recording)
+				// a job that is queued (the recording is a job whose first attempt failed with a 4xx and was queued again: the module sends only the keys that are set, and the Item carries nil for
+				// every other one; the keys it carries are held to the recording by itemMatches, and TestKeysTheRecordingsLackAreReadAndRefusedWhenBroken injects other values into them)
 				it := v.(sendapi.Item)
 				itemMatches(t, it, reportQueued, true)
 				if it.Class != sendapi.ClassPending {
@@ -349,22 +356,32 @@ func cases(t testing.TB) map[string]sendapitest.Case {
 			}),
 			Check: func(t testing.TB, v any, err error) {
 				f := v.(m3.Feasibility)
-				// what the recording says: not feasible, a reason for each cause of a run refusal that applies (the campaign size cap, then the queue depth cap), each with its cause, the cap
-				// that bound, what the cap holds and the count asked, no projection
-				if f.Feasible || len(f.Reasons) != 2 || f.Capacity.EstimatedDurationSec != nil || f.Capacity.EstimateBasis != "" || len(f.Warnings) != 0 {
+				// what the recording says, read from it (the recorded quote is one reason, the queue depth cap, and a quote of both caps is built from it by TestFeasibilityForACampaignAndTheCausesItPredicts):
+				// not feasible, a reason for each cause of a run refusal that applies, each with the code that predicts its cause, the cap that bound, what the cap holds and the count asked, no projection
+				feasibilityMatches(t, f, quoteInf)
+				nReasons := length(t, quoteInf, "reasons")
+				if f.Feasible || nReasons == 0 || len(f.Reasons) != nReasons || f.Capacity.EstimatedDurationSec != nil || f.Capacity.EstimateBasis != "" || len(f.Warnings) != 0 {
 					t.Fatalf("feasibility = %+v", f)
 				}
-				for i, want := range []struct {
-					code  m3.InfeasibleCode
-					cause sendapi.Cause
-				}{{m3.InfeasibleCampaignCap, sendapi.CauseCampaignCap}, {m3.InfeasibleExceedsQueueCap, sendapi.CauseQueueCap}} {
-					r, at := f.Reasons[i], fmt.Sprintf("reasons[%d].", i)
-					if r.Code != want.code || r.Cause != want.cause || r.Limit == nil || *r.Limit != asInt(t, quoteInf, at+"limit") || r.Requested == nil || *r.Requested != quoteInfN || r.Current == nil || *r.Current != asInt(t, quoteInf, at+"current") || r.CapName != asStr(t, quoteInf, at+"cap_name") {
-						t.Fatalf("reason %d = %+v, want %s with cause %s and the numbers of the recording", i, r, want.code, want.cause)
+				codeOf := map[sendapi.Cause]m3.InfeasibleCode{
+					sendapi.CauseSuspended: m3.InfeasibleSuspended, sendapi.CauseCampaignActive: m3.InfeasibleCampaignActive, sendapi.CauseCampaignCap: m3.InfeasibleCampaignCap, sendapi.CauseQueueCap: m3.InfeasibleExceedsQueueCap,
+				}
+				var wantCauses []sendapi.Cause
+				for i, r := range f.Reasons {
+					at := fmt.Sprintf("reasons[%d].", i)
+					cause := sendapi.Cause(asStr(t, quoteInf, at+"cause"))
+					wantCauses = append(wantCauses, cause)
+					if r.Code != codeOf[cause] || r.Cause != cause || r.Limit == nil || *r.Limit != asInt(t, quoteInf, at+"limit") || r.Requested == nil || *r.Requested != quoteInfN || r.Current == nil || *r.Current != asInt(t, quoteInf, at+"current") || r.CapName != asStr(t, quoteInf, at+"cap_name") {
+						t.Fatalf("reason %d = %+v, want %s with cause %s and the numbers of the recording", i, r, codeOf[cause], cause)
 					}
 				}
-				if got := f.Causes(); !slices.Equal(got, []sendapi.Cause{sendapi.CauseCampaignCap, sendapi.CauseQueueCap}) || !f.Predicts(sendapi.CauseQueueCap) || f.Predicts(sendapi.CauseSuspended) {
-					t.Fatalf("the causes the quote predicts: %v", got)
+				if got := f.Causes(); !slices.Equal(got, wantCauses) {
+					t.Fatalf("the causes the quote predicts: %v, the recording names %v", got, wantCauses)
+				}
+				for _, c := range sendapi.RunCauses() {
+					if f.Predicts(c) != slices.Contains(wantCauses, c) {
+						t.Fatalf("Predicts(%s) = %v for a quote whose reasons name %v", c, f.Predicts(c), wantCauses)
+					}
 				}
 				same(t, "queue depth cap", f.Caps.QueueDepthCap, asInt(t, quoteInf, "caps.queue_depth_cap"))
 				same(t, "campaign size cap", f.Caps.CampaignSizeCap, asInt(t, quoteInf, "caps.campaign_size_cap"))
@@ -373,12 +390,12 @@ func cases(t testing.TB) map[string]sendapitest.Case {
 			Mutations: []sendapitest.Mutation{
 				set("feasible", true, "feasible"), del("reasons[0].code", "reasons[0].code"), set("reasons[0].limit", "x", "reasons[0].limit"), set("reasons[0].limit", -1, "reasons[0].limit"),
 				set("reasons[0].requested", 1.5, "reasons[0].requested"), del("caps.campaign_size_cap", "caps.campaign_size_cap"),
-				set("reasons[0].cause", "full_moon", "reasons[0].cause"), // a cause outside the closed set
-				set("reasons[0].cause", "queue_cap", "reasons[0].cause"), // a reason that names the cause of another
-				set("reasons[1].current", -1, "reasons[1].limit"),        // a number that is negative
-				del("reasons[1].cause", "reasons[1].cause"),              // a cap reason that names no cause
-				set("reasons[1].current", "x", "reasons[1].current"),     // a number that is not one
-
+				set("reasons[0].cause", "full_moon", "reasons[0].cause"),    // a cause outside the closed set
+				set("reasons[0].cause", "campaign_cap", "reasons[0].cause"), // a reason that names the cause of another (the recorded reason is the queue cap's)
+				set("reasons[0].current", -1, "reasons[0].limit"),           // a number that is negative
+				del("reasons[0].cause", "reasons[0].cause"),                 // a cap reason that names no cause
+				set("reasons[0].current", "x", "reasons[0].current"),        // a number that is not one
+				// the second reason of a quote that breaks both caps is held key by key by TestBothCapReasonsOfAQuoteAreHeldKeyByKey (the recording holds one reason)
 			},
 		},
 
@@ -461,11 +478,15 @@ func cases(t testing.TB) map[string]sendapitest.Case {
 				return c.CreateAccount(ctx, newAcct(t, 2))
 			}),
 			Check: func(t testing.TB, v any, err error) {
-				// a create whose credential check failed is still a created account, with the reason the module gave
+				// a create whose credential check failed is still a created account, with the reason the module gave: the code of the recording (read from it: the real module's answer of this shape
+				// is a connect failure, see the README; every other code is built from it by TestACreatedAccountWhoseCredentialCheckFailedCarriesEveryCodeOfTheModule), no verified instant, an attempt
+				// instant, and the provider's text exactly when the recording has the key
 				a := v.(m3.Account)
 				accountMatches(t, a, createdFailed)
-				if a.Verification.State != m3.VerificationFailed || a.Verification.Code != m3.VerifyAuthFailed || a.Verification.VerifiedAt != nil || a.Verification.VerifyAt == nil || a.Verification.SMTPResponse == nil {
-					t.Fatalf("the recording is not a create whose credential check failed: %+v", a.Verification)
+				code := asStr(t, createdFailed, "verification.code")
+				if a.Verification.State != m3.VerificationFailed || asStr(t, createdFailed, "verification.state") != string(m3.VerificationFailed) || code == "" || string(a.Verification.Code) != code ||
+					a.Verification.VerifiedAt != nil || a.Verification.VerifyAt == nil || (a.Verification.SMTPResponse == nil) != (optStr(createdFailed, "verification.smtp_response") == nil) {
+					t.Fatalf("the recording is not a create whose credential check failed with the code it names (%q): %+v", code, a.Verification)
 				}
 			},
 			Mutations: []sendapitest.Mutation{
@@ -519,10 +540,13 @@ func cases(t testing.TB) map[string]sendapitest.Case {
 				return c.TestAccount(ctx, acct1, false)
 			}),
 			Check: func(t testing.TB, v any, err error) {
+				// the file is the recorder's answer for the shape family of this case, not a click that verified (see the README): what it is is read from the file, and the decoded result must say the
+				// same. A click that verified carries no code and one that did not carries one (the same holds either way), and neither is a verdict that could not be saved
 				r := v.(m3.TestResult)
 				testMatches(t, r, testOK)
-				if r.Verification.State != m3.VerificationVerified || r.Verification.Code != m3.VerifyNone || r.Alignment.NotStored {
-					t.Fatalf("the recording is not a click that verified: %+v", r)
+				verified := asStr(t, testOK, "verification.state") == string(m3.VerificationVerified)
+				if (r.Verification.State == m3.VerificationVerified) != verified || (r.Verification.Code == m3.VerifyNone) != verified || r.Alignment.NotStored {
+					t.Fatalf("the recording says verified = %v and the result is not that click: %+v", verified, r)
 				}
 			},
 			Mutations: []sendapitest.Mutation{
@@ -557,7 +581,7 @@ func cases(t testing.TB) map[string]sendapitest.Case {
 			},
 			Mutations: []sendapitest.Mutation{set("verification.state", 5, "verification.state"), set("from_alignment.code", 5, "from_alignment.code")},
 		},
-		// the credential check ran and failed (a TLS failure, with an empty provider text); the From check could not get an answer from DNS (Phase 3 close-out D2; hand-written, see testdata/README.md)
+		// the credential check ran and failed (a TLS failure, with an empty provider text); the From check could not get an answer from DNS (Phase 3 close-out D2; recorded from the real module by record run 44395876225, see testdata/README.md)
 		"POST /v1/send-byo/accounts/{id}/test | indeterminate": {
 			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) {
 				return c.TestAccount(ctx, acct1, false)
@@ -656,18 +680,22 @@ func cases(t testing.TB) map[string]sendapitest.Case {
 				set("next_cursor", 5, "next_cursor"), del("items[1].from_flags", "items[1].from_flags"), set("items[0].id", "", "items[0].id"),
 			},
 		},
-		// the last page of the events of an account that was created, verified and quarantined by an enforced health action (Phase 3 close-out D3; hand-written, see testdata/README.md)
+		// the last page of the events of an account that was created, verified and quarantined by an enforced health action (Phase 3 close-out D3; recorded from the real module by record run 44395876225, see testdata/README.md; the harness numbers its ids by first appearance, so the account is norm2 and the tenant norm3)
 		"GET /v1/send-byo/accounts/{id}/events | last page": {
-			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) {
-				return c.AccountEvents(ctx, acct1, "")
-			}),
+			Do: func(t testing.TB, url, token string) (any, error) {
+				return clientFor(t, url, token, eventsTenant).AccountEvents(sendapitest.Ctx(t), eventsAccount, "")
+			},
 			Check: func(t testing.TB, v any, err error) {
 				p := v.(m3.EventPage)
-				if len(p.Items) != 3 || p.NextCursor != "" {
+				if len(p.Items) != length(t, eventsLast, "items") || len(p.Items) != 3 || p.NextCursor != "" {
 					t.Fatalf("page = %+v", p)
 				}
+				for i, e := range p.Items { // every event is held to the document it was decoded from, then the three the recording holds are named
+					eventMatches(t, e, must(t, eventsLast, fmt.Sprintf("items[%d]", i)))
+					same(t, "the account of event "+strconv.Itoa(i), e.AccountID, eventsAccount)
+				}
 				c, ver, q := p.Items[0], p.Items[1], p.Items[2]
-				if c.Actor != "user" || c.Action != "created" || c.From != nil || c.To == nil || c.To.Quarantined || c.Reason != nil || c.RequestID == "" || c.AccountID != acct1 {
+				if c.Actor != "user" || c.Action != "created" || c.From != nil || c.To == nil || c.To.Quarantined || c.Reason != nil || c.RequestID == "" {
 					t.Fatalf("created = %+v", c)
 				}
 				if ver.Actor != "user" || ver.Action != "verified" || ver.From != nil || ver.To != nil || ver.Reason == nil || *ver.Reason != "verify: success" || ver.RequestID != "" {

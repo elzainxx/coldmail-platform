@@ -105,6 +105,46 @@ func feasibilityMatches(t testing.TB, f m3.Feasibility, d any) {
 	}
 }
 
+// eventMatches holds an AccountEvent to the event object it was decoded from (d is one element of a page's items).
+func eventMatches(t testing.TB, e m3.AccountEvent, d any) {
+	t.Helper()
+	same(t, "id", e.ID, asStr(t, d, "id"))
+	same(t, "account_id", e.AccountID, asStr(t, d, "account_id"))
+	same(t, "actor", e.Actor, asStr(t, d, "actor"))
+	same(t, "action", e.Action, asStr(t, d, "action"))
+	flagsMatch(t, "from_flags", e.From, d, "from_flags")
+	flagsMatch(t, "to_flags", e.To, d, "to_flags")
+	samePtr(t, "reason", e.Reason, optStr(d, "reason"))
+	rid := ""
+	if r := optStr(d, "request_id"); r != nil {
+		rid = *r
+	}
+	same(t, "request_id", e.RequestID, rid)
+	sameTime(t, "created_at", &e.CreatedAt, optTime(t, d, "created_at"))
+}
+
+// flagsMatch holds the flags of an event to the object (or the null) at path of the document.
+func flagsMatch(t testing.TB, what string, got *m3.Flags, d any, path string) {
+	t.Helper()
+	if must(t, d, path) == nil {
+		if got != nil {
+			t.Fatalf("%s: got %+v, the recording says null", what, *got)
+		}
+		return
+	}
+	if got == nil {
+		t.Fatalf("%s: got nil, the recording says an object", what)
+	}
+	same(t, what+".paused", got.Paused, must(t, d, path+".paused").(bool))
+	pause := ""
+	if p := optStr(d, path+".pause_reason"); p != nil {
+		pause = mapped(*p, vocabSet(t, "pause_reason"))
+	}
+	same(t, what+".pause_reason", got.PauseReason, pause)
+	same(t, what+".quarantined", got.Quarantined, must(t, d, path+".quarantined").(bool))
+	same(t, what+".disabled", got.Disabled, must(t, d, path+".disabled").(bool))
+}
+
 // keepExisting returns the mutations whose path exists in the recording d (a mutation of a key the recording lacks cannot be made: the injection tests hold those keys), and fails the test
 // when fewer than min remain, so that a recording that loses keys cannot quietly shrink what is mutated to nothing.
 func keepExisting(t testing.TB, d any, min int, muts ...sendapitest.Mutation) []sendapitest.Mutation {

@@ -36,7 +36,7 @@ func withSets(pairs ...string) vocabs {
 // Contracts lists every module 3 response the adapter relies on: the shared routes and describe (sendapi.Contracts with module 3's profile, which has a cancel route and a 409 on run that
 // names its causes: the cancel responses and the run conflict with its details come with it), module 3's feasibility quote, and the account routes (list, get, create, test, bulk add, events), each with the cases whose shape differs (success, an empty page, every error the adapter maps). Fixture names a file under
 // this package's testdata/contract/ directory; the Shape of each entry is the one the adapter decodes that response with (the shared ones are built by the code the shared Client is, every
-// other one is the package variable the decoding code uses). The fixtures are recordings from the real module except the ones testdata/README.md names (the hand-written: since the Phase 3 close-out fourteen, which the lead re-records from the real module).
+// other one is the package variable the decoding code uses). The fixtures are recordings from the real module except the ones testdata/README.md names (the three hand-written ones, which no record run has reached yet).
 //
 // Vocab holds the closed sets the adapter maps from on that response, by describe's own names where the module publishes the set (vocab.go keeps each set equal to the switch that
 // handles it), and VocabAt the path of the position each constrains (see vocabs). Error responses constrain the error code at error.code.

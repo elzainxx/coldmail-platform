@@ -112,12 +112,36 @@ func TestFeasibilityForACampaignAndTheCausesItPredicts(t *testing.T) {
 	if !reflect.DeepEqual(plain, withCampaign) {
 		t.Fatal("the same answer decodes to two values")
 	}
-	want := []sendapi.Cause{sendapi.CauseCampaignCap, sendapi.CauseQueueCap}
-	if got := plain.Causes(); !slices.Equal(got, want) || !plain.Predicts(sendapi.CauseCampaignCap) || !plain.Predicts(sendapi.CauseQueueCap) || plain.Predicts(sendapi.CauseSuspended) || plain.Predicts(sendapi.CauseCampaignActive) {
-		t.Fatalf("causes %v", got)
+	// the causes the recording names, read from it (the recorded quote is the queue depth cap's one reason: the real module's answer of that shape): the quote predicts exactly those, in the
+	// module's order, and of the four causes of a run refusal it predicts each that the recording names and none that it does not
+	rec := doc(t, "quote.infeasible.json")
+	var want []sendapi.Cause
+	for i := 0; i < length(t, rec, "reasons"); i++ {
+		if c := optStr(rec, fmt.Sprintf("reasons[%d].cause", i)); c != nil {
+			want = append(want, sendapi.Cause(*c))
+		}
 	}
-	if plain.Caps.CampaignSizeCap == 0 || plain.Caps.CampaignSizeCap >= plain.Caps.QueueDepthCap {
-		t.Fatalf("caps %+v: the campaign size cap is stated by the module now", plain.Caps)
+	if len(want) == 0 {
+		t.Fatal("the recorded infeasible quote names no cause: the subject is empty")
+	}
+	if got := plain.Causes(); !slices.Equal(got, want) {
+		t.Fatalf("causes %v, the recording names %v", got, want)
+	}
+	for _, c := range sendapi.RunCauses() {
+		if plain.Predicts(c) != slices.Contains(want, c) {
+			t.Fatalf("Predicts(%s) = %v for a quote whose reasons name %v", c, plain.Predicts(c), want)
+		}
+	}
+	// the campaign size cap is stated by the module now, and the two caps are two numbers (the recording's differ, so a decoder that read one for the other is caught here)
+	if wantQ, wantC := asInt(t, rec, "caps.queue_depth_cap"), asInt(t, rec, "caps.campaign_size_cap"); wantC == 0 || wantQ == wantC || plain.Caps.CampaignSizeCap != wantC || plain.Caps.QueueDepthCap != wantQ {
+		t.Fatalf("caps %+v: the recording says a queue depth cap of %d and a campaign size cap of %d (two different numbers, the second not zero)", plain.Caps, wantQ, wantC)
+	}
+	// the control: a quote that breaks both caps (built from the recording, which holds the queue cap's reason alone) predicts both causes, campaign size cap first, and still none of the other two
+	both, nBoth := bothCapsQuote(t)
+	fb, err := newStack(t, reply(200, string(both)), modclient.Options{}).client(t, userA).FeasibilityForCampaign(ctxT(t), campaign, nBoth)
+	if err != nil || fb.Feasible || !slices.Equal(fb.Causes(), []sendapi.Cause{sendapi.CauseCampaignCap, sendapi.CauseQueueCap}) || !fb.Predicts(sendapi.CauseCampaignCap) || !fb.Predicts(sendapi.CauseQueueCap) ||
+		fb.Predicts(sendapi.CauseSuspended) || fb.Predicts(sendapi.CauseCampaignActive) {
+		t.Fatalf("a quote of both caps: %v %+v (causes %v)", err, fb, fb.Causes())
 	}
 	// the control: a feasible quote predicts no refusal
 	ok := newStack(t, replyFixture(200, "quote.feasible.json", t), modclient.Options{})
@@ -186,6 +210,48 @@ func TestEveryCauseIsAReasonOfItsOwn(t *testing.T) {
 	f, err := run(reasons(map[string]any{"code": "no_eligible_accounts"}))
 	if err != nil || len(f.Reasons) != 1 || f.Reasons[0].Code != m3.InfeasibleNoEligibleAccounts || f.Reasons[0].Cause != "" || len(f.Causes()) != 0 {
 		t.Fatalf("a reason with no cause: %+v %v", f, err)
+	}
+}
+
+// The recorded infeasible quote holds one reason, so the breakages of a SECOND reason (the position the recording cannot reach) are made on a quote of both caps built from it: every damage to
+// either reason (a code removed, a number of the wrong type or negative, a cause outside the closed set, missing, or the other reason's) is a Contract error naming that reason's own key, and the
+// same body undamaged is the control (accepted, both reasons read).
+func TestBothCapReasonsOfAQuoteAreHeldKeyByKey(t *testing.T) {
+	both, n := bothCapsQuote(t)
+	run := func(body []byte) (m3.Feasibility, error) {
+		return newStack(t, reply(200, string(body)), modclient.Options{}).client(t, userA).Feasibility(ctxT(t), n)
+	}
+	if f, err := run(both); err != nil || len(f.Reasons) != 2 || f.Reasons[0].Cause != sendapi.CauseCampaignCap || f.Reasons[1].Cause != sendapi.CauseQueueCap {
+		t.Fatalf("the control (the quote of both caps): %v %+v", err, f)
+	}
+	otherCause := []sendapi.Cause{sendapi.CauseQueueCap, sendapi.CauseCampaignCap}
+	for i := 0; i < 2; i++ {
+		at := func(k string) string { return fmt.Sprintf("reasons[%d].%s", i, k) }
+		for _, c := range []struct {
+			path  string
+			op    sendapitest.Op
+			value any
+			key   string
+		}{
+			{at("code"), sendapitest.Delete, nil, at("code")},
+			{at("limit"), sendapitest.Set, "x", at("limit")},
+			{at("limit"), sendapitest.Set, -1, at("limit")},
+			{at("requested"), sendapitest.Set, 1.5, at("requested")},
+			{at("current"), sendapitest.Set, -1, at("limit")}, // a negative number is named by the reason's limit key, whichever of its numbers it is
+			{at("current"), sendapitest.Set, "x", at("current")},
+			{at("cause"), sendapitest.Set, "full_moon", at("cause")},
+			{at("cause"), sendapitest.Delete, nil, at("cause")},
+			{at("cause"), sendapitest.Set, string(otherCause[i]), at("cause")}, // the cause of the other reason
+		} {
+			body, err := sendapitest.Mutate(both, c.path, c.op, c.value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f, err := run(body)
+			if ce := wantKind(t, err, modclient.Contract); ce.Key != c.key || !isZero(f) {
+				t.Fatalf("%s %v %v: key %q, want %q: %v", c.path, c.op, c.value, ce.Key, c.key, err)
+			}
+		}
 	}
 }
 
@@ -386,8 +452,26 @@ func TestTheTestButtonAnswersAreDecodedFromTheClosedSets(t *testing.T) {
 	if !saved.Alignment.NotStored {
 		t.Fatalf("a verdict that was not saved: %+v", saved)
 	}
-	if ok := read(sendapitest.Read(t, fixtures, "accounts.test.ok.json")); ok.Alignment.NotStored || ok.Alignment.Code != m3.AlignmentCodeNone {
+	okRec := sendapitest.Read(t, fixtures, "accounts.test.ok.json")
+	ok := read(okRec)
+	if ok.Alignment.NotStored || ok.Alignment.Code != m3.AlignmentCodeNone {
 		t.Fatalf("the control (the recording): %+v", ok)
+	}
+	testMatches(t, ok, doc(t, "accounts.test.ok.json"))
+	// a click that verified. The file named ok is not one (the real module's answer of that shape is a credential check that failed, see the README), so it is built from it: the verification
+	// is the module's success (state verified, no code, the provider's greeting taken from the recorded create that verified) and the From check is the recording's. The control is the recording
+	// itself, read the same way and held to its own document above.
+	greeting := asStr(t, doc(t, "accounts.create.created.json"), "verification.smtp_response")
+	verifiedBody := edit(t, okRec, func(m map[string]any) {
+		v := m["verification"].(map[string]any)
+		delete(v, "code")
+		v["state"], v["smtp_response"] = "verified", greeting
+	})
+	vr := read(verifiedBody)
+	testMatches(t, vr, doc2(t, verifiedBody))
+	if vr.Verification.State != m3.VerificationVerified || vr.Verification.Code != m3.VerifyNone || vr.Verification.SMTPResponse == nil || *vr.Verification.SMTPResponse != greeting ||
+		vr.Alignment.State != ok.Alignment.State || vr.Alignment.NotStored {
+		t.Fatalf("a click that verified: %+v", vr)
 	}
 	// the provider's reply and the module's sentence are opaque text: whatever they say they are carried (bounded) and never read as a code
 	odd := read(edit(t, failed, func(m map[string]any) {

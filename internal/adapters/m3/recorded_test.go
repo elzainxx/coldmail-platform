@@ -460,6 +460,23 @@ func TestRecordedFixturesCarryTheNormalisedIDs(t *testing.T) {
 		same(t, "events user_id", asStr(t, ev, fmt.Sprintf("items[%d].user_id", i)), userA)
 		same(t, "events account_id", asStr(t, ev, fmt.Sprintf("items[%d].account_id", i)), acct1)
 	}
+	// the events of the recorded last page are numbered by first appearance in THEIR file (the event's own id first, then the account, then the tenant) and name one account and one tenant
+	// among them: the ones the contract case builds its client from. The control is the hand-written page above, which is numbered as the tests number an account file and so is not numbered by
+	// first appearance.
+	last := doc(t, "accounts.events.last_page.json")
+	if length(t, last, "items") == 0 {
+		t.Fatal("the recorded events page holds no event: the subject is empty")
+	}
+	for i := 0; i < length(t, last, "items"); i++ {
+		same(t, "events user_id", asStr(t, last, fmt.Sprintf("items[%d].user_id", i)), asStr(t, last, "items[0].user_id"))
+		same(t, "events account_id", asStr(t, last, fmt.Sprintf("items[%d].account_id", i)), asStr(t, last, "items[0].account_id"))
+	}
+	byFirstAppearance := func(d map[string]any) bool {
+		return asStr(t, d, "items[0].id") == norm1 && asStr(t, d, "items[0].account_id") == norm2 && asStr(t, d, "items[0].user_id") == norm3
+	}
+	if !byFirstAppearance(last) || byFirstAppearance(ev) {
+		t.Fatalf("the recorded events page is not numbered by first appearance (id %s, account %s, tenant %s), or the control is: %v", asStr(t, last, "items[0].id"), asStr(t, last, "items[0].account_id"), asStr(t, last, "items[0].user_id"), byFirstAppearance(ev))
+	}
 	// every uuid-shaped value of a recording is a normalised one, and its timestamps are the normalised instant
 	for _, name := range recordedFixtures {
 		body := string(sendapitest.Read(t, fixtures, name))
@@ -484,9 +501,11 @@ func TestRecordedFixturesCarryTheNormalisedIDs(t *testing.T) {
 
 // ---- what the recordings do not hold, built from the recordings --------------------------------------------------------------------
 
-// The recordings hold the module's ordinary answers. Four keys the adapter reads are ones the module sends only sometimes and the harness did not provoke: an acknowledgment instant on an
-// account, a provider message id on a failed item's report, the test button's `error` key, a warned verdict. Each is injected into a RECORDED body, once with a good value (accepted and
-// carried, the control) and once with a value of the wrong type or an unreadable instant (refused, naming the key).
+// The recordings hold the module's ordinary answers. Keys the adapter reads that the module sends only sometimes are ones the recordings lack or hold in one state only: an acknowledgment
+// instant on an account (the recorded creates carry one, since the From gate ran and its warning was acknowledged, so the injected instant is a DIFFERENT one: the value read is the injected
+// one; likewise the error class and the provider text of a queued job, which the recorded queued job, a job whose first attempt failed, now carries: the injected words differ from the
+// recorded ones), a provider message id on a failed item's report, the test button's `error` key, a warned verdict. Each is injected into a RECORDED body, once with a good value (accepted and carried,
+// the control) and once with a value of the wrong type or an unreadable instant (refused, naming the key).
 func TestKeysTheRecordingsLackAreReadAndRefusedWhenBroken(t *testing.T) {
 	type tc struct {
 		name    string
@@ -505,28 +524,28 @@ func TestKeysTheRecordingsLackAreReadAndRefusedWhenBroken(t *testing.T) {
 	for _, c := range []tc{
 		{
 			name: "error_class of a queued job", fixture: "report.job.queued.json", inject: func(m map[string]any, v any) { m["error_class"] = v },
-			good: "transport_4xx", bad: 7, badKey: "error_class",
+			good: "throttle", bad: 7, badKey: "error_class",
 			call: func(t testing.TB, url string) (any, error) { return client(t, url).ReportJobByID(ctxT(t), jobID) },
 			check: func(t testing.TB, v any) {
-				samePtr(t, "error_class", v.(sendapi.Item).ErrorClass, str("transport_4xx"))
+				samePtr(t, "error_class", v.(sendapi.Item).ErrorClass, str("throttle"))
 			},
 		},
 		{
 			name: "smtp_response of a queued job", fixture: "report.job.queued.json", inject: func(m map[string]any, v any) { m["smtp_response"] = v },
-			good: "451 4.7.1 try later", bad: 5, badKey: "smtp_response",
+			good: "421 4.7.0 try again later", bad: 5, badKey: "smtp_response",
 			call: func(t testing.TB, url string) (any, error) { return client(t, url).ReportJobByID(ctxT(t), jobID) },
 			check: func(t testing.TB, v any) {
-				samePtr(t, "smtp_response", v.(sendapi.Item).SMTPResponse, str("451 4.7.1 try later"))
+				samePtr(t, "smtp_response", v.(sendapi.Item).SMTPResponse, str("421 4.7.0 try again later"))
 			},
 		},
 		{
 			name: "from_alignment.acknowledged_at", fixture: "accounts.create.created_failed.json", inject: acct("from_alignment", "acknowledged_at"),
-			good: "2026-01-01T00:00:00Z", bad: "when", badKey: "from_alignment.acknowledged_at",
+			good: "2026-01-02T03:04:05Z", bad: "when", badKey: "from_alignment.acknowledged_at",
 			call: func(t testing.TB, url string) (any, error) {
 				return client(t, url).CreateAccount(ctxT(t), newAcct(t, 1))
 			},
 			check: func(t testing.TB, v any) {
-				sameTime(t, "acknowledged_at", v.(m3.Account).FromAlignment.AcknowledgedAt, ptrTime(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)))
+				sameTime(t, "acknowledged_at", v.(m3.Account).FromAlignment.AcknowledgedAt, ptrTime(time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)))
 			},
 		},
 		{
@@ -604,25 +623,29 @@ func statusOf(fixture string) int {
 	return 200
 }
 
-// recordedFixtures are the 41 fixtures that were recorded from the real module 3 (full record run 44225747596, 2026-11-18) and normalised by contractcheck.Normalise; the other four files of
-// testdata/contract (handWrittenFixtures) are still hand-written. testdata/README.md names both lists and TestReadmeNamesWhichFixturesAreRecorded holds it to these two.
+// recordedFixtures are the 46 fixtures that are recordings of the real module 3 and normalised by contractcheck.Normalise: the 33 of the earlier full record run 44225747596 (2026-11-18) and the 13
+// that record run 44395876225 (2026-11-18, the Phase 3 close-out D1 run, against the module at its close-out pin) added (the ones that were hand-written before it: the 422 of an unacknowledged
+// From warning, the populated events page, the indeterminate test click, the two cancel files, describe, the three quotes, the three campaign reports and the 409 that names its causes). Seven of
+// the 33 were re-recorded by the new run because the real answer changed shape, four kept their earlier recording because the new answer had the same shape, and the other 22 are byte for byte
+// what the new run produced too. The other three files of testdata/contract (handWrittenFixtures) are still hand-written. testdata/README.md names both lists and
+// TestReadmeNamesWhichFixturesAreRecorded holds it to these two.
 var recordedFixtures = []string{
-	"run.created.json", "run.replay.json", "run.error.validation_failed.json", "run.error.unauthenticated.json", "run.error.not_found.json", "run.error.paused.json",
+	"run.created.json", "run.replay.json", "run.error.validation_failed.json", "run.error.unauthenticated.json", "run.error.not_found.json", "run.error.paused.json", "run.error.conflict.json",
 	"report.job.sent.json", "report.job.queued.json", "report.job.error.not_found.json",
-	"report.campaign.error.cursor_malformed.json", "report.campaign.error.cursor_forged.json",
+	"report.campaign.page.json", "report.campaign.last_page.json", "report.campaign.empty.json", "report.campaign.error.cursor_malformed.json", "report.campaign.error.cursor_forged.json",
 	"accounts.list.page.json", "accounts.list.last_page.json", "accounts.list.empty.json", "accounts.list.error.validation_failed.json", "accounts.list.error.cursor_malformed.json",
 	"accounts.get.ok.json", "accounts.get.error.not_found.json",
 	"accounts.create.created.json", "accounts.create.created_failed.json", "accounts.create.error.validation_failed.json", "accounts.create.error.duplicate.json", "accounts.create.error.conflict.json",
-	"accounts.test.ok.json", "accounts.test.failed.json", "accounts.test.error.rate_limited.json", "accounts.test.error.conflict.json", "accounts.test.error.not_found.json",
+	"accounts.create.error.unprocessable.json",
+	"accounts.test.ok.json", "accounts.test.failed.json", "accounts.test.indeterminate.json", "accounts.test.error.rate_limited.json", "accounts.test.error.conflict.json", "accounts.test.error.not_found.json",
 	"accounts.bulk.ok.json", "accounts.bulk.error.batch_too_large.json", "accounts.bulk.error.conflict.json", "accounts.bulk.error.validation_failed.json",
-	"accounts.events.empty.json",
+	"accounts.events.empty.json", "accounts.events.last_page.json",
+	"cancel.ok.json", "cancel.error.validation_failed.json", "describe.ok.json", "quote.ok.json", "quote.feasible.json", "quote.infeasible.json",
 }
 
-// handWrittenFixtures are the four files the record runs did not reach, and why (the README repeats it).
+// handWrittenFixtures are the three files no record run has reached, and why (the README repeats it).
 var handWrittenFixtures = []string{
-	"run.error.internal_error.json", "accounts.create.error.unprocessable.json", "accounts.test.unavailable.json", "accounts.events.page.json", "accounts.events.last_page.json", "accounts.test.indeterminate.json",
-	"cancel.ok.json", "cancel.error.validation_failed.json", "run.error.conflict.json", "describe.ok.json", "quote.ok.json", "quote.feasible.json", "quote.infeasible.json",
-	"report.campaign.page.json", "report.campaign.last_page.json", "report.campaign.empty.json",
+	"run.error.internal_error.json", "accounts.test.unavailable.json", "accounts.events.page.json",
 }
 
 // readmeSections splits testdata/README.md into the file names it lists under "## Recorded" and under "## Hand-written" (one backticked name per list item).
@@ -647,8 +670,9 @@ func readmeSections(text string) (recorded, hand []string) {
 	return recorded, hand
 }
 
-// The README says which fixtures are recorded and which are still hand-written, and the two lists are the 41 recorded files and the 4 others (every file of the directory once, none in both),
-// and it cites the record run. The control: a README that lists a recorded file as hand-written, or forgets one, is caught by the same comparison.
+// The README says which fixtures are recorded and which are still hand-written, and the two lists are the 46 recorded files and the 3 others (every file of the directory once, none in both),
+// and it cites both record runs (the close-out run that produced the recordings, and the earlier one whose recordings four files keep). The controls: a README that lists a recorded file as
+// hand-written, or forgets one, or does not cite one of the runs, is caught by the same comparison.
 func TestReadmeNamesWhichFixturesAreRecorded(t *testing.T) {
 	text := string(sendapitest.Read(t, "testdata", "README.md"))
 	all := map[string]bool{}
@@ -677,12 +701,17 @@ func TestReadmeNamesWhichFixturesAreRecorded(t *testing.T) {
 		if !slices.Equal(hand, wantHand) {
 			p = append(p, fmt.Sprintf("the hand-written list is %v, want %v", hand, wantHand))
 		}
-		if !strings.Contains(text, "44225747596") || !strings.Contains(text, "2026-11-18") {
-			p = append(p, "the record run and its date are not cited")
+		for _, run := range []string{"44395876225", "44225747596"} {
+			if !strings.Contains(text, run) {
+				p = append(p, "the record run "+run+" is not cited")
+			}
+		}
+		if !strings.Contains(text, "2026-11-18") {
+			p = append(p, "the date of the record runs is not cited")
 		}
 		return p
 	}
-	if len(wantRec) != 33 || len(wantHand) != 16 {
+	if len(wantRec) != 46 || len(wantHand) != 3 {
 		t.Fatalf("%d recorded and %d hand-written: the subject changed", len(wantRec), len(wantHand))
 	}
 	for _, f := range recordedFixtures {
@@ -700,8 +729,10 @@ func TestReadmeNamesWhichFixturesAreRecorded(t *testing.T) {
 	if p := problems(moved); len(p) == 0 {
 		t.Fatal("a README that does not list a recorded file was not caught")
 	}
-	if p := problems(strings.ReplaceAll(text, "44225747596", "1")); len(p) != 1 || !strings.Contains(p[0], "record run") {
-		t.Fatalf("a README that does not cite the run: %v", p)
+	for _, run := range []string{"44395876225", "44225747596"} {
+		if p := problems(strings.ReplaceAll(text, run, "1")); len(p) != 1 || !strings.Contains(p[0], "the record run "+run+" is not cited") {
+			t.Fatalf("a README that does not cite the run %s: %v", run, p)
+		}
 	}
 }
 
