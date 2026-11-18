@@ -299,6 +299,7 @@ m2w_scope_run() {
   DC run --rm -T harness-tests -test.v -test.count=1 -test.timeout=30m -test.run "$re" -test.skip "$skip" > "$WORK/h-run.log" 2>&1; trc=$?
   sed 's/^/  | /' "$WORK/h-run.log" | tail -60
   m2w_evidence "$WORK/h-run.log"
+  drift_evidence "$WORK/h-run.log"   # the contract drift session of module 2 (and, in record mode, its recorded fixtures): Phase 3, chunk B6
   [ "$trc" = 0 ] || { echo "  ---- failing tests (with context) ----"; grep -n -B1 -A14 -e '--- FAIL' "$WORK/h-run.log" | sed 's/^/  | /' | head -240; }
   if [ "$trc" = 0 ]; then
     m2w_outage

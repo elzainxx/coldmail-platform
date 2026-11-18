@@ -250,6 +250,7 @@ m1n_stage4() {
   grep -E " m1_node(_[a-z0-9]+)*_test.go:[0-9]+: " "$WORK/m1n-run.log" | cut -c1-420 | m1n_show | head -500
   echo "  ---- go test verdict lines ----"
   grep -E "^(--- (PASS|FAIL|SKIP)|PASS|FAIL|ok )" "$WORK/m1n-run.log" | m1n_show
+  drift_evidence "$WORK/m1n-run.log"   # the contract drift session of module 1 (and, in record mode, its recorded fixtures): Phase 3, chunk B6
   [ "$trc" = 0 ] || { echo "  ---- failing tests (with context) ----"; grep -n -B1 -A30 -e "--- FAIL" "$WORK/m1n-run.log" | cut -c1-700 | sed "s/^/  | /" | head -320; }
   [ "$trc" = 0 ] || { printf 'FAIL\t%s\t0.000s\n' "$GO_PKG" >> "$WORK/m1n-run.log"; die "the TestM1Node tests failed (exit $trc)"; }
   for t in "${M1N_TESTS[@]}"; do grep -q "^--- PASS: $t " "$WORK/m1n-run.log" || die "$t has no '--- PASS' line in the run log: it did not run, or did not pass"; done

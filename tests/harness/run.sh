@@ -58,6 +58,14 @@ case " ${FULL_INCLUDES:-} " in *" m2worker "*) [ "$SCOPE" = full ] && M2W_ON=1;;
 [ "$M2W_ON" = 1 ] && { M2W_DC=(-f "$HERE/docker-compose.m2worker.yml" --profile m2worker); M2W_EXPOSE="m2-worker"; TEST_TAGS="$TEST_TAGS m2worker"; }
 DC() { docker compose --project-directory "$HERE" -f "$HERE/docker-compose.yml" ${M2W_DC[@]+"${M2W_DC[@]}"} ${M1N_FILES[@]+"${M1N_FILES[@]}"} --env-file "$WORK/harness.env" --profile probe --profile tests "$@"; }
 banner() { echo; echo "================ [$1] $2"; }
+# drift_evidence LOG: the contract drift gate's own output (internal/contractcheck Session, tests TestM*_ZContractDrift): everything the session printed, whole (the differences, the undeclared calls, the contracts no response reached with the reason
+# of each allowance, the coverage and what it cannot see). In record mode (CONTRACT_RECORD=1, the dispatch input contract_record) the session prints each CONTRACT-FIXTURE block as test log lines: those are printed RAW (no prefix) so that
+# cmd/contract-fixtures can read them back out of the downloaded workflow log. Always returns 0: the verdict is the test's.
+drift_evidence() {
+  echo "  ---- the contract drift gate (internal/contractcheck): what each session compared and what it did not reach ----"
+  awk '/^=== RUN +Test[A-Za-z0-9]+_ZContractDrift/{r=1} r && /CONTRACT-FIXTURE BEGIN/{b=1} b{print; if (/CONTRACT-FIXTURE END/) b=0; next} r{print "  | " substr($0,1,600)} /^--- (PASS|FAIL|SKIP): Test[A-Za-z0-9]+_ZContractDrift/{r=0}' "$1"
+  return 0
+}
 dump_logs() { echo "---- service logs (tail) ----"; DC logs --no-color --tail=120 2>&1 | sed 's/^/  | /' || true; DC ps --all 2>&1 | sed 's/^/  | /' || true; }
 STAGE="start"
 die() { echo; echo "HARNESS RED at stage [$STAGE]: $*"; dump_logs; exit 1; }
@@ -275,6 +283,7 @@ echo "  ---- the live module-3 proof: the test's own log lines ----"; grep -E " 
 echo "  ---- the live module-1 proof: the test's own log lines ----"; grep -E " m1_bulk_settle_test.go:[0-9]+: " "$WORK/h-run.log" | sed 's/^/  | /' | head -80
 # module 2's real worker (Phase 3, B8): the test's own log lines, among them the sink's per-recipient counts, the timings and the job rows
 [ "$M2W_ON" = 1 ] && m2w_evidence "$WORK/h-run.log"
+drift_evidence "$WORK/h-run.log"   # the contract drift sessions of module 2 and module 3 (and, in record mode, the recorded fixtures): Phase 3, chunk B6
 # module 3's adapter (Phase 3, B9 to B11 and the control-only runs of the three B12 phases): the tests' own NOTE lines (counts, ledger rows, sink counters, positions), tests/harness/m3adapter/FIRST-RUN.md says what to look for
 echo "  ---- module 3's adapter: the test's own NOTE lines ----"; m3a_evidence "$WORK/h-run.log" 400
 # a failure must name itself: the tail above is only the end of the run, so print every failing test with its context
