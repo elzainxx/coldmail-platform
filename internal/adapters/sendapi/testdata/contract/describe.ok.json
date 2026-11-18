@@ -6,6 +6,7 @@
   "sequences": false,
   "reply_to_per_campaign": true,
   "open_tracking": false,
+  "plain_text_alternative": true,
   "click_tracking": false,
   "content_variation": true
  },
@@ -48,7 +49,8 @@
     "sending",
     "sent",
     "failed",
-    "bounced"
+    "bounced",
+    "cancelled"
    ],
    "fields": [
     "report.state",
@@ -79,6 +81,19 @@
    ],
    "fields": [
     "error.details[].issue"
+   ]
+  },
+  "run_conflict_cause": {
+   "source": "module_constant",
+   "values": [
+    "suspended",
+    "campaign_active",
+    "campaign_cap",
+    "queue_cap"
+   ],
+   "fields": [
+    "run.error.details[].code",
+    "quote.reasons[].cause"
    ]
   },
   "pricing_model": {

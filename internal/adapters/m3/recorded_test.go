@@ -135,6 +135,9 @@ func vocabSet(t testing.TB, name string) []string {
 	}
 	// a set that no fixture holds a position for is not on any contract (it would constrain nothing there): a bulk row's rejection reasons are the share of its code that is not a
 	// verification code, and an account's pause and quarantine reasons are the module's own published sets (the recorded describe, an independent source)
+	if name == "alignment_error" { // the one word of the module's closed table (api-contract.md, "Closed vocabularies of the test button and bulk-add bodies"): no fixture holds the key, it is present only when a verdict could not be saved
+		return []string{"from_check_not_saved"}
+	}
 	if name == "bulk_reject_code" {
 		var out []string
 		for _, w := range vocabSet(t, "bulk_row_code") {
@@ -345,7 +348,7 @@ func bulkMatches(t testing.TB, r m3.BulkResult, d any) {
 		if isCreated {
 			created++
 			same(t, base+"account_id", x.AccountID, asStr(t, d, base+"account_id"))
-			same(t, base+"verification", string(x.Verification), mapped(asStr(t, d, base+"verification"), vocabSet(t, "credential_verification_state")))
+			same(t, base+"verification", string(x.Verification), mapped(asStr(t, d, base+"verification"), vocabSet(t, "test_verification_state")))
 			code := ""
 			if c := optStr(d, base+"code"); c != nil {
 				code = mapped(*c, vocabSet(t, "verify_code"))
@@ -354,7 +357,7 @@ func bulkMatches(t testing.TB, r m3.BulkResult, d any) {
 			samePtr(t, base+"smtp_response", x.SMTPResponse, optStr(d, base+"smtp_response"))
 			al := ""
 			if a := optStr(d, base+"from_alignment_state"); a != nil {
-				al = mapped(*a, vocabSet(t, "from_verification_state"))
+				al = mapped(*a, vocabSet(t, "test_alignment_state"))
 			}
 			same(t, base+"from_alignment_state", string(x.Alignment), al)
 			samePtr(t, base+"from_alignment_message", x.AlignmentMessage, optStr(d, base+"from_alignment_message"))
@@ -550,12 +553,12 @@ func TestKeysTheRecordingsLackAreReadAndRefusedWhenBroken(t *testing.T) {
 		},
 		{
 			name: "from_alignment.error", fixture: "accounts.test.failed.json", inject: acct("from_alignment", "error"),
-			good: "from_gate_write_error", bad: 5, badKey: "from_alignment.error",
+			good: "from_check_not_saved", bad: "from_gate_write_error", badKey: "from_alignment.error",
 			call: func(t testing.TB, url string) (any, error) { return client(t, url).TestAccount(ctxT(t), acct1, false) },
 			check: func(t testing.TB, v any) {
 				r := v.(m3.TestResult)
-				// the module's internal slug becomes a boolean and none of its text is carried
-				if !r.Alignment.NotStored || strings.Contains(reflectDump(r), "from_gate_write_error") {
+				// the module's one closed word (the internal slugs of a failed save went to its log) is a boolean; an internal slug is a Contract error (the bad value) and none of it is carried
+				if !r.Alignment.NotStored || strings.Contains(reflectDump(r), "from_check_not_saved") {
 					t.Fatalf("result = %+v", r)
 				}
 			},
@@ -604,11 +607,9 @@ func statusOf(fixture string) int {
 // recordedFixtures are the 41 fixtures that were recorded from the real module 3 (full record run 44225747596, 2026-11-18) and normalised by contractcheck.Normalise; the other four files of
 // testdata/contract (handWrittenFixtures) are still hand-written. testdata/README.md names both lists and TestReadmeNamesWhichFixturesAreRecorded holds it to these two.
 var recordedFixtures = []string{
-	"describe.ok.json",
-	"quote.ok.json", "quote.feasible.json", "quote.infeasible.json",
-	"run.created.json", "run.replay.json", "run.error.validation_failed.json", "run.error.unauthenticated.json", "run.error.not_found.json", "run.error.conflict.json", "run.error.paused.json",
+	"run.created.json", "run.replay.json", "run.error.validation_failed.json", "run.error.unauthenticated.json", "run.error.not_found.json", "run.error.paused.json",
 	"report.job.sent.json", "report.job.queued.json", "report.job.error.not_found.json",
-	"report.campaign.page.json", "report.campaign.last_page.json", "report.campaign.empty.json", "report.campaign.error.cursor_malformed.json", "report.campaign.error.cursor_forged.json",
+	"report.campaign.error.cursor_malformed.json", "report.campaign.error.cursor_forged.json",
 	"accounts.list.page.json", "accounts.list.last_page.json", "accounts.list.empty.json", "accounts.list.error.validation_failed.json", "accounts.list.error.cursor_malformed.json",
 	"accounts.get.ok.json", "accounts.get.error.not_found.json",
 	"accounts.create.created.json", "accounts.create.created_failed.json", "accounts.create.error.validation_failed.json", "accounts.create.error.duplicate.json", "accounts.create.error.conflict.json",
@@ -620,6 +621,8 @@ var recordedFixtures = []string{
 // handWrittenFixtures are the four files the record runs did not reach, and why (the README repeats it).
 var handWrittenFixtures = []string{
 	"run.error.internal_error.json", "accounts.create.error.unprocessable.json", "accounts.test.unavailable.json", "accounts.events.page.json",
+	"cancel.ok.json", "cancel.error.validation_failed.json", "run.error.conflict.json", "describe.ok.json", "quote.ok.json", "quote.feasible.json", "quote.infeasible.json",
+	"report.campaign.page.json", "report.campaign.last_page.json", "report.campaign.empty.json",
 }
 
 // readmeSections splits testdata/README.md into the file names it lists under "## Recorded" and under "## Hand-written" (one backticked name per list item).
@@ -679,7 +682,7 @@ func TestReadmeNamesWhichFixturesAreRecorded(t *testing.T) {
 		}
 		return p
 	}
-	if len(wantRec) != 41 || len(wantHand) != 4 {
+	if len(wantRec) != 33 || len(wantHand) != 14 {
 		t.Fatalf("%d recorded and %d hand-written: the subject changed", len(wantRec), len(wantHand))
 	}
 	for _, f := range recordedFixtures {

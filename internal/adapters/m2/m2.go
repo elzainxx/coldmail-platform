@@ -1,8 +1,7 @@
 // Package m2 is the platform's adapter for module 2 (coldmail-send-managed): quote, run (idempotent on the platform's job_item_id), report (one job; a campaign with full pagination),
-// cancel, and the module's describe with its vocabularies compared with what the adapter handles. Phase 3, chunk B4.
+// cancel (the shared body's: module 3 has the same route since Phase 3 close-out C1), and the module's describe with its vocabularies compared with what the adapter handles. Phase 3, chunk B4.
 //
-// It is thin on purpose. Everything module 2 shares with module 3 lives in internal/adapters/sendapi (parameterised by a Profile); this package is module 2's Profile, the one route only
-// module 2 has (cancel), the construction from the platform's configuration, and the poll cadence the research derived. It holds no storage, no retry loop and no job logic: Phase 4
+// It is thin on purpose. Everything module 2 shares with module 3 lives in internal/adapters/sendapi (parameterised by a Profile); this package is module 2's Profile, the construction from the platform's configuration, and the poll cadence the research derived. It holds no storage, no retry loop and no job logic: Phase 4
 // owns jobs.
 //
 // Tenancy: every call of a Client carries the user_id the Client was built for. The module does not check it against a user list on these routes and answers a stranger's id with "nothing
@@ -13,8 +12,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
-	"strings"
 	"time"
 
 	"github.com/coldmail-platform/platform/internal/adapters/sendapi"
@@ -62,7 +59,9 @@ func Profile() sendapi.Profile {
 		AccountDetail:    false, // operator-owned pools: no user accounts
 		QuoteFeasibility: false, // quote is arithmetic and nothing else
 		LinearCost:       true,  // cost = recipient_count * unit_price_credits
-		RunConflict:      sendapi.ConflictBackpressure,
+		Cancel:           true,  // POST /v1/cancel (the shared body's Cancel)
+		// MODULE-FORCED(M2-F3): module 2 answers run's 409 with code conflict and no details (owner ruling OD-5: back-pressure, the platform's job engine of phase 4 serialises a user's campaigns), so the adapter can only call it back-pressure and can never say which of its causes it was.
+		RunConflict: sendapi.ConflictBackpressure,
 	}
 }
 
@@ -120,78 +119,10 @@ func (a *Adapter) CheckVocabularies(ctx context.Context) (sendapi.VocabReport, e
 	return sendapi.CheckVocabularies(ctx, a.mc, Profile())
 }
 
-// Client is the adapter for one tenant: the four shared routes (through the embedded sendapi.Client) and cancel.
+// Client is the adapter for one tenant: the four shared routes and cancel, all through the embedded sendapi.Client (Cancel is the shared body's: POST /v1/cancel, the same on module 3).
 type Client struct {
 	*sendapi.Client
 }
 
-// CancelPosition is module 2's answer to a cancel: the campaign's position AFTER the call, not a delta.
-type CancelPosition struct {
-	CampaignID string
-	// Cancelled is EVERY job of the campaign now in the terminal state `cancelled`, those cancelled by earlier calls included.
-	Cancelled int64
-	// InFlight are the jobs assigned or sending: they were already claimed, they finish and are reported once, truthfully; if their attempt fails they end cancelled instead of being retried.
-	InFlight int64
-	// AlreadyTerminal are the jobs that were sent, failed or bounced.
-	AlreadyTerminal int64
-}
-
-// Empty is true for {0, 0, 0}: the campaign has nothing to cancel, or the module does not know it.
-func (p CancelPosition) Empty() bool {
-	// MODULE-FORCED(M2-F2): a cancel of a campaign that is unknown, a typo or another tenant's answers 200 with all zeros (never a 404), so the adapter cannot tell "nothing to cancel" from "no such campaign" and exposes only Empty, never a claim that the campaign existed.
-	return p.Cancelled == 0 && p.InFlight == 0 && p.AlreadyTerminal == 0
-}
-
-var cancelShape = modclient.Object(
-	modclient.Req("campaign_id", modclient.Str), modclient.Req("cancelled", modclient.Int), modclient.Req("in_flight", modclient.Int), modclient.Req("already_terminal", modclient.Int),
-)
-
-// Cancel asks module 2 to cancel a campaign (POST /v1/cancel). What it does (research 2.5, 4.5):
-//
-//   - Every job of the campaign that is still `queued` becomes `cancelled`: terminal, never sent, and free (charge rule M2-08).
-//   - A job already assigned or sending is not stopped: it finishes, is reported once, and if its attempt fails it ends cancelled instead of returning to the queue.
-//   - A second cancel changes nothing and answers the same numbers (it is a no-op, so it is safe to repeat and the call is retried like a read).
-//   - It does NOT freeze the campaign: a run for a new job item of the same campaign afterwards is accepted and sent, so the platform must stop submitting.
-//   - It is not gated by the dispatch rung: it works while the module is paused.
-//
-// The answer is a position (see CancelPosition), and the split between Cancelled and InFlight is timing dependent while anything is claimed: assert the partition and the end state, not the
-// split. ON ANY ERROR THE POSITION IS THE ZERO VALUE.
-func (c *Client) Cancel(ctx context.Context, campaignID string) (CancelPosition, error) {
-	const op = "cancel"
-	route := "m2." + op
-	if !sendapi.CanonicalUUID(campaignID) {
-		return CancelPosition{}, &modclient.Error{Kind: modclient.Invalid, Module: modclient.M2, Route: route, Message: "the campaign id is not a lower-case uuid"}
-	}
-	body := struct {
-		CampaignID string `json:"campaign_id"`
-		UserID     string `json:"user_id"`
-	}{campaignID, c.UserID()}
-	resp, err := c.Module().Do(ctx, modclient.Request{Module: modclient.M2, Route: route, Method: http.MethodPost, Path: "/v1/cancel", Body: body, Idempotent: true})
-	if err != nil {
-		return CancelPosition{}, err
-	}
-	var w struct {
-		CampaignID      string `json:"campaign_id"`
-		Cancelled       int64  `json:"cancelled"`
-		InFlight        int64  `json:"in_flight"`
-		AlreadyTerminal int64  `json:"already_terminal"`
-	}
-	if err := modclient.Decode(resp, &w, cancelShape); err != nil {
-		return CancelPosition{}, err
-	}
-	bad := func(key, msg string) error {
-		return &modclient.Error{Kind: modclient.Contract, Module: modclient.M2, Route: route, Status: resp.Status, RequestID: resp.RequestID, Key: key, Message: msg, Sent: true}
-	}
-	switch {
-	case !strings.EqualFold(w.CampaignID, campaignID):
-		return CancelPosition{}, bad("campaign_id", "the answer is for another campaign than the one cancelled")
-	case w.Cancelled < 0:
-		return CancelPosition{}, bad("cancelled", "the count is negative")
-	case w.InFlight < 0:
-		return CancelPosition{}, bad("in_flight", "the count is negative")
-	case w.AlreadyTerminal < 0:
-		return CancelPosition{}, bad("already_terminal", "the count is negative")
-	}
-	// MODULE-FORCED(M2-F1): cancel answers the campaign's position after the call (cancelled counts every cancelled job, earlier calls included) and its cancelled / in_flight split depends on timing while anything is claimed, so the adapter returns the position as it is and computes no delta.
-	return CancelPosition{CampaignID: campaignID, Cancelled: w.Cancelled, InFlight: w.InFlight, AlreadyTerminal: w.AlreadyTerminal}, nil
-}
+// CancelPosition is module 2's answer to a cancel: the campaign's position AFTER the call, not a delta. It is the shared body's (sendapi.CancelPosition): module 3 answers the same.
+type CancelPosition = sendapi.CancelPosition

@@ -5,9 +5,9 @@ names each file once (`Route`, `Case`, `Fixture`, `Status`, the `Shape` the adap
 it through the adapter's real code, refuse a file no contract names and a contract whose file is missing, and refuse mutated copies (a required key removed, a key's type changed, a state
 outside the vocabulary).
 
-All twenty files are recordings. The test `TestReadmeNamesTheRecordedAndHandWrittenFixtures` holds this list to the directory: a file named in the wrong section, in both or in neither is a failure.
+Nineteen of the twenty files are recordings and one is a recording that was then edited by hand (named in the last section). The test `TestReadmeNamesTheRecordedAndHandWrittenFixtures` holds this list to the directory: a file named in the wrong section, in both or in neither is a failure.
 
-## RECORDED (20 files, from the real module)
+## RECORDED (19 files, from the real module)
 
 Recorded from module 2 running as a real service with a real worker and a controllable SMTP sink, by the contract drift sessions in record mode on the runner, 2026-11-18: the full record run
 44225747596 and the scoped record run 44225754836 (an earlier scoped run, 44211663760, recorded the first ten). They are normalised by `contractcheck.Normalise`: uuids become
@@ -32,7 +32,6 @@ The tests read what each file says (an id, a count, a state, a cursor) from the 
 - `report.campaign.empty.json`: a campaign of ten items that all reached a final state (six sent, two bounced, two failed with `attempts_exhausted`), no next cursor: not an empty campaign.
 - `report.campaign.error.cursor_malformed.json`: 400, details `cursor` `malformed`.
 - `report.campaign.error.cursor_forged.json`: 500 `internal_error` for a cursor that decodes but is not a timestamp and an id (the module answers a 500 where its documentation says 400).
-- `describe.ok.json`: the module's self-description (`send_managed`, `v1`, seven job states, twelve item reasons, seven error codes).
 - `cancel.ok.json`: the module's answer to a cancel: four cancelled, none in flight, one already terminal.
 - `cancel.error.validation_failed.json`: 400, details `campaign_id` `required`.
 
@@ -45,10 +44,11 @@ Three things the recordings do not hold, and what the tests do about each (none 
   `empty` is asserted for what its file holds, whatever that is.
 - A cancel with something left to cancel is a recording whose counts the test fills in (`TestCancelIsAPositionAndASecondCancelIsANoOp`), for the position that is not empty.
 
-## HAND-WRITTEN (none)
+## HAND-WRITTEN (1 file)
 
-No fixture of module 2 is hand-written any more: the record runs reached all twenty contracts. A contract added to `m2.Contracts()` before a run reaches it is hand-written until then, and this
-section names it.
+- `describe.ok.json`: the module's self-description (`send_managed`, `v1`, seven job states, twelve item reasons, seven error codes), RECORDED by the runs above and then EDITED BY HAND for the Phase 3 close-out (B3): `capabilities.plain_text_alternative: true` was added. The lead re-records it from the real module at the new pin, and then it is a recording again.
+
+A contract added to `m2.Contracts()` before a run reaches it is hand-written until then, and this section names it.
 
 ## One file's provenance
 

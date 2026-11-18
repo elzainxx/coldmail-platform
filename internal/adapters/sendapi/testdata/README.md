@@ -9,3 +9,10 @@ Ids and times are obviously synthetic and there is no secret in any file.
 
 Request ids and cursors are written in the harness's normalised spelling (a run of `a`, a run of `A`): the fixture check of the drift gate reads a long mixed run of characters as a
 secret, and a recording of the real module is normalised the same way.
+
+## Phase 3 close-out (all HAND-WRITTEN, like every file here)
+
+The module-3-shaped profile now has the `cancelled` state and a cancel route (C1) and a 409 on run that names its causes (C2), so: `cancel.ok.json` and `cancel.error.validation_failed.json` are new, the campaign
+reports carry `totals.cancelled`, `run.error.conflict.json` carries two `details` entries (`campaign_active`, and `queue_cap` with `current` and `limit`), the quote's caps carry `campaign_size_cap`
+and `describe.ok.json` lists `cancelled` last in `job_state`, the vocabulary `run_conflict_cause` and `capabilities.plain_text_alternative`. Module 2's set (`internal/adapters/m2/testdata/contract/`) is
+read by this package's tests too: its cancel files are the same two shapes. None of these is a recording; the lead re-records every fixture of the three packages from the real modules.

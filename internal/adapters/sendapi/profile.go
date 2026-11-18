@@ -48,15 +48,18 @@ func stateClass(state string) (Class, bool) {
 	return 0, false
 }
 
-// Conflict says what a 409 on `run` means for a module. Both modules answer it with the same body (code `conflict`, a fixed sentence, no details): the cause is not in the response.
+// Conflict says what a 409 on `run` means for a module.
 type Conflict uint8
 
 const (
-	// ConflictBackpressure: module 2. The only cause that matters is "this user has another campaign in flight" (a lost unique-violation race is the other, and it is a retry away from the
-	// same answer), so a 409 is back-pressure: ErrBackpressure.
+	// ConflictBackpressure: module 2. Its 409 is code `conflict`, a fixed sentence and NO details (owner ruling OD-5: back-pressure, phase 4 owns the serialisation). The only cause that
+	// matters is "this user has another campaign in flight" (a lost unique-violation race is the other, and it is a retry away from the same answer), so a 409 is back-pressure:
+	// ErrBackpressure.
 	ConflictBackpressure Conflict = iota + 1
-	// ConflictUnexplained: module 3. Four indistinguishable causes (suspended, another campaign active, the campaign cap, the queue cap): ErrConflictUnexplained, never a guess at which.
-	ConflictUnexplained
+	// ConflictCauses: module 3 since Phase 3 close-out C2. Its 409 keeps status, code and message and adds `details[]`, one entry per cause that applies (suspended, campaign_active,
+	// campaign_cap, queue_cap): the error is a *ConflictError carrying exactly the causes the module named (errors.Is on ErrRunSuspended and the other three). A 409 that names none (a
+	// module older than C2) is ErrConflictUnexplained, never a guess; a cause outside the closed set is a Contract error.
+	ConflictCauses
 )
 
 // Profile is everything that differs between module 2 and module 3 on the four routes they answer identically (research m3-api section 11.2). It is data: the client body has no `if
@@ -67,7 +70,7 @@ type Profile struct {
 	// DescribeModule is the `module` the module's describe names ("send_managed", "send_byo"): a describe that names another is a wiring mistake.
 	DescribeModule string
 	// JobStates is the closed set of item states the module can report (describe vocabularies.job_state, in the module's enum order). Every one must be a state stateClass handles. A
-	// profile that lists `cancelled` also has a `cancelled` count in the campaign totals (module 2); one that does not has none (module 3). A state outside this set is a contract violation.
+	// profile that lists `cancelled` also has a `cancelled` count in the campaign totals (module 2, and module 3 since Phase 3 close-out C1). A state outside this set is a contract violation.
 	JobStates []string
 	// ErrorClasses is the closed set of error_class values (describe vocabularies.error_class). A value outside it is tolerated and carried (the set is additive).
 	ErrorClasses []string
@@ -85,23 +88,28 @@ type Profile struct {
 	QuoteFeasibility bool
 	// LinearCost is true when the quote's cost must equal recipient_count * unit_price_credits (module 2; module 3's cost is inert).
 	LinearCost bool
+	// Cancel is true when the module has POST /v1/cancel (module 2; module 3 since Phase 3 close-out C1): Client.Cancel works, and Contracts lists the cancel responses. A profile with Cancel
+	// lists the `cancelled` state, the one a cancelled item lands in.
+	Cancel bool
 	// RunConflict says what a 409 on run means.
 	RunConflict Conflict
 }
 
 // The vocabulary names are describe's own (vocabularies.<name>), so the live drift gate compares like with like.
 const (
-	vocabJobState    = "job_state"
-	vocabErrorClass  = "error_class"
-	vocabItemReason  = "item_reason"
-	vocabErrorCodes  = "error_codes"
-	apiVersion       = "v1"
-	maxVocabularyLen = 64
+	vocabJobState   = "job_state"
+	vocabErrorClass = "error_class"
+	vocabItemReason = "item_reason"
+	vocabErrorCodes = "error_codes"
+	// vocabRunConflictCause is the closed set of causes of a run 409 (module 3's describe vocabulary of that name); the adapter owns the list (runCauses) because the sentinels are its own.
+	vocabRunConflictCause = "run_conflict_cause"
+	apiVersion            = "v1"
+	maxVocabularyLen      = 64
 )
 
 // strictVocabularies are the vocabularies a value outside which is a contract violation at run time (not merely an additive change): the item state decides what is final and what is
-// charged, so a new state is never mapped by guesswork.
-var strictVocabularies = map[string]bool{vocabJobState: true}
+// charged, and the cause of a run 409 decides whether the platform stops, waits or splits the campaign, so a new state or cause is never mapped by guesswork.
+var strictVocabularies = map[string]bool{vocabJobState: true, vocabRunConflictCause: true}
 
 // hasCancelled reports whether `cancelled` is a state of the module (and a key of its campaign totals).
 func (p Profile) hasCancelled() bool { return slices.Contains(p.JobStates, "cancelled") }
@@ -121,6 +129,9 @@ func (p Profile) Vocabularies() map[string][]string {
 	}
 	if p.hasReason() {
 		out[vocabItemReason] = slices.Clone(p.ItemReasons)
+	}
+	if p.RunConflict == ConflictCauses {
+		out[vocabRunConflictCause] = slices.Clone(runCauses)
 	}
 	return out
 }
@@ -144,7 +155,7 @@ func (p Profile) validate() error {
 		return errors.New("the profile must name the module its describe answers")
 	}
 	switch p.RunConflict {
-	case ConflictBackpressure, ConflictUnexplained:
+	case ConflictBackpressure, ConflictCauses:
 	default:
 		return errors.New("the profile must say what a 409 on run means")
 	}
@@ -182,6 +193,9 @@ func (p Profile) validate() error {
 	}
 	if terminal == 0 {
 		return errors.New("the profile lists no terminal state")
+	}
+	if p.Cancel && !p.hasCancelled() {
+		return errors.New("the profile has a cancel route and no cancelled state for a cancelled item to land in")
 	}
 	return nil
 }

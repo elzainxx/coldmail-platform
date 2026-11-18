@@ -27,12 +27,13 @@ import (
 func TestProfileIsTheDocumentedOne(t *testing.T) {
 	want := sendapi.Profile{
 		Module: modclient.M3, DescribeModule: "send_byo",
-		JobStates:        []string{"queued", "assigned", "sending", "sent", "failed", "bounced"},
+		JobStates:        []string{"queued", "assigned", "sending", "sent", "failed", "bounced", "cancelled"},
 		ErrorClasses:     []string{"bounce_permanent", "transport_4xx", "auth_failure", "throttle", "timeout", "unknown"},
 		ErrorCodes:       []string{"validation_failed", "unauthenticated", "not_found", "method_not_allowed", "conflict", "unprocessable", "rate_limited", "internal_error", "paused"},
 		AccountDetail:    true,
 		QuoteFeasibility: true,
-		RunConflict:      sendapi.ConflictUnexplained,
+		Cancel:           true,
+		RunConflict:      sendapi.ConflictCauses,
 	}
 	if got := m3.Profile(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("the profile is not the documented one:\n got %+v\nwant %+v", got, want)
@@ -47,8 +48,11 @@ func TestProfileIsTheDocumentedOne(t *testing.T) {
 	if m3.Profile().JobStates[0] != "queued" {
 		t.Fatal("Profile shares its slices between calls")
 	}
-	if slicesHas(m3.Profile().JobStates, "cancelled") || len(m3.Profile().ItemReasons) != 0 {
-		t.Fatal("module 3 has no cancelled state and no reason key")
+	if !slicesHas(m3.Profile().JobStates, "cancelled") || len(m3.Profile().ItemReasons) != 0 || !m3.Profile().Cancel {
+		t.Fatal("module 3 has the cancelled state and a cancel route since the close-out, and no reason key")
+	}
+	if js := m3.Profile().JobStates; js[len(js)-1] != "cancelled" {
+		t.Fatalf("cancelled is the LAST state of describe's job_state, the profile has %v", js)
 	}
 	s := newStack(t, nil, modclient.Options{})
 	if _, err := s.a.For(userA); err != nil {
@@ -287,7 +291,7 @@ const (
 
 func placementOf(method, path string) placement {
 	switch {
-	case path == "/v1/quote" || path == "/v1/run" || (method == http.MethodPost && (path == "/v1/send-byo/accounts" || path == "/v1/send-byo/accounts/bulk")):
+	case path == "/v1/quote" || path == "/v1/run" || path == "/v1/cancel" || (method == http.MethodPost && (path == "/v1/send-byo/accounts" || path == "/v1/send-byo/accounts/bulk")):
 		return inBody
 	}
 	return inQuery
@@ -409,43 +413,6 @@ func TestEveryCallCarriesItsTenant(t *testing.T) {
 	}
 }
 
-// ---- no cancel -----------------------------------------------------------------------------------------------------------
-
-// cancelMethods lists the methods of a type whose name says cancel: module 3 has no such route, and a method that pretended would invent a behaviour the module does not have.
-func cancelMethods(v any) []string {
-	var out []string
-	rt := reflect.TypeOf(v)
-	for i := 0; i < rt.NumMethod(); i++ {
-		if n := rt.Method(i).Name; strings.Contains(strings.ToLower(n), "cancel") {
-			out = append(out, n)
-		}
-	}
-	return out
-}
-
-type pretender struct{}
-
-func (pretender) Cancel() {}
-
-// Module 3 has no cancel route and no cancelled state: neither the tenant's Client (the shared body's methods included) nor the Adapter has a method that says cancel. The control runs the
-// same check on a type that has one.
-func TestThereIsNoCancel(t *testing.T) {
-	for name, v := range map[string]any{"*Client": (*m3.Client)(nil), "*Adapter": (*m3.Adapter)(nil), "*sendapi.Client": (*sendapi.Client)(nil)} {
-		if got := cancelMethods(v); len(got) != 0 {
-			t.Fatalf("%s has %v: module 3 has no cancel", name, got)
-		}
-		if reflect.TypeOf(v).NumMethod() < 5 {
-			t.Fatalf("%s has %d methods: the instrument matched nothing", name, reflect.TypeOf(v).NumMethod())
-		}
-	}
-	if got := cancelMethods(pretender{}); len(got) != 1 {
-		t.Fatalf("the control did not catch a Cancel method: %v", got)
-	}
-	if slicesHas(m3.Profile().JobStates, "cancelled") {
-		t.Fatal("module 3's profile lists a cancelled state")
-	}
-}
-
 // ---- describe -------------------------------------------------------------------------------------------------------------
 
 // Module 3's recorded describe advertises exactly what the adapter handles (no break, nothing additive), and CheckVocabularies names each way that stops being true: a state gone, a state
@@ -458,7 +425,7 @@ func TestCheckVocabulariesAgainstModule3sDescribe(t *testing.T) {
 		return s.a.CheckVocabularies(ctxT(t))
 	}
 	rep, err := run(t, good)
-	if err != nil || rep.Breaking() || rep.Additive() || len(rep.Diffs) != 2 {
+	if err != nil || rep.Breaking() || rep.Additive() || len(rep.Diffs) != 3 { // job_state, error_class and run_conflict_cause
 		t.Fatalf("the recorded describe: %v %+v", err, rep)
 	}
 	for _, d := range rep.Diffs {
@@ -482,13 +449,17 @@ func TestCheckVocabulariesAgainstModule3sDescribe(t *testing.T) {
 		key  string
 		msg  string
 	}{
-		"bounced is gone":        {mut("vocabularies.job_state.values[5]", sendapitest.Delete, nil), "vocabularies.job_state", "bounced"},
-		"a new state":            {mut("vocabularies.job_state.values[5]", sendapitest.Set, "cancelled"), "vocabularies.job_state", "bounced"},
-		"an error class gone":    {mut("vocabularies.error_class.values[2]", sendapitest.Delete, nil), "vocabularies.error_class", "auth_failure"},
-		"an error code gone":     {mut("error_codes[5]", sendapitest.Delete, nil), "error_codes", "unprocessable"},
-		"module 2's describe":    {mut("module", sendapitest.Set, "send_managed"), "module", "wired"},
-		"another api version":    {mut("api_version", sendapitest.Set, "v2"), "api_version", "version"},
-		"the vocabulary is gone": {mut("vocabularies.error_class", sendapitest.Delete, nil), "vocabularies.error_class", "no longer advertises"},
+		"bounced is gone":               {mut("vocabularies.job_state.values[5]", sendapitest.Delete, nil), "vocabularies.job_state", "bounced"},
+		"a state replaced by a new one": {mut("vocabularies.job_state.values[5]", sendapitest.Set, "paused"), "vocabularies.job_state", "bounced"},
+		"cancelled is gone":             {mut("vocabularies.job_state.values[6]", sendapitest.Delete, nil), "vocabularies.job_state", "cancelled"},
+		"a cause is gone":               {mut("vocabularies.run_conflict_cause.values[3]", sendapitest.Delete, nil), "vocabularies.run_conflict_cause", "queue_cap"},
+		"a new cause":                   {mut("vocabularies.run_conflict_cause.values", sendapitest.Set, []string{"suspended", "campaign_active", "campaign_cap", "queue_cap", "full_moon"}), "vocabularies.run_conflict_cause", "does not handle"},
+		"the causes are gone":           {mut("vocabularies.run_conflict_cause", sendapitest.Delete, nil), "vocabularies.run_conflict_cause", "no longer advertises"},
+		"an error class gone":           {mut("vocabularies.error_class.values[2]", sendapitest.Delete, nil), "vocabularies.error_class", "auth_failure"},
+		"an error code gone":            {mut("error_codes[5]", sendapitest.Delete, nil), "error_codes", "unprocessable"},
+		"module 2's describe":           {mut("module", sendapitest.Set, "send_managed"), "module", "wired"},
+		"another api version":           {mut("api_version", sendapitest.Set, "v2"), "api_version", "version"},
+		"the vocabulary is gone":        {mut("vocabularies.error_class", sendapitest.Delete, nil), "vocabularies.error_class", "no longer advertises"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			rep, err := run(t, tc.body)

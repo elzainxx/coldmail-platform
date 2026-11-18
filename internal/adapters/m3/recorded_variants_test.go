@@ -3,7 +3,6 @@ package m3_test
 import (
 	"encoding/json"
 	"errors"
-	"strings"
 	"testing"
 
 	"github.com/coldmail-platform/platform/internal/adapters/m3"
@@ -140,7 +139,7 @@ func TestBulkRowsTheRecordingLacksAreDecodedFromTheRecordingPlusRows(t *testing.
 		{"status": "created", "account_id": norm3, "verification": "failed", "code": "verify_auth_failed", "smtp_response": "535 5.7.8 Authentication credentials invalid", "from_alignment_state": "unaligned_warned",
 			"from_alignment_message": "The From address is not confirmed to match the sending server."},
 		{"status": "created", "account_id": "00000000-0000-4000-8000-000000000004", "verification": "unverified", "from_alignment_state": "aligned"},
-		{"status": "created", "account_id": "00000000-0000-4000-8000-000000000005", "verification": "brand_new_word", "code": "verify_brand_new", "from_alignment_state": "brand_new_state"},
+		{"status": "created", "account_id": "00000000-0000-4000-8000-000000000005", "verification": "unavailable", "code": "verify_error", "from_alignment_state": "indeterminate"},
 		{"status": "rejected", "code": "account_cap_reached"},
 		{"status": "rejected", "code": "from_alignment_warning_unacknowledged", "details": []any{map[string]any{"field": "acknowledge_alignment_warning", "issue": "required"}}},
 	}
@@ -176,8 +175,8 @@ func TestBulkRowsTheRecordingLacksAreDecodedFromTheRecordingPlusRows(t *testing.
 	if !failed.Created || failed.Verification != m3.VerificationFailed || failed.VerifyCode != m3.VerifyAuthFailed || failed.Alignment != m3.AlignmentWarned || failed.SMTPResponse == nil || failed.AlignmentMessage == nil {
 		t.Fatalf("a created row whose credential failed: %+v", failed)
 	}
-	if unknown.Verification != m3.VerificationUnrecognised || unknown.VerifyCode != m3.VerifyUnrecognised || unknown.Alignment != m3.AlignmentUnrecognised || strings.Contains(reflectDump(unknown), "brand_new") {
-		t.Fatalf("a created row with words the adapter does not know: %+v", unknown)
+	if unknown.Verification != m3.VerificationUnavailable || unknown.VerifyCode != m3.VerifyError || unknown.Alignment != m3.AlignmentIndeterminate {
+		t.Fatalf("a created row whose check could not run (the words the user routes add to the enum's): %+v", unknown)
 	}
 	if res.Rows[n+3].Reason != m3.RejectAccountCap || res.Rows[n+4].Reason != m3.RejectAlignmentWarning || len(res.Rows[n+4].Fields) != 1 {
 		t.Fatalf("the rejected rows: %+v %+v", res.Rows[n+3], res.Rows[n+4])

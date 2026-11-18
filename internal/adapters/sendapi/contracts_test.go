@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -71,7 +72,7 @@ func m3Cases() map[string]sendapitest.Case {
 					t.Fatalf("run = %+v", r)
 				}
 			},
-			Mutations: []sendapitest.Mutation{set("state", "teleported", "state"), set("state", "cancelled", "state")}, // module 3 has no cancelled
+			Mutations: []sendapitest.Mutation{set("state", "teleported", "state"), set("state", 7, "state")},
 		},
 		"POST /v1/run | error validation_failed": {
 			Do:        call(func(ctx context.Context, c *sendapi.Client) (any, error) { return c.Run(ctx, jobItem) }),
@@ -101,10 +102,33 @@ func m3Cases() map[string]sendapitest.Case {
 			Kind: modclient.Refused,
 			Code: "conflict",
 			Check: func(t testing.TB, v any, err error) {
-				if !errors.Is(err, sendapi.ErrConflictUnexplained) || errors.Is(err, sendapi.ErrBackpressure) {
-					t.Fatalf("module 3's 409 on run: %v", err)
+				// the recorded 409 names two causes: another campaign is active and the queue holds its cap
+				got := sendapi.CausesOf(err)
+				if !slices.Equal(got, []sendapi.Cause{sendapi.CauseCampaignActive, sendapi.CauseQueueCap}) || !errors.Is(err, sendapi.ErrRunCampaignActive) || !errors.Is(err, sendapi.ErrRunQueueCap) ||
+					errors.Is(err, sendapi.ErrRunSuspended) || errors.Is(err, sendapi.ErrRunCampaignCap) || errors.Is(err, sendapi.ErrConflictUnexplained) || errors.Is(err, sendapi.ErrBackpressure) {
+					t.Fatalf("module 3's 409 on run: causes %v, error %v", got, err)
 				}
 			},
+			Mutations: []sendapitest.Mutation{
+				brokenEnvelope(),
+				set("error.details[0].field", "teleported", "error.details[].field"),      // a cause outside the closed set
+				set("error.details[1].field", "campaign_active", "error.details[].field"), // one cause named twice
+				set("error.details[0].issue", "required", "error.details[].field"),        // an entry that is not a conflict
+			},
+		},
+		"POST /v1/cancel | ok": {
+			Do: call(func(ctx context.Context, c *sendapi.Client) (any, error) { return c.Cancel(ctx, campaign) }),
+			Check: func(t testing.TB, v any, err error) {
+				if p := v.(sendapi.CancelPosition); p.CampaignID != campaign || p.Cancelled != 7 || p.InFlight != 1 || p.AlreadyTerminal != 2 || p.Total() != 10 || p.Empty() {
+					t.Fatalf("cancel = %+v", p)
+				}
+			},
+			Mutations: []sendapitest.Mutation{del("cancelled", "cancelled"), set("in_flight", -1, "in_flight"), set("already_terminal", "2", "already_terminal"), set("cancelled", -3, "cancelled"), del("campaign_id", "campaign_id")},
+		},
+		"POST /v1/cancel | error validation_failed": {
+			Do:        call(func(ctx context.Context, c *sendapi.Client) (any, error) { return c.Cancel(ctx, campaign) }),
+			Kind:      modclient.Refused,
+			Code:      "validation_failed",
 			Mutations: []sendapitest.Mutation{brokenEnvelope()},
 		},
 		"POST /v1/run | error paused": {
@@ -356,8 +380,12 @@ func TestContractFixturesDoNotRot(t *testing.T) {
 func TestContractShapesAreTheClientsShapes(t *testing.T) {
 	shapeName := func(c modclient.RouteContract) string {
 		switch {
+		case c.Route == sendapi.RouteRun && c.Case == "error conflict":
+			return "conflict"
 		case c.Status >= 400:
 			return "error"
+		case c.Route == sendapi.RouteCancel:
+			return "cancel"
 		case c.Route == sendapi.RouteQuote:
 			return "quote"
 		case c.Route == sendapi.RouteRun:

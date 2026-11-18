@@ -95,6 +95,7 @@ func cases(t testing.TB) map[string]sendapitest.Case {
 	runCreated, runReplay, reportQueued := doc(t, "run.created.json"), doc(t, "run.replay.json"), doc(t, "report.job.queued.json")
 	campaignLast, describeDoc, quoteFeasible := doc(t, "report.campaign.last_page.json"), doc(t, "describe.ok.json"), doc(t, "quote.feasible.json")
 	feasibleN := asInt(t, quoteFeasible, "recipient_count")
+	conflictDoc, cancelDoc := doc(t, "run.error.conflict.json"), doc(t, "cancel.ok.json")
 	getOK, created, createdFailed := doc(t, "accounts.get.ok.json"), doc(t, "accounts.create.created.json"), doc(t, "accounts.create.created_failed.json")
 	dupBody, testOK, testFailed, bulkOK := doc(t, "accounts.create.error.duplicate.json"), doc(t, "accounts.test.ok.json"), doc(t, "accounts.test.failed.json"), doc(t, "accounts.bulk.ok.json")
 	bulkN := length(t, bulkOK, "results")
@@ -130,7 +131,7 @@ func cases(t testing.TB) map[string]sendapitest.Case {
 					t.Fatalf("run = %+v", r)
 				}
 			},
-			Mutations: []sendapitest.Mutation{del("job_id", "job_id"), set("state", "teleported", "state"), set("state", "cancelled", "state"), set("state", nil, "state")},
+			Mutations: []sendapitest.Mutation{del("job_id", "job_id"), set("state", "teleported", "state"), set("state", nil, "state")},
 		},
 		"POST /v1/run | replay": {
 			Do: run,
@@ -157,12 +158,43 @@ func cases(t testing.TB) map[string]sendapitest.Case {
 			},
 		},
 		"POST /v1/run | error conflict": {
-			Do: run, Kind: modclient.Refused, Code: "conflict", Mutations: []sendapitest.Mutation{brokenEnvelope()},
+			Do: run, Kind: modclient.Refused, Code: "conflict",
+			Mutations: []sendapitest.Mutation{
+				brokenEnvelope(),
+				set("error.details[0].field", "teleported", "error.details[].field"), set("error.details[0].issue", "required", "error.details[].field"),
+			},
 			Check: func(t testing.TB, v any, err error) {
-				if !errors.Is(err, sendapi.ErrConflictUnexplained) || errors.Is(err, sendapi.ErrBackpressure) || !errors.Is(err, modclient.ErrRefused) || !errors.Is(m3.ExplainConflict(err), m3.ErrConflictUnexplained) {
-					t.Fatalf("module 3's 409 on run: %v", err)
+				// the causes the file names, read from the file: the typed error carries exactly those and no sentinel of another cause
+				var want []sendapi.Cause
+				for i := 0; i < length(t, conflictDoc, "error.details"); i++ {
+					want = append(want, sendapi.Cause(asStr(t, conflictDoc, fmt.Sprintf("error.details[%d].field", i))))
+				}
+				if got := sendapi.CausesOf(err); len(want) == 0 || !slices.Equal(got, want) || errors.Is(err, sendapi.ErrConflictUnexplained) || errors.Is(err, sendapi.ErrBackpressure) || !errors.Is(err, modclient.ErrRefused) {
+					t.Fatalf("module 3's 409 on run: causes %v, want %v: %v", got, want, err)
+				}
+				for _, c := range sendapi.RunCauses() {
+					if errors.Is(err, c.Sentinel()) != slices.Contains(want, c) {
+						t.Fatalf("errors.Is(%s) = %v for a 409 that names %v", c, errors.Is(err, c.Sentinel()), want)
+					}
 				}
 			},
+		},
+		"POST /v1/cancel | ok": {
+			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) {
+				return c.Cancel(ctx, asStr(t, cancelDoc, "campaign_id"))
+			}),
+			Check: func(t testing.TB, v any, err error) {
+				p := v.(sendapi.CancelPosition)
+				c, f, a := asInt(t, cancelDoc, "cancelled"), asInt(t, cancelDoc, "in_flight"), asInt(t, cancelDoc, "already_terminal")
+				if p.Cancelled != c || p.InFlight != f || p.AlreadyTerminal != a || p.CampaignID != asStr(t, cancelDoc, "campaign_id") || p.Total() != c+f+a || p.Empty() != (c == 0 && f == 0 && a == 0) {
+					t.Fatalf("cancel = %+v, the recording says %d, %d, %d", p, c, f, a)
+				}
+			},
+			Mutations: []sendapitest.Mutation{del("cancelled", "cancelled"), set("in_flight", "1", "in_flight"), del("already_terminal", "already_terminal"), del("campaign_id", "campaign_id"), set("cancelled", -2, "cancelled")},
+		},
+		"POST /v1/cancel | error validation_failed": {
+			Do:   call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) { return c.Cancel(ctx, campaign) }),
+			Kind: modclient.Refused, Code: "validation_failed", Mutations: []sendapitest.Mutation{brokenEnvelope()},
 		},
 		"POST /v1/run | error paused":         {Do: run, Kind: modclient.Paused, Code: "paused"},
 		"POST /v1/run | error internal_error": {Do: run, Kind: modclient.Internal, Code: "internal_error"},
@@ -317,19 +349,36 @@ func cases(t testing.TB) map[string]sendapitest.Case {
 			}),
 			Check: func(t testing.TB, v any, err error) {
 				f := v.(m3.Feasibility)
-				// what the recording says: not feasible, one reason, the cap the module named and the count asked, no projection
-				if f.Feasible || len(f.Reasons) != 1 || f.Reasons[0].Code != m3.InfeasibleExceedsQueueCap || f.Reasons[0].Limit == nil || *f.Reasons[0].Limit != asInt(t, quoteInf, "reasons[0].limit") ||
-					f.Reasons[0].Requested == nil || *f.Reasons[0].Requested != quoteInfN || f.Reasons[0].CapName != asStr(t, quoteInf, "reasons[0].cap_name") ||
-					f.Capacity.EstimatedDurationSec != nil || f.Capacity.EstimateBasis != "" || len(f.Warnings) != 0 {
+				// what the recording says: not feasible, a reason for each cause of a run refusal that applies (the campaign size cap, then the queue depth cap), each with its cause, the cap
+				// that bound, what the cap holds and the count asked, no projection
+				if f.Feasible || len(f.Reasons) != 2 || f.Capacity.EstimatedDurationSec != nil || f.Capacity.EstimateBasis != "" || len(f.Warnings) != 0 {
 					t.Fatalf("feasibility = %+v", f)
 				}
+				for i, want := range []struct {
+					code  m3.InfeasibleCode
+					cause sendapi.Cause
+				}{{m3.InfeasibleCampaignCap, sendapi.CauseCampaignCap}, {m3.InfeasibleExceedsQueueCap, sendapi.CauseQueueCap}} {
+					r, at := f.Reasons[i], fmt.Sprintf("reasons[%d].", i)
+					if r.Code != want.code || r.Cause != want.cause || r.Limit == nil || *r.Limit != asInt(t, quoteInf, at+"limit") || r.Requested == nil || *r.Requested != quoteInfN || r.Current == nil || *r.Current != asInt(t, quoteInf, at+"current") || r.CapName != asStr(t, quoteInf, at+"cap_name") {
+						t.Fatalf("reason %d = %+v, want %s with cause %s and the numbers of the recording", i, r, want.code, want.cause)
+					}
+				}
+				if got := f.Causes(); !slices.Equal(got, []sendapi.Cause{sendapi.CauseCampaignCap, sendapi.CauseQueueCap}) || !f.Predicts(sendapi.CauseQueueCap) || f.Predicts(sendapi.CauseSuspended) {
+					t.Fatalf("the causes the quote predicts: %v", got)
+				}
 				same(t, "queue depth cap", f.Caps.QueueDepthCap, asInt(t, quoteInf, "caps.queue_depth_cap"))
-				same(t, "queue depth limit", f.QueueDepthLimit(), m3.KnownLimit(asInt(t, quoteInf, "caps.queue_depth_cap")))
+				same(t, "campaign size cap", f.Caps.CampaignSizeCap, asInt(t, quoteInf, "caps.campaign_size_cap"))
 				same(t, "eligible accounts", f.Capacity.EligibleAccounts, asInt(t, quoteInf, "capacity.eligible_accounts"))
 			},
 			Mutations: []sendapitest.Mutation{
 				set("feasible", true, "feasible"), del("reasons[0].code", "reasons[0].code"), set("reasons[0].limit", "x", "reasons[0].limit"), set("reasons[0].limit", -1, "reasons[0].limit"),
-				set("reasons[0].requested", 1.5, "reasons[0].requested"),
+				set("reasons[0].requested", 1.5, "reasons[0].requested"), del("caps.campaign_size_cap", "caps.campaign_size_cap"),
+				set("reasons[0].cause", "full_moon", "reasons[0].cause"), // a cause outside the closed set
+				set("reasons[0].cause", "queue_cap", "reasons[0].cause"), // a reason that names the cause of another
+				set("reasons[1].current", -1, "reasons[1].limit"),        // a number that is negative
+				del("reasons[1].cause", "reasons[1].cause"),              // a cap reason that names no cause
+				set("reasons[1].current", "x", "reasons[1].current"),     // a number that is not one
+
 			},
 		},
 
@@ -698,6 +747,12 @@ func TestContractsNameModule3AndItsShapes(t *testing.T) {
 			if !slices.Equal(c.Vocab["error_codes"], m3.Profile().ErrorCodes) {
 				t.Fatalf("%s / %s: error vocabulary %v", c.Route, c.Case, c.Vocab)
 			}
+			if c.Route == sendapi.RouteRun && c.Case == "error conflict" { // the one error whose details carry more than field and issue (the cause, and for a cap the numbers)
+				if reflect.DeepEqual(c.Shape, sendapi.ErrorShape()) || !slices.Equal(c.Vocab["run_conflict_cause"], causeWords()) {
+					t.Fatalf("the run conflict contract is the shared error shape, or does not carry the closed causes: %v", c.Vocab)
+				}
+				continue
+			}
 			if !reflect.DeepEqual(c.Shape, sendapi.ErrorShape()) {
 				t.Fatalf("%s / %s: not the shared error shape", c.Route, c.Case)
 			}
@@ -776,7 +831,7 @@ func TestVocabIsTheSwitchesAndTheSwitchesAreTheVocab(t *testing.T) {
 	bySwitch := map[string]string{
 		"verificationState": "credential_verification_state", "testVerificationState": "test_verification_state", "alignmentState": "from_verification_state",
 		"testAlignmentState": "test_alignment_state", "verifyCode": "verify_code", "rejectReason": "bulk_reject_code", "quoteReason": "quote_reason_code", "pauseReason": "pause_reason",
-		"quarantineReason": "quarantine_reason", "bulkStatus": "bulk_add_row_status",
+		"quarantineReason": "quarantine_reason", "bulkStatus": "bulk_add_row_status", "alignmentCode": "alignment_code", "alignmentError": "alignment_error",
 	}
 	var fns []string
 	for fn := range bySwitch {
@@ -793,10 +848,10 @@ func TestVocabIsTheSwitchesAndTheSwitchesAreTheVocab(t *testing.T) {
 			vocab[name] = v
 		}
 	}
-	sharedNames := []string{"job_state", "error_class", "error_codes", "item_reason"}
+	sharedNames := []string{"job_state", "error_class", "error_codes", "item_reason", "run_conflict_cause"}
 	// the sets that no contract can carry because no fixture holds a string at their position (a quarantine reason is absent from every healthy account, a bulk row's rejection reasons
 	// share the one position of its code with the verification codes): the first is the module's published set, the second the share of the union that is not a verification code
-	noPosition := []string{"quarantine_reason", "bulk_reject_code"}
+	noPosition := []string{"quarantine_reason", "bulk_reject_code", "alignment_error"}
 	covered := map[string]bool{}
 	for fn, name := range bySwitch {
 		covered[name] = true
@@ -867,49 +922,6 @@ func TestVocabIsTheSwitchesAndTheSwitchesAreTheVocab(t *testing.T) {
 		if got, ok := vocab[name]; !ok || !slices.Equal(got, want) {
 			t.Fatalf("%s is %v on the contracts, the profile says %v", name, got, want)
 		}
-	}
-}
-
-// A word outside a closed set is never an error and carries no text: the account is listed with the set's Unrecognised word, and the module's own word is nowhere in the result.
-func TestAWordOutsideAClosedSetIsUnrecognisedNotCarried(t *testing.T) {
-	word := "brand_new_state_zzz"
-	mutate := func(name, id, path string, v any) *m3.Account {
-		body, err := sendapitest.Mutate(sendapitest.Read(t, fixtures, name), path, sendapitest.Set, v)
-		if err != nil {
-			t.Fatal(err)
-		}
-		s := newStack(t, reply(200, string(body)), modclient.Options{})
-		a, err := s.client(t, userA).GetAccount(ctxT(t), id)
-		if err != nil {
-			t.Fatalf("%s: %v", path, err)
-		}
-		return &a
-	}
-	for _, tc := range []struct {
-		path string
-		got  func(*m3.Account) string
-		want string
-	}{
-		{"verification.state", func(a *m3.Account) string { return string(a.Verification.State) }, string(m3.VerificationUnrecognised)},
-		{"from_alignment.state", func(a *m3.Account) string { return string(a.FromAlignment.State) }, string(m3.AlignmentUnrecognised)},
-		{"verification.code", func(a *m3.Account) string { return string(a.Verification.Code) }, string(m3.VerifyUnrecognised)},
-		{"status.pause_reason", func(a *m3.Account) string { return a.PauseReason }, "unrecognised"},
-	} {
-		fixture, id := "accounts.get.ok.json", acct1
-		if tc.path == "verification.code" {
-			fixture, id = "accounts.create.created_failed.json", acct1
-		}
-		a := mutate(fixture, id, tc.path, word)
-		if got := tc.got(a); got != tc.want {
-			t.Fatalf("%s: %q, want %q", tc.path, got, tc.want)
-		}
-		if strings.Contains(reflectDump(a), word) {
-			t.Fatalf("%s: the module's own word reached the value", tc.path)
-		}
-	}
-	// control: a word inside the set is carried as itself
-	if a := mutate("accounts.get.ok.json", acct1, "verification.state", "failed"); a.Verification.State != m3.VerificationFailed {
-		t.Fatalf("a known word: %q", a.Verification.State)
 	}
 }
 

@@ -160,6 +160,7 @@
     "total": 12,
     "sent": 9,
     "bounced": 2,
+    "cancelled": 0,
     "failed": 0,
     "in_flight": 0,
     "pending": 1,

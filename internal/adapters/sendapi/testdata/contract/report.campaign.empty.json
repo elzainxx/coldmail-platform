@@ -5,6 +5,7 @@
   "total": 0,
   "sent": 0,
   "bounced": 0,
+  "cancelled": 0,
   "failed": 0,
   "in_flight": 0,
   "pending": 0,

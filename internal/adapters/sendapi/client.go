@@ -1,6 +1,6 @@
-// Package sendapi is the one body that serves both sender modules (module 2, send-managed; module 3, send-byo) on the four routes they answer identically: POST /v1/quote, POST /v1/run,
-// and GET /v1/report in its two forms (one job; a whole campaign, paged). Phase 3, chunk B4 (module 2's adapter, internal/adapters/m2, is this package with module 2's Profile and
-// nothing else but its own cancel route); module 3's adapter is built on the same body.
+// Package sendapi is the one body that serves both sender modules (module 2, send-managed; module 3, send-byo) on the routes they answer identically: POST /v1/quote, POST /v1/run,
+// GET /v1/report in its two forms (one job; a whole campaign, paged) and, since the Phase 3 close-out (C1), POST /v1/cancel. Phase 3, chunk B4 (module 2's adapter, internal/adapters/m2, is this
+// package with module 2's Profile and nothing else); module 3's adapter is built on the same body.
 //
 // # WHAT IT IS
 //
@@ -20,8 +20,8 @@
 //
 // # WHERE THE TWO MODULES DIFFER
 //
-// In Profile, as data: the vocabularies each emits, whether the single report always carries its optional keys, module 3's account detail and feasibility block, whether a 409 on run
-// means back-pressure (module 2) or an unexplained refusal (module 3). There is no `if module == ...` in the client.
+// In Profile, as data: the vocabularies each emits, whether the single report always carries its optional keys, module 3's account detail and feasibility block, whether the module has a cancel route (both do), and whether a
+// 409 on run means back-pressure (module 2: no details) or names its causes (module 3, since Phase 3 close-out C2: a *ConflictError, errors.Is on the four cause sentinels). There is no `if module == ...` in the client.
 package sendapi
 
 import (
@@ -53,6 +53,7 @@ const (
 	opRun          = "run"
 	opReport       = "report"
 	opReportCamp   = "report.campaign"
+	opCancel       = "cancel"
 )
 
 // Options are the constructor dials of a Client (not process dials: nothing here is read from the environment).
@@ -161,6 +162,24 @@ func (c *Client) call(ctx context.Context, op, method, path string, q url.Values
 // Quote prices recipientCount recipients for the tenant (POST /v1/quote). It is pure arithmetic on module 2 and arithmetic plus a feasibility verdict on module 3; it reserves nothing and
 // says nothing about whether the tenant can be served (module 2's capacity shows only after run). The count is bounded here (0 to MaxRecipientCount): the module's multiplication is not.
 func (c *Client) Quote(ctx context.Context, recipientCount int64) (Quote, error) {
+	return c.quote(ctx, "", recipientCount)
+}
+
+// QuoteForCampaign is Quote for recipients that will JOIN a campaign (module 3 only: the optional campaign_id of its quote). Omitted (Quote), the module answers for a NEW campaign: it starts with
+// zero jobs against the campaign size cap and any job of the user that is not final blocks it (campaign_active); given, the jobs already in that campaign count against the cap and its own
+// active jobs are not "another campaign". The question the module answers is "can recipientCount more jobs be accepted by run, one at a time, right now", from the same function run reads.
+// A module whose quote takes no campaign id (module 2) refuses the call before anything is sent (modclient.NotSupported); the id must be a lower-case uuid.
+func (c *Client) QuoteForCampaign(ctx context.Context, campaignID string, recipientCount int64) (Quote, error) {
+	if !c.p.QuoteFeasibility {
+		return Quote{}, &modclient.Error{Kind: modclient.NotSupported, Module: c.p.Module, Route: c.p.route(opQuote), Message: "the module's quote takes no campaign id"}
+	}
+	if err := c.id(opQuote, "campaign id", campaignID); err != nil {
+		return Quote{}, err
+	}
+	return c.quote(ctx, campaignID, recipientCount)
+}
+
+func (c *Client) quote(ctx context.Context, campaignID string, recipientCount int64) (Quote, error) {
 	// MODULE-FORCED(SA-F6): module 2's quote has no upper bound on recipient_count and multiplies it by a price of up to 1000 in 64 bits, so the adapter bounds the count itself rather than trust a cost that may have wrapped.
 	if recipientCount < 0 || recipientCount > MaxRecipientCount {
 		return Quote{}, c.invalid(opQuote, "the recipient count must be between 0 and MaxRecipientCount")
@@ -168,7 +187,8 @@ func (c *Client) Quote(ctx context.Context, recipientCount int64) (Quote, error)
 	body := struct {
 		RecipientCount int64  `json:"recipient_count"`
 		UserID         string `json:"user_id"`
-	}{recipientCount, c.user}
+		CampaignID     string `json:"campaign_id,omitempty"` // absent unless the caller names a campaign: the request is then byte for byte what it was
+	}{recipientCount, c.user, campaignID}
 	resp, err := c.call(ctx, opQuote, http.MethodPost, "/v1/quote", nil, body)
 	if err != nil {
 		return Quote{}, err
@@ -213,7 +233,8 @@ func (c *Client) Quote(ctx context.Context, recipientCount int64) (Quote, error)
 // COMMITTED before this call. Run is idempotent on jobItemID: 202 is a job just created, 200 is the job that already existed with its CURRENT state (RunResult.Created tells them apart);
 // both are success, and the same call may be repeated after any failure.
 //
-// Refusals: 409 is ErrBackpressure on module 2 and ErrConflictUnexplained on module 3 (both also unwrap to the Refused error); 503 `paused` is modclient.Paused (wait, do not page); a 404
+// Refusals: 409 is ErrBackpressure on module 2 and, on module 3, a *ConflictError naming the causes the module gave (suspended, campaign_active, campaign_cap, queue_cap; CausesOf, errors.Is on the sentinels), or
+// ErrConflictUnexplained when a module 3 older than the close-out names none (all of them also unwrap to the Refused error); 503 `paused` is modclient.Paused (wait, do not page); a 404
 // means the job item is not committed or is not this tenant's (a platform bug, not a retry).
 func (c *Client) Run(ctx context.Context, jobItemID string) (RunResult, error) {
 	if err := c.id(opRun, "job item id", jobItemID); err != nil {
@@ -373,4 +394,56 @@ func (c *Client) reportJob(ctx context.Context, q url.Values) (Item, error) {
 		return Item{}, err
 	}
 	return c.item(resp, opReport, "", w, true)
+}
+
+// ---- cancel ----------------------------------------------------------------------------------------------------------
+
+// Cancel asks the module to cancel a campaign of the tenant (POST /v1/cancel; module 2, and module 3 since Phase 3 close-out C1: the same path, request, answer and semantics, so one method
+// serves both). What it does:
+//
+//   - Every job of the campaign that is still `queued` becomes `cancelled`: terminal, never sent, and free (charge rules M2-08 and M3-01).
+//   - A job already assigned or sending is not stopped: it finishes, is reported once, and if its attempt fails it ends cancelled instead of returning to the queue.
+//   - A second cancel changes nothing and answers the same position (it is a no-op, so it is safe to repeat and the call is retried like a read).
+//   - It does NOT freeze the campaign: a run for a new job item of the same campaign afterwards is accepted, so the platform must stop submitting.
+//   - It is not gated by the dispatch rung or by a suspension: it works while the module is paused, and for a suspended user it leaves the suspension alone.
+//   - It is tenant scoped: the tenant's id is in the body, and another tenant's campaign, an unknown one and an empty one all answer {0, 0, 0} and change nothing.
+//
+// The answer is a position (CancelPosition), and the split between Cancelled and InFlight is timing dependent while anything is claimed: assert the partition and the end state, not the
+// split. A profile without a cancel route is modclient.NotSupported (nothing is sent). ON ANY ERROR THE POSITION IS THE ZERO VALUE.
+func (c *Client) Cancel(ctx context.Context, campaignID string) (CancelPosition, error) {
+	if !c.p.Cancel {
+		return CancelPosition{}, &modclient.Error{Kind: modclient.NotSupported, Module: c.p.Module, Route: c.p.route(opCancel), Message: "the module has no cancel route"}
+	}
+	if err := c.id(opCancel, "campaign id", campaignID); err != nil {
+		return CancelPosition{}, err
+	}
+	body := struct {
+		CampaignID string `json:"campaign_id"`
+		UserID     string `json:"user_id"`
+	}{campaignID, c.user}
+	resp, err := c.call(ctx, opCancel, http.MethodPost, "/v1/cancel", nil, body)
+	if err != nil {
+		return CancelPosition{}, err
+	}
+	var w struct {
+		CampaignID      string `json:"campaign_id"`
+		Cancelled       int64  `json:"cancelled"`
+		InFlight        int64  `json:"in_flight"`
+		AlreadyTerminal int64  `json:"already_terminal"`
+	}
+	if err := modclient.Decode(resp, &w, c.sh.cancel); err != nil {
+		return CancelPosition{}, err
+	}
+	switch {
+	case !strings.EqualFold(w.CampaignID, campaignID):
+		return CancelPosition{}, c.contract(resp, opCancel, "campaign_id", "the answer is for another campaign than the one cancelled")
+	case w.Cancelled < 0:
+		return CancelPosition{}, c.contract(resp, opCancel, "cancelled", "the count is negative")
+	case w.InFlight < 0:
+		return CancelPosition{}, c.contract(resp, opCancel, "in_flight", "the count is negative")
+	case w.AlreadyTerminal < 0:
+		return CancelPosition{}, c.contract(resp, opCancel, "already_terminal", "the count is negative")
+	}
+	// MODULE-FORCED(SA-F12): cancel answers the campaign's position after the call (cancelled counts every cancelled job, earlier calls included) and its cancelled / in_flight split depends on timing while anything is claimed, so the adapter returns the position as it is and computes no delta.
+	return CancelPosition{CampaignID: campaignID, Cancelled: w.Cancelled, InFlight: w.InFlight, AlreadyTerminal: w.AlreadyTerminal}, nil
 }

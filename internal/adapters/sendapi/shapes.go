@@ -11,6 +11,9 @@ type shapeSet struct {
 	page     modclient.Shape
 	describe modclient.Shape
 	errBody  modclient.Shape
+	// cancel is the cancel position; conflict is the body of a 409 on run (the generic error body for a module that says nothing more, the one with its details for a module that names its causes).
+	cancel   modclient.Shape
+	conflict modclient.Shape
 }
 
 // errorShape is the module error envelope the platform relies on (modclient parses it; the Shape is what the drift gate compares). It is the same for every route and every module.
@@ -32,7 +35,10 @@ func newShapes(p Profile) shapeSet {
 		req("unit_price_credits", modclient.Int), req("tier", str),
 	}
 	if p.QuoteFeasibility {
-		quote = append(quote, req("feasible", modclient.Bool), req("reasons", modclient.ArrayOf(modclient.Object(req("code", str)))))
+		// a reason is its code and, for the causes of a run refusal, the additive cause, the numbers and the cap name (Phase 3 close-out C2); the code is all the shared body reads
+		quote = append(quote, req("feasible", modclient.Bool), req("reasons", modclient.ArrayOf(modclient.Object(
+			req("code", str), opt("cause", str), opt("current", modclient.Int), opt("limit", modclient.Int), opt("requested", modclient.Int), opt("cap_name", str),
+		))))
 	}
 
 	// The single-job report:
@@ -87,6 +93,16 @@ func newShapes(p Profile) shapeSet {
 		))))
 	}
 
+	// a 409 on run: module 2 says nothing but the generic envelope; module 3 names its causes in details[], one entry per cause ({field, issue} always; code, and for the two caps the numbers current and
+	// limit, only some entries), and at this pin always names at least one
+	conflict := errorShape
+	if p.RunConflict == ConflictCauses {
+		conflict = modclient.Object(modclient.Req("error", modclient.Object(
+			modclient.Req("code", str), modclient.Opt("message", str), modclient.Opt("request_id", str),
+			modclient.Req("details", modclient.ArrayOf(modclient.Object(req("field", str), req("issue", str), opt("code", str), opt("current", modclient.Int), opt("limit", modclient.Int)))),
+		)))
+	}
+
 	return shapeSet{
 		quote: modclient.Object(quote...),
 		run:   modclient.Object(req("job_id", str), req("state", str)),
@@ -99,6 +115,8 @@ func newShapes(p Profile) shapeSet {
 			req("vocabularies", modclient.MapOf(modclient.Object(opt("values", modclient.ArrayOf(str))))),
 			req("error_codes", modclient.ArrayOf(modclient.Object(req("code", str), req("http_status", modclient.Int)))),
 		),
-		errBody: errorShape,
+		errBody:  errorShape,
+		cancel:   modclient.Object(req("campaign_id", str), req("cancelled", modclient.Int), req("in_flight", modclient.Int), req("already_terminal", modclient.Int)),
+		conflict: conflict,
 	}
 }

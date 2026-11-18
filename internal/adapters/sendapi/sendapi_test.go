@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
@@ -308,8 +309,8 @@ func TestIDsAreCheckedBeforeTheNetwork(t *testing.T) {
 	}
 }
 
-// A 409 on run is the same body for every cause: module 2's profile reads it as back-pressure, module 3's as a refusal of unknown cause, and both still unwrap to the Refused error. The
-// controls: a 409 with a code the adapter does not know, a 400 and a 422 are neither (the cause is never guessed from anything but the known code), and the 409 is not retried.
+// A 409 on run with no details (module 2's, and a module 3 older than the close-out) is the same body for every cause: module 2's profile reads it as back-pressure, module 3's as a refusal
+// of unknown cause, and both still unwrap to the Refused error. (A module 3 that names its causes is TestRunConflictNamesItsCauses.) The controls: a 409 with a code the adapter does not know, a 400 and a 422 are neither (the cause is never guessed from anything but the known code), and the 409 is not retried.
 func TestRunConflictMeansWhatTheProfileSays(t *testing.T) {
 	conflict := sendapitest.Envelope("conflict")
 	for name, tc := range map[string]struct {
@@ -319,7 +320,7 @@ func TestRunConflictMeansWhatTheProfileSays(t *testing.T) {
 		reason string
 	}{
 		"m2": {m2like(), sendapi.ErrBackpressure, sendapi.ErrConflictUnexplained, "another campaign of this user is active"},
-		"m3": {m3like(), sendapi.ErrConflictUnexplained, sendapi.ErrBackpressure, "cause it does not say"},
+		"m3 older than the close-out (no details)": {m3like(), sendapi.ErrConflictUnexplained, sendapi.ErrBackpressure, "cause it does not say"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			e := newEnv(t, tc.p, userA, reply(409, conflict), modclient.Options{Retries: 2}, sendapi.Options{})
@@ -434,10 +435,16 @@ func TestAStateOutsideTheVocabularyIsRefused(t *testing.T) {
 	if !isZero(rep) {
 		t.Fatalf("a report came back with the error: %+v", rep)
 	}
-	// control: module 3 does not have `cancelled`, so the same state that module 2 accepts is refused by its profile
-	e3 := newEnv(t, m3like(), userA, reply(200, `{"job_id":"`+jobID+`","state":"cancelled"}`), modclient.Options{}, sendapi.Options{})
+	// control: a profile that does not list `cancelled` refuses the state that module 2 and (since the close-out) module 3 accept
+	noCancel := m3like()
+	noCancel.JobStates, noCancel.Cancel = slices.DeleteFunc(slices.Clone(noCancel.JobStates), func(s string) bool { return s == "cancelled" }), false
+	e3 := newEnv(t, noCancel, userA, reply(200, `{"job_id":"`+jobID+`","state":"cancelled"}`), modclient.Options{}, sendapi.Options{})
 	if _, err := e3.c.Run(ctxT(t), jobItem); modclient.KindOf(err) != modclient.Contract {
-		t.Fatalf("module 3's profile accepts cancelled: %v", err)
+		t.Fatalf("a profile without cancelled accepts it: %v", err)
+	}
+	e3 = newEnv(t, m3like(), userA, reply(200, `{"job_id":"`+jobID+`","state":"cancelled"}`), modclient.Options{}, sendapi.Options{})
+	if r, err := e3.c.Run(ctxT(t), jobItem); err != nil || r.Class != sendapi.ClassTerminal || r.State != "cancelled" || r.Created {
+		t.Fatalf("module 3's profile refuses cancelled (the replay of a cancelled item): %v %+v", err, r)
 	}
 	e2 := newEnv(t, m2like(), userA, reply(200, `{"job_id":"`+jobID+`","state":"cancelled"}`), modclient.Options{}, sendapi.Options{})
 	if r, err := e2.c.Run(ctxT(t), jobItem); err != nil || r.Class != sendapi.ClassTerminal {

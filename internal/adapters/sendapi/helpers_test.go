@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -36,21 +37,22 @@ func m2like() sendapi.Profile {
 		ItemReasons: []string{"pool_exhausted", "attempts_exhausted", "bounce_permanent", "cancelled", "transport_4xx", "auth_failure", "throttle", "timeout", "unknown",
 			"no_eligible_account", "waiting_for_capacity", "dispatch_paused"},
 		ErrorCodes:    []string{"validation_failed", "unauthenticated", "not_found", "method_not_allowed", "conflict", "internal_error", "paused"},
-		AlwaysPresent: true, LinearCost: true, RunConflict: sendapi.ConflictBackpressure,
+		AlwaysPresent: true, LinearCost: true, Cancel: true, RunConflict: sendapi.ConflictBackpressure,
 	}
 }
 
-// m3like is module 3's profile as the research describes it (the m3 adapter builds the real one): no cancelled state, no reason key, account detail, a feasibility quote, the
-// single report omits keys until set, and a 409 on run has four causes.
+// m3like is module 3's profile (the m3 adapter builds the real one, and its own test holds the two equal): the cancelled state and a cancel route (Phase 3 close-out C1), no reason key,
+// account detail, a feasibility quote, the single report omits keys until set, and a 409 on run that names its causes (C2).
 func m3like() sendapi.Profile {
 	return sendapi.Profile{
 		Module: modclient.M3, DescribeModule: "send_byo",
-		JobStates:        []string{"queued", "assigned", "sending", "sent", "failed", "bounced"},
+		JobStates:        []string{"queued", "assigned", "sending", "sent", "failed", "bounced", "cancelled"},
 		ErrorClasses:     []string{"bounce_permanent", "transport_4xx", "auth_failure", "throttle", "timeout", "unknown"},
 		ErrorCodes:       []string{"validation_failed", "unauthenticated", "not_found", "method_not_allowed", "conflict", "unprocessable", "rate_limited", "internal_error", "paused"},
 		AccountDetail:    true,
 		QuoteFeasibility: true,
-		RunConflict:      sendapi.ConflictUnexplained,
+		Cancel:           true,
+		RunConflict:      sendapi.ConflictCauses,
 	}
 }
 
@@ -136,7 +138,7 @@ func idOf(n int) string { return itemJSON(m2like(), n, "sent")["job_item_id"].(s
 func header(p sendapi.Profile) func(total int) map[string]any {
 	return func(total int) map[string]any {
 		totals := map[string]any{"total": total, "sent": total, "bounced": 0, "failed": 0, "in_flight": 0, "pending": 0, "waiting_for_capacity": 0}
-		if len(p.ItemReasons) > 0 {
+		if slices.Contains(p.JobStates, "cancelled") {
 			totals["cancelled"] = 0
 		}
 		h := map[string]any{

@@ -71,6 +71,12 @@ func feasibilityMatches(t testing.TB, f m3.Feasibility, d any) {
 		same(t, base+"code", string(r.Code), mapped(asStr(t, d, base+"code"), vocabSet(t, "quote_reason_code")))
 		samePtrInt(t, base+"limit", r.Limit, optInt(d, base+"limit"))
 		samePtrInt(t, base+"requested", r.Requested, optInt(d, base+"requested"))
+		samePtrInt(t, base+"current", r.Current, optInt(d, base+"current"))
+		cause := ""
+		if c := optStr(d, base+"cause"); c != nil {
+			cause = *c
+		}
+		same(t, base+"cause", string(r.Cause), cause)
 		cap := ""
 		if c := optStr(d, base+"cap_name"); c != nil {
 			cap = *c
@@ -80,7 +86,7 @@ func feasibilityMatches(t testing.TB, f m3.Feasibility, d any) {
 	same(t, "caps.queue_depth_cap", f.Caps.QueueDepthCap, asInt(t, d, "caps.queue_depth_cap"))
 	same(t, "caps.daily_send_cap", f.Caps.DailySendCap, asInt(t, d, "caps.daily_send_cap"))
 	same(t, "caps.account_count_cap", f.Caps.AccountCountCap, asInt(t, d, "caps.account_count_cap"))
-	same(t, "queue depth limit", f.QueueDepthLimit(), m3.KnownLimit(asInt(t, d, "caps.queue_depth_cap")))
+	same(t, "caps.campaign_size_cap", f.Caps.CampaignSizeCap, asInt(t, d, "caps.campaign_size_cap"))
 	same(t, "capacity.eligible_accounts", f.Capacity.EligibleAccounts, asInt(t, d, "capacity.eligible_accounts"))
 	same(t, "capacity.daily_capacity_remaining", f.Capacity.DailyCapacityRemaining, asInt(t, d, "capacity.daily_capacity_remaining"))
 	same(t, "capacity.effective_concurrency", f.Capacity.EffectiveConcurrency, asInt(t, d, "capacity.effective_concurrency"))

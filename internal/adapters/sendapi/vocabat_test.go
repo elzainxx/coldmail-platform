@@ -150,6 +150,8 @@ func TestVocabAtPlacesEachVocabularyWhereItsBodyHoldsIt(t *testing.T) {
 		errs := map[string]string{"error_codes": code}
 		return map[string]map[string]string{
 			"POST /v1/quote | ok":                              {},
+			"POST /v1/cancel | ok":                             {},
+			"POST /v1/cancel | error validation_failed":        errs,
 			"POST /v1/run | created":                           {"job_state": state},
 			"POST /v1/run | replay":                            {"job_state": state},
 			"POST /v1/run | error validation_failed":           errs,
@@ -173,6 +175,9 @@ func TestVocabAtPlacesEachVocabularyWhereItsBodyHoldsIt(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			cs := sendapi.Contracts(p)
 			expected := want(len(p.ItemReasons) > 0)
+			if p.RunConflict == sendapi.ConflictCauses { // module 3 names the causes of its run 409: the closed set constrains the code of each detail
+				expected["POST /v1/run | error conflict"] = map[string]string{"error_codes": code, "run_conflict_cause": sendapi.PathConflictCause}
+			}
 			if len(cs) != len(expected) {
 				t.Fatalf("%d contracts, the table has %d", len(cs), len(expected))
 			}

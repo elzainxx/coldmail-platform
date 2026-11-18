@@ -159,3 +159,24 @@ type Classified struct {
 	NotYet   []Pending
 	Unmapped []Unmapped
 }
+
+// CancelPosition is a module's answer to a cancel: the campaign's position AFTER the call, not a delta (module 2, and module 3 since Phase 3 close-out C1).
+type CancelPosition struct {
+	CampaignID string
+	// Cancelled is EVERY job of the campaign now in the terminal state `cancelled`, those cancelled by earlier calls included.
+	Cancelled int64
+	// InFlight are the jobs assigned or sending: they were already claimed, they finish and are reported once, truthfully; if their attempt fails they end cancelled instead of being retried.
+	InFlight int64
+	// AlreadyTerminal are the jobs that were sent, failed or bounced.
+	AlreadyTerminal int64
+}
+
+// Total is the number of items the position accounts for: cancelled, in flight and already final. After a cancel every item of the campaign is one of the three (a queued item has become
+// cancelled), so it is the number of items the module holds under the campaign.
+func (p CancelPosition) Total() int64 { return p.Cancelled + p.InFlight + p.AlreadyTerminal }
+
+// Empty is true for {0, 0, 0}: the campaign has nothing to cancel, or the module does not know it.
+func (p CancelPosition) Empty() bool {
+	// MODULE-FORCED(SA-F13): a cancel of a campaign that is unknown, a typo or another tenant's answers 200 with all zeros (never a 404), so the adapter cannot tell "nothing to cancel" from "no such campaign" and exposes only Empty, never a claim that the campaign existed.
+	return p.Cancelled == 0 && p.InFlight == 0 && p.AlreadyTerminal == 0
+}

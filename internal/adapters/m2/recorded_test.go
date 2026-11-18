@@ -23,7 +23,7 @@ import (
 // adapter's decoding, and compare what the adapter returned with what the file says. They do not assume what a file name says about its content either (what a recording of a
 // "page" holds is read from the page), and they do not assume that one recorded page is a whole campaign: see campaignPages.
 var recordedFixtures = []string{
-	"cancel.error.validation_failed.json", "cancel.ok.json", "describe.ok.json", "quote.ok.json",
+	"cancel.error.validation_failed.json", "cancel.ok.json", "quote.ok.json",
 	"report.campaign.empty.json", "report.campaign.error.cursor_forged.json", "report.campaign.error.cursor_malformed.json", "report.campaign.last_page.json", "report.campaign.page.json",
 	"report.job.error.not_found.json", "report.job.queued.json", "report.job.sent.json",
 	"run.created.json", "run.error.conflict.json", "run.error.internal_error.json", "run.error.not_found.json", "run.error.paused.json", "run.error.unauthenticated.json",

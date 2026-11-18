@@ -40,8 +40,8 @@ func TestForcedSpecialCasesAreRegistered(t *testing.T) {
 	if len(ids) == 0 {
 		t.Fatal("no MODULE-FORCED tag found in the package: the subject of the check is empty")
 	}
-	// the tags the research says module 2 forces on its own route: the cancel position and the empty foreign cancel
-	want := map[string]bool{"M2-F1": false, "M2-F2": false}
+	// the one tag module 2 keeps on its own: its 409 on run says nothing but back-pressure (the cancel position and the empty foreign cancel moved to the shared body as SA-F12 and SA-F13)
+	want := map[string]bool{"M2-F3": false}
 	for _, id := range ids {
 		if _, ok := want[id]; ok {
 			want[id] = true
@@ -51,6 +51,9 @@ func TestForcedSpecialCasesAreRegistered(t *testing.T) {
 		if !found {
 			t.Fatalf("the tag %s is not in the package", id)
 		}
+	}
+	if len(ids) != len(want) {
+		t.Fatalf("%d tags found, %d expected: a tag was added without a line in this test (a cancel tag belongs to the shared body now)", len(ids), len(want))
 	}
 	tag := "// MODULE-" + "FORCED(ZZ-F1): a quirk the module forces."
 	if p, got := sendapitest.CheckForced(writeDir(t, "package x\n"+tag+"\n", "ZZ-F1|a.go|a quirk\n")); len(p) != 0 || len(got) != 1 {

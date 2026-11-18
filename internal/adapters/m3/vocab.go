@@ -5,8 +5,12 @@ import "slices"
 // The closed sets this adapter maps from, each handled by ONE switch below and listed once here as the Vocab of the contracts that carry it. A test reads the switches' case literals from
 // this file and holds them equal to these lists in both directions (a case the list does not name, a value the switch does not handle), with a paired control for each.
 //
-// A value outside a set is never an error and never guessed at: it maps to the set's Unrecognised word, which carries NO text from the module (an account whose state the adapter does not
-// know is still listed; what the adapter cannot do is say what that state means). The job state is the one set that is strict, and it lives in sendapi (a new state decides what is charged).
+// TWO KINDS OF SET. The sets of the test button, of bulk add and of an account's verification and From verdict are user vocabularies the module has CLOSED (Phase 3 close-out C3: an internal
+// reason is never serialised, and a value outside a set is mapped to the set's named fallback by the module itself): a word outside one of them is a Contract error here, never a guess, and
+// nothing of it is carried (the switch answers ok = false and the caller names the key). The rest (a pause or quarantine reason, a quote reason, an event's actor and action) are
+// descriptive words a user app shows and the module may add to; a word outside one of those is the Unrecognised word, which carries NO text from the module. The job state is strict and
+// lives in sendapi (a new state decides what is charged), and so is the cause of a run refusal. `smtp_response` (the provider's scrubbed reply) and `message` (rendered copy) are free text by
+// the module's own documentation: carried as opaque text, bounded, never branched on.
 //
 // The describe names are the module's own (describe.vocabularies.<name>) where the module publishes the set, so the live drift gate compares like with like; the others are named for the
 // route.
@@ -17,10 +21,12 @@ const (
 	vocabPauseReason            = "pause_reason"                  // describe
 	vocabQuarantineReason       = "quarantine_reason"             // describe
 	vocabBulkRowStatus          = "bulk_add_row_status"           // describe
-	vocabTestVerification       = "test_verification_state"       // the test button's own word set
-	vocabTestAlignment          = "test_alignment_state"          // the test button's own word set
-	vocabVerifyCode             = "verify_code"                   // the verify_* failure codes and the test button's two "unavailable" codes
-	vocabBulkRejectCode         = "bulk_reject_code"              // the rejected rows' codes the adapter recognises
+	vocabTestVerification       = "test_verification_state"       // the test button's and a bulk row's verification words
+	vocabTestAlignment          = "test_alignment_state"          // the test button's and a bulk row's From verdict words
+	vocabVerifyCode             = "verify_code"                   // the verify_* failure codes and the test button's two "could not run" codes
+	vocabAlignmentCode          = "alignment_code"                // from_alignment.code of the test button: why the From check could not run
+	vocabAlignmentError         = "alignment_error"               // from_alignment.error of the test button: the check ran and its result could not be saved
+	vocabBulkRejectCode         = "bulk_reject_code"              // the rejected rows' codes
 	// vocabBulkRowCode is a bulk row's `code` as a whole: a rejected row's reason or the reason a created row's credential check failed, which share the one position of the answer, so the
 	// contract constrains the union of the two sets (the switches rejectReason and verifyCode, held equal to it by a test).
 	vocabBulkRowCode = "bulk_row_code"
@@ -30,17 +36,23 @@ const (
 var sets = map[string][]string{
 	vocabCredentialVerification: {"unverified", "verified", "failed"},
 	vocabFromVerification:       {"unverified", "aligned", "unaligned_warned", "blocked"},
-	vocabQuoteReason:            {"dispatch_disabled", "exceeds_queue_cap", "no_eligible_accounts", "all_accounts_unverified", "from_gate_blocked"},
-	vocabPauseReason:            {"daily_limit", "throttle", "manual"},
-	vocabQuarantineReason:       {"auth_failure", "consecutive_failures", "failure_rate", "manual"},
-	vocabBulkRowStatus:          {"created", "rejected"},
-	vocabTestVerification:       {"verified", "failed", "unavailable"},
-	vocabTestAlignment:          {"unverified", "aligned", "unaligned_warned", "blocked", "indeterminate"},
+	vocabQuoteReason: {
+		"dispatch_disabled", "exceeds_queue_cap", "no_eligible_accounts", "all_accounts_unverified", "from_gate_blocked", "suspended", "campaign_active", "campaign_cap",
+	},
+	vocabPauseReason:      {"daily_limit", "throttle", "manual"},
+	vocabQuarantineReason: {"auth_failure", "consecutive_failures", "failure_rate", "manual"},
+	vocabBulkRowStatus:    {"created", "rejected"},
+	vocabTestVerification: {"verified", "failed", "unverified", "unavailable"},
+	vocabTestAlignment:    {"unverified", "aligned", "unaligned_warned", "blocked", "indeterminate"},
 	vocabVerifyCode: {
 		"verify_connect_failed", "verify_timeout", "verify_tls_unavailable", "verify_tls_failed", "verify_auth_failed", "verify_protocol_error", "verify_connection_lost",
-		"verify_error", "verification_unavailable",
+		"verify_host_not_allowed", "verify_error", "verification_unavailable",
 	},
-	vocabBulkRejectCode: {"validation_failed", "account_cap_reached", "duplicate_account_for_user", "from_alignment_warning_unacknowledged"},
+	vocabAlignmentCode:  {"from_dns_unavailable", "from_domain_not_found"},
+	vocabAlignmentError: {"from_check_not_saved"},
+	vocabBulkRejectCode: {
+		"validation_failed", "account_cap_reached", "duplicate_account_for_user", "from_alignment_warning_unacknowledged", "conflict", "unprocessable", "not_found", "internal_error",
+	},
 }
 
 func init() { sets[vocabBulkRowCode] = slices.Concat(sets[vocabBulkRejectCode], sets[vocabVerifyCode]) }
@@ -60,42 +72,43 @@ func vocab(names ...string) map[string][]string {
 	return v
 }
 
-// VerificationState is an account's credential verification state, or the test button's.
+// VerificationState is an account's credential verification state, or the test button's and a bulk row's (the closed set verified, failed, unverified, unavailable).
 type VerificationState string
 
 const (
 	VerificationUnverified  VerificationState = "unverified"
 	VerificationVerified    VerificationState = "verified"
 	VerificationFailed      VerificationState = "failed"
-	VerificationUnavailable VerificationState = "unavailable" // the test button only: the check could not run
-	// VerificationUnrecognised is a state the adapter does not know. It says nothing about the credential.
-	VerificationUnrecognised VerificationState = "unrecognised"
+	VerificationUnavailable VerificationState = "unavailable" // the test button and bulk add only: the check could not run
 )
 
-// verificationState maps an account's `verification.state` and a bulk row's `verification` (the module's credential_verification_state enum).
-func verificationState(s string) VerificationState {
+// verificationState maps an account's `verification.state` (the module's credential_verification_state enum: three words). A word outside it is not a state: ok is false.
+func verificationState(s string) (VerificationState, bool) {
 	switch s {
 	case "unverified":
-		return VerificationUnverified
+		return VerificationUnverified, true
 	case "verified":
-		return VerificationVerified
+		return VerificationVerified, true
 	case "failed":
-		return VerificationFailed
+		return VerificationFailed, true
 	}
-	return VerificationUnrecognised
+	return "", false
 }
 
-// testVerificationState maps the test button's `verification.state`: the enum's `verified` and `failed`, and `unavailable`, which the button says when the check could not run.
-func testVerificationState(s string) VerificationState {
+// testVerificationState maps the test button's `verification.state` and a bulk row's `verification` (the closed set of the two routes: the enum's three words and `unavailable`, which the
+// route says when the check could not run). A word outside it is not a state: ok is false.
+func testVerificationState(s string) (VerificationState, bool) {
 	switch s {
+	case "unverified":
+		return VerificationUnverified, true
 	case "verified":
-		return VerificationVerified
+		return VerificationVerified, true
 	case "failed":
-		return VerificationFailed
+		return VerificationFailed, true
 	case "unavailable":
-		return VerificationUnavailable
+		return VerificationUnavailable, true
 	}
-	return VerificationUnrecognised
+	return "", false
 }
 
 // AlignmentState is the From-gate's verdict on an account's from address.
@@ -107,46 +120,81 @@ const (
 	// AlignmentWarned is `unaligned_warned`: usable only once the user acknowledged the warning for the current verdict.
 	AlignmentWarned  AlignmentState = "unaligned_warned"
 	AlignmentBlocked AlignmentState = "blocked"
-	// AlignmentIndeterminate is the test button's word for "the DNS did not answer, nothing was decided and nothing was stored".
+	// AlignmentIndeterminate is the test button's and a bulk row's word for "the DNS did not answer, nothing was decided and nothing was stored".
 	AlignmentIndeterminate AlignmentState = "indeterminate"
-	// AlignmentUnrecognised is a state the adapter does not know.
-	AlignmentUnrecognised AlignmentState = "unrecognised"
 )
 
-// alignmentState maps an account's `from_alignment.state` and a bulk row's `from_alignment_state` (the module's from_verification_state enum).
-func alignmentState(s string) AlignmentState {
+// alignmentState maps an account's `from_alignment.state` (the module's from_verification_state enum: four words). A word outside it is not a state: ok is false.
+func alignmentState(s string) (AlignmentState, bool) {
 	switch s {
 	case "unverified":
-		return AlignmentUnverified
+		return AlignmentUnverified, true
 	case "aligned":
-		return AlignmentAligned
+		return AlignmentAligned, true
 	case "unaligned_warned":
-		return AlignmentWarned
+		return AlignmentWarned, true
 	case "blocked":
-		return AlignmentBlocked
+		return AlignmentBlocked, true
 	}
-	return AlignmentUnrecognised
+	return "", false
 }
 
-// testAlignmentState maps the test button's `from_alignment.state`: the enum, and `indeterminate`.
-func testAlignmentState(s string) AlignmentState {
+// testAlignmentState maps the test button's `from_alignment.state` and a bulk row's `from_alignment_state` (the closed set of the two routes: the enum, and `indeterminate`). A word outside
+// it is not a state: ok is false.
+func testAlignmentState(s string) (AlignmentState, bool) {
 	switch s {
 	case "unverified":
-		return AlignmentUnverified
+		return AlignmentUnverified, true
 	case "aligned":
-		return AlignmentAligned
+		return AlignmentAligned, true
 	case "unaligned_warned":
-		return AlignmentWarned
+		return AlignmentWarned, true
 	case "blocked":
-		return AlignmentBlocked
+		return AlignmentBlocked, true
 	case "indeterminate":
-		return AlignmentIndeterminate
+		return AlignmentIndeterminate, true
 	}
-	return AlignmentUnrecognised
+	return "", false
 }
 
-// VerifyCode says why a credential check did not verify. The seven verify_* codes are the module's closed failure set (dispatch/verify.go externalCodeFor); the other two are what the test
-// button says when it could not run the check at all.
+// AlignmentCode says why the test button's From check could not run (`from_alignment.code`, present with the state indeterminate).
+type AlignmentCode string
+
+const (
+	AlignmentCodeNone AlignmentCode = ""
+	// AlignmentDNSUnavailable: the DNS lookup did not answer.
+	AlignmentDNSUnavailable AlignmentCode = "from_dns_unavailable"
+	// AlignmentDomainNotFound: the From domain does not exist.
+	AlignmentDomainNotFound AlignmentCode = "from_domain_not_found"
+)
+
+// alignmentCode maps `from_alignment.code`. "" is no code, not a code. A word outside the closed set is not a code: ok is false.
+func alignmentCode(s string) (AlignmentCode, bool) {
+	switch s {
+	case "":
+		return AlignmentCodeNone, true
+	case "from_dns_unavailable":
+		return AlignmentDNSUnavailable, true
+	case "from_domain_not_found":
+		return AlignmentDomainNotFound, true
+	}
+	return "", false
+}
+
+// alignmentError is the one word of `from_alignment.error`: the check ran and decided, and the verdict could not be saved (the internal slugs of the failed save went to the module's log).
+// "" is no error. A word outside the closed set is not an error word: ok is false.
+func alignmentError(s string) (notSaved, ok bool) {
+	switch s {
+	case "":
+		return false, true
+	case "from_check_not_saved":
+		return true, true
+	}
+	return false, false
+}
+
+// VerifyCode says why a credential check did not verify. The eight verify_* codes are the module's closed failure set (dispatch/verify.go externalCodeFor, and since the Phase 3 close-out
+// verify_host_not_allowed, the destination guard's refusal at connect time); the other two are what the test button says when it could not run the check at all.
 type VerifyCode string
 
 const (
@@ -158,41 +206,43 @@ const (
 	VerifyAuthFailed         VerifyCode = "verify_auth_failed"
 	VerifyProtocolError      VerifyCode = "verify_protocol_error"
 	VerifyConnectionLost     VerifyCode = "verify_connection_lost"
+	VerifyHostNotAllowed     VerifyCode = "verify_host_not_allowed"
 	VerifyError              VerifyCode = "verify_error"
 	VerifyServiceUnavailable VerifyCode = "verification_unavailable"
-	// VerifyUnrecognised is a code the adapter does not know; the module's text is not carried.
-	VerifyUnrecognised VerifyCode = "unrecognised"
 )
 
-// verifyCode maps a verification `code`. "" is no code, not a code.
-func verifyCode(s string) VerifyCode {
+// verifyCode maps a verification `code`. "" is no code, not a code. A word outside the closed set is not a code: ok is false.
+func verifyCode(s string) (VerifyCode, bool) {
 	switch s {
 	case "":
-		return VerifyNone
+		return VerifyNone, true
 	case "verify_connect_failed":
-		return VerifyConnectFailed
+		return VerifyConnectFailed, true
 	case "verify_timeout":
-		return VerifyTimeout
+		return VerifyTimeout, true
 	case "verify_tls_unavailable":
-		return VerifyTLSUnavailable
+		return VerifyTLSUnavailable, true
 	case "verify_tls_failed":
-		return VerifyTLSFailed
+		return VerifyTLSFailed, true
 	case "verify_auth_failed":
-		return VerifyAuthFailed
+		return VerifyAuthFailed, true
 	case "verify_protocol_error":
-		return VerifyProtocolError
+		return VerifyProtocolError, true
 	case "verify_connection_lost":
-		return VerifyConnectionLost
+		return VerifyConnectionLost, true
+	case "verify_host_not_allowed":
+		return VerifyHostNotAllowed, true
 	case "verify_error":
-		return VerifyError
+		return VerifyError, true
 	case "verification_unavailable":
-		return VerifyServiceUnavailable
+		return VerifyServiceUnavailable, true
 	}
-	return VerifyUnrecognised
+	return "", false
 }
 
-// RejectReason says why a bulk-add row was not created. The closed set is the codes the module's own validation and create path emit as fixed words; everything else (an infrastructure
-// failure's internal reason, which can carry error text) is RejectUnrecognised and its text is dropped.
+// RejectReason says why a bulk-add row was not created: the module's closed set (Phase 3 close-out C3). The first four are the codes the contract has always documented; `conflict`,
+// `unprocessable`, `not_found` and `internal_error` are the external error codes that replaced a raw internal reason (`unique_violation:<constraint>`, `tx_begin_error`, a driver message,
+// which now go to the module's log). A code outside the set is a Contract error.
 type RejectReason string
 
 const (
@@ -200,23 +250,33 @@ const (
 	RejectAccountCap       RejectReason = "account_cap_reached"
 	RejectDuplicate        RejectReason = "duplicate_account_for_user"
 	RejectAlignmentWarning RejectReason = "from_alignment_warning_unacknowledged"
-	// RejectUnrecognised is every other code, an infrastructure failure's internal reason included. Nothing of that text is carried.
-	RejectUnrecognised RejectReason = "unrecognised"
+	RejectConflict         RejectReason = "conflict"
+	RejectUnprocessable    RejectReason = "unprocessable"
+	RejectNotFound         RejectReason = "not_found"
+	RejectInternal         RejectReason = "internal_error"
 )
 
-// rejectReason maps a rejected row's `code`.
-func rejectReason(s string) RejectReason {
+// rejectReason maps a rejected row's `code`. A code outside the closed set is not a reason: ok is false.
+func rejectReason(s string) (RejectReason, bool) {
 	switch s {
 	case "validation_failed":
-		return RejectValidation
+		return RejectValidation, true
 	case "account_cap_reached":
-		return RejectAccountCap
+		return RejectAccountCap, true
 	case "duplicate_account_for_user":
-		return RejectDuplicate
+		return RejectDuplicate, true
 	case "from_alignment_warning_unacknowledged":
-		return RejectAlignmentWarning
+		return RejectAlignmentWarning, true
+	case "conflict":
+		return RejectConflict, true
+	case "unprocessable":
+		return RejectUnprocessable, true
+	case "not_found":
+		return RejectNotFound, true
+	case "internal_error":
+		return RejectInternal, true
 	}
-	return RejectUnrecognised
+	return "", false
 }
 
 // InfeasibleCode is why a quote said a run cannot be accepted.
@@ -228,6 +288,10 @@ const (
 	InfeasibleNoEligibleAccounts    InfeasibleCode = "no_eligible_accounts"
 	InfeasibleAllAccountsUnverified InfeasibleCode = "all_accounts_unverified"
 	InfeasibleFromGateBlocked       InfeasibleCode = "from_gate_blocked"
+	// The three reasons that predict a run 409 beside exceeds_queue_cap (Phase 3 close-out C2); each carries the cause of the refusal it predicts (see InfeasibleReason.Cause).
+	InfeasibleSuspended      InfeasibleCode = "suspended"
+	InfeasibleCampaignActive InfeasibleCode = "campaign_active"
+	InfeasibleCampaignCap    InfeasibleCode = "campaign_cap"
 	// InfeasibleUnrecognised is a reason the adapter does not know. The quote is still infeasible: only the word for why is missing.
 	InfeasibleUnrecognised InfeasibleCode = "unrecognised"
 )
@@ -245,6 +309,12 @@ func quoteReason(s string) InfeasibleCode {
 		return InfeasibleAllAccountsUnverified
 	case "from_gate_blocked":
 		return InfeasibleFromGateBlocked
+	case "suspended":
+		return InfeasibleSuspended
+	case "campaign_active":
+		return InfeasibleCampaignActive
+	case "campaign_cap":
+		return InfeasibleCampaignCap
 	}
 	return InfeasibleUnrecognised
 }

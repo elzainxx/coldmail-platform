@@ -33,10 +33,10 @@ func withSets(pairs ...string) vocabs {
 	return out
 }
 
-// Contracts lists every module 3 response the adapter relies on: the shared four routes and describe (sendapi.Contracts with module 3's profile), module 3's feasibility quote, and the
-// account routes (list, get, create, test, bulk add, events), each with the cases whose shape differs (success, an empty page, every error the adapter maps). Fixture names a file under
+// Contracts lists every module 3 response the adapter relies on: the shared routes and describe (sendapi.Contracts with module 3's profile, which has a cancel route and a 409 on run that
+// names its causes: the cancel responses and the run conflict with its details come with it), module 3's feasibility quote, and the account routes (list, get, create, test, bulk add, events), each with the cases whose shape differs (success, an empty page, every error the adapter maps). Fixture names a file under
 // this package's testdata/contract/ directory; the Shape of each entry is the one the adapter decodes that response with (the shared ones are built by the code the shared Client is, every
-// other one is the package variable the decoding code uses). The fixtures are recordings from the real module except the four testdata/README.md names.
+// other one is the package variable the decoding code uses). The fixtures are recordings from the real module except the ones testdata/README.md names (the hand-written: since the Phase 3 close-out fourteen, which the lead re-records from the real module).
 //
 // Vocab holds the closed sets the adapter maps from on that response, by describe's own names where the module publishes the set (vocab.go keeps each set equal to the switch that
 // handles it), and VocabAt the path of the position each constrains (see vocabs). Error responses constrain the error code at error.code.
@@ -56,6 +56,8 @@ func Contracts() []modclient.RouteContract {
 	// the test button: its own two state words (a click that verified, one that failed and one that could not run differ in nothing else), and the reason of a check that did not verify
 	test := withSets(vocabTestVerification, "verification.state", vocabTestAlignment, "from_alignment.state")
 	testReason := withSets(vocabTestVerification, "verification.state", vocabTestAlignment, "from_alignment.state", vocabVerifyCode, "verification.code")
+	// the click that could not run the check at all: a check that could not run says why (the From check's closed code)
+	testUnavailable := withSets(vocabTestVerification, "verification.state", vocabTestAlignment, "from_alignment.state", vocabVerifyCode, "verification.code", vocabAlignmentCode, "from_alignment.code")
 	eb := sendapi.ErrorShape()
 	return append(sendapi.Contracts(Profile()),
 		rc(RouteQuote, "feasible", "quote.feasible.json", 200, feasibilityShape, vocabs{}),
@@ -79,7 +81,7 @@ func Contracts() []modclient.RouteContract {
 
 		rc(RouteAccountsTest, "ok", "accounts.test.ok.json", 200, testShape, test),
 		rc(RouteAccountsTest, "failed", "accounts.test.failed.json", 200, testShape, testReason),
-		rc(RouteAccountsTest, "unavailable", "accounts.test.unavailable.json", 200, testShape, testReason),
+		rc(RouteAccountsTest, "unavailable", "accounts.test.unavailable.json", 200, testShape, testUnavailable),
 		rc(RouteAccountsTest, "error rate_limited", "accounts.test.error.rate_limited.json", 429, eb, errs()),
 		rc(RouteAccountsTest, "error conflict", "accounts.test.error.conflict.json", 409, eb, errs()),
 		rc(RouteAccountsTest, "error not_found", "accounts.test.error.not_found.json", 404, eb, errs()),

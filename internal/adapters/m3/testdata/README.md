@@ -9,7 +9,7 @@ Ids and times are synthetic or normalised, addresses are in the documentation, p
 
 ## Recorded
 
-These 41 files are RECORDED from the real module 3 in the harness (full record run 44225747596, 2026-11-18, the third record run of `platform` Phase 3 B6) and normalised by
+These 33 files are RECORDED from the real module 3 in the harness (full record run 44225747596, 2026-11-18, the third record run of `platform` Phase 3 B6) and normalised by
 `contractcheck.Normalise`: every uuid of a file becomes `00000000-0000-4000-8000-00000000000N` (N counting by first appearance in that file), every timestamp `2026-01-01T00:00:00Z`, every
 request id a run of `a`.
 
@@ -32,23 +32,15 @@ and where a test needs a KIND of answer they pick the recording by what it holds
 What the recordings lack is built FROM the recordings (an empty campaign, a stranger's quote, an acknowledgment instant, a provider message id, the test button's `error` key, a bulk batch with an
 internal reason), and each such test has the recording itself as its control.
 
-- `describe.ok.json`
-- `quote.ok.json`
-- `quote.feasible.json`
-- `quote.infeasible.json`
 - `run.created.json`
 - `run.replay.json`
 - `run.error.validation_failed.json`
 - `run.error.unauthenticated.json`
 - `run.error.not_found.json`
-- `run.error.conflict.json`
 - `run.error.paused.json`
 - `report.job.sent.json`
 - `report.job.queued.json`
 - `report.job.error.not_found.json`
-- `report.campaign.page.json`
-- `report.campaign.last_page.json`
-- `report.campaign.empty.json`
 - `report.campaign.error.cursor_malformed.json`
 - `report.campaign.error.cursor_forged.json`
 - `accounts.list.page.json`
@@ -76,7 +68,7 @@ internal reason), and each such test has the recording itself as its control.
 
 ## Hand-written
 
-These 4 files are still hand-written from the module's code (`Docs/history/p3-research/m3-api.md`, checked against the module at the pinned commit), to be replaced by a recording when the
+These 14 files are hand-written (the first four from the module's code, the other ten for the Phase 3 close-out, see below) (`Docs/history/p3-research/m3-api.md`, checked against the module at the pinned commit), to be replaced by a recording when the
 harness reaches them. The record runs did not reach these responses:
 
 - `run.error.internal_error.json`: a 500 on run needs a fault inside module 3, which the harness does not provoke.
@@ -86,9 +78,21 @@ harness reaches them. The record runs did not reach these responses:
   the From check cannot get an answer from DNS; the harness has a worker and no From gate, so neither happens there. It is allowlisted for the drift gate.
 - `accounts.events.page.json`: no populated events listing was ever observed by the drift session (only an empty page), so the page with events in it is hand-written; it will be allowlisted.
 
+Ten more are hand-written for the Phase 3 close-out (module 3 at the pin `8855a52`, the lead re-records every one from the real module and then moves it to the list above): the two files of the new route `POST /v1/cancel` (`cancel.ok.json`, `cancel.error.validation_failed.json`), a 409 of run that names its causes (`run.error.conflict.json`: another campaign active and the queue cap, the cap with `current` and `limit`; it REPLACES the recording of the unexplained 409, which an older module would answer), and seven RECORDINGS that were edited by hand to what the new module answers: `quote.ok.json`, `quote.feasible.json` (`caps.campaign_size_cap` added), `quote.infeasible.json` (a quote of 100001 recipients now holds a `campaign_cap` reason beside the queue cap, each with `cause`, `current` and `limit`), `report.campaign.page.json`, `report.campaign.last_page.json`, `report.campaign.empty.json` (`totals.cancelled` added) and `describe.ok.json` (`capabilities.plain_text_alternative`, `cancelled` last in `job_state`, the vocabulary `run_conflict_cause`, the three new `quote_reason_code` values; its `schemas` still say what the module said before C6). Where a file is a recording that was edited, nothing but the additions named here was changed.
+
 They use the same normalised ids as the recordings (`00000000-0000-4000-8000-000000000001` for the first, `...02` for the tenant of an account file) so that one tenant serves every file. Their request ids and cursors are the normalised forms too (a run of `a`): contractcheck's no-rot check reads a long opaque run as secret-shaped.
 
 - `run.error.internal_error.json`
 - `accounts.create.error.unprocessable.json`
 - `accounts.test.unavailable.json`
 - `accounts.events.page.json`
+- `describe.ok.json`
+- `quote.ok.json`
+- `quote.feasible.json`
+- `quote.infeasible.json`
+- `run.error.conflict.json`
+- `report.campaign.page.json`
+- `report.campaign.last_page.json`
+- `report.campaign.empty.json`
+- `cancel.ok.json`
+- `cancel.error.validation_failed.json`

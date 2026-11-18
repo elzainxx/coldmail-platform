@@ -4,6 +4,7 @@
     "click_tracking": false,
     "content_variation": true,
     "open_tracking": false,
+    "plain_text_alternative": true,
     "reply_to_per_campaign": true,
     "sequences": false,
     "single_send": true

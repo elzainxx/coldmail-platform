@@ -1,15 +1,17 @@
-// Package m3 is the platform's adapter for module 3 (coldmail-send-byo, user-owned SMTP accounts): the four core routes on the shared sender body (quote, run, report single and
-// campaign), module 3's feasibility quote, the 409 refusal of a run explained as far as the platform's own state can explain it, the account surface the user app needs, the suspension
-// read, and the module's describe with its vocabularies compared with what the adapter handles. Phase 3, chunk B5.
+// Package m3 is the platform's adapter for module 3 (coldmail-send-byo, user-owned SMTP accounts): the shared sender body's routes (quote, run, report single and campaign, and since Phase 3
+// close-out C1 cancel), module 3's feasibility quote, the 409 refusal of a run explained by the causes the module itself names, the account surface the user app needs, the suspension read, and
+// the module's describe with its vocabularies compared with what the adapter handles. Phase 3, chunk B5, and the close-out chunk D5.
 //
 // It is thin on purpose. Everything module 3 shares with module 2 lives in internal/adapters/sendapi (parameterised by a Profile); this package is module 3's Profile, the routes only
-// module 3 has (the accounts), the construction from the platform's configuration and the pre-check of a run. It holds no storage, no retry loop and no job logic: Phase 4 owns jobs.
+// module 3 has (the accounts), and the construction from the platform's configuration. It holds no storage, no retry loop and no job logic: Phase 4 owns jobs.
 //
-// # THERE IS NO CANCEL
+// # CANCEL AND THE CAUSES OF A REFUSED RUN
 //
-// Module 3 has no cancel route and no `cancelled` state (research m3-api section 0.1; spec open decision 1): the only levers are the per-user suspension (no new claims, queued items stay
-// queued) and disabling the user's accounts (which turns READY queued items into `failed`, a side effect on the user's accounts). `Cancel` is therefore deliberately absent from Client and
-// from Adapter, and a test holds it absent, so nobody adds a method that pretends. If the owner asks for an additive cancel route, the method comes with it.
+// Cancel is the shared body's (sendapi.Client.Cancel, POST /v1/cancel, the same on module 2): queued items become the terminal state `cancelled` (free by charge row M3-01), claimed items finish and
+// are reported once, a repeat changes nothing, another tenant's or an unknown campaign answers {0, 0, 0}. A run the module refuses with 409 names its causes in details[] (suspended,
+// campaign_active, campaign_cap, queue_cap): the error is a *sendapi.ConflictError (sendapi.CausesOf, errors.Is on sendapi.ErrRunSuspended and the other three), so the platform does not
+// predict the refusal from its own state and does not guess: the quote answers from the very function run reads (Feasibility, FeasibilityForCampaign), reasons with their cause and the cap that
+// bound included. Only a module 3 older than the close-out answers a 409 with no cause (sendapi.ErrConflictUnexplained).
 //
 // # TENANCY
 //
@@ -23,10 +25,10 @@
 // The user-facing calls carry module 3's Domain A SERVICE token (PLATFORM_M3_SERVICE_TOKEN). The operator's ADMIN key (PLATFORM_M3_ADMIN_TOKEN) is a different credential for a different
 // domain and is used only by internal/m3admin; FromConfig refuses a service token equal to the admin key, so the operator key can never ride on a user-facing call by a configuration slip.
 //
-// # FINDINGS THAT ARE NOT SPECIAL CASES
+// # THE PLAIN-TEXT PART
 //
-// Module 3 sends the rendered body as ONE text/html part (research m3-api oddity 19): there is no plain-text slot for the platform's planned auto-generated plain-text alternative. The
-// adapter has nothing to do about it; it is a finding for Phase 5 (authoring), recorded here so that it is not lost.
+// Module 3 sends the rendered body as text/html, and as multipart/alternative (text first, HTML last) when the platform has written `public.job_items.rendered_text` (Phase 3 close-out C5; the
+// module copies the column at run time, so there is no field on run). The adapter has nothing to do about it; describe advertises capabilities.plain_text_alternative.
 package m3
 
 import (
@@ -57,14 +59,14 @@ var (
 // Profile is module 3's profile of the shared sender body (research m3 sections 4, 5 and 11.2, checked against the module at the pinned commit: the job states are send_byo.job_state in enum
 // order, the error classes send_byo.error_class, the error codes the nine of describeErrorCodes in status order).
 //
-// What differs from module 2, as data: no `cancelled` state, no `reason` key (so no ItemReasons and no charge reasons), a single report that omits its optional keys until they are set
-// (AlwaysPresent false), per-account detail on items and totals_by_account on the campaign report (AccountDetail), a feasibility quote with an inert price (QuoteFeasibility, not
-// LinearCost), and a 409 on run with four causes the module does not tell apart (ConflictUnexplained).
+// What differs from module 2, as data: no `reason` key (so no ItemReasons and no charge reasons), a single report that omits its optional keys until they are set (AlwaysPresent false),
+// per-account detail on items and totals_by_account on the campaign report (AccountDetail), a feasibility quote with an inert price (QuoteFeasibility, not LinearCost), and a 409 on run
+// that names the causes it has (ConflictCauses). Like module 2 it has a cancel route and the `cancelled` state (since Phase 3 close-out C1).
 func Profile() sendapi.Profile {
 	return sendapi.Profile{
 		Module:         modclient.M3,
 		DescribeModule: "send_byo",
-		JobStates:      []string{"queued", "assigned", "sending", "sent", "failed", "bounced"},
+		JobStates:      []string{"queued", "assigned", "sending", "sent", "failed", "bounced", "cancelled"},
 		ErrorClasses:   []string{"bounce_permanent", "transport_4xx", "auth_failure", "throttle", "timeout", "unknown"},
 		ErrorCodes:     []string{"validation_failed", "unauthenticated", "not_found", "method_not_allowed", "conflict", "unprocessable", "rate_limited", "internal_error", "paused"},
 		ItemReasons:    nil,
@@ -73,7 +75,8 @@ func Profile() sendapi.Profile {
 		// The price is inert (flat subscription, unit price 0): the quote's cost is not an amount the platform can check against recipient_count * unit_price.
 		QuoteFeasibility: true,
 		LinearCost:       false,
-		RunConflict:      sendapi.ConflictUnexplained,
+		Cancel:           true,
+		RunConflict:      sendapi.ConflictCauses,
 	}
 }
 
@@ -106,19 +109,12 @@ type SuspensionReader interface {
 type Option func(*settings)
 
 type settings struct {
-	reader       SuspensionReader
-	privateHosts bool
+	reader SuspensionReader
 }
 
 // WithSuspensionReader wires the reader of the suspension state (normally the *m3admin.Client the reconcile loop already uses).
 func WithSuspensionReader(r SuspensionReader) Option {
 	return func(s *settings) { s.reader = r }
-}
-
-// AllowPrivateSMTPHosts lets an account name an SMTP host that is a private, loopback, link-local or otherwise non-routable address or the name of one (see CreateAccount). Production never
-// sets it; the harness does, because its sink is a private address.
-func AllowPrivateSMTPHosts() Option {
-	return func(s *settings) { s.privateHosts = true }
 }
 
 // Adapter is the tenant-free part of the adapter: the module client (one service token serves every tenant) and the operations that are not scoped to a tenant's own client. Build it with
@@ -183,13 +179,12 @@ func (a *Adapter) For(userID string) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Client{Client: sc, privateHosts: a.st.privateHosts}, nil
+	return &Client{Client: sc}, nil
 }
 
-// Client is the adapter for one tenant: the four shared routes (through the embedded sendapi.Client), the feasibility quote, the pre-check, and the account surface. It has no Cancel.
+// Client is the adapter for one tenant: the shared routes (through the embedded sendapi.Client: quote, run, report, Cancel), the feasibility quote and the account surface.
 type Client struct {
 	*sendapi.Client
-	privateHosts bool
 }
 
 // Describe reads module 3's self-description, checking that it is module 3's (a describe that names another module is a wiring mistake). ON ANY ERROR THE RESULT IS NIL.

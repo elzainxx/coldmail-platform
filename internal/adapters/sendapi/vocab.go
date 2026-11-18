@@ -61,7 +61,7 @@ func Vocabularies(ctx context.Context, mc *modclient.Client, p Profile) (modclie
 
 // VocabReport is what a describe says against what the profile handles.
 type VocabReport struct {
-	// Diffs has one entry per vocabulary the profile handles (job_state, error_class, and item_reason when the module has reasons), in that order.
+	// Diffs has one entry per vocabulary the profile handles (job_state, error_class, item_reason when the module has reasons and run_conflict_cause when it names the causes of a run 409), in that order.
 	Diffs []modclient.VocabDiff
 	// CodesMissing are error codes the adapter maps that the module no longer lists; CodesExtra are codes it lists that the adapter does not know (additive: the status decides the kind).
 	CodesMissing []string
@@ -102,7 +102,7 @@ func (r VocabReport) firstBreak() string {
 func CompareVocabularies(d *modclient.Describe, p Profile) VocabReport {
 	var r VocabReport
 	want := p.Vocabularies()
-	for _, name := range []string{vocabJobState, vocabErrorClass, vocabItemReason} {
+	for _, name := range []string{vocabJobState, vocabErrorClass, vocabItemReason, vocabRunConflictCause} {
 		expected, ok := want[name]
 		if !ok {
 			continue

@@ -3,6 +3,7 @@ package sendapi_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -47,6 +48,13 @@ func TestForcedSpecialCasesAreRegistered(t *testing.T) {
 	}
 	if len(ids) == 0 {
 		t.Fatal("no MODULE-FORCED tag found in the package: the subject of the check is empty")
+	}
+	// the cases the Phase 3 close-out moved here: the 409 of run (module 2 says nothing, an older module 3 says nothing: SA-F1) and the two quirks of the cancel both sender modules share (SA-F12, SA-F13;
+	// they were module 2's M2-F1 and M2-F2 until module 3 got the same route)
+	for _, id := range []string{"SA-F1", "SA-F12", "SA-F13"} {
+		if !slices.Contains(ids, id) {
+			t.Fatalf("the tag %s is not in the package (found %v)", id, ids)
+		}
 	}
 	src := func(extra string) map[string]string {
 		return map[string]string{"a.go": "package x\n\n" + tag("ZZ-F1", "a quirk the module forces.") + "\nfunc f() {}\n" + extra}

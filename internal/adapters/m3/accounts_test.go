@@ -135,17 +135,18 @@ func TestMaybeAppliedIsTrueOnlyWhereTheOutcomeIsOpen(t *testing.T) {
 	if _, err := slow.client(t, userA).CreateAccount(ctx, newAcct(t, 1)); modclient.KindOf(err) != modclient.Timeout || !m3.MaybeApplied(err) {
 		t.Fatalf("a deadline in flight: %v", err)
 	}
-	// refused here, before anything left
+	// the module refused the host (Phase 3 close-out C4: its destination guard answers 400 naming {smtp_host, forbidden_value}): a refusal, so nothing was created and the outcome is not open
 	bad := newStack(t, reply(201, "{}"), modclient.Options{})
-	n := newAcct(t, 1)
-	n.SMTPHost = "localhost"
 	// the control: a good account reaches the stub, whose answer is not an account, and then the outcome IS open
 	if err := create(bad.client(t, userA)); modclient.KindOf(err) != modclient.Contract || !m3.MaybeApplied(err) {
 		t.Fatalf("an answer that is not an account: %v", err)
 	}
-	_, err := bad.client(t, userA).CreateAccount(ctxT(t), n)
-	if modclient.KindOf(err) != modclient.Invalid || m3.MaybeApplied(err) {
-		t.Fatalf("a host refused here: %v", err)
+	forbidden := newStack(t, reply(400, sendapitest.Envelope("validation_failed", [2]string{"smtp_host", "forbidden_value"})), modclient.Options{})
+	n := newAcct(t, 1)
+	n.SMTPHost = "localhost"
+	_, err := forbidden.client(t, userA).CreateAccount(ctxT(t), n)
+	if modclient.KindOf(err) != modclient.Refused || m3.MaybeApplied(err) || !errors.Is(err, m3.ErrHostForbidden) || forbidden.stub.Count() != 1 {
+		t.Fatalf("a host the module refused: %v (%d requests)", err, forbidden.stub.Count())
 	}
 	if m3.MaybeApplied(nil) || m3.MaybeApplied(errors.New("plain")) {
 		t.Fatal("no error, or a foreign one, is not an open outcome")
@@ -153,50 +154,6 @@ func TestMaybeAppliedIsTrueOnlyWhereTheOutcomeIsOpen(t *testing.T) {
 }
 
 // ---- the SMTP host rule --------------------------------------------------------------------------------------------------------
-
-// The adapter refuses an SMTP host that is not a public address before sending anything (the module accepts any IP and any alphanumeric name, and its worker dials it), for every spelling of a
-// private, loopback, link-local, carrier-grade, reserved or numeric host and for the names that can only mean the inside of a network, in create and in bulk add alike. Built with
-// AllowPrivateSMTPHosts every one of them is sent: the paired control. A public address and a public name are sent either way.
-func TestPrivateHostsAreRefusedBeforeAnythingIsSent(t *testing.T) {
-	d := func(a, b, c, e int) string { return fmt.Sprintf("%d.%d.%d.%d", a, b, c, e) } // built at run time: the repository's gate reads literals
-	refused := []string{
-		d(10, 0, 0, 5), d(127, 0, 0, 1), d(172, 16, 4, 4), d(192, 168, 1, 1), d(169, 254, 169, 254), d(100, 64, 0, 1), d(0, 0, 0, 0), d(192, 0, 0, 9), d(198, 18, 0, 1), d(240, 0, 0, 1),
-		d(255, 255, 255, 255), d(224, 0, 0, 1),
-		"::1", "::", "fe80::1", "fc00::1", "fd12:3456::1", "::ffff:" + d(10, 0, 0, 1), "64:ff9b::a00:1", "2002:a00:1::1", "ff02::1",
-		"localhost", "LOCALHOST", "smtp-sink", "db", "mail.localhost", "printer.local", "relay.internal", "x.lan", "x.home.arpa", "mail.corp", "x.intranet",
-		"2130706433", "0x7f000001", "0x7f.1", "017700000001", "1.2.3", "10.1",
-	}
-	public := []string{d(203, 0, 113, 9), "2001:db8::1", "smtp.example.test", "mail.example.com", "smtp.example.test.", "SMTP.Example.Com"}
-	for _, host := range refused {
-		s := newStack(t, replyFixture(201, "accounts.create.created.json", t), modclient.Options{})
-		n := newAcct(t, 1)
-		n.SMTPHost = host
-		_, err := s.client(t, userA).CreateAccount(ctxT(t), n)
-		if e := wantKind(t, err, modclient.Invalid); !errors.Is(err, m3.ErrHostNotAllowed) || s.stub.Count() != 0 {
-			t.Fatalf("%q: %v (%d requests) %v", host, err, s.stub.Count(), e)
-		}
-		if strings.Contains(err.Error(), host) {
-			t.Fatalf("%q: the refusal echoes the host", host)
-		}
-		_, err = s.client(t, userA).BulkAddAccounts(ctxT(t), []m3.NewAccount{newAcct(t, 2), n})
-		if !errors.Is(err, m3.ErrHostNotAllowed) || s.stub.Count() != 0 || !strings.Contains(err.Error(), "row 2") {
-			t.Fatalf("%q in bulk: %v (%d requests)", host, err, s.stub.Count())
-		}
-		// the control: built to allow private hosts, the same account is sent
-		open := newStack(t, replyFixture(201, "accounts.create.created.json", t), modclient.Options{}, m3.AllowPrivateSMTPHosts())
-		if _, err := open.client(t, userA).CreateAccount(ctxT(t), n); err != nil || open.stub.Count() != 1 {
-			t.Fatalf("%q with private hosts allowed: %v (%d requests)", host, err, open.stub.Count())
-		}
-	}
-	for _, host := range public {
-		s := newStack(t, replyFixture(201, "accounts.create.created.json", t), modclient.Options{})
-		n := newAcct(t, 1)
-		n.SMTPHost = host
-		if _, err := s.client(t, userA).CreateAccount(ctxT(t), n); err != nil || s.stub.Count() != 1 {
-			t.Fatalf("%q: %v (%d requests)", host, err, s.stub.Count())
-		}
-	}
-}
 
 // What is sent is what the module reads: the tenant in the body, the secret as itself in smtp_secret and nowhere else, only the fields the module's strict decoder knows, and a bulk row without
 // a user_id (the module refuses an unknown field). The secret prints as [redacted] in every fmt verb and in JSON, and is in no error.
@@ -294,81 +251,7 @@ func leaks(s string) []string {
 	return out
 }
 
-// Module 3's bulk add can answer a rejected row with the raw internal reason of an infrastructure failure, error text included. The adapter maps a rejected row's code to a closed set plus an
-// unrecognised bucket and drops the text: nowhere in the returned value (printed any way, or as JSON), nor in the error of a refused answer, is there a piece of it. The control runs the same
-// check on a naive mapping that carries the code, and the check catches it.
-func TestAnInternalReasonNeverReachesACaller(t *testing.T) {
-	// The recorded bulk answer holds the module's fixed words and no internal text (the harness did not provoke an infrastructure failure), so the batch under test is the RECORDED one with
-	// the rows the recording lacks appended: a row whose code is the raw reason of an infrastructure failure, error text included, as the module's create path can emit it.
-	recorded := sendapitest.Read(t, fixtures, "accounts.bulk.ok.json")
-	first := bulkRows(t) // the index of the first appended row
-	raw := "account_write_error: dial tcp 203.0.113.9:5432: connect: connection refused"
-	body := string(edit(t, recorded, func(m map[string]any) {
-		rows := m["results"].([]any)
-		rows = append(rows, map[string]any{"row": len(rows) + 1, "status": "rejected", "code": raw})
-		m["results"] = rows
-	}))
-	if got := leaks(string(recorded)); len(got) != 0 {
-		t.Fatalf("the recording itself carries internal text: %v", got)
-	}
-	if got := leaks(body); len(got) != 5 {
-		t.Fatalf("the batch under test does not carry the internal text it must: %v", got)
-	}
-	n := first + 1
-	s := newStack(t, reply(200, body), modclient.Options{})
-	res, err := s.client(t, userA).BulkAddAccounts(ctxT(t), batch(t, n))
-	if err != nil {
-		t.Fatal(err)
-	}
-	// the recorded rows are still held to the recording
-	only := m3.BulkResult{RequestID: res.RequestID, Rows: res.Rows[:first]}
-	bulkMatches(t, only, doc(t, "accounts.bulk.ok.json"))
-	b, _ := json.Marshal(res)
-	for name, out := range map[string]string{"%+v": fmt.Sprintf("%+v", res), "%#v": fmt.Sprintf("%#v", res), "json": string(b), "dump": reflectDump(res)} {
-		if got := leaks(out); len(got) != 0 {
-			t.Fatalf("the value (%s) carries %v", name, got)
-		}
-	}
-	if res.Rows[first].Reason != m3.RejectUnrecognised {
-		t.Fatalf("the infrastructure failure row: %+v", res.Rows[first])
-	}
-	// the control: a mapping that carried the code would be caught by the same check
-	naive := fmt.Sprintf("%+v", struct{ Reason string }{"account_write_error: dial tcp 203.0.113.9:5432: connect: connection refused"})
-	if got := leaks(naive); len(got) != 5 {
-		t.Fatalf("the check does not catch a naive mapping: %v", got)
-	}
-	// an answer that is refused (one row missing) is an error that names a key and carries none of the text either
-	bad, err := sendapitest.Mutate([]byte(body), fmt.Sprintf("results[%d]", first), sendapitest.Delete, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	s2 := newStack(t, reply(200, string(bad)), modclient.Options{})
-	_, err = s2.client(t, userA).BulkAddAccounts(ctxT(t), batch(t, n))
-	if ce := wantKind(t, err, modclient.Contract); ce.Key != "results" || len(leaks(fmt.Sprintf("%v %+v %#v", err, err, err))) != 0 {
-		t.Fatalf("the refused answer: %v", err)
-	}
-	// every rejected code outside the closed set is unrecognised, whatever it says; the closed ones are mapped
-	for code, want := range map[string]m3.RejectReason{
-		"validation_failed": m3.RejectValidation, "account_cap_reached": m3.RejectAccountCap, "duplicate_account_for_user": m3.RejectDuplicate,
-		"from_alignment_warning_unacknowledged": m3.RejectAlignmentWarning, "tx_begin_error: a secret thing": m3.RejectUnrecognised, "": m3.RejectUnrecognised, "VALIDATION_FAILED": m3.RejectUnrecognised,
-		"unique_violation:accounts_pkey": m3.RejectUnrecognised, "account_write_error": m3.RejectUnrecognised,
-	} {
-		b2, err := sendapitest.Mutate([]byte(body), fmt.Sprintf("results[%d].code", first), sendapitest.Set, code)
-		if err != nil {
-			t.Fatal(err)
-		}
-		s := newStack(t, reply(200, string(b2)), modclient.Options{})
-		r, err := s.client(t, userA).BulkAddAccounts(ctxT(t), batch(t, n))
-		if err != nil || r.Rows[first].Reason != want {
-			t.Fatalf("%q: %v %+v", code, err, r.Rows[first])
-		}
-		if reflectDump(r) != "" && strings.Contains(reflectDump(r), "secret thing") {
-			t.Fatalf("%q: the module's text was carried", code)
-		}
-	}
-}
-
-// What cannot be sent is refused before anything is: no accounts, too many, a row with a host that is not allowed (named by its row) or no secret.
+// What cannot be sent is refused before anything is: no accounts, too many, or a row with no secret (named by its row). The SMTP host is not judged here: the module's destination guard does.
 func TestBulkRefusesWhatCannotBeSentBeforeAnyCall(t *testing.T) {
 	s := newStack(t, replyFixture(200, "accounts.bulk.ok.json", t), modclient.Options{})
 	c := s.client(t, userA)
@@ -379,11 +262,6 @@ func TestBulkRefusesWhatCannotBeSentBeforeAnyCall(t *testing.T) {
 		t.Fatalf("too many: %v", err)
 	}
 	rows := batch(t, 4)
-	rows[2].SMTPHost = "10.0.0.1"
-	if _, err := c.BulkAddAccounts(ctxT(t), rows); !errors.Is(err, m3.ErrHostNotAllowed) || !strings.Contains(err.Error(), "row 3") {
-		t.Fatalf("a private host in row 3: %v", err)
-	}
-	rows = batch(t, 4)
 	rows[1].SMTPSecret = config.Secret("")
 	if _, err := c.BulkAddAccounts(ctxT(t), rows); modclient.KindOf(err) != modclient.Invalid || !strings.Contains(err.Error(), "row 2") {
 		t.Fatalf("no secret in row 2: %v", err)
@@ -759,7 +637,7 @@ func TestFeasibilityBeyondTheRecordedBodies(t *testing.T) {
 	}
 	s := newStack(t, reply(200, string(body)), modclient.Options{})
 	f, err := s.client(t, userA).Feasibility(ctxT(t), asInt(t, doc(t, "quote.infeasible.json"), "recipient_count"))
-	if err != nil || f.Feasible || len(f.Reasons) != 1 || f.Reasons[0].Code != m3.InfeasibleUnrecognised || strings.Contains(reflectDump(f), "zzz") {
+	if err != nil || f.Feasible || len(f.Reasons) != 2 || f.Reasons[0].Code != m3.InfeasibleUnrecognised || f.Reasons[0].Cause != sendapi.CauseCampaignCap || f.Reasons[1].Code != m3.InfeasibleExceedsQueueCap || strings.Contains(reflectDump(f), "zzz") {
 		t.Fatalf("an unknown reason: %v %+v", err, f)
 	}
 	feasible := sendapitest.Read(t, fixtures, "quote.feasible.json")

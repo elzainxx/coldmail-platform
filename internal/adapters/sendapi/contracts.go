@@ -12,6 +12,8 @@ const (
 	RouteRun      = "POST /v1/run"
 	RouteReport   = "GET /v1/report"
 	RouteDescribe = "GET /v1/describe"
+	// RouteCancel is the route of a module with a cancel (Profile.Cancel): module 2, and module 3 since Phase 3 close-out C1.
+	RouteCancel = "POST /v1/cancel"
 )
 
 // Where each vocabulary lives in a body, in the path grammar of internal/contractcheck (a.b is a key, x[] is every element of an array): the string-valued position the closed set
@@ -27,6 +29,8 @@ const (
 	PathErrorCode = "error.code"
 	// PathDescribeErrorCode: the `code` of every entry of describe's error_codes.
 	PathDescribeErrorCode = "error_codes[].code"
+	// PathConflictCause: the `code` of every entry of the details of a run 409 that names its causes (module 3): one of run_conflict_cause.
+	PathConflictCause = "error.details[].code"
 )
 
 // place puts one vocabulary (by its describe name) at a path of a body.
@@ -46,7 +50,8 @@ type place struct{ name, path string }
 // (a page that holds a failed or bounced item); the last page lists only job_state; the empty page lists nothing (it has no item); the quote lists nothing (it has no state, class or
 // code); describe lists only error_codes, because its other vocabularies sit under keys of a map that the drift gate's grammar folds (`vocabularies{}`), so no path reaches one of them
 // alone: those are compared with CheckVocabularies, against the live describe, at run time. Every error body lists error_codes at error.code. A vocabulary the profile has no set for
-// (item_reason on module 3) is not listed.
+// (item_reason on module 3) is not listed. The 409 on run of a module that names its causes lists run_conflict_cause at error.details[].code. A profile with a cancel route (Profile.Cancel) also
+// lists its two cancel responses (the position, and the 400 of a missing or malformed id).
 //
 // Contracts returns nil for a profile that fails validation: a subject that is empty is red in every test that counts it.
 func Contracts(p Profile) []modclient.RouteContract {
@@ -74,7 +79,7 @@ func Contracts(p Profile) []modclient.RouteContract {
 	state := place{vocabJobState, PathState}
 	errCode := place{vocabErrorCodes, PathErrorCode}
 	page := []place{{vocabJobState, PathItemState}, {vocabErrorClass, PathItemErrorClass}, {vocabItemReason, PathItemReason}}
-	return []modclient.RouteContract{
+	cs := []modclient.RouteContract{
 		rc(RouteQuote, "ok", "quote.ok.json", 200, sh.quote),
 
 		rc(RouteRun, "created", "run.created.json", 202, sh.run, state),
@@ -82,7 +87,7 @@ func Contracts(p Profile) []modclient.RouteContract {
 		rc(RouteRun, "error validation_failed", "run.error.validation_failed.json", 400, sh.errBody, errCode),
 		rc(RouteRun, "error unauthenticated", "run.error.unauthenticated.json", 401, sh.errBody, errCode),
 		rc(RouteRun, "error not_found", "run.error.not_found.json", 404, sh.errBody, errCode),
-		rc(RouteRun, "error conflict", "run.error.conflict.json", 409, sh.errBody, errCode),
+		rc(RouteRun, "error conflict", "run.error.conflict.json", 409, sh.conflict, errCode, place{vocabRunConflictCause, PathConflictCause}),
 		rc(RouteRun, "error paused", "run.error.paused.json", 503, sh.errBody, errCode),
 		rc(RouteRun, "error internal_error", "run.error.internal_error.json", 500, sh.errBody, errCode),
 
@@ -97,4 +102,11 @@ func Contracts(p Profile) []modclient.RouteContract {
 
 		rc(RouteDescribe, "ok", "describe.ok.json", 200, sh.describe, place{vocabErrorCodes, PathDescribeErrorCode}),
 	}
+	if p.Cancel {
+		cs = append(cs,
+			rc(RouteCancel, "ok", "cancel.ok.json", 200, sh.cancel),
+			rc(RouteCancel, "error validation_failed", "cancel.error.validation_failed.json", 400, sh.errBody, errCode),
+		)
+	}
+	return cs
 }

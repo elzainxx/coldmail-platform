@@ -208,7 +208,7 @@ func TestCheckVocabulariesNamesWhatChanged(t *testing.T) {
 		return sendapi.CheckVocabularies(ctxT(t), e.c.Module(), p)
 	}
 	rep, err := check(t, good)
-	if err != nil || rep.Breaking() || rep.Additive() || len(rep.Diffs) != 2 {
+	if err != nil || rep.Breaking() || rep.Additive() || len(rep.Diffs) != 3 { // job_state, error_class and run_conflict_cause (module 3 names the causes of a run 409)
 		t.Fatalf("the control (an exact describe): %v %+v", err, rep)
 	}
 	for _, d := range rep.Diffs {
@@ -224,6 +224,9 @@ func TestCheckVocabulariesNamesWhatChanged(t *testing.T) {
 		"a state is gone":                  {mutated(t, good, "vocabularies.job_state.values[5]", sendapitest.Delete, nil), "vocabularies.job_state", "bounced"},
 		"a state is added (a strict set)":  {appendValue(t, good, "job_state", "paused"), "vocabularies.job_state", "does not handle"},
 		"a vocabulary is gone":             {mutated(t, good, "vocabularies.error_class", sendapitest.Delete, nil), "vocabularies.error_class", "no longer advertises"},
+		"a cause of a run refusal is gone": {mutated(t, good, "vocabularies.run_conflict_cause.values[3]", sendapitest.Delete, nil), "vocabularies.run_conflict_cause", "queue_cap"},
+		"a cause is added (a strict set)":  {appendValue(t, good, "run_conflict_cause", "full_moon"), "vocabularies.run_conflict_cause", "does not handle"},
+		"the cause vocabulary is gone":     {mutated(t, good, "vocabularies.run_conflict_cause", sendapitest.Delete, nil), "vocabularies.run_conflict_cause", "no longer advertises"},
 		"an error class is gone":           {mutated(t, good, "vocabularies.error_class.values[0]", sendapitest.Delete, nil), "vocabularies.error_class", "bounce_permanent"},
 		"an error code is gone":            {mutated(t, good, "error_codes[8]", sendapitest.Delete, nil), "error_codes", "paused"},
 		"the first error code is gone":     {mutated(t, good, "error_codes[0]", sendapitest.Delete, nil), "error_codes", "validation_failed"},
@@ -272,8 +275,8 @@ func TestCheckVocabulariesNamesWhatChanged(t *testing.T) {
 	}
 }
 
-// Module 2's profile against module 3's describe: the pure comparison names every difference in both directions (module 3 has no cancelled state and no item_reason vocabulary, and two
-// more error codes), and Vocabularies hands back the advertised sets with no network beyond the one describe.
+// Module 2's profile against module 3's describe: the pure comparison names every difference in both directions (module 3 has no item_reason vocabulary, and two more error codes; both have
+// the cancelled state since the close-out, so job_state is exact), and Vocabularies hands back the advertised sets with no network beyond the one describe.
 func TestCompareVocabulariesAcrossTheTwoModules(t *testing.T) {
 	e := newEnv(t, m3like(), userA, serve(200, sendapitest.Read(t, fixtures, "describe.ok.json")), modclient.Options{}, sendapi.Options{})
 	d, err := sendapi.Describe(ctxT(t), e.c.Module(), m3like())
@@ -293,8 +296,15 @@ func TestCompareVocabulariesAcrossTheTwoModules(t *testing.T) {
 			ir = &r.Diffs[i]
 		}
 	}
-	if js == nil || !slices.Equal(js.Missing, []string{"cancelled"}) || len(js.Extra) != 0 {
-		t.Fatalf("job_state: %+v", js)
+	if js == nil || !js.Exact() {
+		t.Fatalf("job_state: %+v (both modules list cancelled since the close-out)", js)
+	}
+	// the control: module 3's describe with its cancelled state taken out differs from module 2's profile exactly by that state
+	noCancel := slices.DeleteFunc(slices.Clone(m3like().JobStates), func(s string) bool { return s == "cancelled" })
+	other := m3like()
+	other.JobStates, other.Cancel = noCancel, false
+	if rj := sendapi.CompareVocabularies(d, other); rj.Diffs[0].Name != "job_state" || !slices.Equal(rj.Diffs[0].Extra, []string{"cancelled"}) {
+		t.Fatalf("job_state against a profile without cancelled: %+v", rj.Diffs[0])
 	}
 	if ir == nil || ir.Advertised {
 		t.Fatalf("item_reason: %+v", ir)

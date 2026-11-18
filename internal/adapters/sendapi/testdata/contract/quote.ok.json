@@ -8,6 +8,7 @@
  "reasons": [],
  "caps": {
   "queue_depth_cap": 100000,
+  "campaign_size_cap": 50000,
   "daily_send_cap": 500,
   "account_count_cap": 20
  },

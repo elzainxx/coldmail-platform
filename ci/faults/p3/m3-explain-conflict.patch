@@ -1,9 +1,0 @@
---- a/internal/adapters/m3/precheck.go
-+++ b/internal/adapters/m3/precheck.go
-@@ -143,5 +143,5 @@
- 		return err
- 	}
- 	// MODULE-FORCED(M3-F3): the module answers run's 409 with one body for four causes (suspended, another campaign active, campaign size cap, queue depth cap) and the quote predicts two of them wrongly, so the adapter can only record "refused, cause unknown" and must never pick one.
--	return fmt.Errorf("%w: m3 run refused with HTTP 409, cause unknown (suspended, another campaign active, campaign size cap or queue depth cap: the module does not say which): %w", ErrConflictUnexplained, err)
-+	return fmt.Errorf("%w: m3 run refused with HTTP 409, cause unknown (suspended, another campaign active, campaign size cap or queue depth cap: the module does not say which): %w", ErrJobActive, err)
- }

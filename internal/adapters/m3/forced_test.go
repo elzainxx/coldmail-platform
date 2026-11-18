@@ -30,8 +30,8 @@ func TestForcedSpecialCasesAreRegistered(t *testing.T) {
 	if len(ids) == 0 {
 		t.Fatal("no MODULE-FORCED tag found in the package: the subject of the check is empty")
 	}
-	// the special cases the research and the module's code say module 3 forces on its adapter
-	want := map[string]bool{"M3-F1": false, "M3-F2": false, "M3-F3": false, "M3-F4": false, "M3-F5": false, "M3-F6": false, "M3-F7": false, "M3-F8": false, "M3-F9": false}
+	// the two special cases module 3 still forces on its adapter after the Phase 3 close-out (the other seven were removed because the module now answers what the adapter worked around)
+	want := map[string]bool{"M3-F6": false, "M3-F9": false}
 	for _, id := range ids {
 		if _, ok := want[id]; ok {
 			want[id] = true

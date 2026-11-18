@@ -1,2 +1,4 @@
-M2-F1|m2.go|cancel answers the campaign position after the call (cancelled includes earlier calls) and its cancelled and in_flight split is timing dependent, so the position is returned as it is and no delta is computed
-M2-F2|m2.go|a cancel of an unknown campaign, a typo or another tenant campaign answers 200 with all zeros (never a 404), so the adapter cannot tell nothing to cancel from no such campaign and exposes only Empty
+# The special cases module 2 forces on its adapter: one `<ID>|<file>|<one-line why>` per MODULE-FORCED tag in this package's non-test sources (TestForcedSpecialCasesAreRegistered keeps the two
+# in step). The shared body's own are in internal/adapters/sendapi/forced.txt. M2-F1 and M2-F2 (the cancel position and the empty foreign cancel) moved there as SA-F12 and SA-F13 when module 3
+# gained the same route (Phase 3 close-out C1): the cancel is the shared body's now, and an id is never reused for another case.
+M2-F3|m2.go|run answers 409 with code conflict and no details (owner ruling OD-5: back-pressure, phase 4 owns the serialisation), so the adapter can only call it back-pressure and can never say which of its causes it was

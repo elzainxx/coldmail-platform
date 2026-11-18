@@ -34,10 +34,33 @@ type BulkRow struct {
 	Alignment        AlignmentState
 	AlignmentMessage *string
 
-	// For a rejected row: Reason is one of the module's fixed words or RejectUnrecognised. The module's own text for a reason it does not publish (an infrastructure failure's internal reason
-	// can carry error text) is NEVER carried: it is dropped here, and the adapter's errors and values never contain it.
+	// For a rejected row: Reason is one of the module's closed set (RejectReason; since Phase 3 close-out C3 an internal reason never crosses the boundary: the module logs it and answers its
+	// external code), and Fields the field problems the module named.
 	Reason RejectReason
 	Fields []FieldIssue
+}
+
+// HostForbidden is true for a rejected row whose smtp_host the module's destination guard refused: validation_failed with {smtp_host, forbidden_value} in its details (Phase 3 close-out C4).
+// The other rows of the batch are not affected.
+func (r BulkRow) HostForbidden() bool {
+	if r.Created || r.Reason != RejectValidation {
+		return false
+	}
+	for _, f := range r.Fields {
+		if f.Field == "smtp_host" && f.Issue == "forbidden_value" {
+			return true
+		}
+	}
+	return false
+}
+
+// Err is the typed refusal of a row the module rejected because of its SMTP host (ErrHostForbidden, also a Refused modclient error), and nil for every other row. The row's own reason and
+// fields are the other facts about a rejection.
+func (r BulkRow) Err() error {
+	if !r.HostForbidden() {
+		return nil
+	}
+	return fmt.Errorf("%w: %w", ErrHostForbidden, &modclient.Error{Kind: modclient.Refused, Module: modclient.M3, Route: routeBulk, Status: http.StatusBadRequest, Message: "the module refused the row's SMTP host as a destination", Sent: true})
 }
 
 // BulkResult is the answer of a bulk add: one BulkRow per row sent, in order, or an error and nothing.
@@ -76,9 +99,10 @@ func safeIssueWord(s string) bool {
 // accounts to find out which rows were created). It is never retried by the adapter. At most MaxBulkRows rows; each row obeys the same host rule as CreateAccount, and one row that
 // breaks it refuses the whole batch before anything is sent.
 //
-// A 409 (the whole batch is refused for a suspended user) is ErrActionUnavailable; a batch over the module's row limit is a 422 Refused error. The answer is checked against what was sent:
-// exactly one result per row, in order, each created row naming an account id, each status one of created or rejected; anything else is a Contract error and no rows are returned, because
-// a listing that may be missing rows is never returned as complete.
+// A 409 (the whole batch is refused for a suspended user) is ErrActionUnavailable; a batch over the module's row limit is a 422 Refused error. A row whose host the module's destination guard
+// refuses is rejected alone (BulkRow.HostForbidden); the other rows are processed. The answer is checked against what was sent: exactly one result per row, in order, each created row naming
+// an account id, each status one of created or rejected, every state and code one of the module's closed sets (Phase 3 close-out C3); anything else is a Contract error naming the key
+// and no rows are returned, because a listing that may be missing rows is never returned as complete.
 func (c *Client) BulkAddAccounts(ctx context.Context, accounts []NewAccount) (BulkResult, error) {
 	switch {
 	case len(accounts) == 0:
@@ -142,16 +166,23 @@ func (c *Client) BulkAddAccounts(ctx context.Context, accounts []NewAccount) (Bu
 				return BulkResult{}, contract(resp, routeBulk, path+".account_id", "a created row names no account id")
 			}
 			row.AccountID = r.AccountID
-			row.Verification = verificationState(r.Verification)
-			row.VerifyCode = verifyCode(r.Code)
+			if row.Verification, ok = testVerificationState(r.Verification); !ok {
+				return BulkResult{}, contract(resp, routeBulk, path+".verification", "the verification state is not one of the module's closed set")
+			}
+			if row.VerifyCode, ok = verifyCode(r.Code); !ok {
+				return BulkResult{}, contract(resp, routeBulk, path+".code", "the verification code is not one of the module's closed set")
+			}
 			row.SMTPResponse = providerText(r.SMTPResponse)
 			if r.Alignment != "" {
-				row.Alignment = alignmentState(r.Alignment)
+				if row.Alignment, ok = testAlignmentState(r.Alignment); !ok {
+					return BulkResult{}, contract(resp, routeBulk, path+".from_alignment_state", "the From verdict is not one of the module's closed set")
+				}
 			}
 			row.AlignmentMessage = providerText(r.AlignMessage)
 		} else {
-			// MODULE-FORCED(M3-F4): a rejected row's `code` is the module's fixed word for a validation, cap or duplicate refusal but the raw internal reason (error text included) for an infrastructure failure, so the adapter maps it to a closed set plus an unrecognised bucket and drops the text.
-			row.Reason = rejectReason(r.Code)
+			if row.Reason, ok = rejectReason(r.Code); !ok {
+				return BulkResult{}, contract(resp, routeBulk, path+".code", "the rejection code is not one of the module's closed set")
+			}
 			for _, d := range r.Details {
 				if safeIssueWord(d.Field) && safeIssueWord(d.Issue) {
 					row.Fields = append(row.Fields, FieldIssue{Field: d.Field, Issue: d.Issue})

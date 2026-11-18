@@ -282,8 +282,8 @@ func TestContractFixturesDoNotRot(t *testing.T) {
 	if problems := sendapitest.CheckNoRot(fixtures, cs); len(problems) != 0 {
 		t.Fatalf("the fixtures have rotted: %v", problems)
 	}
-	if len(cs) != len(sendapi.Contracts(m2.Profile()))+2 {
-		t.Fatalf("%d contracts: the shared ones and cancel's two", len(cs))
+	if len(cs) != len(sendapi.Contracts(m2.Profile())) || len(cs) != 20 {
+		t.Fatalf("%d contracts: the shared ones (which include the cancel's two since module 3 has the route too), 20 of them", len(cs))
 	}
 	copyDir := func(t *testing.T) string {
 		dir := t.TempDir()
@@ -656,4 +656,25 @@ func hasProblem(problems []string, subs ...string) bool {
 		}
 	}
 	return false
+}
+
+// Module 2's describe advertises the plain-text alternative (B3): the capability is read as the module says it, true in the describe and false when the module says false (it is not defaulted
+// to true), and the closed sets the adapter handles are not troubled by it. The control is the module that says false.
+func TestDescribeAdvertisesThePlainTextAlternative(t *testing.T) {
+	good := sendapitest.Read(t, fixtures, "describe.ok.json")
+	d, err := newStack(t, reply(200, string(good)), modclient.Options{}).a.Describe(ctxT(t))
+	if err != nil || !d.Capabilities["plain_text_alternative"] {
+		t.Fatalf("describe: %v %v", err, d)
+	}
+	off, err := sendapitest.Mutate(good, "capabilities.plain_text_alternative", sendapitest.Set, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d2, err := newStack(t, reply(200, string(off)), modclient.Options{}).a.Describe(ctxT(t))
+	if v, ok := d2.Capabilities["plain_text_alternative"]; err != nil || !ok || v {
+		t.Fatalf("a module that says false: %v %v %v", err, ok, v)
+	}
+	if rep, err := newStack(t, reply(200, string(good)), modclient.Options{}).a.CheckVocabularies(ctxT(t)); err != nil || rep.Breaking() {
+		t.Fatalf("CheckVocabularies: %v %+v", err, rep)
+	}
 }

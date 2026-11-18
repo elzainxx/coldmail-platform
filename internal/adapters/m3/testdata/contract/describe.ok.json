@@ -8,6 +8,7 @@
     "click_tracking": false,
     "content_variation": true,
     "open_tracking": false,
+    "plain_text_alternative": true,
     "reply_to_per_campaign": true,
     "sequences": false,
     "single_send": true
@@ -661,7 +662,8 @@
         "sending",
         "sent",
         "failed",
-        "bounced"
+        "bounced",
+        "cancelled"
       ]
     },
     "notification_condition": {
@@ -761,7 +763,10 @@
         "exceeds_queue_cap",
         "no_eligible_accounts",
         "all_accounts_unverified",
-        "from_gate_blocked"
+        "from_gate_blocked",
+        "suspended",
+        "campaign_active",
+        "campaign_cap"
       ]
     },
     "quote_warning_code": {
@@ -771,6 +776,19 @@
       "source": "module_constant",
       "values": [
         "long_duration"
+      ]
+    },
+    "run_conflict_cause": {
+      "fields": [
+        "run.error.details[].code",
+        "quote.reasons[].cause"
+      ],
+      "source": "module_constant",
+      "values": [
+        "suspended",
+        "campaign_active",
+        "campaign_cap",
+        "queue_cap"
       ]
     },
     "routing_strategy": {

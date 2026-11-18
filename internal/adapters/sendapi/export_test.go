@@ -13,5 +13,5 @@ func UnvalidatedClientForTest(p Profile) *Client { return &Client{p: p.clone()} 
 
 // ClientShapesForTest are the Shapes a client built by New decodes with, by the names the contracts use.
 func ClientShapesForTest(c *Client) map[string]modclient.Shape {
-	return map[string]modclient.Shape{"quote": c.sh.quote, "run": c.sh.run, "job": c.sh.job, "page": c.sh.page, "describe": c.sh.describe, "error": c.sh.errBody}
+	return map[string]modclient.Shape{"quote": c.sh.quote, "run": c.sh.run, "job": c.sh.job, "page": c.sh.page, "describe": c.sh.describe, "error": c.sh.errBody, "cancel": c.sh.cancel, "conflict": c.sh.conflict}
 }

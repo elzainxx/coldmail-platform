@@ -56,9 +56,11 @@ var (
 	// ErrActionUnavailable: module 3 answered 409 to the test button or to a bulk add. On those two routes the only cause of a 409 is the user's suspension (the module's one fixed sentence,
 	// "not available for your account right now", which deliberately does not say why); the adapter names the route's only cause as "unavailable", not as "suspended".
 	ErrActionUnavailable = errors.New("m3: module 3 refuses this account action for this user right now")
-	// ErrHostNotAllowed: the SMTP host is a private, loopback, link-local or otherwise non-routable address, or a name that can only mean one (a single label, localhost, .local), and the
-	// adapter was not built with AllowPrivateSMTPHosts.
-	ErrHostNotAllowed = errors.New("m3: the SMTP host is not a public address")
+	// ErrHostForbidden: the module refused the SMTP host the user named, or the address it resolves to, as a destination it will not connect to (its destination guard, Phase 3 close-out C4: a
+	// special-purpose address such as loopback, private, link-local or the cloud metadata address). It is carried by the 400 `validation_failed` whose details name {smtp_host, forbidden_value}
+	// (create, and a bulk row through BulkRow.Err) and by VerifyCode.HostRefusal for the code `verify_host_not_allowed` (the same refusal at connect time); both also unwrap to a Refused
+	// modclient error. Nothing was created. The module says neither the address nor the range, and neither does this error.
+	ErrHostForbidden = errors.New("m3: the module refuses this SMTP host as a destination")
 )
 
 // ---- the account object ------------------------------------------------------------------------------------------------
@@ -141,7 +143,7 @@ var accountShape = modclient.Object(
 
 // accountListShape is the list answer: {"items": [...], "next_cursor": ...}.
 //
-// MODULE-FORCED(M3-F5): the module's list handlers answer the array under `items` while describe.schemas names it `results` (the campaign report's key), so this shape is built from the handlers and describe.schemas is never read for it.
+// It is built from the handlers' own types, and since the Phase 3 close-out (C6) describe.schemas agrees with them (the list key is `items`, an account is nested): nothing is special about it any more.
 var accountListShape = modclient.Object(
 	modclient.Req("items", modclient.ArrayOf(accountShape)),
 	modclient.Req("next_cursor", modclient.Str.OrNull()),
@@ -260,9 +262,15 @@ func (c *Client) account(resp *modclient.Response, route, path string, w *wireAc
 	if a.QuarantinedAt, err = optInstant(resp, route, at(path, "status"), "quarantined_at", w.Status.QuarantinedAt); err != nil {
 		return Account{}, err
 	}
+	// the closed vocabularies of the user surface (Phase 3 close-out C3): a word outside one is a Contract error naming the key, never a guess, and nothing of it is carried
 	v := &a.Verification
-	v.State = verificationState(w.Verification.State)
-	v.Code = verifyCode(word(w.Verification.Code))
+	var ok bool
+	if v.State, ok = verificationState(w.Verification.State); !ok {
+		return Account{}, contract(resp, route, at(path, "verification.state"), "the verification state is not one of the module's closed set")
+	}
+	if v.Code, ok = verifyCode(word(w.Verification.Code)); !ok {
+		return Account{}, contract(resp, route, at(path, "verification.code"), "the verification code is not one of the module's closed set")
+	}
 	v.SMTPResponse = providerText(w.Verification.SMTPResponse)
 	if v.VerifiedAt, err = optInstant(resp, route, at(path, "verification"), "verified_at", w.Verification.VerifiedAt); err != nil {
 		return Account{}, err
@@ -271,7 +279,9 @@ func (c *Client) account(resp *modclient.Response, route, path string, w *wireAc
 		return Account{}, err
 	}
 	al := &a.FromAlignment
-	al.State = alignmentState(w.FromAlignment.State)
+	if al.State, ok = alignmentState(w.FromAlignment.State); !ok {
+		return Account{}, contract(resp, route, at(path, "from_alignment.state"), "the From verdict is not one of the module's closed set")
+	}
 	al.DMARCPolicy = word(w.FromAlignment.DMARCPolicy)
 	al.Message = providerText(w.FromAlignment.Message)
 	if al.CheckedAt, err = optInstant(resp, route, at(path, "from_alignment"), "checked_at", w.FromAlignment.CheckedAt); err != nil {
@@ -294,10 +304,22 @@ func hasDetail(e *modclient.Error, field, issue string) bool {
 	return false
 }
 
-// accountErr refines the 409 of an account route, never changes a Kind and never turns an error into a value.
+// hostForbidden is true when the module refused the SMTP host: a 400 validation_failed whose details name {smtp_host, forbidden_value} (the destination guard, Phase 3 close-out C4).
+func hostForbidden(e *modclient.Error) bool {
+	return e.Kind == modclient.Refused && e.Status == http.StatusBadRequest && hasDetail(e, "smtp_host", "forbidden_value")
+}
+
+// accountErr refines the refusals of an account route, never changes a Kind and never turns an error into a value: a 400 that names {smtp_host, forbidden_value} is ErrHostForbidden, and a
+// 409 is what the route's only causes make it.
 func accountErr(route string, err error) error {
 	var e *modclient.Error
-	if !errors.As(err, &e) || e.Kind != modclient.Refused || e.Status != http.StatusConflict {
+	if !errors.As(err, &e) {
+		return err
+	}
+	if hostForbidden(e) {
+		return fmt.Errorf("%w: %w", ErrHostForbidden, err)
+	}
+	if e.Kind != modclient.Refused || e.Status != http.StatusConflict {
 		return err
 	}
 	switch route {
@@ -632,15 +654,11 @@ func (n NewAccount) wire() wireNew {
 	return w
 }
 
-// check refuses before anything is sent: no secret, and (unless private hosts are allowed) a host that is not a public address.
+// check refuses before anything is sent: no secret. The SMTP host is NOT judged here: the module refuses a host that is, or resolves to, a special-purpose address at add time and at every
+// connect (Phase 3 close-out C4), and it is the one that can resolve a name; its refusal is ErrHostForbidden.
 func (c *Client) check(route string, n NewAccount) error {
 	if n.SMTPSecret.Reveal() == "" {
 		return invalid(route, "the SMTP secret is empty")
-	}
-	if !c.privateHosts {
-		if err := checkHost(n.SMTPHost); err != nil {
-			return fmt.Errorf("%w: %w", ErrHostNotAllowed, invalid(route, err.Error()))
-		}
 	}
 	return nil
 }
@@ -649,9 +667,10 @@ func (c *Client) check(route string, n NewAccount) error {
 // missing verification is NOT an error (read Account.Verification). It is not idempotent and is never retried by the adapter: after an error for which MaybeApplied is true, list the
 // accounts before trying again (a repeat after a lost answer is a 409 duplicate, ErrAccountDuplicate). It has its own timeout (SlowAccountTimeout).
 //
-// The SMTP host is refused unless it is a public address (ErrHostNotAllowed), see checkHost. A 409 is ErrAccountDuplicate when it names the username, and otherwise
-// sendapi.ErrConflictUnexplained (the account cap and a suspended user answer alike); a 422 refusal of an unacknowledged From-gate warning is a Refused error whose details name
-// acknowledge_alignment_warning.
+// A host the module's destination guard refuses (loopback, private, link-local including the cloud metadata address, ...: a 400 naming {smtp_host, forbidden_value}) is ErrHostForbidden and
+// creates nothing; a name that does not resolve at add time is accepted and judged again at every connect (an account that later resolves into a refused range fails its verification with
+// verify_host_not_allowed). A 409 is ErrAccountDuplicate when it names the username, and otherwise sendapi.ErrConflictUnexplained (the account cap and a suspended user answer alike); a 422
+// refusal of an unacknowledged From-gate warning is a Refused error whose details name acknowledge_alignment_warning.
 func (c *Client) CreateAccount(ctx context.Context, n NewAccount) (Account, error) {
 	if err := c.check(routeCreate, n); err != nil {
 		return Account{}, err
@@ -687,10 +706,12 @@ type TestVerification struct {
 	SMTPResponse *string
 }
 
-// TestAlignment is the From-gate re-check of the test button. State indeterminate means the DNS did not answer: nothing was decided and nothing was stored. NotStored is true when the
-// module decided but could not store the verdict.
+// TestAlignment is the From-gate re-check of the test button. State indeterminate means the check could not run (Code says why: the DNS did not answer, or the From domain does not exist):
+// nothing was decided and nothing was stored. NotStored is true when the module decided but could not store the verdict (the module's one closed word `from_check_not_saved`; the internal
+// reason went to its log). Message is the module's rendered sentence for the verdict: opaque text, never branched on.
 type TestAlignment struct {
 	State     AlignmentState
+	Code      AlignmentCode
 	Message   *string
 	NotStored bool
 }
@@ -729,17 +750,42 @@ func (c *Client) TestAccount(ctx context.Context, accountID string, acknowledge 
 		FromAlignment struct {
 			State   string  `json:"state"`
 			Message *string `json:"message"`
+			Code    *string `json:"code"`
 			Error   *string `json:"error"`
 		} `json:"from_alignment"`
 	}
 	if err := modclient.Decode(resp, &w, testShape); err != nil {
 		return TestResult{}, err
 	}
-	r := TestResult{
-		Verification: TestVerification{State: testVerificationState(w.Verification.State), Code: verifyCode(word(w.Verification.Code)), SMTPResponse: providerText(w.Verification.SMTPResponse)},
-		Alignment:    TestAlignment{State: testAlignmentState(w.FromAlignment.State), Message: providerText(w.FromAlignment.Message)},
+	// every state and code of the answer is one of the module's closed sets (Phase 3 close-out C3): a word outside one is a Contract error naming its key, and nothing of it is carried
+	var r TestResult
+	var ok bool
+	if r.Verification.State, ok = testVerificationState(w.Verification.State); !ok {
+		return TestResult{}, contract(resp, routeTest, "verification.state", "the verification state is not one of the module's closed set")
 	}
-	// MODULE-FORCED(M3-F7): when the test button decided the From verdict but could not store it, it puts an internal reason slug in from_alignment.error, so the adapter reduces that key to a boolean and never carries its text.
-	r.Alignment.NotStored = w.FromAlignment.Error != nil && *w.FromAlignment.Error != ""
+	if r.Verification.Code, ok = verifyCode(word(w.Verification.Code)); !ok {
+		return TestResult{}, contract(resp, routeTest, "verification.code", "the verification code is not one of the module's closed set")
+	}
+	r.Verification.SMTPResponse = providerText(w.Verification.SMTPResponse)
+	if r.Alignment.State, ok = testAlignmentState(w.FromAlignment.State); !ok {
+		return TestResult{}, contract(resp, routeTest, "from_alignment.state", "the From verdict is not one of the module's closed set")
+	}
+	if r.Alignment.Code, ok = alignmentCode(word(w.FromAlignment.Code)); !ok {
+		return TestResult{}, contract(resp, routeTest, "from_alignment.code", "the From check's code is not one of the module's closed set")
+	}
+	if r.Alignment.NotStored, ok = alignmentError(word(w.FromAlignment.Error)); !ok {
+		return TestResult{}, contract(resp, routeTest, "from_alignment.error", "the From check's error is not the module's one closed word")
+	}
+	r.Alignment.Message = providerText(w.FromAlignment.Message)
 	return r, nil
+}
+
+// HostRefusal is the typed error of a credential check the module refused as a destination: for the code `verify_host_not_allowed` (the guard's refusal at connect time, on the test button, in
+// create's verify-on-add and on a bulk row) a Refused modclient error that errors.Is-finds ErrHostForbidden, the same sentinel the add-time refusal (a 400 naming {smtp_host,
+// forbidden_value}) carries; nil for every other code, the empty one included. The check was not made: nothing was sent to the host.
+func (c VerifyCode) HostRefusal() error {
+	if c != VerifyHostNotAllowed {
+		return nil
+	}
+	return fmt.Errorf("%w: %w", ErrHostForbidden, &modclient.Error{Kind: modclient.Refused, Module: modclient.M3, Route: routeTest, Message: "the module refused the account's SMTP host as a destination at connect time", Sent: true})
 }
