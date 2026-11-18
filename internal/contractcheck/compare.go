@@ -16,10 +16,11 @@ type Kind string
 const (
 	// StatusChanged: the live HTTP status is not the recorded one.
 	StatusChanged Kind = "StatusChanged"
-	// KeyMissing: a key of the fixture is not in the live body (unless the contract's Shape lists it as optional: Opt).
+	// KeyMissing: a key of the fixture is not in the live body. Not for a key the contract's Shape declares Opt: a module omits or sets such a key depending on the state of the
+	// thing it describes, so its presence on one side only is no difference (Report.Optional says so).
 	KeyMissing Kind = "KeyMissing"
 	// KeyAdded: a key of the live body is not in the fixture. The modules' API changes are additive and the platform tolerates an added key, but the fixture is stale and
-	// must be refreshed, so it is its own difference.
+	// must be refreshed, so it is its own difference. Not for a key the Shape declares Opt (see KeyMissing); a key the Shape does not list at all is still one.
 	KeyAdded Kind = "KeyAdded"
 	// TypeChanged: the JSON type at a path differs (null is not a type here: a null side says nothing about the type and is listed as a gap). Where the Shape says Int, a
 	// number that stopped being an integer (or became one) is a TypeChanged too.
@@ -57,6 +58,9 @@ type Report struct {
 	Diffs []Diff
 	// Gaps are the positions that could not be judged (an empty array, an empty map, a null on either side). They are not differences.
 	Gaps []Gap
+	// Optional are the paths of keys the contract's Shape declares Opt (the module omits or sets them depending on state) that are present on one side only: their presence is not
+	// compared, so they are neither differences nor part of the distance Match ranks by. A key that is present on both sides is compared as any other.
+	Optional []string
 }
 
 // Clean is true when there is no difference.
@@ -86,10 +90,17 @@ func (c *comparer) gap(side, path, why string) {
 	c.rep.Gaps = append(c.rep.Gaps, Gap{Side: side, Path: display(path), Why: why})
 }
 
+// optional notes an Opt key that is on one side only (once per path: a position is visited once, however many array elements it was folded from).
+func (c *comparer) optional(path string) {
+	c.rep.Optional = append(c.rep.Optional, display(path))
+}
+
 // Compare compares one live response with the recorded fixture of its contract: the HTTP status; the keys, JSON types and (where the Shape says Int) integer-ness of the two
 // skeletons; the closed vocabularies; and whether the live body still decodes with the contract's Shape (modclient.Decode, the adapter's own check).
 //
-// Positions that tell nothing (an empty array, an empty map, a null) are never differences: they are returned in Report.Gaps. The order of Diffs is deterministic: status, then
+// Positions that tell nothing (an empty array, an empty map, a null) are never differences: they are returned in Report.Gaps. A key the Shape declares Opt that is present on one side
+// only is not a difference either, in either direction (no KeyMissing, no KeyAdded): it is returned in Report.Optional; present on both sides it is compared as any other key. A key
+// the Shape does not list keeps KeyMissing and KeyAdded. The order of Diffs is deterministic: status, then
 // the structure in fixture order, then added keys, then vocabularies by name, then the Shape check.
 func Compare(rc modclient.RouteContract, fixture, live []byte, liveStatus int) Report {
 	var rep Report
@@ -177,7 +188,8 @@ func (c *comparer) walkKeys(path string, fx, lv *node, sv *sview) {
 		child, ok := lv.kids[k]
 		if !ok {
 			if fld != nil && !fld.required {
-				continue // the Shape says the key may be absent
+				c.optional(kp) // the Shape says the key may be absent: presence is not compared
+				continue
 			}
 			c.diff(kp, KeyMissing, "the key is in the recorded fixture and not in the live body")
 			continue
@@ -190,6 +202,10 @@ func (c *comparer) walkKeys(path string, fx, lv *node, sv *sview) {
 	}
 	for _, k := range lv.keys {
 		if _, ok := fx.kids[k]; !ok {
+			if fld := sv.field(k); fld != nil && !fld.required {
+				c.optional(join(path, safeKey(k))) // optional per the Shape: the fixture simply lacks it
+				continue
+			}
 			c.diff(join(path, safeKey(k)), KeyAdded, "the key is in the live body and not in the recorded fixture: refresh the fixture")
 		}
 	}

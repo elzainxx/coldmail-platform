@@ -22,3 +22,4 @@ a47dd609|agent id: module-comparison verification agent (never returned, unanswe
 f09df58|commit of the parent repository (outside the four-repository layout): its public-release forward fix, cited by the audit
 c6b53b9|commit of the parent repository (outside the four-repository layout): the parent head at the start of Phase 3, cited by Docs/phase-3-spec.md
 99c06a3|commit of the parent repository (outside the four-repository layout): the Part A re-pin, cited by Docs/phase-3-spec.md
+aaaaaaaaaa|a run of the letter a: the normalised request id and provider message id inside the recorded contract fixtures (internal/adapters/*/testdata/contract), not a commit

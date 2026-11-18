@@ -279,6 +279,29 @@ func (s *Session) finishCompare(t TB, res MatchResult, total, dropped int) {
 	for _, l := range gapLines {
 		t.Logf("note: %s", l)
 	}
+	for _, l := range optionalNotes(res) {
+		t.Logf("note: %s", l)
+	}
+}
+
+// optionalNotes lists, once per contract and path, the keys the Shape declares Opt that were present on one side only in some observation: their presence is not compared.
+func optionalNotes(res MatchResult) []string {
+	type key struct {
+		idx  int
+		path string
+	}
+	seen := map[key]bool{}
+	var out []string
+	for _, m := range res.Matched {
+		for _, p := range m.Report.Optional {
+			k := key{m.Index, p}
+			if !seen[k] {
+				seen[k] = true
+				out = append(out, fmt.Sprintf("optional per the Shape, presence not compared: %s (%s)", p, keyOf(m.Contract)))
+			}
+		}
+	}
+	return out
 }
 
 // logNearestMisses prints, for each unexercised contract that has observed responses of its module, route and status, how far its fixture is from the closest of them, and how many
@@ -351,6 +374,9 @@ func (s *Session) finishRecord(t TB, res MatchResult, total, dropped int) {
 		t.Logf("still unexercised: %s", keyOf(rc))
 	}
 	logNearestMisses(t, res)
+	for _, l := range optionalNotes(res) {
+		t.Logf("note: %s", l)
+	}
 	if dropped > 0 {
 		t.Logf("%d distinct observations were dropped after the cap of %d", dropped, MaxObservations)
 	}

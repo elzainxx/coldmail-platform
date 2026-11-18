@@ -7,7 +7,9 @@
 //
 //   - Skeleton: the structure of a body (keys, JSON types, arrays folded into one element, maps ignoring their keys where the Shape says MapOf).
 //   - Compare: a live response against a fixture; the differences are StatusChanged, KeyMissing, KeyAdded, TypeChanged, VocabNew and ShapeViolation (and ContractInvalid when
-//     the comparison itself cannot be made). A difference names the module, route, case and path and prints no value except a vocabulary value.
+//     the comparison itself cannot be made). A difference names the module, route, case and path and prints no value except a vocabulary value. A key the contract's Shape
+//     declares Opt (the module omits or sets it depending on state) is never a KeyMissing or a KeyAdded: its presence on one side only is listed in Report.Optional and
+//     noted ("optional per the Shape, presence not compared"), and it does not count in the distance Match ranks by; present on both sides it is compared like any key.
 //   - CheckFixtures: the no-rot check (every contract has a usable fixture, every fixture has a contract, nothing secret-shaped is committed).
 //   - Normalise, Record, ParseRecorded and WriteRecorded: record mode. The harness prints each live response as a delimited, normalised block in its log; the lead feeds the
 //     downloaded log to cmd/contract-fixtures, which writes the files to commit.
