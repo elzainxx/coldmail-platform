@@ -1,11 +1,11 @@
 --- a/internal/tenant/m1key.go
 +++ b/internal/tenant/m1key.go
-@@ -31,7 +31,7 @@
+@@ -39,7 +39,7 @@
  
- // m1CallerPrefix is what the HMAC is taken over, in front of the user id. It names the purpose of the key, so the same secret could derive a key for something else without the two
+ // m1CallerPrefix is what the HMAC is taken over, in front of the version and the user id. It names the purpose of the key, so the same secret could derive a key for something else without the two
  // colliding.
 -const m1CallerPrefix = "m1-caller|"
 +const m1CallerPrefix = "m1-caller:"
  
- // M1CallerIDPrefix starts the caller_id of every row ProvisionM1Caller writes. caller_id is module 1's opaque authenticated principal (no PII there: a uuid is not one); module 1 reads it
- // into a request context and does not interpret it.
+ // m1CallerContext is the whole text the HMAC is taken over: the purpose, the key version and the user id, each set off by a vertical bar ("m1-caller|v1|<id>").
+ func m1CallerContext(version int, userID string) string {

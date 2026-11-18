@@ -1,0 +1,8 @@
+# Phase 3 close-out, D4: the liveness branch of Health. A 200 whose liveness document says a status other than "ok" is not a healthy module and must be an error (Contract), with no value. The no-value table (TestNoErrorPathReturnsAValue) has a cell for exactly that answer; before the cell existed a mutation of this branch was not caught (found by the rehearsal of the modclient-no-value fault proof). The fault makes the branch fire only for an EMPTY status, so a "degraded" liveness answer is accepted as healthy; the table must go red naming the operation and the cell. The control is the real tree. Go only.
+GATE=modclient-health-liveness
+TARGET=platform
+SETUP=
+STEP=go test TestNoErrorPathReturnsAValue (a 200 whose liveness status is not ok is an error)
+CMD=GOTOOLCHAIN=local go test -count=1 -v -run '^TestNoErrorPathReturnsAValue$' ./internal/modclient/
+MESSAGE=--- FAIL: TestNoErrorPathReturnsAValue
+MESSAGE=Health / a 200 whose liveness status is not ok: the cell was meant to fail and returned no error

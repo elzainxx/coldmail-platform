@@ -1,0 +1,9 @@
+# Phase 3 close-out, A4: the module 1 caller key carries a key version in the text the HMAC is taken over ("m1-caller|v<N>|" + user id), so a rotation can provision version 2 beside version 1 and both authenticate. A derivation that ignores the version would give every version of one user the same key (a rotation would overwrite nothing and protect nothing). The pinned version-2 vectors (computed independently of the code) catch it. The fault makes the derivation always write version 1; TestDeriveM1KeyVersion_PinnedVectors must go red naming the user and saying the derived text is not the pinned vector. The control is the real tree. Go only.
+GATE=tenant-m1-key-version
+TARGET=platform
+SETUP=
+STEP=go test TestDeriveM1KeyVersion_PinnedVectors (the module 1 caller key of version 2 equals the pinned vector)
+CMD=GOTOOLCHAIN=local go test -count=1 -v -run '^TestDeriveM1KeyVersion_PinnedVectors$' ./internal/tenant/
+MESSAGE=--- FAIL: TestDeriveM1KeyVersion_PinnedVectors
+MESSAGE=version 2, user 11111111-1111-4111-8111-111111111111: the derived text is
+MESSAGE=the pinned vector is

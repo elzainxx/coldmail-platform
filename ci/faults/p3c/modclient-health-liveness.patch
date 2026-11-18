@@ -1,0 +1,11 @@
+--- a/internal/modclient/ops.go
++++ b/internal/modclient/ops.go
+@@ -38,7 +38,7 @@
+ 	if err := Decode(resp, &w, healthShape); err != nil {
+ 		return nil, err
+ 	}
+-	if w.Status != "ok" {
++	if w.Status == "" {
+ 		return nil, c.contractFrom(resp, "status", "the liveness status is not ok")
+ 	}
+ 	at, err := time.Parse(time.RFC3339Nano, w.At)
