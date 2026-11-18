@@ -8,6 +8,9 @@
 #     M1N-2  m1n_stage2   the node alone: its resolver and hostname, its audit (each of the three steps, then the JSON), then POST /v1/verify DIRECTLY on the node for every recipe
 #     M1N-3  m1n_stage3   module 1's control plane wired to the node: boot log, the first audit row, the promotion (SQL), a synchronous verify that shows a node verdict
 #     M1N-4  m1n_stage4   the integration tests (tests/harness/m1_node_test.go, TestM1Node_*): one bulk job holding one address per recipe, the cache, a control per recipe family
+#     M1N-4b m1n_outage   the OUTAGE proof (Phase 3, B12; tests/harness/m1_node_outage_test.go): a job in flight, the control plane stopped, the platform's calls and books while it is down, the
+#                         control plane started again, the job completed exactly once; three test phases in three processes with the stop and the start between them, then m1n_floor counts all of them
+#   m1n_floor     every TestM1Node test (the ordinary run and the three outage phases) ran, counted against the floor of this scope
 #   m1n_exposure  no service of this stack publishes a port; the fixture network is internal
 #
 # DORMANT until proven: run.sh sets M1N_ON=1, merges docker-compose.m1node.yml, calls m1n_mint and runs these stages ONLY under H_SCOPE=m1node, or in the full run once `m1node` is named in
@@ -34,7 +37,18 @@ M1N_TESTS=(
   TestM1Node_E2EPaginationBoundaries
   TestM1Node_E2ECrossTenant
   TestM1Node_E2EChecksBite
+  TestM1Node_OutageChecksBite
 )
+# the three phases of the outage proof: each runs in a process of its own, in this order, between the stop and the start of the control plane (m1n_outage). The ordinary run of stage M1N-4
+# excludes them by name (M1N_OUTAGE_SKIP, -test.skip): a phase needs the state of the one before and a module that is up or down at the right moment. Their PASS lines are required by name
+# and they count towards the floor (m1n_floor).
+M1N_OUTAGE_TESTS=(
+  TestM1Node_OutagePhase1Start
+  TestM1Node_OutagePhase2Down
+  TestM1Node_OutagePhase3Resume
+)
+M1N_OUTAGE_SKIP='^TestM1Node_OutagePhase'
+M1N_READY_SECS=90        # how long m1n_outage waits for the restarted control plane to answer /readyz with ready=true over the private network
 M1N_NODE_TOKEN=""
 M1N_T0=$SECONDS
 
@@ -227,24 +241,116 @@ m1n_stage4() {
   ( cd "$PLATFORM_DIR" && CGO_ENABLED=0 GOTOOLCHAIN=local go test -tags "harness m1node" -c -o "$WORK/out/harness-m1node.test" ./tests/harness ) || die "the harness test binary (tags harness m1node) did not compile"
   DC run --rm -T m1node-tests -test.list '^TestM1Node_' > "$WORK/m1n-list.log" 2>&1; lrc=$?
   [ "$lrc" = 0 ] || { cat "$WORK/m1n-list.log"; die "listing the TestM1Node tests failed ($lrc)"; }
-  for t in "${M1N_TESTS[@]}"; do grep -qx "$t" "$WORK/m1n-list.log" || die "$t is not among the declared tests of the binary"; done
-  [ "$(grep -c '^TestM1Node_' "$WORK/m1n-list.log")" = "${#M1N_TESTS[@]}" ] || die "the binary declares $(grep -c '^TestM1Node_' "$WORK/m1n-list.log") TestM1Node tests, m1node.sh names ${#M1N_TESTS[@]} (M1N_TESTS): a test was added or removed without the list"
-  DC run --rm -T m1node-tests -test.run '^TestM1Node_' -test.v -test.count=1 -test.timeout=20m > "$WORK/m1n-run.log" 2>&1; trc=$?
+  for t in "${M1N_TESTS[@]}" "${M1N_OUTAGE_TESTS[@]}"; do grep -qx "$t" "$WORK/m1n-list.log" || die "$t is not among the declared tests of the binary"; done
+  [ "$(grep -c '^TestM1Node_' "$WORK/m1n-list.log")" = "$(( ${#M1N_TESTS[@]} + ${#M1N_OUTAGE_TESTS[@]} ))" ] || die "the binary declares $(grep -c '^TestM1Node_' "$WORK/m1n-list.log") TestM1Node tests, m1node.sh names $(( ${#M1N_TESTS[@]} + ${#M1N_OUTAGE_TESTS[@]} )) (M1N_TESTS and M1N_OUTAGE_TESTS): a test was added or removed without the list"
+  # the outage phases are NOT part of this run: each needs the state of the one before and the control plane up or down at the right moment (m1n_outage runs them, by name, and m1n_floor counts them)
+  DC run --rm -T m1node-tests -test.run '^TestM1Node_' -test.skip "$M1N_OUTAGE_SKIP" -test.v -test.count=1 -test.timeout=20m > "$WORK/m1n-run.log" 2>&1; trc=$?
   echo "  ---- the tests' own log lines (the recipe table as module 1 reported it, the sessions the fixture saw, the controls) ----"
-  grep -E " m1_node(_helpers)?_test.go:[0-9]+: " "$WORK/m1n-run.log" | cut -c1-420 | m1n_show | head -500
+  grep -E " m1_node(_[a-z0-9]+)*_test.go:[0-9]+: " "$WORK/m1n-run.log" | cut -c1-420 | m1n_show | head -500
   echo "  ---- go test verdict lines ----"
   grep -E "^(--- (PASS|FAIL|SKIP)|PASS|FAIL|ok )" "$WORK/m1n-run.log" | m1n_show
   [ "$trc" = 0 ] || { echo "  ---- failing tests (with context) ----"; grep -n -B1 -A30 -e "--- FAIL" "$WORK/m1n-run.log" | cut -c1-700 | sed "s/^/  | /" | head -320; }
-  if [ "$trc" = 0 ]; then printf 'ok  \t%s\t0.000s\n' "$GO_PKG" >> "$WORK/m1n-run.log"; else printf 'FAIL\t%s\t0.000s\n' "$GO_PKG" >> "$WORK/m1n-run.log"; fi
-  printf 'ok  \t%s\t0.000s\n' "$GO_PKG" >> "$WORK/m1n-list.log"
-  [ "$trc" = 0 ] || die "the TestM1Node tests failed (exit $trc)"
+  [ "$trc" = 0 ] || { printf 'FAIL\t%s\t0.000s\n' "$GO_PKG" >> "$WORK/m1n-run.log"; die "the TestM1Node tests failed (exit $trc)"; }
   for t in "${M1N_TESTS[@]}"; do grep -q "^--- PASS: $t " "$WORK/m1n-run.log" || die "$t has no '--- PASS' line in the run log: it did not run, or did not pass"; done
-  # the floor of THIS scope is the number of tests named in M1N_TESTS (the full floor, tests/floors-harness.txt, never counts them: they are behind a build tag)
-  printf '# the TestM1Node tests of scope m1node\ngo|%s|%s\n' "$GO_PKG" "${#M1N_TESTS[@]}" > "$WORK/floors-m1node.txt"
-  bash "$PLATFORM_DIR/scripts/check-test-floors.sh" --floors "$WORK/floors-m1node.txt" --go-run-log "$WORK/m1n-run.log" --go-list-log "$WORK/m1n-list.log" || die "the TestM1Node test-count floor"
+  # the test-count floor of this scope (M1N_TESTS plus the outage phases) is checked by m1n_floor, after the outage sub-stage has added its three PASS lines to this log
   m1n_step M1N-4.9 "the fixture's counters after the whole run"
   m1n_fx /api/state | m1n_show
   echo "  M1N-4 OK in $((SECONDS - t0)) s"
+}
+
+# ── M1N-4b: the outage proof ────────────────────────────────────────────────────────────────────────────────────────────────
+# Phase 3, chunk B12. Module 1's control plane (m1n) is stopped in the MIDDLE of a job and started again; the node, the fixtures and Postgres keep running. Three test phases
+# (tests/harness/m1_node_outage_test.go), each a `go test` of its own in a fresh test container; the state between them is the scratch table harness_outage.m1 in the stack's database:
+#   phase 1  a real tenant, a reserve, ONE job that cannot be finished a few seconds later, progress and "not complete" proved by the adapter's own Status
+#   (stage)  stop m1n; prove it is stopped: its container is not running AND its health endpoint no longer answers on the private network (with a control: the same probe reaches the fixture)
+#   phase 2  every call the platform polls or writes with fails typed and returns nothing, polling halts by its context, and neither the platform's books nor module 1's tables moved
+#   (stage)  start m1n; wait for /readyz ready=true over the private network; wait for its audit at boot; promote the node again (every boot registers it as provisioning again)
+#   phase 3  the job completes exactly once, every charged item is charged exactly once, the books close, a replay writes nothing
+# The same flow with the module up is TestM1Node_E2EBulkSettleThroughAdapter (stage M1N-4): phase 3 runs the same comparisons.
+
+# one phase: a go test of its own in a fresh test container, by name, with the variable that only this sub-stage sets (the phases fail without it)
+m1n_outage_phase() { # number name
+  local n="$1" name="$2" rc log="$WORK/m1n-outage-$1.log"
+  DC run --rm -T -e HARNESS_M1_OUTAGE=1 m1node-tests -test.run "^${name}\$" -test.v -test.count=1 -test.timeout=10m > "$log" 2>&1; rc=$?
+  grep -E " m1_node(_[a-z0-9]+)*_test.go:[0-9]+: " "$log" | cut -c1-420 | m1n_show | head -200
+  grep -E "^(--- (PASS|FAIL|SKIP)|PASS|FAIL|ok )" "$log" | m1n_show
+  if [ "$rc" != 0 ]; then
+    echo "  ---- the failing phase (with context) ----"
+    grep -n -B1 -A30 -e "--- FAIL" "$log" | cut -c1-700 | sed 's/^/  | /' | head -200
+    die "outage phase $n ($name) failed (exit $rc): its log is above"
+  fi
+  grep -q "^--- PASS: $name " "$log" || die "outage phase $n ($name) has no '--- PASS' line in its log: it did not run, or it was skipped"
+  echo "  outage phase $n ($name): PASS"
+}
+
+# a GET from a throwaway container on the private network (busybox wget): succeeds, printing the body, when the URL answers
+m1n_outage_probe() { DC run --rm -T --entrypoint wget m1node-tests -q -T 3 -O - "$1" 2>/dev/null; }
+
+m1n_outage_stop() {
+  local id st
+  DC stop m1n >/dev/null 2>&1 || die "docker compose could not stop m1n: the outage cannot start"
+  id="$(DC ps -aq m1n)"
+  [ -n "$id" ] || die "m1n has no container after the stop: the stack is not what the outage sub-stage expects"
+  st="$(docker inspect -f '{{.State.Running}}' "$id")"
+  [ "$st" = false ] || die "m1n is still running after docker compose stop (State.Running=$st): an outage proof against a running module would prove nothing"
+  m1n_outage_probe http://fx:8025/api/state >/dev/null || die "the probe from the private network cannot reach the fixture (fx) either: a refused connection to m1n would prove nothing, the probe itself does not work"
+  if m1n_outage_probe http://m1n:8080/healthz >/dev/null; then die "m1n's health endpoint still answers on the private network after the stop: the module is not gone"; fi
+  echo "  m1n is stopped: its container is not running, its health endpoint no longer answers on the private network, and the same probe does reach the fixture (the control)"
+}
+
+m1n_outage_start() {
+  local n0 n1 i body a
+  n0="$(m1n_psql "select count(*) from verify.node_audits where node_id = '$M1N_NODE_ID'")"
+  DC up -d --wait --wait-timeout 240 m1n >/dev/null 2>&1 || { DC logs --no-color --tail 80 m1n 2>&1 | m1n_show; die "m1n did not become healthy again after the restart (its log tail is above)"; }
+  i=0; body=""
+  while [ "$i" -lt "$M1N_READY_SECS" ]; do
+    body="$(m1n_outage_probe http://m1n:8080/readyz)" && printf '%s' "$body" | grep -Eq '"ready": *true' && break
+    body=""; i=$((i+1)); sleep 1
+  done
+  [ -n "$body" ] || { DC logs --no-color --tail 80 m1n 2>&1 | m1n_show; die "m1n did not answer /readyz with ready=true within ${M1N_READY_SECS} s of the restart, over the private network (its log tail is above)"; }
+  echo "  m1n is back: /readyz answers ready=true over the private network after $i s of waiting"
+  DC logs --no-color m1n 2>&1 | grep -E 'verify: (SMTP node=|orchestrator wired)|queue: bulk endpoint wired' | tail -3 | cut -c1-260 | m1n_show
+  i=0; n1="$n0"
+  while [ "$i" -lt 30 ]; do n1="$(m1n_psql "select count(*) from verify.node_audits where node_id = '$M1N_NODE_ID'")"; [ "$n1" -gt "$n0" ] && break; i=$((i+1)); sleep 1; done
+  if [ "$n1" -gt "$n0" ]; then echo "  the restarted control plane audited the node again at boot ($n0 -> $n1 audit rows)"
+  else echo "     NOTE: no new audit row within 30 s of the restart ($n0 rows): the node row keeps its last green audit and is promoted from that"; fi
+  a="$(m1n_psql "select coalesce(audit_status, '') from verify.nodes where id = '$M1N_NODE_ID'")"
+  [ "$a" = green ] || die "after the restart the node's audit status is '${a:-missing}', not green: the promotion that puts the node back in service needs it"
+  [ "$(m1n_psql "with u as (update verify.nodes set status = 'active', port25_open = true where id = '$M1N_NODE_ID' and audit_status = 'green' returning 1) select count(*) from u")" = 1 ] || die "the promotion UPDATE after the restart changed no row: the node row is missing"
+  m1n_psql "select 'node row after the restart and the promotion: status=' || status || ' port25_open=' || port25_open::text from verify.nodes where id = '$M1N_NODE_ID'" | m1n_show
+}
+
+m1n_outage() {
+  STAGE=m1n-outage; banner "M1N-4b" "module 1's control plane is stopped in the middle of a job: the platform's calls fail typed and nothing is settled or invented; started again, the job completes exactly once"
+  local t0=$SECONDS
+  m1n_step M1N-4b.1 "phase 1: a real tenant, a reserve, one job in flight (the adapter's Status shows progress and not complete)"
+  m1n_outage_phase 1 "${M1N_OUTAGE_TESTS[0]}"
+  m1n_step M1N-4b.2 "stop m1n (the node, the fixtures and Postgres keep running) and prove it is gone"
+  m1n_outage_stop
+  m1n_step M1N-4b.3 "phase 2: the module is down: typed errors and no value from every call, polling halts, nothing settled or invented"
+  m1n_outage_phase 2 "${M1N_OUTAGE_TESTS[1]}"
+  m1n_step M1N-4b.4 "start m1n again and wait for its readiness over the private network"
+  m1n_outage_start
+  m1n_step M1N-4b.5 "phase 3: the job completes exactly once, charged exactly once, the books close, a replay writes nothing"
+  m1n_outage_phase 3 "${M1N_OUTAGE_TESTS[2]}"
+  echo "  M1N-4b OK in $((SECONDS - t0)) s"
+}
+
+# the test-count floor of this scope: the tests of stage M1N-4 and the three outage phases, each proven to have run by its own PASS line (the phases were run by name, outside the ordinary run)
+m1n_floor() {
+  STAGE=m1n-floor; banner "M1N-F" "every TestM1Node test ran: the ordinary run and the three outage phases, counted against the floor"
+  local i t n=$(( ${#M1N_TESTS[@]} + ${#M1N_OUTAGE_TESTS[@]} ))
+  for i in 1 2 3; do
+    [ -s "$WORK/m1n-outage-$i.log" ] || die "the log of outage phase $i is missing: the outage sub-stage did not run it"
+    cat "$WORK/m1n-outage-$i.log" >> "$WORK/m1n-run.log"
+  done
+  for t in "${M1N_OUTAGE_TESTS[@]}"; do grep -q "^--- PASS: $t " "$WORK/m1n-run.log" || die "$t has no '--- PASS' line in the run log: it did not run, or did not pass"; done
+  printf 'ok  \t%s\t0.000s\n' "$GO_PKG" >> "$WORK/m1n-run.log"
+  printf 'ok  \t%s\t0.000s\n' "$GO_PKG" >> "$WORK/m1n-list.log"
+  # the floor of THIS scope is the number of tests named in M1N_TESTS and M1N_OUTAGE_TESTS (the full floor, tests/floors-harness.txt, never counts them: they are behind a build tag)
+  printf '# the TestM1Node tests of scope m1node\ngo|%s|%s\n' "$GO_PKG" "$n" > "$WORK/floors-m1node.txt"
+  bash "$PLATFORM_DIR/scripts/check-test-floors.sh" --floors "$WORK/floors-m1node.txt" --go-run-log "$WORK/m1n-run.log" --go-list-log "$WORK/m1n-list.log" || die "the TestM1Node test-count floor ($n)"
+  echo "  floor: $n TestM1Node tests declared, run and passed (${#M1N_TESTS[@]} in the ordinary run, ${#M1N_OUTAGE_TESTS[@]} outage phases)"
 }
 
 # None of this run's credentials may appear in what the stack logged or in what this script captured (a workflow log is public). Names a file and a count, never a value.
@@ -283,6 +389,8 @@ m1n_run() {
   m1n_stage2
   m1n_stage3
   m1n_stage4
+  m1n_outage      # stops and starts m1n: after every stage that needs it up, before the two checks that read its logs
+  m1n_floor
   m1n_exposure
   m1n_secret_leak
 }

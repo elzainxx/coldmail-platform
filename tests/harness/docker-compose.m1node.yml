@@ -117,6 +117,10 @@ services:
       TM_QUEUE_RATE_WAIT_SECONDS: "5"
       TM_QUEUE_DRAIN_IDLE_POLL_SECONDS: "1"
       TM_CACHE_TTL_SECONDS: "3600"
+      # The outage proof (sub-stage M1N-4b) stops this control plane in the middle of a job. The drainer leases a batch of ten work items and a stop leaves them leased, and they are re-readied
+      # only when the lease is older than its TTL (the client deadline plus this margin, default 120 s: 150 s here) AND a reclaim sweep runs (once per TTL). With 5 s the TTL is 35 s, still above
+      # the 30 s deadline (the module refuses a TTL at or below it), so a stranded batch is picked up within about a minute of the restart and the proof stays inside its time budget.
+      TM_QUEUE_LEASE_MARGIN_SECONDS: "5"
     volumes:
       - ${H_WORK:?}/m1fx/cp-resolv.conf:/etc/resolv.conf:ro
     healthcheck:

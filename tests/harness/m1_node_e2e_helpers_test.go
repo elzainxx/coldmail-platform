@@ -69,18 +69,25 @@ type m1eStack struct {
 
 func newM1eStack(t *testing.T) *m1eStack {
 	t.Helper()
+	return newM1eStackWith(t, config.Secret(randomHex(t, 32)), modclient.Options{Timeout: 30 * time.Second})
+}
+
+// newM1eStackWith is the stack with a given key secret and the dials of the adapters it makes. The outage tests (m1_node_outage_test.go) run in three separate processes and rebuild the
+// SAME stack in each: the secret of the first phase is kept in the database and passed back here, so that the second and the third derive the first one's tenant key.
+func newM1eStackWith(t *testing.T, secret config.Secret, opts modclient.Options) *m1eStack {
+	t.Helper()
 	env := newM1nEnv(t)
 	adminURL := requireEnv(t, envAdminURL)
 	s := &m1eStack{m1nEnv: env}
 	s.admin = dial(t, adminURL, nil)
 	s.pool = mnyPool(t, adminURL) // proves it is a real login as platform_app and not a superuser
-	s.secret = config.Secret(randomHex(t, 32))
+	s.secret = secret
 	res, err := tenant.NewResolver(s.pool, s.secret)
 	if err != nil {
 		t.Fatalf("tenant.NewResolver: %v", err)
 	}
 	s.res = res
-	fac, err := m1ad.NewFactory(env.base, modclient.Options{Timeout: 30 * time.Second}, nil)
+	fac, err := m1ad.NewFactory(env.base, opts, nil)
 	if err != nil {
 		t.Fatalf("m1.NewFactory: %v", err) // never carries the URL
 	}
@@ -148,6 +155,23 @@ func (s *m1eStack) newTenant(name string, provision bool) *m1eTenant {
 		}
 	}
 	out := &m1eTenant{name: name, userID: id, scope: sc}
+	out.ad = s.adapterFor(out, m1ePageLimit)
+	return out
+}
+
+// existingTenant is the tenant of a user that an earlier process made and provisioned: the resolver builds its Scope again from the database and the secret, nothing is seeded.
+func (s *m1eStack) existingTenant(name, userID string) *m1eTenant {
+	t := s.t
+	t.Helper()
+	tn, err := s.res.ByAuthUser(s.ctx, userID)
+	if err != nil {
+		t.Fatalf("ByAuthUser for tenant %s: %v", name, err)
+	}
+	sc, err := s.res.Scope(s.ctx, tn)
+	if err != nil {
+		t.Fatalf("Scope for tenant %s: %v", name, err)
+	}
+	out := &m1eTenant{name: name, userID: userID, scope: sc}
 	out.ad = s.adapterFor(out, m1ePageLimit)
 	return out
 }
@@ -313,6 +337,7 @@ type m1eRun struct {
 	rows     []m1ad.Row // the delivered rows, in order
 	list     []money.SettleItem
 	results  []money.SettleResult // one per settle call of a page
+	pages    [][]money.SettleItem // what each of those calls was given, for a replay
 	malRes   money.SettleResult   // the settle call of the malformed rows
 	stats    m1ad.DrainStats
 	ledger   []m1bCharge // the job's charge rows, read by assess
@@ -348,9 +373,19 @@ func (s *m1eStack) settleThrough(tn *m1eTenant, items []m1eItem, grant int64) *m
 		t.Fatalf("Submit as tenant %s failed (kind %v): %v", tn.name, modclient.KindOf(err), err)
 	}
 	r.status, r.polls, r.waited = s.waitComplete(tn, r.jobID, len(r.plan.Items), m1eJobWait)
+	s.drainAndSettle(r)
+	return r
+}
 
+// drainAndSettle reads every page of the run's COMPLETE job with the tenant's adapter and settles each page through the money core as it arrives, then settles the malformed rows free (they
+// were never sent), and reads the fixture's SMTP sessions of the window. The outage test's third phase calls it on a run it rebuilt from the database.
+func (s *m1eStack) drainAndSettle(r *m1eRun) {
+	t := s.t
+	t.Helper()
+	tn, ma := r.tn, s.mny
 	dctx, cancel := context.WithTimeout(s.ctx, 3*time.Minute)
 	defer cancel()
+	var err error
 	r.stats, err = tn.ad.Drain(dctx, r.jobID, func(rows []m1ad.Row) error {
 		list, err := m1ad.ToSettleItems(rows)
 		if err != nil {
@@ -363,6 +398,7 @@ func (s *m1eStack) settleThrough(tn *m1eTenant, items []m1eItem, grant int64) *m
 		r.rows = append(r.rows, rows...)
 		r.list = append(r.list, list...)
 		r.results = append(r.results, res)
+		r.pages = append(r.pages, list)
 		return nil
 	})
 	if err != nil {
@@ -377,7 +413,6 @@ func (s *m1eStack) settleThrough(tn *m1eTenant, items []m1eItem, grant int64) *m
 		r.list = append(r.list, mal...)
 	}
 	r.sessions = s.fx.sessions(r.fxBase, "")
-	return r
 }
 
 // release ends the platform job and returns the unused remainder of its reserve.
