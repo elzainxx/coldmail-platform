@@ -149,7 +149,7 @@ outage_run() { # label function scenario
           case "$sql" in
             *"select status || '|' || coalesce(port25_open"*) [ "$PROMO" = 1 ] && echo "active|true" || echo "provisioning|false";;
             *"select 'node row: status="*) [ "$PROMO" = 1 ] && echo "node row: status=active port25_open=true audit_status=green promoted_by_audit_id=audit-9 registered_at=x" || echo "node row: status=provisioning port25_open=false audit_status=green promoted_by_audit_id=null registered_at=x";;
-            *"a.audited_at >= n.registered_at"*) [ "$STALE" = 1 ] && echo false || echo true;;
+            *"a.created_at > n.registered_at"*) [ "$STALE" = 1 ] && echo false || echo true;;
             *"select audit_status from verify.node_audits where id"*) echo green;;
             *"select coalesce(promoted_by_audit_id"*) [ "$NOID" = 1 ] && echo "" || echo audit-9;;
             *"select id::text from verify.node_audits"*) echo audit-9;;
@@ -201,7 +201,7 @@ verdict "m1n_outage_start: a node whose audit is not green is not put back in se
 out="$(outage_run nopromo m1n_outage_start 'PROMO=0')"; rc=$?
 verdict "m1n_outage_start: a node that never promotes itself is red (the harness does not do it for it)" 1 "the node did not promote itself to active with port25_open=true within 90 s after the restart" "$out" "$rc"
 out="$(outage_run stale m1n_outage_start 'STALE=1')"; rc=$?
-verdict "m1n_outage_start: a node promoted by an audit row older than its registration is red (a stale active is never trusted)" 1 "is older than the node's registration after the restart" "$out" "$rc"
+verdict "m1n_outage_start: a node promoted by an audit row older than its registration is red (a stale active is never trusted)" 1 "was not recorded after the node's registration after the restart" "$out" "$rc"
 out="$(outage_run noid m1n_outage_start 'NOID=1')"; rc=$?
 verdict "m1n_outage_start: a node that is active but names no promoting audit row is red" 1 "names no audit row" "$out" "$rc"
 

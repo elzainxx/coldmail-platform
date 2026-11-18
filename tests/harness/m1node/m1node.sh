@@ -216,7 +216,7 @@ m1n_wait_self_promoted() {
   aid="$(m1n_psql "select id::text from verify.node_audits where node_id = '$M1N_NODE_ID' and audit_status = 'green' order by audited_at desc limit 1")"
   pid="$(m1n_psql "select coalesce(promoted_by_audit_id::text, '') from verify.nodes where id = '$M1N_NODE_ID'")"
   [ -n "$pid" ] || die "the node is active but names no audit row (nodes.promoted_by_audit_id is empty) $when: it was promoted by something other than module 1's promotion"
-  [ "$(m1n_psql "select (a.audited_at >= n.registered_at)::text from verify.node_audits a, verify.nodes n where a.id = '$pid' and n.id = '$M1N_NODE_ID'")" = true ] || die "the audit row that promoted the node ($pid) is older than the node's registration $when: a stale audit promoted it"
+  [ "$(m1n_psql "select (a.created_at > n.registered_at)::text from verify.node_audits a, verify.nodes n where a.id = '$pid' and n.id = '$M1N_NODE_ID'")" = true ] || die "the audit row that promoted the node ($pid) was not recorded after the node's registration $when (node_audits.created_at is not later than nodes.registered_at, the database clock): a stale audit promoted it"
   [ "$(m1n_psql "select audit_status from verify.node_audits where id = '$pid'")" = green ] || die "the audit row that promoted the node ($pid) is not green $when"
   echo "  the node is active with port25_open=true, promoted by the green audit row $pid (the latest green row is $aid), $when: no UPDATE was run by the harness"
 }
