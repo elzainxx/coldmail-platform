@@ -106,8 +106,8 @@ A retry is rare on purpose. It happens only when the request was marked idempote
 and 3's `run`) **and** the failure was one of three kinds: the module could not be reached (connection refused, DNS failure, a reset connection, a 502 or 504, a 503 with the code `unavailable`), the attempt
 timed out, or the module answered 429. A 429 that carries a `Retry-After` waits the larger of that and the backoff, never more than the request timeout. Everything else comes back at once, whatever the
 dials say: a refusal (400, 401, 403, 409, 410, 413, 422), a not found, `paused` (a 503 that means an operator stopped the module: wait, do not page and do not hammer), a 500 (a fault of the module, not of the
-connection), an answer that breaks the contract (not JSON, a missing key, a status the route does not use, a body over the size limit), and every write that is not idempotent (module 1's bulk submission is the
-one that matters: a second attempt would create a second job). The caller's context ends the whole call, including a wait between attempts. A call that fails returns an error and never a value: no default,
+connection), an answer that breaks the contract (not JSON, a missing key, a status the route does not use, a body over the size limit), and every write that is not idempotent (module 1's synchronous verify is the
+one that matters: a second attempt repeats billed work; its bulk submission is idempotent since the Phase 3 close-out, on the Idempotency-Key every submission carries, and is retried with the same key). The caller's context ends the whole call, including a wait between attempts. A call that fails returns an error and never a value: no default,
 no zero verdict and no "probably fine" is ever produced for a module that did not answer.
 
 The three values are validated at start-up like every other variable. A request may carry its own timeout instead of the dial (module 3's account creation and its bulk add run for tens of seconds

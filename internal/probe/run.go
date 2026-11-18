@@ -52,7 +52,7 @@ func (r Report) Summary() string {
 // how much it did not cover).
 const notChecked = "PROBE NOT CHECKED: module behaviour beyond health, readiness, describe and credential refusal " +
 	"(no verify, send or bulk call is made); TLS; reachability from outside the private network; " +
-	"module 1 describe (the module has none); the contents of describe beyond the fields listed in Docs/probe-reference.md"
+	"the contents of describe beyond the fields listed in Docs/probe-reference.md"
 
 // Execute runs the plan with cfg through d. Check lines and the summary go to stdout, request lines and
 // diagnostics to stderr, each as it happens. The exit status is 0 only when no check failed and at least

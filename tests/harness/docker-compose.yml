@@ -371,7 +371,7 @@ services:
       PROBE_M2_TOKEN: ${H_M2_TOKEN:?}
       PROBE_M3_URL: http://m3:8080
       PROBE_M3_TOKEN: ${H_M3_TOKEN:?}
-      PROBE_MIN_CHECKS: "42"       # a healthy run executes 42 checks; the default floor (25) would let a whole module's 16 checks vanish unnoticed
+      PROBE_MIN_CHECKS: "52"       # a healthy run executes 52 checks; the default floor (25) would let a whole module's 16 or 18 checks vanish unnoticed
     networks: [private]
     restart: "no"
 

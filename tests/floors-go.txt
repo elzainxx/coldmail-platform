@@ -21,7 +21,7 @@ go|github.com/coldmail-platform/platform/internal/migrate|47
 go|github.com/coldmail-platform/platform/internal/modclient|69
 go|github.com/coldmail-platform/platform/internal/money|23
 go|github.com/coldmail-platform/platform/internal/norm|17
-go|github.com/coldmail-platform/platform/internal/probe|40
+go|github.com/coldmail-platform/platform/internal/probe|55
 go|github.com/coldmail-platform/platform/internal/server|10
 go|github.com/coldmail-platform/platform/internal/tenant|19
 go|github.com/coldmail-platform/platform/tests/harness/fx|14

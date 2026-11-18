@@ -1130,7 +1130,7 @@ func TestConstraints_Suppressions(t *testing.T) {
 			})
 		}
 		ledgerExpectOK(t, tx, "control: the smallest dotted domain", ins, a, "a@b.c", "manual")
-		ledgerExpectOK(t, tx, "control: a punycode label may carry -- in its third and fourth bytes", ins, a, "a@xn--bcher-kva.example", "manual")
+		ledgerExpectOK(t, tx, "control: a punycode label may carry -- in its third and fourth bytes", ins, a, "b@xn--bcher-kva.example", "manual")
 	})
 
 	t.Run("the source vocabulary", func(t *testing.T) {

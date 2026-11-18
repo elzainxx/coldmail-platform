@@ -174,6 +174,24 @@ func diffChecks(rows [][]string, results []probe.Result) []string {
 	return out
 }
 
+// staleClaims returns each phrase of the old world (module 1 had no describe, so the probe recorded
+// NOT-APPLICABLE m1.describe) that md still contains.
+func staleClaims(md string) []string {
+	var out []string
+	for _, phrase := range []string{
+		"NOT-APPLICABLE m1.describe",
+		"module 1 has no describe",
+		"Module 1: no describe",
+		"module 1 (verify) has no describe",
+		"module 1 describe (the module has none)",
+	} {
+		if strings.Contains(md, phrase) {
+			out = append(out, phrase)
+		}
+	}
+	return out
+}
+
 func readReference(t *testing.T) string {
 	t.Helper()
 	b, err := os.ReadFile(filepath.FromSlash(referencePath))
@@ -215,8 +233,13 @@ func TestReference_ChecksTableMatchesAHealthyRun(t *testing.T) {
 		t.Errorf("found %d documented checks, a healthy run executes %d", len(rows), healthyChecks)
 	}
 	// The prose count is held to the same numbers as the table.
-	if want := fmt.Sprintf("executes %d checks (%d positive, %d negative)", healthyChecks, healthyPositive, healthyNegative); !strings.Contains(readReference(t), want) {
+	// (the sentence says "no NOT-APPLICABLE line" and wantGreen holds the run to not_applicable=0)
+	if want := fmt.Sprintf("executes %d checks (%d positive, %d negative) and prints no NOT-APPLICABLE line", healthyChecks, healthyPositive, healthyNegative); !strings.Contains(readReference(t), want) {
 		t.Errorf("the document no longer says %q", want)
+	}
+	// The old claim, that module 1 has no describe, is gone from the document.
+	if stale := staleClaims(readReference(t)); len(stale) != 0 {
+		t.Errorf("the document still says module 1 has no describe: %v", stale)
 	}
 	if diffs := diffChecks(rows, o.report.Results); len(diffs) != 0 {
 		t.Fatalf("Docs/probe-reference.md and a healthy run disagree:\n  %s", strings.Join(diffs, "\n  "))
@@ -378,6 +401,22 @@ func TestReference_ChecksCheckDetectsEveryKindOfDrift(t *testing.T) {
 			},
 			"m2.describe.no_token.rejected: documented kind positive, code kind negative",
 		},
+		"a module 1 describe check removed from the docs": {
+			func(md string) string { return dropRow(md, "m1.describe.module") },
+			"m1.describe.module runs but is not documented",
+		},
+		"a module 1 describe refusal's kind flipped": {
+			func(md string) string {
+				return flipCell(md, "m1.describe.wrong_key.rejected", 1, "negative", "positive")
+			},
+			"m1.describe.wrong_key.rejected: documented kind positive, code kind negative",
+		},
+		"a module 1 describe check documented that does not run": {
+			func(md string) string {
+				return strings.Replace(md, "|---|---|---|\n", "|---|---|---|\n| `m1.describe.pricing` | positive | x |\n", 1)
+			},
+			"m1.describe.pricing is documented but does not run",
+		},
 		"two rows swapped": {
 			func(md string) string {
 				a, b := rowOf(md, "m1.healthz.ok"), rowOf(md, "m1.readyz.ok")
@@ -399,6 +438,24 @@ func TestReference_ChecksCheckDetectsEveryKindOfDrift(t *testing.T) {
 				t.Fatalf("drift %q was not reported.\nwant a line containing %q\ngot: %q", name, c.want, diffs)
 			}
 		})
+	}
+}
+
+// The control of the stale-claim instrument: it finds each of the old sentences, so a document that said
+// them again would be red, and it finds nothing in a clean one.
+func TestReference_StaleNoDescribeClaimIsDetected(t *testing.T) {
+	if got := staleClaims("module 1 describes itself; nothing here is stale"); len(got) != 0 {
+		t.Fatalf("control failed: a clean text was reported: %v", got)
+	}
+	for _, old := range []string{
+		"`NOT-APPLICABLE m1.describe`: module 1 has no describe endpoint.",
+		"- Module 1: no describe. `/healthz` and `/readyz` need no token.",
+		"module 1 (verify) has no describe endpoint; its health is checked instead",
+		"module 1 describe (the module has none); the contents of describe",
+	} {
+		if len(staleClaims("prose\n"+old+"\nprose")) == 0 {
+			t.Errorf("the old sentence %q was not detected", old)
+		}
 	}
 }
 

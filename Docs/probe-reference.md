@@ -1,6 +1,6 @@
 # platform-probe reference
 
-`platform-probe` (`cmd/platform-probe`, logic in `internal/probe`) is the platform's role as the **first caller of the three modules**. The harness runs it inside the private Docker network. For each service it checks health and readiness and, where the service has one, `describe` with the service token. It is written so that every check can fail and so that the run is red when a check did not run. Phase context: [`phase-0-spec.md`](phase-0-spec.md), chunk 6.
+`platform-probe` (`cmd/platform-probe`, logic in `internal/probe`) is the platform's role as the **first caller of the three modules**. The harness runs it inside the private Docker network. For each service it checks health and readiness and, for each of the three modules, `describe` with the module's credential (the service token of modules 2 and 3, the per-caller key of module 1). It is written so that every check can fail and so that the run is red when a check did not run. Phase context: [`phase-0-spec.md`](phase-0-spec.md), chunk 6.
 
 The tables below are checked against the code by tests in `internal/probe` (`TestReference_MatchesVars`, `TestReference_ChecksTableMatchesAHealthyRun`): each fails when the document and the code disagree in either direction, and each fails if it finds no rows, so a table that stopped matching anything cannot pass quietly.
 
@@ -12,7 +12,7 @@ An unset or blank variable takes its default. A missing required variable, or a 
 |---|---|---|---|---|
 | `PROBE_PLATFORM_URL` | (none) | yes | no | Base URL of the platform service, as http://host:port. No credentials, query or fragment. |
 | `PROBE_M1_URL` | (none) | yes | no | Base URL of module 1 (verify). Same rules as the platform URL. |
-| `PROBE_M1_KEY` | (none) | yes | yes | Raw per-caller bearer key for module 1, sent on the job lookups. Never printed. |
+| `PROBE_M1_KEY` | (none) | yes | yes | Raw per-caller bearer key for module 1, sent on the job lookups and on describe. Never printed. |
 | `PROBE_M2_URL` | (none) | yes | no | Base URL of module 2 (send_managed). Same rules as the platform URL. |
 | `PROBE_M2_TOKEN` | (none) | yes | yes | Service token for module 2, sent as a bearer credential to describe. Never printed. |
 | `PROBE_M3_URL` | (none) | yes | no | Base URL of module 3 (send_byo). Same rules as the platform URL. |
@@ -22,7 +22,7 @@ An unset or blank variable takes its default. A missing required variable, or a 
 
 Column notes. Default `(none)` means the variable has no default. A URL with credentials in it is refused at start-up (exit 2), because the credentials would otherwise be sent as Basic authentication and turn a "no credential" request into an authenticated one. A secret may not contain whitespace or control characters.
 
-The default floor of 25 is deliberately looser than the 42 checks a healthy run executes. A run that lost one whole module's 16 checks still reaches 26, so the floor alone does not catch a dropped module; a caller that wants it caught sets `PROBE_MIN_CHECKS=42`. (Every check that cannot run is a failure rather than a skip, which is what keeps the count stable when a service is down.)
+The default floor of 25 is deliberately looser than the 52 checks a healthy run executes. A run that lost one whole module's checks (16 for a sender, 18 for module 1) still reaches at least 34, so the floor alone does not catch a dropped module; a caller that wants it caught sets `PROBE_MIN_CHECKS=52` (the harness does). (Every check that cannot run is a failure rather than a skip, which is what keeps the count stable when a service is down.)
 
 ## Output and exit status
 
@@ -35,7 +35,7 @@ NOT-APPLICABLE <id> <why>
 PROBE SUMMARY checks=<N> pass=<P> fail=<F> not_applicable=<A>
 ```
 
-The summary is always the last line. `N` is passes plus failures; a `NOT-APPLICABLE` line is not a check and not a pass and is counted apart. Standard error holds one `REQUEST GET <url without credentials> auth=<none|configured|wrong>` line per request, a `PROBE RED:` line saying why the run is red, and, on every run, a `PROBE NOT CHECKED:` line.
+The summary is always the last line. `N` is passes plus failures; a `NOT-APPLICABLE` line is not a check and not a pass and is counted apart (no check is recorded that way today, since module 1 gained a describe; the line kind and the counter stay for a service that lacks an endpoint, and a unit test exercises them directly). Standard error holds one `REQUEST GET <url without credentials> auth=<none|configured|wrong>` line per request, a `PROBE RED:` line saying why the run is red, and, on every run, a `PROBE NOT CHECKED:` line.
 
 | Exit | Meaning |
 |---|---|
@@ -53,7 +53,7 @@ The configured key and tokens are sent only in the `Authorization: Bearer` heade
 
 ## The checks
 
-A healthy run executes 42 checks (30 positive, 12 negative) and prints one NOT-APPLICABLE line. A **positive** check asserts that a good call is answered well. A **negative** check asserts that a call with no credential, or a deliberately wrong one, is refused with the module's error envelope; each negative call is the control that proves the positive call can fail. The positive call is always made first.
+A healthy run executes 52 checks (36 positive, 16 negative) and prints no NOT-APPLICABLE line. A **positive** check asserts that a good call is answered well. A **negative** check asserts that a call with no credential, or a deliberately wrong one, is refused with the module's error envelope; each negative call is the control that proves the positive call can fail. The positive call is always made first.
 
 | Check | Kind | Asserts |
 |---|---|---|
@@ -67,6 +67,16 @@ A healthy run executes 42 checks (30 positive, 12 negative) and prints one NOT-A
 | `m1.jobs.no_key.request_id` | negative | That envelope carries a non-empty `error.request_id`. |
 | `m1.jobs.wrong_key.rejected` | negative | The same call with a wrong bearer value: 401 and `unauthenticated`. |
 | `m1.jobs.wrong_key.request_id` | negative | That envelope carries a non-empty `error.request_id`. |
+| `m1.describe.ok` | positive | `GET /v1/describe` with the caller key (the one the job lookup sends): 200 and a JSON object. |
+| `m1.describe.module` | positive | `module` is `verify`. |
+| `m1.describe.api_version` | positive | `api_version` is `v1`. |
+| `m1.describe.capabilities` | positive | `capabilities` is an object, and `capabilities.idempotent_bulk_create` and `capabilities.job_totals` are true. |
+| `m1.describe.vocabularies` | positive | `vocabularies.status.values` is a non-empty array (the module serves its own constants). |
+| `m1.describe.error_codes` | positive | `error_codes` is a non-empty array of `{code, http_status}`. |
+| `m1.describe.no_key.rejected` | negative | The same call with no Authorization header: 401 and `error.code` is `unauthenticated`. |
+| `m1.describe.no_key.request_id` | negative | That envelope carries a non-empty `error.request_id`. |
+| `m1.describe.wrong_key.rejected` | negative | The same call with a wrong bearer value: 401 and `unauthenticated`. |
+| `m1.describe.wrong_key.request_id` | negative | That envelope carries a non-empty `error.request_id`. |
 | `m2.healthz.ok` | positive | As the platform's health check. |
 | `m2.readyz.ok` | positive | 200, `status` is `ready`, `at` present, `checks.db`, `checks.singleton_lock`, `db` and `singleton_lock` are true. |
 | `m2.describe.ok` | positive | `GET /v1/describe` with the service token: 200 and a JSON object. |
@@ -102,7 +112,7 @@ A healthy run executes 42 checks (30 positive, 12 negative) and prints one NOT-A
 
 When the describe call itself fails (not 200, not JSON, no answer), every `describe.*` field check of that module fails with that reason: an absent key cannot be proved absent in an error body, so nothing passes by omission.
 
-`NOT-APPLICABLE m1.describe`: module 1 has no describe endpoint. The line is printed on every run; it is not a pass.
+Module 1 asserts no `pricing`: its describe has none (module 1 has nothing to quote), and the senders' `pricing` checks are not applied to it. Module 1's `vocabularies` check reads `vocabularies.status` (module 1's own constants), where the senders' reads `vocabularies.job_state` (their database enums).
 
 ## The contract the checks encode
 
@@ -110,7 +120,7 @@ Read from the module code, not from the module documentation. Authentication is 
 
 - Platform: `GET /healthz` 200 `{"status":"ok","at":...}`; `GET /readyz` 200 `{"status":"ready","checks":{"db":true},"db":true,"at":...}`.
 - Modules 2 and 3: `/healthz` and `/readyz` need no token; `/readyz` carries `checks.db` and `checks.singleton_lock` and the two top-level copies. `GET /v1/describe` needs the service token and answers 401 with `{"error":{"code":"unauthenticated","message":...,"request_id":"req_<32 hex>"}}` otherwise. Module 3 additionally has `extension_routes`, `schemas` and `bulk_add`; module 2 has none of the three.
-- Module 1: no describe. `/healthz` and `/readyz` need no token (`checks.pepper`, `checks.db`, `ready`). `GET /v1/jobs/<uuid>` answers 401 `unauthenticated` without a valid per-caller key and 404 `not_found` with one when the job does not exist. Its request ids are UUIDs, not `req_<hex>`, which is why its rule is only "non-empty".
+- Module 1: `/healthz` and `/readyz` need no token (`checks.pepper`, `checks.db`, `ready`). `GET /v1/jobs/<uuid>` answers 401 `unauthenticated` without a valid per-caller key and 404 `not_found` with one when the job does not exist. `GET /v1/describe` takes the same per-caller key and answers 401 `unauthenticated` with none or a wrong one; its body carries `module` (`verify`), `api_version` (`v1`), `capabilities` (booleans; `idempotent_bulk_create` and `job_totals` are true), `routes`, `schemas`, `vocabularies` (`{name: {source: module_constant, values, fields}}`, among them `status`), `error_codes` (`[{code, http_status}]`) and `idempotency`, and has no `pricing`. Its request ids are UUIDs, not `req_<hex>`, which is why its rule is only "non-empty".
 
 ## What the probe does not check
 

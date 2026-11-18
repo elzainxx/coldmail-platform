@@ -588,6 +588,10 @@ func TestEntObserved_TheBackfillGivesAConvergedRowItsVersionAndChangesNothingEls
 
 	dir := repoMigrationsDir(t)
 	envDown := migEnv(e.s.DSN, dir, map[string]string{"PLATFORM_MIGRATE_ALLOW_DOWN": "true"})
+	// the chain has grown above 0008 (platform_0009 and platform_0010 do not touch the delivery table): the runner rolls back highest-first, so they go first
+	for _, v := range []string{"0010", "0009"} {
+		mustExit(t, runMigrator(t, envDown, "down", v), 0, "down "+v+" on a database with delivery rows")
+	}
 	res := runMigrator(t, envDown, "down", "0008")
 	mustExit(t, res, 0, "down 0008 on a database with delivery rows")
 	// the control: the table is in the platform_0006 shape with its rows (the old CHECK, no new columns), and nothing else of any row moved

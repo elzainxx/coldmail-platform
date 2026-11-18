@@ -14,12 +14,19 @@ import (
 	"github.com/coldmail-platform/platform/internal/probe/probetest"
 )
 
-// healthyChecks is the number of checks a healthy run executes: platform 2, module 1 8, module 2 16,
-// module 3 16. It is asserted exactly, so a check that quietly disappears turns a test red.
+// healthyChecks is the number of checks a healthy run executes: platform 2, module 1 18, module 2 16,
+// module 3 16. It is asserted exactly, so a check that quietly disappears turns a test red. A healthy run
+// prints no NOT-APPLICABLE line (module 1 has a describe since the Phase 3 close-out); the mechanism stays
+// and is tested on its own (TestNotApplicable_*).
 const (
-	healthyChecks   = 42
-	healthyPositive = 30
-	healthyNegative = 12
+	healthyChecks        = 52
+	healthyPositive      = 36
+	healthyNegative      = 16
+	healthyNotApplicable = 0
+
+	// What a healthy run asks of module 1: 18 checks over 8 requests (the job lookup and describe, each
+	// with the key, with no key and with a wrong key, after health and readiness).
+	healthyM1Checks = 18
 )
 
 // outcome is everything one run produced.
@@ -116,7 +123,7 @@ func keysOf(m map[string]string) []string {
 // wantGreen asserts the exact healthy outcome.
 func wantGreen(t *testing.T, o outcome) {
 	t.Helper()
-	want := fmt.Sprintf("PROBE SUMMARY checks=%d pass=%d fail=0 not_applicable=1", healthyChecks, healthyChecks)
+	want := fmt.Sprintf("PROBE SUMMARY checks=%d pass=%d fail=0 not_applicable=%d", healthyChecks, healthyChecks, healthyNotApplicable)
 	if o.code != 0 || o.summary() != want || len(o.failedIDs()) != 0 {
 		t.Fatalf("expected a green run (%s)\n%s", want, o)
 	}
@@ -139,7 +146,7 @@ func wantRed(t *testing.T, o outcome, want map[string]string) {
 			t.Fatalf("line for %s = %q, want a FAIL containing %q\n%s", id, line, text, o)
 		}
 	}
-	wantSummary := fmt.Sprintf("PROBE SUMMARY checks=%d pass=%d fail=%d not_applicable=1", healthyChecks, healthyChecks-len(want), len(want))
+	wantSummary := fmt.Sprintf("PROBE SUMMARY checks=%d pass=%d fail=%d not_applicable=%d", healthyChecks, healthyChecks-len(want), len(want), healthyNotApplicable)
 	if o.summary() != wantSummary {
 		t.Fatalf("summary = %q, want %q\n%s", o.summary(), wantSummary, o)
 	}

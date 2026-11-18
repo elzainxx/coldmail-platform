@@ -113,9 +113,10 @@ func CheckPlatform(ctx context.Context, d Doer, rec *Recorder, svc Service) {
 
 // ---- module 1 (verify) -----------------------------------------------------------------------------------------
 
-// CheckM1 checks module 1: health, readiness, and the job lookup with the caller key (404 not_found:
-// authenticated, job absent), without a key and with a wrong key (both 401 unauthenticated). Module 1
-// has no describe, which is recorded as NOT-APPLICABLE and is not a pass.
+// CheckM1 checks module 1: health, readiness, the job lookup with the caller key (404 not_found:
+// authenticated, job absent), without a key and with a wrong key (both 401 unauthenticated), and then
+// describe (GET /v1/describe, authenticated with the same per-caller key): the positive call with one
+// check per asserted field, and the two refusals that prove the positive one can fail.
 func CheckM1(ctx context.Context, d Doer, rec *Recorder, svc Service) {
 	checkHealthz(ctx, d, rec, svc)
 	checkReadyz(ctx, d, rec, svc, "checks.pepper", "checks.db", "ready")
@@ -128,8 +129,31 @@ func CheckM1(ctx context.Context, d Doer, rec *Recorder, svc Service) {
 	recordEnvelope(rec, rec.get(ctx, d, svc, path, credNone), svc.Name+".jobs.no_key", "rejected", Negative, rejected)
 	recordEnvelope(rec, rec.get(ctx, d, svc, path, credWrong), svc.Name+".jobs.wrong_key", "rejected", Negative, rejected)
 
-	rec.NotApplicable(svc.Name+".describe",
-		"module 1 (verify) has no describe endpoint; its health, readiness and the authenticated-versus-unauthenticated job lookups are checked instead")
+	// Describe, in the senders' order: the positive call first, then the two refusals.
+	checkM1Describe(rec, rec.get(ctx, d, svc, "/v1/describe", credConfigured), svc.Name)
+	recordEnvelope(rec, rec.get(ctx, d, svc, "/v1/describe", credNone), svc.Name+".describe.no_key", "rejected", Negative, rejected)
+	recordEnvelope(rec, rec.get(ctx, d, svc, "/v1/describe", credWrong), svc.Name+".describe.wrong_key", "rejected", Negative, rejected)
+}
+
+// checkM1Describe records m1.describe.ok and one check per asserted field of module 1's describe. The body
+// carries no pricing (module 1 has nothing to quote), so none is asserted. When the call produced no usable
+// body every field check fails with that reason, as for the senders.
+func checkM1Describe(rec *Recorder, ex exchange, name string) {
+	field := describeFields(rec, ex, name)
+	field("module", func(p *problems, m map[string]any) { p.wantString(m, "module", "verify") })
+	field("api_version", func(p *problems, m map[string]any) { p.wantString(m, "api_version", "v1") })
+	field("capabilities", func(p *problems, m map[string]any) {
+		p.wantObjectAt(m, "capabilities")
+		// The two capabilities the platform relies on. Asserted only when capabilities is an object, so a
+		// wrong shape is reported once and not three times.
+		if _, isObject := m["capabilities"].(map[string]any); isObject {
+			p.wantTrue(m, "capabilities.idempotent_bulk_create")
+			p.wantTrue(m, "capabilities.job_totals")
+		}
+	})
+	// A non-empty status vocabulary proves the module serves its own constants (source module_constant).
+	field("vocabularies", func(p *problems, m map[string]any) { p.wantNonEmptyArray(m, "vocabularies.status.values") })
+	field("error_codes", wantErrorCodes)
 }
 
 // ---- modules 2 and 3 (the senders) -----------------------------------------------------------------------------
@@ -161,10 +185,11 @@ func checkSender(ctx context.Context, d Doer, rec *Recorder, svc Service, spec s
 	recordEnvelope(rec, rec.get(ctx, d, svc, "/v1/describe", credWrong), svc.Name+".describe.wrong_token", "rejected", Negative, rejected)
 }
 
-// checkDescribe records describe.ok and one check per asserted field. When the describe call produced no
-// usable body every field check fails with that reason: an absent field cannot be proved absent in an
-// error body, so nothing here passes by omission.
-func checkDescribe(rec *Recorder, ex exchange, name string, spec sendSpec) {
+// describeFields records <name>.describe.ok and returns the recorder of the field checks: one call per
+// asserted field, recorded as <name>.describe.<suffix>. When the describe call produced no usable body every
+// field check fails with that reason: an absent field cannot be proved absent in an error body, so nothing
+// here passes by omission. All three modules' describe checks are recorded through it.
+func describeFields(rec *Recorder, ex exchange, name string) func(suffix string, fn func(p *problems, m map[string]any)) {
 	okID := name + ".describe.ok"
 	if ex.usable(rec, okID, Positive) {
 		var p problems
@@ -182,7 +207,7 @@ func checkDescribe(rec *Recorder, ex exchange, name string, spec sendSpec) {
 	case ex.body == nil:
 		unusable = "describe body is not a JSON object, so this field cannot be checked"
 	}
-	field := func(suffix string, fn func(p *problems, m map[string]any)) {
+	return func(suffix string, fn func(p *problems, m map[string]any)) {
 		id := name + ".describe." + suffix
 		if unusable != "" {
 			rec.Fail(id, Positive, unusable)
@@ -192,6 +217,11 @@ func checkDescribe(rec *Recorder, ex exchange, name string, spec sendSpec) {
 		fn(&p, ex.body)
 		p.verdict(rec, id, Positive)
 	}
+}
+
+// checkDescribe records a sender's describe.ok and one check per asserted field (see describeFields).
+func checkDescribe(rec *Recorder, ex exchange, name string, spec sendSpec) {
+	field := describeFields(rec, ex, name)
 
 	field("module", func(p *problems, m map[string]any) { p.wantString(m, "module", spec.module) })
 	field("api_version", func(p *problems, m map[string]any) { p.wantString(m, "api_version", "v1") })

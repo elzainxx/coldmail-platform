@@ -1,6 +1,7 @@
 package probe_test
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -17,7 +18,7 @@ func TestVars_EveryVariableHasAConsumer(t *testing.T) {
 	type effect struct {
 		opts       probetest.Options
 		perturb    func(t *testing.T, env map[string]string)
-		wantPrefix string // every failing check id starts with this ("" when none must fail)
+		wantPrefix []string // every failing check id starts with one of these (none when no check must fail)
 		wantFailed int
 		wantStderr string // on stderr when the run is red
 	}
@@ -29,22 +30,24 @@ func TestVars_EveryVariableHasAConsumer(t *testing.T) {
 		return func(_ *testing.T, env map[string]string) { env[variable] = value }
 	}
 	cases := map[string]effect{
-		probe.VarPlatformURL: {perturb: closed(probe.VarPlatformURL), wantPrefix: "platform.", wantFailed: 2},
-		probe.VarM1URL:       {perturb: closed(probe.VarM1URL), wantPrefix: "m1.", wantFailed: 8},
-		probe.VarM1Key:       {perturb: set(probe.VarM1Key, wrong), wantPrefix: "m1.jobs.right_key.", wantFailed: 1},
-		probe.VarM2URL:       {perturb: closed(probe.VarM2URL), wantPrefix: "m2.", wantFailed: 16},
-		probe.VarM2Token:     {perturb: set(probe.VarM2Token, wrong), wantPrefix: "m2.describe.", wantFailed: 10},
-		probe.VarM3URL:       {perturb: closed(probe.VarM3URL), wantPrefix: "m3.", wantFailed: 16},
-		probe.VarM3Token:     {perturb: set(probe.VarM3Token, wrong), wantPrefix: "m3.describe.", wantFailed: 10},
+		probe.VarPlatformURL: {perturb: closed(probe.VarPlatformURL), wantPrefix: []string{"platform."}, wantFailed: 2},
+		probe.VarM1URL:       {perturb: closed(probe.VarM1URL), wantPrefix: []string{"m1."}, wantFailed: healthyM1Checks},
+		// The key is sent on the job lookup and on describe: the lookup's accepted check fails, and the
+		// describe call (401 instead of 200) fails with its five field checks. The refusals still pass.
+		probe.VarM1Key:   {perturb: set(probe.VarM1Key, wrong), wantPrefix: []string{"m1.jobs.right_key.", "m1.describe."}, wantFailed: 7},
+		probe.VarM2URL:   {perturb: closed(probe.VarM2URL), wantPrefix: []string{"m2."}, wantFailed: 16},
+		probe.VarM2Token: {perturb: set(probe.VarM2Token, wrong), wantPrefix: []string{"m2.describe."}, wantFailed: 10},
+		probe.VarM3URL:   {perturb: closed(probe.VarM3URL), wantPrefix: []string{"m3."}, wantFailed: 16},
+		probe.VarM3Token: {perturb: set(probe.VarM3Token, wrong), wantPrefix: []string{"m3.describe."}, wantFailed: 10},
 		probe.VarTimeoutSec: {
 			// Module 2 answers /healthz after 1.5 s: inside the default 10 s, past a 1 s timeout.
 			opts:       probetest.Options{M2: probetest.Slow("/healthz", 1500*time.Millisecond)},
 			perturb:    set(probe.VarTimeoutSec, "1"),
-			wantPrefix: "m2.healthz.", wantFailed: 1,
+			wantPrefix: []string{"m2.healthz."}, wantFailed: 1,
 		},
 		probe.VarMinChecks: {
-			perturb:    set(probe.VarMinChecks, "43"),
-			wantFailed: 0, wantStderr: "PROBE_MIN_CHECKS=43",
+			perturb:    set(probe.VarMinChecks, strconv.Itoa(healthyChecks+1)),
+			wantFailed: 0, wantStderr: "PROBE_MIN_CHECKS=" + strconv.Itoa(healthyChecks+1),
 		},
 	}
 
@@ -84,7 +87,11 @@ func TestVars_EveryVariableHasAConsumer(t *testing.T) {
 				t.Fatalf("changing %s failed %d checks %v, want %d", name, len(failed), failed, c.wantFailed)
 			}
 			for _, id := range failed {
-				if !strings.HasPrefix(id, c.wantPrefix) {
+				inside := false
+				for _, prefix := range c.wantPrefix {
+					inside = inside || strings.HasPrefix(id, prefix)
+				}
+				if !inside {
 					t.Errorf("changing %s failed %s, which is outside %q", name, id, c.wantPrefix)
 				}
 			}

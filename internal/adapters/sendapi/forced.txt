@@ -1,5 +1,5 @@
 SA-F1|errors.go|run answers 409 with one body for every cause (code conflict, no details), so the cause is inferred from the route and the profile: back-pressure on module 2, unexplained on module 3
-SA-F2|errors.go|a cursor that decodes but is not a timestamp and an id is a 500 from the module (documented as 400) and cannot be told from a module fault, so a 500 on a request that carried a cursor is reported as a possible bad cursor
+SA-F2|errors.go|a cursor that decodes but is not a timestamp and an id is a 500 from module 3 (documented as 400; module 2 answers 400 since its close-out) and cannot be told from a module fault, so a 500 on a request that carried a cursor is reported as a possible bad cursor
 SA-F3|errors.go|a 404 on a report is the same answer for a job never run, another tenant job and a typo, so the module NotFound is returned untouched and only the missing resource is named
 SA-F4|shapes.go|module 3 omits single-report keys until set where module 2 sends null and campaign items carry null on both, so the Shape requires or allows the single report keys by profile
 SA-F5|client.go|the module reports a malformed job_item_id as required, not malformed, so the adapter validates every id itself before sending

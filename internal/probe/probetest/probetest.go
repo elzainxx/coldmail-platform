@@ -206,7 +206,72 @@ func m1Handler(key string) http.Handler {
 		}
 		WriteJSON(w, 404, Envelope("not_found", M1RequestID()))
 	})
+	// Module 1's describe takes the same per-caller key as its job lookup, and answers 401 with its own
+	// (UUID) request id when the key is absent or wrong.
+	mux.HandleFunc("GET /v1/describe", func(w http.ResponseWriter, r *http.Request) {
+		if !authorised(r, key) {
+			WriteJSON(w, 401, Envelope("unauthenticated", M1RequestID()))
+			return
+		}
+		WriteJSON(w, 200, M1Describe())
+	})
 	return mux
+}
+
+// M1Describe is the healthy body of module 1's GET /v1/describe, in the shape of the real handler: module
+// "verify", the capabilities (booleans), routes, schemas, vocabularies read from the module's own constants
+// ({source, values, fields} per name), error_codes and the idempotency contract. It has no pricing key
+// (module 1 has nothing to quote) and no job_state vocabulary (that is the senders').
+func M1Describe() map[string]any {
+	vocab := func(fields []any, values ...any) map[string]any {
+		return map[string]any{"source": "module_constant", "values": values, "fields": fields}
+	}
+	route := func(method, path, id, auth string) map[string]any {
+		return map[string]any{"method": method, "path": path, "id": id, "auth": auth, "description": "emulated"}
+	}
+	return map[string]any{
+		"module":      "verify",
+		"api_version": "v1",
+		"capabilities": map[string]any{
+			"sync_verify": true, "bulk_verify": true, "idempotent_bulk_create": true, "job_totals": true,
+			"quote": false, "run": false, "report": false,
+		},
+		"routes": []any{
+			route("POST", "/v1/verify", "verify", "per_caller_key_or_legacy_token"),
+			route("POST", "/v1/verify/bulk", "verify.bulk.create", "per_caller_key"),
+			route("GET", "/v1/jobs/{id}", "verify.bulk.status", "per_caller_key"),
+			route("GET", "/v1/jobs/{id}/results", "verify.bulk.results", "per_caller_key"),
+			route("GET", "/v1/describe", "describe", "per_caller_key"),
+			route("GET", "/healthz", "healthz", "none"),
+			route("GET", "/readyz", "readyz", "none"),
+		},
+		"schemas": map[string]any{"verdict": map[string]any{"type": "object"}},
+		"vocabularies": map[string]any{
+			"status":              vocab([]any{"verify.status"}, "valid", "invalid", "risky", "unknown"),
+			"reason":              vocab([]any{"verify.reason"}, "mailbox_exists", "no_mx"),
+			"recommendation":      vocab([]any{"verify.recommendation"}, "send", "do_not_send"),
+			"failure_origin":      vocab([]any{"verify.signals.failure_origin"}, "none", "network"),
+			"smtp_skipped_reason": vocab([]any{"verify.signals.smtp_skipped_reason"}, "policy"),
+			"job_status":          vocab([]any{"job.status"}, "running", "complete"),
+			"submit_status":       vocab([]any{"bulk.accepted.status"}, "accepted"),
+			"detail_issue":        vocab([]any{"error.details[].issue"}, "required", "malformed"),
+		},
+		"error_codes": []any{
+			map[string]any{"code": "unauthenticated", "http_status": 401},
+			map[string]any{"code": "validation_failed", "http_status": 400},
+			map[string]any{"code": "not_found", "http_status": 404},
+			map[string]any{"code": "method_not_allowed", "http_status": 405},
+			map[string]any{"code": "idempotency_key_reused", "http_status": 409},
+			map[string]any{"code": "payload_too_large", "http_status": 413},
+			map[string]any{"code": "internal_error", "http_status": 500},
+			map[string]any{"code": "contract_violation", "http_status": 500},
+			map[string]any{"code": "unavailable", "http_status": 503},
+			map[string]any{"code": "paused", "http_status": 503},
+		},
+		"idempotency": map[string]any{
+			"route": "POST /v1/verify/bulk", "header": "Idempotency-Key", "scope": "authenticated_caller",
+		},
+	}
 }
 
 // Describe is the healthy body of GET /v1/describe. Module 3 (extension true) additionally carries

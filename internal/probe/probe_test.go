@@ -18,12 +18,12 @@ func TestHealthyRun_AllFourServicesPass(t *testing.T) {
 	st := start(t, probetest.Options{})
 	o := run(t, st.Env(), nil)
 
-	// The exact outcome: 42 checks, all passing, one NOT-APPLICABLE counted apart, floor met.
+	// The exact outcome: 52 checks, all passing, nothing NOT-APPLICABLE, floor met.
 	wantGreen(t, o)
 	if o.report.Checks < o.report.Floor {
 		t.Fatalf("a green run executed %d checks, below the floor %d", o.report.Checks, o.report.Floor)
 	}
-	if got := o.summary(); got != "PROBE SUMMARY checks=42 pass=42 fail=0 not_applicable=1" {
+	if got := o.summary(); got != "PROBE SUMMARY checks=52 pass=52 fail=0 not_applicable=0" {
 		t.Fatalf("summary = %q", got)
 	}
 
@@ -40,11 +40,15 @@ func TestHealthyRun_AllFourServicesPass(t *testing.T) {
 	if pass != healthyChecks {
 		t.Fatalf("%d PASS lines, want %d", pass, healthyChecks)
 	}
-	if !strings.Contains(o.stdout, "NOT-APPLICABLE m1.describe ") {
-		t.Fatalf("module 1's missing describe was not recorded as NOT-APPLICABLE\n%s", o)
+	// Module 1 has a describe now: it is checked for real, and nothing is recorded as not applicable.
+	if strings.Contains(o.stdout, "NOT-APPLICABLE") {
+		t.Fatalf("a healthy run printed a NOT-APPLICABLE line\n%s", o)
+	}
+	if !strings.Contains(o.stdout, "CHECK m1.describe.ok PASS\n") {
+		t.Fatalf("module 1's describe was not checked\n%s", o)
 	}
 
-	// Positive and negative counts, unique ids, and exactly one not-applicable line.
+	// Positive and negative counts, unique ids, and no not-applicable line.
 	var pos, neg, na int
 	seen := map[string]bool{}
 	for _, r := range o.report.Results {
@@ -61,8 +65,8 @@ func TestHealthyRun_AllFourServicesPass(t *testing.T) {
 			pos++
 		}
 	}
-	if pos != healthyPositive || neg != healthyNegative || na != 1 {
-		t.Fatalf("positive=%d negative=%d not-applicable=%d, want %d/%d/1", pos, neg, na, healthyPositive, healthyNegative)
+	if pos != healthyPositive || neg != healthyNegative || na != healthyNotApplicable {
+		t.Fatalf("positive=%d negative=%d not-applicable=%d, want %d/%d/%d", pos, neg, na, healthyPositive, healthyNegative, healthyNotApplicable)
 	}
 
 	// The request lines on stderr: one per request, labelled, and never carrying a credential.
@@ -76,11 +80,15 @@ func TestHealthyRun_AllFourServicesPass(t *testing.T) {
 			t.Errorf("request line %q does not match the expected form", l)
 		}
 	}
-	if reqs != 17 {
-		t.Fatalf("%d request lines, want 17\n%s", reqs, o.stderr)
+	if reqs != 20 {
+		t.Fatalf("%d request lines, want 20\n%s", reqs, o.stderr)
 	}
 	if !strings.Contains(o.stderr, "PROBE NOT CHECKED:") {
 		t.Fatalf("the run did not say what it did not check\n%s", o.stderr)
+	}
+	// The not-checked line no longer claims that module 1 has no describe.
+	if strings.Contains(o.stderr, "module 1 describe") || strings.Contains(o.stderr, "has none") {
+		t.Fatalf("the not-checked line still says module 1 has no describe\n%s", o.stderr)
 	}
 
 	// What the services actually received: the negative checks really sent no credential and a wrong
@@ -102,7 +110,8 @@ func TestHealthyRun_AllFourServicesPass(t *testing.T) {
 	want := map[string][]string{
 		"platform": {"GET /healthz none", "GET /readyz none"},
 		"m1": {"GET /healthz none", "GET /readyz none",
-			"GET /v1/jobs/<uuid> right", "GET /v1/jobs/<uuid> none", "GET /v1/jobs/<uuid> wrong"},
+			"GET /v1/jobs/<uuid> right", "GET /v1/jobs/<uuid> none", "GET /v1/jobs/<uuid> wrong",
+			"GET /v1/describe right", "GET /v1/describe none", "GET /v1/describe wrong"},
 		"m2": {"GET /healthz none", "GET /readyz none",
 			"GET /v1/describe right", "GET /v1/describe none", "GET /v1/describe wrong"},
 		"m3": {"GET /healthz none", "GET /readyz none",
@@ -593,15 +602,15 @@ func TestFloor_BoundaryIsInclusive(t *testing.T) {
 	st := start(t, probetest.Options{})
 	env := st.Env()
 
-	env["PROBE_MIN_CHECKS"] = "42"
+	env["PROBE_MIN_CHECKS"] = "52"
 	wantGreen(t, runMain(env))
 
-	env["PROBE_MIN_CHECKS"] = "43"
+	env["PROBE_MIN_CHECKS"] = "53"
 	o := runMain(env)
-	if o.code != 1 || o.summary() != "PROBE SUMMARY checks=42 pass=42 fail=0 not_applicable=1" {
-		t.Fatalf("a floor of 43 against 42 checks was not red for the floor alone\n%s", o)
+	if o.code != 1 || o.summary() != "PROBE SUMMARY checks=52 pass=52 fail=0 not_applicable=0" {
+		t.Fatalf("a floor of 53 against 52 checks was not red for the floor alone\n%s", o)
 	}
-	if !strings.Contains(o.stderr, "only 42 checks were executed, fewer than the floor PROBE_MIN_CHECKS=43") {
+	if !strings.Contains(o.stderr, "only 52 checks were executed, fewer than the floor PROBE_MIN_CHECKS=53") {
 		t.Fatalf("the message does not name the floor\n%s", o.stderr)
 	}
 }

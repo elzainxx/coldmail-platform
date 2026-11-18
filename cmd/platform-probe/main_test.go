@@ -76,7 +76,7 @@ func TestBinary_HealthyExitsZeroAndPrintsTheSummaryLast(t *testing.T) {
 	if r.code != 0 {
 		t.Fatalf("%s", r)
 	}
-	if got, want := lastLine(r.stdout), "PROBE SUMMARY checks=42 pass=42 fail=0 not_applicable=1"; got != want {
+	if got, want := lastLine(r.stdout), "PROBE SUMMARY checks=52 pass=52 fail=0 not_applicable=0"; got != want {
 		t.Fatalf("last stdout line = %q, want %q", got, want)
 	}
 	for _, l := range strings.Split(strings.TrimRight(r.stdout, "\n"), "\n") {
@@ -105,7 +105,7 @@ func TestBinary_ARedCheckExitsOne(t *testing.T) {
 	if r.code != 1 {
 		t.Fatalf("%s", r)
 	}
-	if got, want := lastLine(r.stdout), "PROBE SUMMARY checks=42 pass=32 fail=10 not_applicable=1"; got != want {
+	if got, want := lastLine(r.stdout), "PROBE SUMMARY checks=52 pass=42 fail=10 not_applicable=0"; got != want {
 		t.Fatalf("last stdout line = %q, want %q", got, want)
 	}
 	if !strings.Contains(r.stdout, "CHECK m2.describe.ok FAIL expected status 200, got 401\n") {
@@ -118,7 +118,7 @@ func TestBinary_FewerChecksThanTheFloorExitsOne(t *testing.T) {
 	env := st.Env()
 	env["PROBE_MIN_CHECKS"] = "100"
 	r := runBinary(t, env)
-	if r.code != 1 || lastLine(r.stdout) != "PROBE SUMMARY checks=42 pass=42 fail=0 not_applicable=1" {
+	if r.code != 1 || lastLine(r.stdout) != "PROBE SUMMARY checks=52 pass=52 fail=0 not_applicable=0" {
 		t.Fatalf("%s", r)
 	}
 	if !strings.Contains(r.stderr, "fewer than the floor PROBE_MIN_CHECKS=100") {

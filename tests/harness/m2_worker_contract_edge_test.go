@@ -351,7 +351,7 @@ func TestM2Worker_ContractEdgeCases(t *testing.T) {
 		t.Logf("NOTE edge control cancel: Cancel of an unknown campaign answers 200 with all zeros (cancelled %d, in flight %d, already terminal %d): the same body with a campaign id is accepted", pos.Cancelled, pos.InFlight, pos.AlreadyTerminal)
 	}
 
-	// ---- GET /v1/report?campaign_id=&cursor=: 400 cursor_malformed and 500 cursor_forged (campaign X is finished: four items, pages of one) ----
+	// ---- GET /v1/report?campaign_id=&cursor=: 400 cursor_malformed and 400 cursor_forged (a 500 before the close-out) (campaign X is finished: four items, pages of one) ----
 	rep, err := ad.ReportCampaign(ctx, tn.CampaignID)
 	if err != nil || !m2eAllTerminal(rep, 4) {
 		t.Fatalf("the report of campaign X is not four terminal items (%s), error %v", m2eTotalsLine(rep.Totals), err)
@@ -369,11 +369,12 @@ func TestM2Worker_ContractEdgeCases(t *testing.T) {
 	t.Logf("NOTE edge cursor_malformed: a cursor that is not base64url answered kind %s, HTTP %d, code %s, details %s (request %s), reported as ErrBadCursor", me.Kind, me.Status, me.Code, m2cDetails(me), me.RequestID)
 	forged := base64.RawURLEncoding.EncodeToString([]byte("not-a-time|" + itA.ID))
 	_, err = pg.ReportCampaignPage(ctx, tn.CampaignID, forged)
-	me = m2cRefusal(t, r, "the report with a well-formed cursor that is not a time", err, modclient.Internal, http.StatusInternalServerError, "internal_error")
-	if !errors.Is(err, sendapi.ErrBadCursor) {
-		t.Errorf("the forged cursor's 500 is not reported as sendapi.ErrBadCursor: %s", r.scrub(err.Error()))
+	// Phase 3 close-out B2 (module 2 dc2b532): a forged cursor is a 400 with the envelope, as the contract always said; before it module 2 answered 500 internal_error for a cursor whose time is not a time
+	me = m2cRefusal(t, r, "the report with a well-formed cursor that is not a time", err, modclient.Refused, http.StatusBadRequest, "validation_failed")
+	if !errors.Is(err, sendapi.ErrBadCursor) || !m2cDetail(me, "cursor", "malformed") {
+		t.Errorf("the forged cursor's 400 is not reported as sendapi.ErrBadCursor with the detail cursor/malformed (%s): %s", m2cDetails(me), r.scrub(err.Error()))
 	}
-	t.Logf("NOTE edge cursor_forged: a well-formed cursor whose time is not a time answered kind %s, HTTP %d, code %s (request %s) and is reported as ErrBadCursor: the module's 500 where its documentation promises a 400", me.Kind, me.Status, me.Code, me.RequestID)
+	t.Logf("NOTE edge cursor_forged: a well-formed cursor whose time is not a time answered kind %s, HTTP %d, code %s (request %s) and is reported as ErrBadCursor: a 400 since the close-out (it was a 500)", me.Kind, me.Status, me.Code, me.RequestID)
 	second, err := pg.ReportCampaignPage(ctx, tn.CampaignID, first.NextCursor)
 	if err != nil || len(second.Items) != 1 || second.Items[0].JobItemID == first.Items[0].JobItemID {
 		t.Errorf("CONTROL: the genuine next cursor answered %d item(s) (error %v), want the next item of the campaign", len(second.Items), err)

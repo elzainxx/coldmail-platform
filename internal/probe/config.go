@@ -1,6 +1,6 @@
 // Package probe is platform-probe: the platform's role as the first caller of the three modules. For each
-// service it checks health and readiness, and for the two senders the service-token-gated describe, and
-// it prints one line per check. Every check can fail, a check that cannot run is a failure and not a
+// service it checks health and readiness, and for each of the three modules the credential-gated describe
+// (the senders' service token, module 1's per-caller key), and it prints one line per check. Every check can fail, a check that cannot run is a failure and not a
 // skip, and the run is red when fewer checks ran than the floor.
 package probe
 
@@ -48,7 +48,7 @@ func Vars() []Var {
 	return []Var{
 		{VarPlatformURL, "", true, false, "Base URL of the platform service, as http://host:port. No credentials, query or fragment."},
 		{VarM1URL, "", true, false, "Base URL of module 1 (verify). Same rules as the platform URL."},
-		{VarM1Key, "", true, true, "Raw per-caller bearer key for module 1, sent on the job lookups. Never printed."},
+		{VarM1Key, "", true, true, "Raw per-caller bearer key for module 1, sent on the job lookups and on describe. Never printed."},
 		{VarM2URL, "", true, false, "Base URL of module 2 (send_managed). Same rules as the platform URL."},
 		{VarM2Token, "", true, true, "Service token for module 2, sent as a bearer credential to describe. Never printed."},
 		{VarM3URL, "", true, false, "Base URL of module 3 (send_byo). Same rules as the platform URL."},
