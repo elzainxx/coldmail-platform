@@ -2,5 +2,5 @@
 # One line per module: <repository> <40-hex commit id>. tools/fetch-modules.sh --lock checks each module out at its pin and fails unless HEAD equals it.
 # The parent repository (elzainxx/coldmail) pins the same three commits as submodules; tools/check-modules-lock.sh <parent-dir> compares the two when you re-pin.
 coldmail-verify fad942e7e488e7b7da04abdb63992f903d9692b4
-coldmail-send-managed bffd42422a1d624e41214751a670965f594c3311
+coldmail-send-managed dc2b53299d3a202191e18e20cf0682087f762fc2
 coldmail-send-byo 5dde0c0536f31b0b2f92e95d8d60c271001ed8a2
