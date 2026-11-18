@@ -3,7 +3,8 @@
     "state": "aligned"
   },
   "verification": {
-    "smtp_response": "235 2.7.0 Authentication successful",
-    "state": "verified"
+    "code": "verify_tls_failed",
+    "smtp_response": "",
+    "state": "failed"
   }
 }

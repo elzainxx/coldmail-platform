@@ -4,21 +4,67 @@
   "items": {
     "next_cursor": null,
     "page_size": 200,
-    "results": []
+    "results": [
+      {
+        "job_item_id": "00000000-0000-4000-8000-000000000002",
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
+        "completed_at": "2026-01-01T00:00:00Z",
+        "attempt_count": 0,
+        "reason": null,
+        "error_class": null
+      },
+      {
+        "job_item_id": "00000000-0000-4000-8000-000000000003",
+        "state": "cancelled",
+        "provider_message_id": null,
+        "completed_at": "2026-01-01T00:00:00Z",
+        "attempt_count": 0,
+        "reason": "cancelled",
+        "error_class": null
+      },
+      {
+        "job_item_id": "00000000-0000-4000-8000-000000000004",
+        "state": "cancelled",
+        "provider_message_id": null,
+        "completed_at": "2026-01-01T00:00:00Z",
+        "attempt_count": 0,
+        "reason": "cancelled",
+        "error_class": null
+      },
+      {
+        "job_item_id": "00000000-0000-4000-8000-000000000005",
+        "state": "cancelled",
+        "provider_message_id": null,
+        "completed_at": "2026-01-01T00:00:00Z",
+        "attempt_count": 0,
+        "reason": "cancelled",
+        "error_class": null
+      },
+      {
+        "job_item_id": "00000000-0000-4000-8000-000000000006",
+        "state": "cancelled",
+        "provider_message_id": null,
+        "completed_at": "2026-01-01T00:00:00Z",
+        "attempt_count": 0,
+        "reason": "cancelled",
+        "error_class": null
+      }
+    ]
   },
   "progress": {
-    "fraction_complete": 0,
-    "is_complete": false,
-    "terminal": 0
+    "fraction_complete": 1,
+    "is_complete": true,
+    "terminal": 5
   },
   "totals": {
-    "total": 0,
-    "sent": 0,
+    "total": 5,
+    "sent": 1,
     "bounced": 0,
     "failed": 0,
     "in_flight": 0,
     "pending": 0,
     "waiting_for_capacity": 0,
-    "cancelled": 0
+    "cancelled": 4
   }
 }

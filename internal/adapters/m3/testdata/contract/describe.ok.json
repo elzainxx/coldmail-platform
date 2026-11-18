@@ -196,7 +196,7 @@
       "id": "aaaaaaaaaaaa",
       "method": "PUT",
       "path": "/v1/send-byo/settings",
-      "request_schema_ref": "#/schemas/settings_object",
+      "request_schema_ref": "#/schemas/settings_put_request",
       "response_schema_ref": "#/schemas/settings_object",
       "scope": "user"
     },
@@ -246,19 +246,178 @@
   "schemas": {
     "account_events_response": {
       "properties": {
-        "results": {
+        "items": {
+          "items": {
+            "properties": {
+              "account_id": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "action": {
+                "type": "string"
+              },
+              "actor": {
+                "type": "string"
+              },
+              "created_at": {
+                "type": "string"
+              },
+              "from_flags": {
+                "properties": {
+                  "disabled": {
+                    "type": "boolean"
+                  },
+                  "pause_reason": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "paused": {
+                    "type": "boolean"
+                  },
+                  "quarantined": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "paused",
+                  "pause_reason",
+                  "quarantined",
+                  "disabled"
+                ],
+                "type": [
+                  "object",
+                  "null"
+                ]
+              },
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "request_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "to_flags": {
+                "properties": {
+                  "disabled": {
+                    "type": "boolean"
+                  },
+                  "pause_reason": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "paused": {
+                    "type": "boolean"
+                  },
+                  "quarantined": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "paused",
+                  "pause_reason",
+                  "quarantined",
+                  "disabled"
+                ],
+                "type": [
+                  "object",
+                  "null"
+                ]
+              },
+              "user_id": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "account_id",
+              "user_id",
+              "actor",
+              "action",
+              "from_flags",
+              "to_flags",
+              "reason",
+              "request_id",
+              "created_at"
+            ],
+            "type": "object"
+          },
           "type": "array"
+        },
+        "next_cursor": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
+      "required": [
+        "items",
+        "next_cursor"
+      ],
       "type": "object"
     },
     "account_object": {
       "properties": {
-        "disabled": {
-          "type": "boolean"
+        "created_at": {
+          "type": "string"
+        },
+        "daily_limit": {
+          "type": "integer"
         },
         "from_address": {
           "type": "string"
+        },
+        "from_alignment": {
+          "properties": {
+            "acknowledged_at": {
+              "type": "string"
+            },
+            "checked_at": {
+              "type": "string"
+            },
+            "dmarc_policy": {
+              "type": "string"
+            },
+            "last_attempt_at": {
+              "type": "string"
+            },
+            "last_attempt_error": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "state"
+          ],
+          "type": "object"
+        },
+        "from_name": {
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "has_credential": {
           "type": "boolean"
@@ -267,23 +426,94 @@
           "format": "uuid",
           "type": "string"
         },
-        "paused": {
-          "type": "boolean"
-        },
-        "quarantined": {
-          "type": "boolean"
-        },
         "smtp_host": {
           "type": "string"
         },
+        "smtp_port": {
+          "type": "integer"
+        },
         "smtp_username": {
+          "type": "string"
+        },
+        "status": {
+          "properties": {
+            "disabled": {
+              "type": "boolean"
+            },
+            "pause_reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "paused": {
+              "type": "boolean"
+            },
+            "quarantine_reason": {
+              "type": "string"
+            },
+            "quarantined": {
+              "type": "boolean"
+            },
+            "quarantined_at": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "paused",
+            "pause_reason",
+            "quarantined",
+            "disabled"
+          ],
+          "type": "object"
+        },
+        "updated_at": {
           "type": "string"
         },
         "user_id": {
           "format": "uuid",
           "type": "string"
+        },
+        "verification": {
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "smtp_response": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            },
+            "verified_at": {
+              "type": "string"
+            },
+            "verify_at": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "state"
+          ],
+          "type": "object"
         }
       },
+      "required": [
+        "id",
+        "user_id",
+        "smtp_host",
+        "smtp_port",
+        "smtp_username",
+        "from_address",
+        "from_name",
+        "has_credential",
+        "status",
+        "verification",
+        "from_alignment",
+        "daily_limit",
+        "created_at",
+        "updated_at"
+      ],
       "type": "object"
     },
     "accounts_bulk_add_request": {
@@ -291,6 +521,9 @@
         "accounts": {
           "items": {
             "properties": {
+              "acknowledge_alignment_warning": {
+                "type": "boolean"
+              },
               "daily_limit": {
                 "type": "integer"
               },
@@ -334,13 +567,76 @@
           "type": "string"
         },
         "results": {
+          "items": {
+            "properties": {
+              "account_id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "code": {
+                "type": "string"
+              },
+              "details": {
+                "items": {
+                  "properties": {
+                    "field": {
+                      "type": "string"
+                    },
+                    "issue": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "field",
+                    "issue"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "from_alignment_message": {
+                "type": "string"
+              },
+              "from_alignment_state": {
+                "type": "string"
+              },
+              "row": {
+                "type": "integer"
+              },
+              "smtp_response": {
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "created",
+                  "rejected"
+                ],
+                "type": "string"
+              },
+              "verification": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "row",
+              "status"
+            ],
+            "type": "object"
+          },
           "type": "array"
         }
       },
+      "required": [
+        "request_id",
+        "results"
+      ],
       "type": "object"
     },
     "accounts_create_request": {
       "properties": {
+        "acknowledge_alignment_warning": {
+          "type": "boolean"
+        },
         "daily_limit": {
           "type": "integer"
         },
@@ -378,16 +674,23 @@
     },
     "accounts_list_response": {
       "properties": {
-        "next_cursor": {
-          "type": "string"
-        },
-        "results": {
+        "items": {
           "items": {
             "$ref": "#/schemas/account_object"
           },
           "type": "array"
+        },
+        "next_cursor": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
+      "required": [
+        "items",
+        "next_cursor"
+      ],
       "type": "object"
     },
     "accounts_test_request": {
@@ -401,12 +704,47 @@
     "accounts_test_response": {
       "properties": {
         "from_alignment": {
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "error": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "state"
+          ],
           "type": "object"
         },
         "verification": {
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "smtp_response": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "state"
+          ],
           "type": "object"
         }
       },
+      "required": [
+        "verification",
+        "from_alignment"
+      ],
       "type": "object"
     },
     "accounts_update_request": {
@@ -512,6 +850,20 @@
                 "type": "string"
               }
             },
+            "required": [
+              "id",
+              "user_id",
+              "condition",
+              "subject_type",
+              "subject_id",
+              "severity",
+              "state",
+              "payload",
+              "first_seen_at",
+              "last_seen_at",
+              "notified_at",
+              "cleared_at"
+            ],
             "type": "object"
           },
           "type": "array"
@@ -523,14 +875,37 @@
           ]
         }
       },
+      "required": [
+        "items",
+        "next_cursor"
+      ],
       "type": "object"
     },
     "settings_object": {
       "properties": {
         "routing_strategy": {
           "type": "string"
+        },
+        "user_id": {
+          "format": "uuid",
+          "type": "string"
         }
       },
+      "required": [
+        "user_id",
+        "routing_strategy"
+      ],
+      "type": "object"
+    },
+    "settings_put_request": {
+      "properties": {
+        "routing_strategy": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "routing_strategy"
+      ],
       "type": "object"
     },
     "test_send_response": {
@@ -542,11 +917,60 @@
           "type": "string"
         }
       },
+      "required": [
+        "job_id",
+        "state"
+      ],
       "type": "object"
     },
     "usage_response": {
       "properties": {
+        "accounts_configured": {
+          "type": "integer"
+        },
+        "accounts_eligible": {
+          "type": "integer"
+        },
         "days": {
+          "items": {
+            "properties": {
+              "campaigns_run": {
+                "type": "integer"
+              },
+              "date": {
+                "type": "string"
+              },
+              "distinct_destination_domains": {
+                "type": "integer"
+              },
+              "messages_attempted": {
+                "type": "integer"
+              },
+              "messages_bounced": {
+                "type": "integer"
+              },
+              "messages_failed": {
+                "type": "integer"
+              },
+              "messages_sent": {
+                "type": "integer"
+              },
+              "peak_concurrency_used": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "date",
+              "messages_attempted",
+              "messages_sent",
+              "messages_bounced",
+              "messages_failed",
+              "campaigns_run",
+              "peak_concurrency_used",
+              "distinct_destination_domains"
+            ],
+            "type": "object"
+          },
           "type": "array"
         },
         "from": {
@@ -560,6 +984,14 @@
           "type": "string"
         }
       },
+      "required": [
+        "user_id",
+        "from",
+        "to",
+        "accounts_configured",
+        "accounts_eligible",
+        "days"
+      ],
       "type": "object"
     }
   },
@@ -595,7 +1027,8 @@
         "malformed",
         "out_of_range",
         "not_found",
-        "conflict"
+        "conflict",
+        "forbidden_value"
       ]
     },
     "dmarc_policy": {
@@ -778,6 +1211,17 @@
         "long_duration"
       ]
     },
+    "routing_strategy": {
+      "fields": [
+        "settings_object.routing_strategy"
+      ],
+      "source": "db_enum",
+      "values": [
+        "random",
+        "round_robin",
+        "one_by_one"
+      ]
+    },
     "run_conflict_cause": {
       "fields": [
         "run.error.details[].code",
@@ -789,17 +1233,6 @@
         "campaign_active",
         "campaign_cap",
         "queue_cap"
-      ]
-    },
-    "routing_strategy": {
-      "fields": [
-        "settings_object.routing_strategy"
-      ],
-      "source": "db_enum",
-      "values": [
-        "random",
-        "round_robin",
-        "one_by_one"
       ]
     }
   }

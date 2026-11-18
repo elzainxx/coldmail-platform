@@ -1,37 +1,29 @@
 {
   "capacity": {
-    "daily_capacity_remaining": 1500,
+    "daily_capacity_remaining": 500,
     "effective_concurrency": 3,
-    "eligible_accounts": 3
+    "eligible_accounts": 1
   },
   "caps": {
     "account_count_cap": 20,
     "campaign_size_cap": 50000,
-    "daily_send_cap": 1500,
-    "queue_depth_cap": 100000
+    "daily_send_cap": 500,
+    "queue_depth_cap": 3
   },
   "cost": 0,
   "currency": "credits",
   "feasible": false,
   "reasons": [
     {
-      "cap_name": "campaign_size_cap",
-      "cause": "campaign_cap",
-      "code": "campaign_cap",
-      "current": 0,
-      "limit": 50000,
-      "requested": 100001
-    },
-    {
       "cap_name": "queue_depth_cap",
       "cause": "queue_cap",
       "code": "exceeds_queue_cap",
-      "current": 0,
-      "limit": 100000,
-      "requested": 100001
+      "current": 3,
+      "limit": 3,
+      "requested": 1
     }
   ],
-  "recipient_count": 100001,
+  "recipient_count": 1,
   "tier": "shared",
   "unit_price_credits": 0,
   "warnings": []

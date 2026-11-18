@@ -4,16 +4,11 @@
     "message": "The request conflicts with the current state.",
     "details": [
       {
-        "field": "campaign_active",
-        "issue": "conflict",
-        "code": "campaign_active"
-      },
-      {
         "field": "queue_cap",
         "issue": "conflict",
         "code": "queue_cap",
-        "current": 100000,
-        "limit": 100000
+        "current": 3,
+        "limit": 3
       }
     ],
     "request_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"

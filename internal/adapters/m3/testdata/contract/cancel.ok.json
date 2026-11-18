@@ -1,6 +1,6 @@
 {
   "campaign_id": "00000000-0000-4000-8000-000000000001",
-  "cancelled": 7,
-  "in_flight": 1,
-  "already_terminal": 2
+  "cancelled": 5,
+  "in_flight": 0,
+  "already_terminal": 0
 }

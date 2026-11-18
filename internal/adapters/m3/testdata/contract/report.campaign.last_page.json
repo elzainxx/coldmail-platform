@@ -12,7 +12,7 @@
         "completed_at": null,
         "attempt_count": 1,
         "account_id": "00000000-0000-4000-8000-000000000003",
-        "account_username": "sender-rl-edge-08996c7e@example.test",
+        "account_username": "sender-1-edge-591eba0a@example.test",
         "smtp_response": "451 4.7.1 try later",
         "error_class": "transport_4xx",
         "failed_at": null
@@ -40,16 +40,16 @@
     "total": 5,
     "sent": 0,
     "bounced": 0,
-    "cancelled": 0,
     "failed": 0,
     "in_flight": 0,
     "pending": 5,
-    "waiting_for_capacity": 0
+    "waiting_for_capacity": 0,
+    "cancelled": 0
   },
   "totals_by_account": [
     {
       "account_id": "00000000-0000-4000-8000-000000000003",
-      "account_username": "sender-rl-edge-08996c7e@example.test",
+      "account_username": "sender-1-edge-591eba0a@example.test",
       "sent": 0,
       "bounced": 0,
       "failed": 0,

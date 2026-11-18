@@ -1,16 +1,18 @@
 {
   "id": "00000000-0000-4000-8000-000000000001",
   "user_id": "00000000-0000-4000-8000-000000000002",
-  "smtp_host": "192.0.2.1",
+  "smtp_host": "10.smtp-ctl.example.test",
   "smtp_port": 1025,
-  "smtp_username": "sender-1-cta-43a5b87a@example.test",
-  "from_address": "sender-1-cta-43a5b87a@example.test",
+  "smtp_username": "sender-1-qenf-93eda1ce@example.test",
+  "from_address": "sender-1-qenf-93eda1ce@example.test",
   "from_name": "Harness",
   "has_credential": true,
   "status": {
     "paused": false,
     "pause_reason": null,
-    "quarantined": false,
+    "quarantined": true,
+    "quarantine_reason": "auth_failure",
+    "quarantined_at": "2026-01-01T00:00:00Z",
     "disabled": false
   },
   "verification": {
@@ -21,6 +23,7 @@
   },
   "from_alignment": {
     "state": "aligned",
+    "dmarc_policy": "none",
     "checked_at": "2026-01-01T00:00:00Z"
   },
   "daily_limit": 500,

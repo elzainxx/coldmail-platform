@@ -12,7 +12,7 @@
         "completed_at": "2026-01-01T00:00:00Z",
         "attempt_count": 0,
         "account_id": "00000000-0000-4000-8000-000000000003",
-        "account_username": "sender-1-e2e-42e1521f@example.test",
+        "account_username": "sender-3-e2e-cbd6ca05@example.test",
         "smtp_response": null,
         "error_class": null,
         "failed_at": null
@@ -24,7 +24,7 @@
         "completed_at": "2026-01-01T00:00:00Z",
         "attempt_count": 0,
         "account_id": "00000000-0000-4000-8000-000000000005",
-        "account_username": "sender-2-e2e-42e1521f@example.test",
+        "account_username": "sender-1-e2e-cbd6ca05@example.test",
         "smtp_response": "550 5.1.1 no such user",
         "error_class": "bounce_permanent",
         "failed_at": "2026-01-01T00:00:00Z"
@@ -36,21 +36,21 @@
         "completed_at": "2026-01-01T00:00:00Z",
         "attempt_count": 0,
         "account_id": "00000000-0000-4000-8000-000000000007",
-        "account_username": "sender-3-e2e-42e1521f@example.test",
+        "account_username": "sender-2-e2e-cbd6ca05@example.test",
         "smtp_response": null,
         "error_class": null,
         "failed_at": null
       },
       {
         "job_item_id": "00000000-0000-4000-8000-000000000008",
-        "state": "sent",
-        "provider_message_id": "AAAAAAAAAAAAAAAAA",
-        "completed_at": "2026-01-01T00:00:00Z",
-        "attempt_count": 2,
-        "account_id": "00000000-0000-4000-8000-000000000007",
-        "account_username": "sender-3-e2e-42e1521f@example.test",
-        "smtp_response": null,
-        "error_class": null,
+        "state": "queued",
+        "provider_message_id": null,
+        "completed_at": null,
+        "attempt_count": 1,
+        "account_id": "00000000-0000-4000-8000-000000000003",
+        "account_username": "sender-3-e2e-cbd6ca05@example.test",
+        "smtp_response": "451 4.7.1 try later",
+        "error_class": "transport_4xx",
         "failed_at": null
       },
       {
@@ -60,7 +60,7 @@
         "completed_at": "2026-01-01T00:00:00Z",
         "attempt_count": 0,
         "account_id": "00000000-0000-4000-8000-000000000005",
-        "account_username": "sender-2-e2e-42e1521f@example.test",
+        "account_username": "sender-1-e2e-cbd6ca05@example.test",
         "smtp_response": null,
         "error_class": null,
         "failed_at": null
@@ -72,7 +72,7 @@
         "completed_at": "2026-01-01T00:00:00Z",
         "attempt_count": 0,
         "account_id": "00000000-0000-4000-8000-000000000007",
-        "account_username": "sender-3-e2e-42e1521f@example.test",
+        "account_username": "sender-2-e2e-cbd6ca05@example.test",
         "smtp_response": null,
         "error_class": null,
         "failed_at": null
@@ -83,8 +83,8 @@
         "provider_message_id": null,
         "completed_at": "2026-01-01T00:00:00Z",
         "attempt_count": 0,
-        "account_id": "00000000-0000-4000-8000-000000000007",
-        "account_username": "sender-3-e2e-42e1521f@example.test",
+        "account_id": "00000000-0000-4000-8000-000000000003",
+        "account_username": "sender-3-e2e-cbd6ca05@example.test",
         "smtp_response": "550 5.1.1 no such user",
         "error_class": "bounce_permanent",
         "failed_at": "2026-01-01T00:00:00Z"
@@ -95,8 +95,8 @@
         "provider_message_id": "AAAAAAAAAAAAAAAAA",
         "completed_at": "2026-01-01T00:00:00Z",
         "attempt_count": 0,
-        "account_id": "00000000-0000-4000-8000-000000000003",
-        "account_username": "sender-1-e2e-42e1521f@example.test",
+        "account_id": "00000000-0000-4000-8000-000000000005",
+        "account_username": "sender-1-e2e-cbd6ca05@example.test",
         "smtp_response": null,
         "error_class": null,
         "failed_at": null
@@ -106,45 +106,45 @@
         "state": "queued",
         "provider_message_id": null,
         "completed_at": null,
-        "attempt_count": 2,
-        "account_id": "00000000-0000-4000-8000-000000000005",
-        "account_username": "sender-2-e2e-42e1521f@example.test",
+        "attempt_count": 1,
+        "account_id": "00000000-0000-4000-8000-000000000007",
+        "account_username": "sender-2-e2e-cbd6ca05@example.test",
         "smtp_response": "451 4.7.1 try later",
         "error_class": "transport_4xx",
         "failed_at": null
       },
       {
         "job_item_id": "00000000-0000-4000-8000-000000000014",
-        "state": "sent",
-        "provider_message_id": "AAAAAAAAAAAAAAAAA",
-        "completed_at": "2026-01-01T00:00:00Z",
+        "state": "sending",
+        "provider_message_id": null,
+        "completed_at": null,
         "attempt_count": 0,
-        "account_id": "00000000-0000-4000-8000-000000000005",
-        "account_username": "sender-2-e2e-42e1521f@example.test",
+        "account_id": "00000000-0000-4000-8000-000000000003",
+        "account_username": "sender-3-e2e-cbd6ca05@example.test",
         "smtp_response": null,
         "error_class": null,
         "failed_at": null
       },
       {
         "job_item_id": "00000000-0000-4000-8000-000000000015",
-        "state": "sent",
-        "provider_message_id": "AAAAAAAAAAAAAAAAA",
-        "completed_at": "2026-01-01T00:00:00Z",
+        "state": "queued",
+        "provider_message_id": null,
+        "completed_at": null,
         "attempt_count": 0,
-        "account_id": "00000000-0000-4000-8000-000000000003",
-        "account_username": "sender-1-e2e-42e1521f@example.test",
+        "account_id": null,
+        "account_username": null,
         "smtp_response": null,
         "error_class": null,
         "failed_at": null
       },
       {
         "job_item_id": "00000000-0000-4000-8000-000000000016",
-        "state": "sent",
-        "provider_message_id": "AAAAAAAAAAAAAAAAA",
-        "completed_at": "2026-01-01T00:00:00Z",
+        "state": "queued",
+        "provider_message_id": null,
+        "completed_at": null,
         "attempt_count": 0,
-        "account_id": "00000000-0000-4000-8000-000000000007",
-        "account_username": "sender-3-e2e-42e1521f@example.test",
+        "account_id": null,
+        "account_username": null,
         "smtp_response": null,
         "error_class": null,
         "failed_at": null
@@ -152,32 +152,24 @@
     ]
   },
   "progress": {
-    "fraction_complete": 0.9166666666666666,
+    "fraction_complete": 0.5833333333333334,
     "is_complete": false,
-    "terminal": 11
+    "terminal": 7
   },
   "totals": {
     "total": 12,
-    "sent": 9,
+    "sent": 5,
     "bounced": 2,
-    "cancelled": 0,
     "failed": 0,
-    "in_flight": 0,
-    "pending": 1,
-    "waiting_for_capacity": 0
+    "in_flight": 1,
+    "pending": 4,
+    "waiting_for_capacity": 0,
+    "cancelled": 0
   },
   "totals_by_account": [
     {
-      "account_id": "00000000-0000-4000-8000-000000000003",
-      "account_username": "sender-1-e2e-42e1521f@example.test",
-      "sent": 3,
-      "bounced": 0,
-      "failed": 0,
-      "in_flight": 0
-    },
-    {
       "account_id": "00000000-0000-4000-8000-000000000005",
-      "account_username": "sender-2-e2e-42e1521f@example.test",
+      "account_username": "sender-1-e2e-cbd6ca05@example.test",
       "sent": 2,
       "bounced": 1,
       "failed": 0,
@@ -185,11 +177,19 @@
     },
     {
       "account_id": "00000000-0000-4000-8000-000000000007",
-      "account_username": "sender-3-e2e-42e1521f@example.test",
-      "sent": 4,
-      "bounced": 1,
+      "account_username": "sender-2-e2e-cbd6ca05@example.test",
+      "sent": 2,
+      "bounced": 0,
       "failed": 0,
       "in_flight": 0
+    },
+    {
+      "account_id": "00000000-0000-4000-8000-000000000003",
+      "account_username": "sender-3-e2e-cbd6ca05@example.test",
+      "sent": 1,
+      "bounced": 1,
+      "failed": 0,
+      "in_flight": 1
     }
   ]
 }

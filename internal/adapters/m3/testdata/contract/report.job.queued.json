@@ -1,5 +1,9 @@
 {
-  "attempt_count": 0,
-  "job_id": "00000000-0000-4000-8000-000000000001",
+  "account_id": "00000000-0000-4000-8000-000000000001",
+  "account_username": "sender-1-edge-591eba0a@example.test",
+  "attempt_count": 1,
+  "error_class": "transport_4xx",
+  "job_id": "00000000-0000-4000-8000-000000000002",
+  "smtp_response": "451 4.7.1 try later",
   "state": "queued"
 }

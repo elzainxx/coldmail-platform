@@ -1,11 +1,11 @@
 {
- "verification": {
-  "state": "failed",
-  "smtp_response": "",
-  "code": "verify_tls_failed"
- },
- "from_alignment": {
-  "state": "indeterminate",
-  "code": "from_dns_unavailable"
- }
+  "from_alignment": {
+    "code": "from_dns_unavailable",
+    "state": "indeterminate"
+  },
+  "verification": {
+    "code": "verify_tls_failed",
+    "smtp_response": "",
+    "state": "failed"
+  }
 }

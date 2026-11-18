@@ -297,6 +297,8 @@ drift_evidence "$WORK/h-run.log"   # the contract drift sessions of module 2 and
 echo "  ---- module 3's adapter: the test's own NOTE lines ----"; m3a_evidence "$WORK/h-run.log" 400
 # a failure must name itself: the tail above is only the end of the run, so print every failing test with its context
 [ "$trc" = 0 ] || { echo "  ---- failing tests (with context) ----"; grep -n -B1 -A12 -e '--- FAIL' "$WORK/h-run.log" | sed 's/^/  | /' | head -200; }
+# and each failing top-level test WHOLE (its own log lines are printed while it runs, BEFORE its '--- FAIL' line, so the lines above can miss the assertion that failed it; Phase 3 close-out: a host-guard control failed with its message out of reach): from its '=== RUN' line to its '--- FAIL' line, the last 80 lines of each
+[ "$trc" = 0 ] || { echo "  ---- each failing test, whole (the last 80 lines before its FAIL line) ----"; awk -v keep=80 '/^=== RUN +Test[A-Za-z0-9_]+$/ {n=0} {buf[n%keep]=$0; n++} /^--- FAIL: Test/ {start=(n>keep)?n-keep:0; for(i=start;i<n;i++) print buf[i%keep]; print "-----"; n=0}' "$WORK/h-run.log" | cut -c1-600 | sed 's/^/  | /' | head -400; }
 # a compiled test binary prints no `ok <pkg>` line (go test does); the floor gate reads one, so write it from the binary's own exit status
 if [ "$trc" = 0 ]; then t="ok  \t$GO_PKG\t0.000s"; else t="FAIL\t$GO_PKG\t0.000s"; fi
 printf "$t\n" >> "$WORK/h-run.log"; printf "ok  \t$GO_PKG\t0.000s\n" >> "$WORK/h-list.log"

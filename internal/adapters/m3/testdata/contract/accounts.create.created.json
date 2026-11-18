@@ -3,8 +3,8 @@
   "user_id": "00000000-0000-4000-8000-000000000002",
   "smtp_host": "192.0.2.1",
   "smtp_port": 1025,
-  "smtp_username": "sender-capped-edge-08996c7e@example.test",
-  "from_address": "sender-capped-edge-08996c7e@example.test",
+  "smtp_username": "sender-ip-hostg-a96e7111@example.test",
+  "from_address": "sender-ip-hostg-a96e7111@example.test",
   "from_name": "Harness",
   "has_credential": true,
   "status": {
@@ -20,8 +20,11 @@
     "smtp_response": "235 2.7.0 Authentication successful"
   },
   "from_alignment": {
-    "state": "aligned",
-    "checked_at": "2026-01-01T00:00:00Z"
+    "state": "unaligned_warned",
+    "dmarc_policy": "none",
+    "checked_at": "2026-01-01T00:00:00Z",
+    "message": "We couldn't identify 192.0.2.1 as a known mail provider, so we can't verify whether example.test authorizes it. If this is your own mail server and example.test's SPF record covers it, you're fine.",
+    "acknowledged_at": "2026-01-01T00:00:00Z"
   },
   "daily_limit": 500,
   "created_at": "2026-01-01T00:00:00Z",

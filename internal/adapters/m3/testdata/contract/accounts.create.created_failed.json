@@ -1,10 +1,10 @@
 {
   "id": "00000000-0000-4000-8000-000000000001",
   "user_id": "00000000-0000-4000-8000-000000000002",
-  "smtp_host": "192.0.2.1",
+  "smtp_host": "no-such-host.invalid",
   "smtp_port": 1025,
-  "smtp_username": "sender-f-fail-42e1521f@example.test",
-  "from_address": "sender-f-fail-42e1521f@example.test",
+  "smtp_username": "sender-gone-hostg-a96e7111@example.test",
+  "from_address": "sender-gone-hostg-a96e7111@example.test",
   "from_name": "Harness",
   "has_credential": true,
   "status": {
@@ -16,12 +16,15 @@
   "verification": {
     "state": "failed",
     "verify_at": "2026-01-01T00:00:00Z",
-    "code": "verify_auth_failed",
-    "smtp_response": "535 5.7.8 Authentication credentials invalid"
+    "code": "verify_connect_failed",
+    "smtp_response": ""
   },
   "from_alignment": {
-    "state": "aligned",
-    "checked_at": "2026-01-01T00:00:00Z"
+    "state": "unaligned_warned",
+    "dmarc_policy": "none",
+    "checked_at": "2026-01-01T00:00:00Z",
+    "message": "We couldn't identify no-such-host.invalid as a known mail provider, so we can't verify whether example.test authorizes it. If this is your own mail server and example.test's SPF record covers it, you're fine.",
+    "acknowledged_at": "2026-01-01T00:00:00Z"
   },
   "daily_limit": 500,
   "created_at": "2026-01-01T00:00:00Z",
