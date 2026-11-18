@@ -2,7 +2,7 @@
 +++ b/internal/adapters/m1/plan.go
 @@ -115,7 +115,6 @@
  		if err != nil {
- 			reason, _ := norm.ReasonOf(err)
+ 			reason, _ := norm.ReasonAny(err)
  			p.Malformed = append(p.Malformed, Malformed{ItemRef: in.ItemRef, Reason: reason})
 -			continue
  		}
