@@ -72,8 +72,9 @@ func TestM1Node_Tier4DescribeAndVocabulariesAreTheModulesOwn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CheckVocabularies failed (%s): %v", modclient.KindOf(err), err)
 	}
-	if rep.Breaking() || rep.Additive() || len(rep.Diffs) != 7 {
-		t.Errorf("module 1's vocabularies against the adapter's: %+v (breaking %v, additive %v, %d diffs): want seven exact vocabularies, nothing missing and nothing extra", rep, rep.Breaking(), rep.Additive(), len(rep.Diffs))
+	// the one thing module 1 publishes that the adapter does not handle is detail_issue (the issue words of a validation error): additive, never breaking
+	if rep.Breaking() || len(rep.Diffs) != 7 || len(rep.CodesMissing) != 0 || len(rep.CodesExtra) != 0 || len(rep.VocabulariesExtra) != 1 || rep.VocabulariesExtra[0] != "detail_issue" {
+		t.Errorf("module 1's vocabularies against the adapter's: %+v (breaking %v, additive %v, %d diffs): want seven exact vocabularies, no code missing or extra, and detail_issue as the only vocabulary the adapter does not handle", rep, rep.Breaking(), rep.Additive(), len(rep.Diffs))
 	}
 	for _, df := range rep.Diffs {
 		if !df.Exact() {
