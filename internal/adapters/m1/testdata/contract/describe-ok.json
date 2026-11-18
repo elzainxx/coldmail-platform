@@ -64,7 +64,7 @@
     {
       "auth": "per_caller_key_or_legacy_token",
       "description": "Verify one address synchronously; the answer is the verdict object.",
-      "id": "verify",
+      "id": "aaaaaa",
       "method": "POST",
       "path": "/v1/verify",
       "request_schema_ref": "#/schemas/verify_request",
@@ -73,7 +73,7 @@
     {
       "auth": "per_caller_key",
       "description": "Submit a job of addresses (addresses[] or items[] with item_id). Optional Idempotency-Key header: a repeat with the same request returns the original job (header Idempotent-Replayed: true); the same key with another request is a 409 idempotency_key_reused.",
-      "id": "verify.bulk.create",
+      "id": "aaaaaaaaaaaaaaaaaa",
       "method": "POST",
       "path": "/v1/verify/bulk",
       "request_schema_ref": "#/schemas/bulk_request",
@@ -82,7 +82,7 @@
     {
       "auth": "per_caller_key",
       "description": "A job's status: complete, counts and totals (submitted, settled, pending, duplicates, malformed, by_status), all from one consistent read.",
-      "id": "verify.bulk.status",
+      "id": "aaaaaaaaaaaaaaaaaa",
       "method": "GET",
       "path": "/v1/jobs/{id}",
       "response_schema_ref": "#/schemas/job_status_response"
@@ -90,7 +90,7 @@
     {
       "auth": "per_caller_key",
       "description": "One result per input row that has an outcome, in ordinal order, cursor-paged. Stable once the job is complete.",
-      "id": "verify.bulk.results",
+      "id": "aaaaaaaaaaaaaaaaaaa",
       "method": "GET",
       "path": "/v1/jobs/{id}/results",
       "response_schema_ref": "#/schemas/job_results_response"
@@ -98,14 +98,14 @@
     {
       "auth": "per_caller_key",
       "description": "This document.",
-      "id": "describe",
+      "id": "aaaaaaaa",
       "method": "GET",
       "path": "/v1/describe"
     },
     {
       "auth": "none",
       "description": "Liveness: the process is up.",
-      "id": "healthz",
+      "id": "aaaaaaa",
       "method": "GET",
       "path": "/healthz",
       "response_schema_ref": "#/schemas/healthz_response"
@@ -113,7 +113,7 @@
     {
       "auth": "none",
       "description": "Readiness: pepper, database and (when declared) queue. 200 ready, 503 not_ready.",
-      "id": "readyz",
+      "id": "aaaaaa",
       "method": "GET",
       "path": "/readyz",
       "response_schema_ref": "#/schemas/readyz_response"
@@ -124,49 +124,100 @@
       "properties": {
         "counts": {
           "properties": {
-            "duplicate": { "type": "integer" },
-            "enqueued": { "type": "integer" },
-            "malformed": { "type": "integer" },
-            "total": { "type": "integer" }
+            "duplicate": {
+              "type": "integer"
+            },
+            "enqueued": {
+              "type": "integer"
+            },
+            "malformed": {
+              "type": "integer"
+            },
+            "total": {
+              "type": "integer"
+            }
           },
-          "required": ["total", "enqueued", "duplicate", "malformed"],
+          "required": [
+            "total",
+            "enqueued",
+            "duplicate",
+            "malformed"
+          ],
           "type": "object"
         },
-        "job_id": { "type": "string" },
+        "job_id": {
+          "type": "string"
+        },
         "malformed_rows": {
           "items": {
             "properties": {
-              "item_id": { "type": "string" },
-              "ordinal": { "type": "integer" }
+              "item_id": {
+                "type": "string"
+              },
+              "ordinal": {
+                "type": "integer"
+              }
             },
-            "required": ["ordinal"],
+            "required": [
+              "ordinal"
+            ],
             "type": "object"
           },
           "type": "array"
         },
-        "malformed_rows_truncated": { "type": "boolean" },
-        "processing_paused": { "type": "boolean" },
-        "status": { "type": "string", "vocabulary": "submit_status" }
+        "malformed_rows_truncated": {
+          "type": "boolean"
+        },
+        "processing_paused": {
+          "type": "boolean"
+        },
+        "status": {
+          "type": "string",
+          "vocabulary": "submit_status"
+        }
       },
-      "required": ["job_id", "status", "counts", "malformed_rows", "malformed_rows_truncated", "processing_paused"],
+      "required": [
+        "job_id",
+        "status",
+        "counts",
+        "malformed_rows",
+        "malformed_rows_truncated",
+        "processing_paused"
+      ],
       "type": "object"
     },
     "bulk_request": {
       "properties": {
-        "addresses": { "items": { "type": "string" }, "type": "array" },
-        "caller_ref": { "type": "string" },
+        "addresses": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "caller_ref": {
+          "type": "string"
+        },
         "items": {
           "items": {
             "properties": {
-              "address": { "type": "string" },
-              "item_id": { "type": "string" }
+              "address": {
+                "type": "string"
+              },
+              "item_id": {
+                "type": "string"
+              }
             },
-            "required": ["item_id", "address"],
+            "required": [
+              "item_id",
+              "address"
+            ],
             "type": "object"
           },
           "type": "array"
         },
-        "policy": { "type": "string" }
+        "policy": {
+          "type": "string"
+        }
       },
       "type": "object"
     },
@@ -174,166 +225,400 @@
       "properties": {
         "error": {
           "properties": {
-            "code": { "type": "string" },
+            "code": {
+              "type": "string"
+            },
             "details": {
               "items": {
                 "properties": {
-                  "field": { "type": "string" },
-                  "issue": { "type": "string", "vocabulary": "detail_issue" }
+                  "field": {
+                    "type": "string"
+                  },
+                  "issue": {
+                    "type": "string",
+                    "vocabulary": "detail_issue"
+                  }
                 },
-                "required": ["field", "issue"],
+                "required": [
+                  "field",
+                  "issue"
+                ],
                 "type": "object"
               },
               "type": "array"
             },
-            "message": { "type": "string" },
-            "request_id": { "type": "string" }
+            "message": {
+              "type": "string"
+            },
+            "request_id": {
+              "type": "string"
+            }
           },
-          "required": ["code", "message", "request_id"],
+          "required": [
+            "code",
+            "message",
+            "request_id"
+          ],
           "type": "object"
         }
       },
-      "required": ["error"],
+      "required": [
+        "error"
+      ],
       "type": "object"
     },
     "healthz_response": {
       "properties": {
-        "at": { "type": "string" },
-        "status": { "type": "string" }
+        "at": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
       },
-      "required": ["status", "at"],
+      "required": [
+        "status",
+        "at"
+      ],
       "type": "object"
     },
     "job_results_response": {
       "properties": {
-        "job_id": { "type": "string" },
-        "next_cursor": { "type": "string" },
+        "job_id": {
+          "type": "string"
+        },
+        "next_cursor": {
+          "type": "string"
+        },
         "results": {
           "items": {
             "properties": {
-              "api_version": { "type": "string" },
-              "confidence": { "type": "integer" },
-              "domain": { "type": "string" },
-              "duplicate_of": { "type": "integer" },
-              "email": { "type": "string" },
-              "flags": { "type": "object" },
-              "item_id": { "type": "string" },
-              "meta": { "type": "object" },
-              "ordinal": { "type": "integer" },
-              "raw": { "type": "null" },
-              "reason": { "type": "string", "vocabulary": "reason" },
-              "recommendation": { "type": "string", "vocabulary": "recommendation" },
-              "signals": { "type": "object" },
-              "status": { "type": "string", "vocabulary": "status" }
+              "api_version": {
+                "type": "string"
+              },
+              "confidence": {
+                "type": "integer"
+              },
+              "domain": {
+                "type": "string"
+              },
+              "duplicate_of": {
+                "type": "integer"
+              },
+              "email": {
+                "type": "string"
+              },
+              "flags": {
+                "type": "object"
+              },
+              "item_id": {
+                "type": "string"
+              },
+              "meta": {
+                "type": "object"
+              },
+              "ordinal": {
+                "type": "integer"
+              },
+              "raw": {
+                "type": "null"
+              },
+              "reason": {
+                "type": "string",
+                "vocabulary": "reason"
+              },
+              "recommendation": {
+                "type": "string",
+                "vocabulary": "recommendation"
+              },
+              "signals": {
+                "type": "object"
+              },
+              "status": {
+                "type": "string",
+                "vocabulary": "status"
+              }
             },
-            "required": ["api_version", "status", "reason", "confidence", "recommendation", "email", "domain", "flags", "signals", "meta", "raw", "ordinal"],
+            "required": [
+              "api_version",
+              "status",
+              "reason",
+              "confidence",
+              "recommendation",
+              "email",
+              "domain",
+              "flags",
+              "signals",
+              "meta",
+              "raw",
+              "ordinal"
+            ],
             "type": "object"
           },
           "type": "array"
         }
       },
-      "required": ["job_id", "results", "next_cursor"],
+      "required": [
+        "job_id",
+        "results",
+        "next_cursor"
+      ],
       "type": "object"
     },
     "job_status_response": {
       "properties": {
-        "caller_ref": { "type": "string" },
-        "complete": { "type": "boolean" },
+        "caller_ref": {
+          "type": "string"
+        },
+        "complete": {
+          "type": "boolean"
+        },
         "counts": {
           "properties": {
-            "pending": { "type": "integer" },
-            "settled": { "type": "integer" },
-            "total": { "type": "integer" }
+            "pending": {
+              "type": "integer"
+            },
+            "settled": {
+              "type": "integer"
+            },
+            "total": {
+              "type": "integer"
+            }
           },
-          "required": ["total", "settled", "pending"],
+          "required": [
+            "total",
+            "settled",
+            "pending"
+          ],
           "type": "object"
         },
-        "job_id": { "type": "string" },
-        "processing_paused": { "type": "boolean" },
-        "status": { "type": "string", "vocabulary": "job_status" },
+        "job_id": {
+          "type": "string"
+        },
+        "processing_paused": {
+          "type": "boolean"
+        },
+        "status": {
+          "type": "string",
+          "vocabulary": "job_status"
+        },
         "totals": {
           "properties": {
             "by_status": {
               "properties": {
-                "invalid": { "type": "integer" },
-                "risky": { "type": "integer" },
-                "unknown": { "type": "integer" },
-                "valid": { "type": "integer" }
+                "invalid": {
+                  "type": "integer"
+                },
+                "risky": {
+                  "type": "integer"
+                },
+                "unknown": {
+                  "type": "integer"
+                },
+                "valid": {
+                  "type": "integer"
+                }
               },
-              "required": ["valid", "invalid", "risky", "unknown"],
+              "required": [
+                "valid",
+                "invalid",
+                "risky",
+                "unknown"
+              ],
               "type": "object"
             },
-            "duplicates": { "type": "integer" },
-            "malformed": { "type": "integer" },
-            "pending": { "type": "integer" },
-            "settled": { "type": "integer" },
-            "submitted": { "type": "integer" }
+            "duplicates": {
+              "type": "integer"
+            },
+            "malformed": {
+              "type": "integer"
+            },
+            "pending": {
+              "type": "integer"
+            },
+            "settled": {
+              "type": "integer"
+            },
+            "submitted": {
+              "type": "integer"
+            }
           },
-          "required": ["submitted", "settled", "pending", "duplicates", "malformed", "by_status"],
+          "required": [
+            "submitted",
+            "settled",
+            "pending",
+            "duplicates",
+            "malformed",
+            "by_status"
+          ],
           "type": "object"
         }
       },
-      "required": ["job_id", "status", "complete", "caller_ref", "counts", "totals", "processing_paused"],
+      "required": [
+        "job_id",
+        "status",
+        "complete",
+        "caller_ref",
+        "counts",
+        "totals",
+        "processing_paused"
+      ],
       "type": "object"
     },
     "readyz_response": {
       "properties": {
-        "at": { "type": "string" },
-        "checks": { "type": "object" },
-        "config": { "type": "string" },
-        "pepper": { "type": "string" },
-        "ready": { "type": "boolean" },
-        "reasons": { "items": { "type": "string" }, "type": "array" },
-        "status": { "type": "string" },
-        "supabaseKey": { "type": "string" }
+        "at": {
+          "type": "string"
+        },
+        "checks": {
+          "type": "object"
+        },
+        "config": {
+          "type": "string"
+        },
+        "pepper": {
+          "type": "string"
+        },
+        "ready": {
+          "type": "boolean"
+        },
+        "reasons": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "status": {
+          "type": "string"
+        },
+        "supabaseKey": {
+          "type": "string"
+        }
       },
-      "required": ["status", "checks", "at", "ready", "config", "pepper", "supabaseKey"],
+      "required": [
+        "status",
+        "checks",
+        "at",
+        "ready",
+        "config",
+        "pepper",
+        "supabaseKey"
+      ],
       "type": "object"
     },
     "verdict": {
       "properties": {
-        "api_version": { "type": "string" },
-        "confidence": { "type": "integer" },
-        "domain": { "type": "string" },
-        "email": { "type": "string" },
-        "flags": { "type": "object" },
-        "meta": { "type": "object" },
-        "raw": { "type": "null" },
-        "reason": { "type": "string", "vocabulary": "reason" },
-        "recommendation": { "type": "string", "vocabulary": "recommendation" },
-        "signals": { "type": "object" },
-        "status": { "type": "string", "vocabulary": "status" }
+        "api_version": {
+          "type": "string"
+        },
+        "confidence": {
+          "type": "integer"
+        },
+        "domain": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        },
+        "flags": {
+          "type": "object"
+        },
+        "meta": {
+          "type": "object"
+        },
+        "raw": {
+          "type": "null"
+        },
+        "reason": {
+          "type": "string",
+          "vocabulary": "reason"
+        },
+        "recommendation": {
+          "type": "string",
+          "vocabulary": "recommendation"
+        },
+        "signals": {
+          "type": "object"
+        },
+        "status": {
+          "type": "string",
+          "vocabulary": "status"
+        }
       },
-      "required": ["api_version", "status", "reason", "confidence", "recommendation", "email", "domain", "flags", "signals", "meta", "raw"],
+      "required": [
+        "api_version",
+        "status",
+        "reason",
+        "confidence",
+        "recommendation",
+        "email",
+        "domain",
+        "flags",
+        "signals",
+        "meta",
+        "raw"
+      ],
       "type": "object"
     },
     "verify_request": {
       "properties": {
-        "email": { "type": "string" },
-        "policy": { "type": "string" }
+        "email": {
+          "type": "string"
+        },
+        "policy": {
+          "type": "string"
+        }
       },
-      "required": ["email"],
+      "required": [
+        "email"
+      ],
       "type": "object"
     }
   },
   "vocabularies": {
     "detail_issue": {
-      "fields": ["error.details[].issue"],
+      "fields": [
+        "error.details[].issue"
+      ],
       "source": "module_constant",
-      "values": ["required", "malformed", "out_of_range", "not_found", "conflict", "duplicate"]
+      "values": [
+        "required",
+        "malformed",
+        "out_of_range",
+        "not_found",
+        "conflict",
+        "duplicate"
+      ]
     },
     "failure_origin": {
-      "fields": ["verify.signals.failure_origin", "job.results[].signals.failure_origin"],
+      "fields": [
+        "verify.signals.failure_origin",
+        "job.results[].signals.failure_origin"
+      ],
       "source": "module_constant",
-      "values": ["own", "remote", "undetermined"]
+      "values": [
+        "own",
+        "remote",
+        "undetermined"
+      ]
     },
     "job_status": {
-      "fields": ["job.status"],
+      "fields": [
+        "job.status"
+      ],
       "source": "module_constant",
-      "values": ["submitted", "running", "complete", "complete_with_unknowns"]
+      "values": [
+        "submitted",
+        "running",
+        "complete",
+        "complete_with_unknowns"
+      ]
     },
     "reason": {
-      "fields": ["verify.reason", "job.results[].reason"],
+      "fields": [
+        "verify.reason",
+        "job.results[].reason"
+      ],
       "source": "module_constant",
       "values": [
         "accept_all",
@@ -366,24 +651,54 @@
       ]
     },
     "recommendation": {
-      "fields": ["verify.recommendation", "job.results[].recommendation"],
+      "fields": [
+        "verify.recommendation",
+        "job.results[].recommendation"
+      ],
       "source": "module_constant",
-      "values": ["send", "review", "skip"]
+      "values": [
+        "send",
+        "review",
+        "skip"
+      ]
     },
     "smtp_skipped_reason": {
-      "fields": ["verify.signals.smtp_skipped_reason", "job.results[].signals.smtp_skipped_reason"],
+      "fields": [
+        "verify.signals.smtp_skipped_reason",
+        "job.results[].signals.smtp_skipped_reason"
+      ],
       "source": "module_constant",
-      "values": ["audit_red", "no_eligible_node", "provider_mx_routed", "rate_limited", "smtp_unwired", "warmup_cap"]
+      "values": [
+        "audit_red",
+        "no_eligible_node",
+        "provider_mx_routed",
+        "rate_limited",
+        "smtp_unwired",
+        "warmup_cap"
+      ]
     },
     "status": {
-      "fields": ["verify.status", "job.results[].status", "job.totals.by_status (the keys)"],
+      "fields": [
+        "verify.status",
+        "job.results[].status",
+        "job.totals.by_status (the keys)"
+      ],
       "source": "module_constant",
-      "values": ["valid", "invalid", "risky", "unknown"]
+      "values": [
+        "valid",
+        "invalid",
+        "risky",
+        "unknown"
+      ]
     },
     "submit_status": {
-      "fields": ["bulk.accepted.status"],
+      "fields": [
+        "bulk.accepted.status"
+      ],
       "source": "module_constant",
-      "values": ["accepted"]
+      "values": [
+        "accepted"
+      ]
     }
   }
 }
