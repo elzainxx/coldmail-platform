@@ -239,3 +239,57 @@ func TestSubmit_NothingToSendIsRefusedNotSubmitted(t *testing.T) {
 		t.Fatalf("control: %v", err)
 	}
 }
+
+// TestPrepare_AnAddressModuleOneWouldAnswerInvalidSyntaxIsNeverSentAndIsFree is the half of owner ruling OD-9 (Phase 3 close-out A5) that makes row M1-10 unreachable from the platform:
+// an address that normalises under norm/v1 but fails module 1's syntax layer (a local part over 64 bytes, a domain over 255 bytes, a domain with no dot) is filtered by Prepare exactly
+// like a malformed one: counted with its reason, never sent, free by P-08. The request body holds none of them. The paired control is the boundary address one step inside each limit,
+// which IS sent, and a charge-table control: the outcome module 1 WOULD have answered for them (invalid/invalid_syntax) is charged by M1-10, so the filter is what keeps the platform from
+// paying for it.
+func TestPrepare_AnAddressModuleOneWouldAnswerInvalidSyntaxIsNeverSentAndIsFree(t *testing.T) {
+	long := func(n int) string { return strings.Repeat("a", n) }
+	inputs := []Input{
+		{"ok-64", long(64) + "@acme.example"},                        // the last local part module 1's layer accepts
+		{"bad-65", long(65) + "@acme.example"},                       // one byte over
+		{"bad-nodot", "ada@localhost"},                               // a one-label domain
+		{"ok-dot", "ada@a.b"},                                        // the smallest dotted domain
+		{"bad-multibyte", strings.Repeat("é", 33) + "@acme.example"}, // 66 bytes of local part in 33 letters
+		{"bad-domain", "ada@" + strings.Repeat("b.", 128) + "c"},     // 257 bytes
+	}
+	plan := Prepare(inputs)
+	if err := plan.Err(); err != nil {
+		t.Fatal(err)
+	}
+	wantItems := []string{"ok-64", "ok-dot"}
+	var gotItems []string
+	for _, it := range plan.Items {
+		gotItems = append(gotItems, it.ItemID)
+	}
+	if fmt.Sprint(gotItems) != fmt.Sprint(wantItems) {
+		t.Fatalf("rows to send %v, want %v", gotItems, wantItems)
+	}
+	wantBad := []Malformed{{"bad-65", norm.ReasonLocalTooLong}, {"bad-nodot", norm.ReasonDomainNoDot}, {"bad-multibyte", norm.ReasonLocalTooLong}, {"bad-domain", norm.ReasonDomainTooLong}}
+	if fmt.Sprint(plan.Malformed) != fmt.Sprint(wantBad) {
+		t.Fatalf("rejected rows %v, want %v (in input order, with the syntax reason)", plan.Malformed, wantBad)
+	}
+	for _, it := range plan.MalformedSettleItems() {
+		if d := charge.Decide(it.Outcome); d.Kind != charge.Free || d.Rule != "P-08" {
+			t.Errorf("rejected row %s decides %+v, want Free by P-08", it.ItemRef, d)
+		}
+	}
+	// the control behind the claim: the answer module 1 gives such an address IS charged, so only the filter prevents the charge
+	if d := charge.Decide(charge.Outcome{Module: "m1", State: "invalid", Reason: "invalid_syntax"}); d.Kind != charge.Charge || d.Rule != "M1-10" {
+		t.Fatalf("control: module 1's own invalid_syntax answer decides %+v, want a charge by M1-10", d)
+	}
+	f := serve(t, 202, `{"job_id":"`+testJob+`","status":"accepted","counts":{"total":2,"enqueued":2,"duplicate":0,"malformed":0},"malformed_rows":[],"malformed_rows_truncated":false,"processing_paused":false}`)
+	if _, _, err := f.adapter(t).Submit(testCtx(t), plan); err != nil {
+		t.Fatal(err)
+	}
+	calls := f.seen()
+	body := ""
+	if len(calls) > 0 {
+		body = string(calls[len(calls)-1].Body)
+	}
+	if len(calls) != 1 || strings.Contains(body, "bad-") || !strings.Contains(body, "ok-64") || !strings.Contains(body, "ok-dot") {
+		t.Fatalf("the request body is %.200s: it must hold the two good rows and none of the rejected ones", body)
+	}
+}

@@ -36,7 +36,7 @@ type Item struct {
 	Address string `json:"address"`
 }
 
-// Malformed is a row that failed norm/v1: module 1 would answer it with invalid/invalid_syntax, so the platform never sends it. Reason is the machine word of the refusal.
+// Malformed is a row that failed the platform address rule (norm/v1, then module 1's syntax layer): module 1 would answer it with invalid/invalid_syntax, so the platform never sends it. Reason is the machine word of the refusal.
 type Malformed struct {
 	ItemRef string
 	Reason  norm.Reason
@@ -48,7 +48,7 @@ type Plan struct {
 	// Items are the rows to send, in input order, each with item_id = the input's ItemRef and the address AS GIVEN (module 1 normalises it itself, by the same frozen rule).
 	// Duplicates (the same normalised address) are all here: module 1 answers every row and marks each repeat duplicate_of the first.
 	Items []Item
-	// Malformed are the rows that failed norm/v1, in input order. They are counted here and never sent.
+	// Malformed are the rows that failed the address rule (norm/v1 or the syntax layer), in input order. They are counted here and never sent.
 	Malformed []Malformed
 	// Duplicates is how many of Items repeat the normalised address of an earlier item.
 	Duplicates int
@@ -94,7 +94,7 @@ type limits struct {
 
 var module1Limits = limits{rows: MaxRows, bodyBytes: MaxRequestBodyBytes}
 
-// Prepare decides, without any network call, what to send of the inputs. Every address goes through norm/v1; one that fails it is NEVER sent and is returned in Plan.Malformed with
+// Prepare decides, without any network call, what to send of the inputs. Every address goes through norm.Validate (norm/v1, then module 1's syntax layer); one that fails it is NEVER sent and is returned in Plan.Malformed with
 // its reason (its outcome is the free P-08 one). The others become Items. A batch module 1 would refuse is refused here instead (Plan.Err, an Invalid error): an unusable item_ref
 // on ANY input (the ledger keys a charge by it, so a malformed row needs one too), more than MaxRows rows to send, or a body over MaxRequestBodyBytes.
 func Prepare(inputs []Input) Plan { return prepare(inputs, module1Limits) }
@@ -111,9 +111,9 @@ func prepare(inputs []Input, lim limits) Plan {
 	seen := make(map[string]struct{}, len(inputs))
 	bodyBytes := len(`{"items":[]}`)
 	for _, in := range inputs {
-		n, err := norm.Normalize(in.Address)
+		n, err := norm.Validate(in.Address) // norm/v1, then module 1's syntax layer (Phase 3 close-out A5): what module 1 would answer invalid_syntax is never sent
 		if err != nil {
-			reason, _ := norm.ReasonOf(err)
+			reason, _ := norm.ReasonAny(err)
 			p.Malformed = append(p.Malformed, Malformed{ItemRef: in.ItemRef, Reason: reason})
 			continue
 		}

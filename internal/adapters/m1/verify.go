@@ -23,7 +23,7 @@ type Verdict struct {
 	FromCache     bool
 	SkipReason    string
 	FailureOrigin string
-	// Malformed is the norm/v1 reason when the address failed it: module 1 was NOT called, and Outcome is the free platform / malformed one (row P-08).
+	// Malformed is the norm reason (norm/v1 or module 1's syntax layer) when the address failed the platform's address rule: module 1 was NOT called, and Outcome is the free platform / malformed one (row P-08).
 	Malformed norm.Reason
 }
 
@@ -39,7 +39,7 @@ type verifyBody struct {
 	Email string `json:"email"`
 }
 
-// Verify checks one address synchronously: POST /v1/verify. An address that fails norm/v1 is never sent (the verdict says Malformed and no request is made); every other address is
+// Verify checks one address synchronously: POST /v1/verify. An address that fails the platform's address rule (norm/v1 and module 1's syntax layer) is never sent (the verdict says Malformed and no request is made); every other address is
 // sent as given and the verdict is returned with module 1's own words, each checked against its closed vocabulary.
 //
 // IT IS NEVER RETRIED, by the adapter or by modclient (the request is not marked idempotent). Module 1's cache is OFF unless TM_CACHE_TTL_SECONDS is set (research m1 1.8 item
@@ -48,8 +48,8 @@ type verifyBody struct {
 // whether to ask again; a Timeout or Unavailable error says only that nothing was confirmed. The per-request timeout is at least verifyTimeoutFloor because the module holds the
 // request for the node's whole session.
 func (a *Adapter) Verify(ctx context.Context, address string) (Verdict, error) {
-	if _, err := norm.Normalize(address); err != nil {
-		reason, _ := norm.ReasonOf(err)
+	if _, err := norm.Validate(address); err != nil {
+		reason, _ := norm.ReasonAny(err)
 		return Verdict{Malformed: reason}, nil
 	}
 	resp, err := a.c.Do(ctx, modclient.Request{

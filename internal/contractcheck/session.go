@@ -428,17 +428,20 @@ func fitNote(rc modclient.RouteContract, rep Report, observations int) string {
 		head, len(rep.Diffs), oneSidedGaps(rep), len(rep.VocabMismatch), observations)
 }
 
-// pickIndex picks, of several observations of one contract, the one that says most: the fewest positions that tell nothing, then the longest body, then the first.
+// pickIndex picks, of several observations of one contract, the one that says most and costs least: the fewest positions that tell nothing, then the MOST positions (an
+// observation that shows an optional key another lacks says more), then the SHORTEST body (a page of 100 rows says no more than a page of 1 row with the same skeleton; before
+// Phase 3 close-out D1 this last step took the longest body and a 220-row results page of 170 KB became the fixture), then the first.
 func pickIndex(n int, body func(i int) []byte, shape modclient.Shape) int {
-	best, bestGaps, bestLen := 0, 1<<30, -1
+	best, bestGaps, bestPos, bestLen := 0, 1<<30, -1, 1<<30
 	for i := 0; i < n; i++ {
 		b := body(i)
-		g := 1 << 29 // a body that cannot be read says nothing
+		g, pos := 1<<29, 0 // a body that cannot be read says nothing
 		if sk, err := Skeleton(b, shape); err == nil {
-			g = len(sk.Gaps())
+			g, pos = len(sk.Gaps()), strings.Count(sk.String(), "\n")
 		}
-		if g < bestGaps || g == bestGaps && len(b) > bestLen {
-			best, bestGaps, bestLen = i, g, len(b)
+		switch {
+		case g < bestGaps, g == bestGaps && pos > bestPos, g == bestGaps && pos == bestPos && len(b) < bestLen:
+			best, bestGaps, bestPos, bestLen = i, g, pos, len(b)
 		}
 	}
 	return best

@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -154,5 +155,33 @@ func TestVerify_RefusesAVerdictOffContract(t *testing.T) {
 		if kind, key := kindAndKey(err); kind != modclient.Contract || key != m.key || v != (Verdict{}) {
 			t.Errorf("%s: got %+v kind %v key %q (%v), want no verdict and a Contract error naming %q", m.name, v, kind, key, err, m.key)
 		}
+	}
+}
+
+// TestVerify_AnAddressThatFailsModuleOnesSyntaxLayerIsNeverSent: the synchronous check applies the same rule as Prepare (Phase 3 close-out A5, row M1-10 unreachable from the platform): an address
+// that normalises but would be answered invalid/invalid_syntax (local part over 64 bytes, domain with no dot, domain over 255 bytes) returns a Malformed verdict with its syntax reason, free by
+// P-08, and no request. Control: the boundary address one step inside the limit is sent.
+func TestVerify_AnAddressThatFailsModuleOnesSyntaxLayerIsNeverSent(t *testing.T) {
+	f := serve(t, 200, fixture(t, "verify-ok.json"))
+	a := f.adapter(t)
+	for addr, reason := range map[string]norm.Reason{
+		strings.Repeat("a", 65) + "@acme.example": norm.ReasonLocalTooLong,
+		"ada@localhost":                          norm.ReasonDomainNoDot,
+		"ada@" + strings.Repeat("b.", 128) + "c": norm.ReasonDomainTooLong,
+	} {
+		v, err := a.Verify(testCtx(t), addr)
+		if err != nil || v.Malformed != reason || v.Status != "" {
+			t.Errorf("%.30q...: got %+v %v, want a verdict that says rejected (%s) and nothing else", addr, v, err, reason)
+			continue
+		}
+		if d := charge.Decide(v.Outcome()); d.Kind != charge.Free || d.Rule != "P-08" {
+			t.Errorf("%.30q...: decides %+v, want Free by P-08", addr, d)
+		}
+	}
+	if f.count() != 0 {
+		t.Fatalf("%d request(s) for addresses module 1's syntax layer would fail", f.count())
+	}
+	if v, err := a.Verify(testCtx(t), strings.Repeat("a", 64)+"@acme.example"); err != nil || v.Malformed != "" || f.count() != 1 {
+		t.Fatalf("control: %+v %v after %d request(s)", v, err, f.count())
 	}
 }

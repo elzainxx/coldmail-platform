@@ -97,6 +97,8 @@ var chainRelations = map[string][]string{
 	"0007": {},
 	// platform_0008 adds no relation: two columns of platform.m3_sync (observed_version, m3_version) and a replacement of its convergence CHECK
 	"0008": {},
+	// platform_0009 adds no relation: it replaces the CHECK suppressions_email_norm_v1 of platform.suppressions (module 1's syntax layer and IDNA's hyphen rule)
+	"0009": {},
 }
 
 // relationsThrough is the sorted union of what the listed versions add.
@@ -137,6 +139,10 @@ func downStepBefore(t *testing.T, c *pgx.Conn, v string) {
 	t.Helper()
 	when := "before down " + v
 	switch v {
+	case "0009":
+		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009"), when)
+		suppressionSyntaxObjects(t, c, true, when)
+		observedVersionObjects(t, c, true, when)
 	case "0008":
 		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007", "0008"), when)
 		observedVersionObjects(t, c, true, when)
@@ -182,6 +188,13 @@ func downStepAfter(t *testing.T, c *pgx.Conn, v string) {
 	t.Helper()
 	when := "after down " + v
 	switch v {
+	case "0009":
+		// the CHECK of platform_0003 is back: a local part of 65 bytes and a domain with no dot are accepted again; everything of 0008 and below is still there
+		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007", "0008"), when)
+		suppressionSyntaxObjects(t, c, false, when)
+		observedVersionObjects(t, c, true, when)
+		snapshotTerminalObjects(t, c, true, when)
+		moneyCoreObjects(t, c, true, when)
 	case "0008":
 		// the two columns and the new CHECK are gone, the platform_0006 CHECK is back (the entitlement flow is whole again, which entitlementFlowObjects proves), the same stale-looking observation is accepted again; 0007 and below are untouched
 		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007"), when)
@@ -465,6 +478,36 @@ func observedVersionObjects(t *testing.T, c *pgx.Conn, present bool, when string
 	lifecycleObservedVersion(t, c, present, when)
 }
 
+// suppressionSyntaxObjects is the CONTROL (present) and the ASSERTION (absent) of platform_0009's down, in a transaction that is ALWAYS rolled back: with the migration the CHECK
+// suppressions_email_norm_v1 refuses an address module 1's syntax layer fails (a local part of 65 bytes, a domain with no dot) and a label with "--" in its third and fourth bytes, and accepts the
+// boundary (a local part of exactly 64 bytes, the smallest dotted domain, an "xn--" label); without it (platform_0003's CHECK) all of them are accepted. The ordinary address is accepted either way.
+func suppressionSyntaxObjects(t *testing.T, c *pgx.Conn, enforced bool, when string) {
+	t.Helper()
+	tx, err := c.Begin(testCtx(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	a := ledgerUserA
+	ledgerSeed(t, tx)
+	const ins = "INSERT INTO platform.suppressions (user_id, email, source) VALUES ($1, $2, 'manual')"
+	ledgerExpectOK(t, tx, when+": an ordinary address", ins, a, "ada@example.com")
+	ledgerExpectOK(t, tx, when+": a local part of exactly 64 bytes", ins, a, strings.Repeat("a", 64)+"@example.com")
+	ledgerExpectOK(t, tx, when+": the smallest dotted domain", ins, a, "ada@a.b")
+	ledgerExpectOK(t, tx, when+": a punycode label with -- in its third and fourth bytes", ins, a, "ada@xn--bcher-kva.example")
+	for _, c := range []struct{ what, email string }{
+		{"a local part of 65 bytes", strings.Repeat("a", 65) + "@example.com"},
+		{"a domain with no dot", "ada@localhost"},
+		{"a label with -- in its third and fourth bytes", "ada@ab--cd.example"},
+	} {
+		if enforced {
+			ledgerExpectRefused(t, tx, when+": "+c.what, "23514", ledgerWhy{Constraint: "suppressions_email_norm_v1"}, ins, a, c.email)
+		} else {
+			ledgerExpectOK(t, tx, when+": "+c.what+" (platform_0003 knows no syntax layer)", ins, a, c.email)
+		}
+	}
+}
+
 // lifecycleObservedVersion is the behavioural half of observedVersionObjects, in a transaction that is ALWAYS rolled back. With platform_0008 a delivery row whose observation carries no version cannot be
 // converged (23514, m3_sync_converged_only_when_observed_at_version) and the same row with the observation made at this version can; without it the platform_0006 rule accepts the first statement (the right state
 // was observed) and the column does not exist (42703).
@@ -563,7 +606,7 @@ func TestRunnerLifecycle(t *testing.T) {
 
 	// The executable expectation of the migration chain. scripts/check-migrations.sh reads this literal and fails when the
 	// newest migration is not named in it, so a migration cannot be added without extending this test.
-	wantChain := []string{"0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008"}
+	wantChain := []string{"0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009"}
 
 	dir := repoMigrationsDir(t)
 	if onDisk := chainOnDisk(t, dir); !sameStrings(onDisk, wantChain) {
