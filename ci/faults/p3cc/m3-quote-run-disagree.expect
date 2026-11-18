@@ -1,0 +1,8 @@
+# Phase 3 close-out, C2: module 3's quote and run decide the four refusals of a run (suspended, campaign_active, campaign_cap, queue_cap) with ONE function, so the quote predicts exactly what run will refuse; the run 409 names each cause in details[]. The fault makes quote ignore the queue cap (it passes a huge number instead of the user's resolved cap); the test that pins the call must go red saying so. The control is the pinned module. Go only.
+GATE=m3-quote-run-disagree
+TARGET=module:coldmail-send-byo
+SETUP=
+STEP=go test TestRunCauses_QuoteAndRunShareOneFunction (quote and run agree because they share one function)
+CMD=cd services/control && GOTOOLCHAIN=local go test -count=1 -v -run '^TestRunCauses_QuoteAndRunShareOneFunction$' ./internal/platformapi/
+MESSAGE=--- FAIL: TestRunCauses_QuoteAndRunShareOneFunction
+MESSAGE=quote calls facts.causes(

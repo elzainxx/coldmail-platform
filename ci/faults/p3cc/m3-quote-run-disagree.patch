@@ -1,0 +1,11 @@
+--- a/services/control/internal/platformapi/quote_feasibility.go
++++ b/services/control/internal/platformapi/quote_feasibility.go
+@@ -158,7 +158,7 @@
+ 	if ferr != nil {
+ 		return quoteFeasibility{}, newErr(codeInternalError, "run_cause_facts_failed")
+ 	}
+-	causes := facts.causes(recipientCount, uc.MaxCampaignSize, uc.MaxQueuedJobs)
++	causes := facts.causes(recipientCount, uc.MaxCampaignSize, 1<<30)
+ 
+ 	// §4.3's infeasible table, in order — the FIRST binding reason is reported; quote answers one
+ 	// clear "why," not every constraint that happens to also be true (a user with zero accounts

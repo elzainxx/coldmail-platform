@@ -1,0 +1,11 @@
+--- a/services/worker/src/assemble.js
++++ b/services/worker/src/assemble.js
+@@ -83,7 +83,7 @@
+     headers.push(["Content-Type", `multipart/alternative; boundary="${boundary}"`]);
+     return { headers, body, text: textCRLF, transferEncoding: "8bit", boundary, alternative: true };
+   }
+-  headers.push(["Content-Type", 'text/html; charset="utf-8"']);
++  headers.push(["Content-Type", 'text/html; charset=utf-8']);
+   headers.push(["Content-Transfer-Encoding", "8bit"]);
+   return { headers, body: String(send.body || ""), transferEncoding: "8bit", boundary: null };
+ }

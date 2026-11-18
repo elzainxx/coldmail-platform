@@ -1,0 +1,8 @@
+# Phase 3 close-out, C4: module 3 refuses an smtp_host that is, or resolves to, a special-purpose address (31 ranges, one table, ranges.txt) at add time and at connect time. The fault deletes the link-local row (169.254.0.0/16, which holds the cloud metadata address); TestTheOwnersBlockedAddressesAreRefused must go red naming the metadata address as ALLOWED. The control is the pinned module. Go only, no database.
+GATE=m3-host-range-removed
+TARGET=module:coldmail-send-byo
+SETUP=
+STEP=go test TestTheOwnersBlockedAddressesAreRefused (the metadata address is refused)
+CMD=cd services/control && GOTOOLCHAIN=local go test -count=1 -v -run '^TestTheOwnersBlockedAddressesAreRefused$' ./internal/hostguard/
+MESSAGE=--- FAIL: TestTheOwnersBlockedAddressesAreRefused
+MESSAGE=cloud metadata: 169.254.169.254 was ALLOWED

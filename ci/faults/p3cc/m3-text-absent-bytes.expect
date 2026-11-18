@@ -1,0 +1,7 @@
+# Phase 3 close-out, C5: with no plain-text part (rendered_text NULL, empty or white space only) module 3's worker sends today's single text/html message BYTE FOR BYTE (golden bytes captured from the renderer before the text part existed). The fault changes charset="utf-8" to charset=utf-8 in the single-part branch; the golden test and the structure control must go red. The control is the pinned module. Node only.
+GATE=m3-text-absent-bytes
+TARGET=module:coldmail-send-byo
+SETUP=
+STEP=node --test plaintext.test.mjs (an absent text is today's bytes)
+CMD=cd services/worker && node --test --test-reporter=tap test/plaintext.test.mjs
+MESSAGE=not ok 1 - C5 golden: with text ABSENT every golden case renders byte-for-byte

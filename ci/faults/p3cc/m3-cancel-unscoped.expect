@@ -1,0 +1,9 @@
+# Phase 3 close-out, C1: POST /v1/cancel is tenant-scoped (a user can only cancel their own campaign; another user's id answers zeros and changes nothing). The fault drops the user from the WHERE clause of the statement that cancels the queued items; the source test that every statement of cancel.go is scoped by campaign_id AND user_id must go red naming the statement (the Postgres-backed TestCancel_TenantScoped is its twin on the runner). The control is the pinned module. Go only.
+GATE=m3-cancel-unscoped
+TARGET=module:coldmail-send-byo
+SETUP=
+STEP=go test TestCancelSQL_EveryStatementIsTenantScoped (a cancel is scoped by tenant)
+CMD=cd services/control && GOTOOLCHAIN=local go test -count=1 -v -run '^TestCancelSQL_EveryStatementIsTenantScoped$' ./internal/platformapi/
+MESSAGE=--- FAIL: TestCancelSQL_EveryStatementIsTenantScoped
+MESSAGE=cancel.go statement(s) not scoped by
+MESSAGE=[cancelQueuedSQL]

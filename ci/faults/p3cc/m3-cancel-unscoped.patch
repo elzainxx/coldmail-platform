@@ -1,0 +1,11 @@
+--- a/services/control/internal/platformapi/cancel.go
++++ b/services/control/internal/platformapi/cancel.go
+@@ -157,7 +157,7 @@
+        completed_at = NOW(),
+        updated_at = NOW()
+  WHERE id IN (SELECT id FROM send_byo.jobs
+-               WHERE campaign_id = $1 AND user_id = $2
++               WHERE campaign_id = $1 AND $2::text <> ''
+                  AND state = 'queued'
+                ORDER BY id FOR UPDATE)`
+ 

@@ -1,0 +1,9 @@
+# Phase 3 close-out, C3: module 3's test button and bulk add return user-vocabulary codes only; an internal slug or a raw error never crosses the API. An AST gate over the handlers and builders of those responses (a rule table, a floor on what it examined) fails when a string field can carry anything but a closed-set constant. The fault passes the module's internal external code straight into the verification code field; TestResponseLeakGate_RealTreeIsClean must go red naming the file, the line and the field. The control is the pinned module. Go only, no database.
+GATE=m3-response-leak
+TARGET=module:coldmail-send-byo
+SETUP=
+STEP=go test TestResponseLeakGate_RealTreeIsClean (no response field can carry raw error text)
+CMD=cd services/control && GOTOOLCHAIN=local go test -count=1 -v -run '^TestResponseLeakGate_RealTreeIsClean$' ./internal/platformapi/
+MESSAGE=--- FAIL: TestResponseLeakGate_RealTreeIsClean
+MESSAGE=LEAK GATE: account_test_button.go
+MESSAGE=is not an allowed source for this field

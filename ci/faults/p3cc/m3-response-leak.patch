@@ -1,0 +1,11 @@
+--- a/services/control/internal/platformapi/account_test_button.go
++++ b/services/control/internal/platformapi/account_test_button.go
+@@ -158,7 +158,7 @@
+ 			// verifier is not passed through); smtp_response is the provider's own scrubbed reply.
+ 			verification = map[string]any{"state": userVerificationState(result.State), "smtp_response": result.SMTPResponse}
+ 			if !result.Verified {
+-				verification["code"] = userVerifyCode(result.ExternalCode)
++				verification["code"] = result.ExternalCode
+ 			}
+ 		}
+ 	}

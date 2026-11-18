@@ -1,0 +1,10 @@
+--- a/services/control/internal/hostguard/ranges.txt
++++ b/services/control/internal/hostguard/ranges.txt
+@@ -25,7 +25,6 @@
+ 10.0.0.0/8|block|private (RFC 1918)
+ 100.64.0.0/10|block|shared address space (carrier-grade NAT)
+ 127.0.0.0/8|block|loopback
+-169.254.0.0/16|block|link-local, including the cloud metadata address
+ 172.16.0.0/12|block|private (RFC 1918)
+ 192.0.0.0/24|block|IETF protocol assignments
+ 192.0.2.0/24|block|documentation (TEST-NET-1)
