@@ -169,10 +169,10 @@ func TestDrain_WalksThreePagesAndAnEmptyLastPage(t *testing.T) {
 	}
 }
 
-// TestDrain_SettlesAsRowsArriveAndCatchesARowBehindTheCursor: a running job of six rows where row 1 settles AFTER the cursor has passed it (module 1 does not revisit a
-// position). Drain hands fn the first page while the job is still running, waits, follows the cursor to the end, and once the job is complete delivers the missed row by one full
-// walk: every ordinal exactly once, row 1 last. Control: a plain walker over the same stand-in, which is what a client that trusts next_cursor would be, ends with five rows and
-// misses row 1: the hazard is real, so the catch-up is what delivered it.
+// TestDrain_SettlesAsRowsArriveAndCatchesARowBehindTheCursor: a running job of six rows where row 1 settles AFTER the cursor has passed it (while a job runs module 1 does not revisit a
+// position; once it is complete its listing is stable, which is what makes one more walk enough). Drain hands fn the first page while the job is still running, waits, follows the cursor
+// to the end, and once the job is complete delivers the missed row by one full walk: every ordinal exactly once, row 1 last. Control: a plain walker over the same stand-in, which is
+// what a client that trusts next_cursor would be, ends with five rows and misses row 1: the hazard is real, so the catch-up is what delivered it.
 func TestDrain_SettlesAsRowsArriveAndCatchesARowBehindTheCursor(t *testing.T) {
 	script := func() *listing {
 		l := newListing(6, 0, 2, 3)
@@ -271,6 +271,55 @@ func TestDrain_ACompleteJobWhoseRowsDoNotAddUpIsRefused(t *testing.T) {
 	d.PageLimit = 2
 	if _, err := d.Drain(testCtx(t), testJob, func(r []Row) error { rows += len(r); return nil }); err != nil || rows != 4 {
 		t.Fatalf("control: the complete listing gave %d row(s) and %v", rows, err)
+	}
+}
+
+// TestDrain_TheCompletenessCheckUsesTheTotals: a job that says complete is believed only when the rows delivered are the rows its TOTALS say are settled and its settled rows are all
+// its submitted rows (ErrIncomplete, a Contract error naming the numbers, otherwise). Each case is a stand-in whose status is consistent in itself (the counts and the totals of one
+// snapshot agree, so Status accepts it) and whose listing is what the case says: three rows read of a complete job that submitted four (one still pending, though it says complete);
+// four rows read of a job whose totals settle three (a listing that holds a row the status never counted); and the rows read fewer than the totals settle. Paired control: the job whose
+// totals settle exactly the rows read, all of them submitted, is drained.
+func TestDrain_TheCompletenessCheckUsesTheTotals(t *testing.T) {
+	run := func(status string, rows ...string) (DrainStats, error, int) {
+		f := newFakeM1(t, func(c call) (int, string) {
+			if strings.HasSuffix(c.Path, "/results") {
+				return 200, page(testJob, "", rows...)
+			}
+			return 200, status
+		})
+		var delivered int
+		st, err := f.adapter(t).Drain(testCtx(t), testJob, func(r []Row) error { delivered += len(r); return nil })
+		return st, err, delivered
+	}
+	cases := []struct {
+		name   string
+		status string // complete: true, with total rows submitted and settled of them settled
+		rows   []string
+		want   []string
+	}{
+		{"complete with a row still pending", statusBody(testJob, "complete", true, 4, 3), []string{row(0), row(1), row(2)}, []string{"3 row(s) were read", "total 4", "settled 3", "pending 1"}},
+		{"a listing longer than the settled rows", statusBody(testJob, "complete", true, 3, 3), []string{row(0), row(1), row(2), row(3)}, []string{"4 row(s) were read", "total 3", "settled 3", "pending 0"}},
+		{"a listing shorter than the settled rows", statusBody(testJob, "complete", true, 3, 3), []string{row(0), row(1)}, []string{"2 row(s) were read", "total 3", "settled 3", "pending 0"}},
+	}
+	for _, c := range cases {
+		st, err, delivered := run(c.status, c.rows...)
+		if !errors.Is(err, ErrIncomplete) || modclient.KindOf(err) != modclient.Contract {
+			t.Errorf("%s: got %v (kind %v), want a Contract error with cause ErrIncomplete", c.name, err, modclient.KindOf(err))
+			continue
+		}
+		for _, w := range c.want {
+			if !strings.Contains(err.Error(), w) {
+				t.Errorf("%s: the error %q does not say %q", c.name, err, w)
+			}
+		}
+		if delivered != st.Rows || delivered > len(c.rows) {
+			t.Errorf("%s: %d row(s) reached fn (stats %+v) of %d in the listing", c.name, delivered, st, len(c.rows))
+		}
+	}
+	// control: totals that settle exactly the three rows read, all submitted
+	st, err, delivered := run(statusBody(testJob, "complete", true, 3, 3), row(0), row(1), row(2))
+	if err != nil || delivered != 3 || st.Rows != 3 || st.CatchUp != 0 {
+		t.Fatalf("control: %+v after %d row(s), %v", st, delivered, err)
 	}
 }
 

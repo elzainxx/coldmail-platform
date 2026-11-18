@@ -9,8 +9,8 @@ import (
 	"time"
 )
 
-// Module names the module a Client talks to. It is a label for error messages and for the one rule that differs between the modules (module 1 has no describe); the
-// client holds no other module-specific knowledge.
+// Module names the module a Client talks to. It is a label for error messages and for the one rule that differs between the modules (the shape a describe must have: module 1
+// has no pricing and its vocabularies carry their values); the client holds no other module-specific knowledge.
 type Module string
 
 const (
@@ -53,7 +53,8 @@ const (
 	// Invalid: the request was refused here, before anything was sent: a bad route label, method, path, timeout or body, a module the client was not built for, or a
 	// bad constructor argument.
 	Invalid
-	// NotSupported: the module has no such operation (module 1 has no describe). Nothing was sent.
+	// NotSupported: the module has no such operation. Nothing was sent. (No operation of the three modules is NotSupported today: module 1 gained describe in the Phase 3
+	// close-out; the kind stays for an operation one module lacks.)
 	NotSupported
 )
 
@@ -145,8 +146,9 @@ type Error struct {
 	// Enveloped is true when the response carried a well-formed module error envelope. A bare 404 or 503 from a proxy has none.
 	Enveloped bool
 	// Sent is false when the failure came before the request could have reached the module (the connection was refused, the name did not resolve, the TLS handshake failed,
-	// the request was refused here), and true otherwise: after a timeout or a reset the module may or may not have acted on it. An adapter that submits a write that is not
-	// idempotent (module 1's bulk submission) records "orphan possible" when Sent is true.
+	// the request was refused here), and true otherwise: after a timeout or a reset the module may or may not have acted on it. An adapter that submits a write the module cannot
+	// deduplicate (module 1's synchronous verification) must treat Sent as "the outcome is unknown"; a write that carries the module's idempotency key (module 1's bulk
+	// submission) is simply sent again with the same key.
 	Sent bool
 	// Attempts is the number of attempts made (1 unless the request was retried).
 	Attempts int

@@ -32,7 +32,9 @@ var (
 		modclient.Req("signals", signalsShape),
 	)
 
-	// submitShape: POST /v1/verify/bulk, 202. counts is over INPUT ROWS and is the only place the duplicate and malformed counts are ever reported (M1-F8).
+	// submitShape: POST /v1/verify/bulk, 202 (the first answer; a replay of the same key and request is the same body, so it has the same shape: only the response header
+	// Idempotent-Replayed differs, and a header is not part of a body contract). counts is over INPUT ROWS; since the Phase 3 close-out the duplicate and malformed counts are also on
+	// the job status (jobShape's totals).
 	submitShape = modclient.Object(
 		modclient.Req("job_id", modclient.Str),
 		modclient.Req("status", modclient.Str),
@@ -44,7 +46,8 @@ var (
 		)),
 	)
 
-	// jobShape: GET /v1/jobs/{id}, 200.
+	// jobShape: GET /v1/jobs/{id}, 200. totals (Phase 3 close-out) is read from the same snapshot as counts and complete: every key of it is required, and the four keys of by_status
+	// (the verdict statuses, zero included) too, so a module that stopped sending one cannot make a count read as zero.
 	jobShape = modclient.Object(
 		modclient.Req("job_id", modclient.Str),
 		modclient.Req("status", modclient.Str),
@@ -54,7 +57,48 @@ var (
 			modclient.Req("settled", modclient.Int),
 			modclient.Req("pending", modclient.Int),
 		)),
+		modclient.Req("totals", modclient.Object(
+			modclient.Req("submitted", modclient.Int),
+			modclient.Req("settled", modclient.Int),
+			modclient.Req("pending", modclient.Int),
+			modclient.Req("duplicates", modclient.Int),
+			modclient.Req("malformed", modclient.Int),
+			modclient.Req("by_status", modclient.Object(
+				modclient.Req("valid", modclient.Int),
+				modclient.Req("invalid", modclient.Int),
+				modclient.Req("risky", modclient.Int),
+				modclient.Req("unknown", modclient.Int),
+			)),
+		)),
 		modclient.Req("processing_paused", modclient.Bool),
+	)
+
+	// describeShape: GET /v1/describe, 200. The family's keys as modclient demands them of a client built for module 1 (module, api_version, capabilities, vocabularies whose entries
+	// carry their values, error_codes; no pricing: TestDescribeShapeAgreesWithModclient holds the two together) plus the two keys the adapter reads itself, the route table and the
+	// idempotency contract. `schemas` is not listed: the adapter reads none of it, and the drift gate still compares its keys with the fixture's.
+	describeShape = modclient.Object(
+		modclient.Req("module", modclient.Str),
+		modclient.Req("api_version", modclient.Str),
+		modclient.Req("capabilities", modclient.MapOf(modclient.Bool)),
+		modclient.Req("routes", modclient.ArrayOf(modclient.Object(
+			modclient.Req("method", modclient.Str),
+			modclient.Req("path", modclient.Str),
+			modclient.Opt("id", modclient.Str),
+			modclient.Opt("auth", modclient.Str),
+			modclient.Opt("description", modclient.Str),
+			modclient.Opt("request_schema_ref", modclient.Str),
+			modclient.Opt("response_schema_ref", modclient.Str),
+		))),
+		modclient.Req("vocabularies", modclient.MapOf(modclient.Object(modclient.Req("values", modclient.ArrayOf(modclient.Str))))),
+		modclient.Req("error_codes", modclient.ArrayOf(modclient.Object(modclient.Req("code", modclient.Str), modclient.Req("http_status", modclient.Int)))),
+		modclient.Req("idempotency", modclient.Object(
+			modclient.Req("header", modclient.Str),
+			modclient.Req("replay_response_header", modclient.Str),
+			modclient.Opt("route", modclient.Str),
+			modclient.Opt("key_pattern", modclient.Str),
+			modclient.Opt("scope", modclient.Str),
+			modclient.Opt("reused_with_other_request", modclient.Str),
+		)),
 	)
 
 	// rowShape: one element of the results listing: the verdict object plus the row's identity. item_id is required because the adapter always submits the `items` shape, so a result
@@ -90,15 +134,17 @@ var (
 
 // The routes as the contracts name them (method and path template, never a URL) and as errors name them (a modclient route label).
 const (
-	tplVerify  = "POST /v1/verify"
-	tplSubmit  = "POST /v1/verify/bulk"
-	tplStatus  = "GET /v1/jobs/{id}"
-	tplResults = "GET /v1/jobs/{id}/results"
+	tplVerify   = "POST /v1/verify"
+	tplSubmit   = "POST /v1/verify/bulk"
+	tplStatus   = "GET /v1/jobs/{id}"
+	tplResults  = "GET /v1/jobs/{id}/results"
+	tplDescribe = "GET /v1/describe"
 
-	routeVerify  = "m1.verify"
-	routeSubmit  = "m1.submit"
-	routeStatus  = "m1.status"
-	routeResults = "m1.results"
+	routeVerify   = "m1.verify"
+	routeSubmit   = "m1.submit"
+	routeStatus   = "m1.status"
+	routeResults  = "m1.results"
+	routeDescribe = "m1.describe" // the label modclient gives its own describe call, so a Contract error of the adapter's checks and one of the decode name the same route
 )
 
 // UncoveredRoutes are the routes the adapter calls that Contracts() does not cover, each with why: the drift gate prints them so that "all contracts match" is never read as "every
@@ -108,11 +154,14 @@ func UncoveredRoutes() map[string]string {
 	return map[string]string{"GET /healthz": why, "GET /readyz": why}
 }
 
-// errorCodeValues is the code of module 1's error envelope (api/errors.go: the nine `code*` constants, additive-only). The adapter has NO switch on it: modclient decides the class
-// of an error by its status and reads the code as data (only `paused` changes a class), so a code module 1 adds later is carried and never refused. It is published for the drift
-// gate alone, on every error contract at `error.code`, so that a new code in a live answer is reported.
+// errorCodeValues is the code of module 1's error envelope (api/errors.go: the ten `code*` constants, additive-only; `idempotency_key_reused` came with the idempotent create). The
+// adapter has ONE switch on it: a 409 whose code is idempotency_key_reused is ErrIdempotencyKeyReused (Submit); for every other code modclient decides the class of an error by
+// its status and reads the code as data (only `paused` changes a class), so a code module 1 adds later is carried and never refused. The list is published for the drift gate on
+// every error contract at `error.code` and on the describe contract at `error_codes[].code`, so that a new code in a live answer is reported, and CheckVocabularies reports a code
+// of it that the module no longer lists.
 var errorCodeValues = []string{
 	"unauthenticated", "validation_failed", "not_found", "method_not_allowed", "payload_too_large", "unavailable", "paused", "internal_error", "contract_violation",
+	"idempotency_key_reused",
 }
 
 // Contracts lists every module 1 response the adapter relies on: one entry per route and per case whose shape or vocabulary differs (the success of each route, a page with rows and
@@ -120,11 +169,12 @@ var errorCodeValues = []string{
 // adapter decodes that response with; Vocab holds the closed sets the adapter maps from, as the switches of vocab.go handle them, and VocabAt the JSON path of the string position
 // each set constrains IN THAT RESPONSE (a bare set name is read by the drift gate as a path to a top-level key, which most of these bodies do not have).
 //
-// A set is listed on a contract only when the contract's recorded body has a string at that path: a vocabulary that constrains nothing in its own fixture would be inert. So
-// failure_origin and smtp_skipped_reason (signals of an unknown or degraded answer) are on NO contract: no recorded body of the real node holds either (its pages have no unknown
-// row and no row that skipped the SMTP stage), and the page and the verdict that were recorded for the results and verify routes carry neither key. The adapter still maps both
-// (vocab.go), and the tests prove it on inline bodies; they are not checked against a live response. The results page recorded WITHOUT rows (case empty_page) lists no row set at
-// all, for the same reason (it has no row to hold a status).
+// A set is listed on a contract only when the contract's recorded body has a string at that path: a vocabulary that constrains nothing in its own fixture would be inert. The
+// signals of an unknown or degraded answer (failure_origin, smtp_skipped_reason) are in no recorded verdict or results row (the real node's pages have no unknown row and no row
+// that skipped the SMTP stage), so they are listed only on the describe contract, where module 1 publishes every set it has (`vocabularies.<name>.values[]`): that is the one body
+// that holds all seven the adapter maps, and the live drift gate compares the live values of each with the adapter's. The results page recorded WITHOUT rows (case empty_page) lists
+// no row set at all (it has no row to hold a status). The describe contract also lists the error codes at `error_codes[].code`. The replay of an idempotent create is the same body
+// as its first answer and is not a contract of its own.
 //
 // Module 1's two probe routes, /healthz and /readyz, are NOT listed: the adapter passes them through modclient (Health, Ready), which decodes them with shapes it does not export,
 // so listing a copy here would be a second definition that nothing decodes with (UncoveredRoutes says so).
@@ -141,6 +191,7 @@ func Contracts() []modclient.RouteContract {
 		return rc
 	}
 	errAt := func(rc modclient.RouteContract) modclient.RouteContract { return with(rc, "error_code", "error.code") }
+	described := func(name string) string { return "vocabularies." + name + ".values[]" } // where the describe body holds the values of one vocabulary
 	m1 := modclient.M1
 	return []modclient.RouteContract{
 		with(modclient.RouteContract{Module: m1, Route: tplVerify, Case: "ok", Fixture: "verify-ok.json", Status: http.StatusOK, Shape: verifyShape},
@@ -149,6 +200,7 @@ func Contracts() []modclient.RouteContract {
 		with(modclient.RouteContract{Module: m1, Route: tplSubmit, Case: "accepted", Fixture: "submit-accepted.json", Status: http.StatusAccepted, Shape: submitShape}, "submit_status", "status"),
 		errAt(modclient.RouteContract{Module: m1, Route: tplSubmit, Case: "validation_failed", Fixture: "submit-error-validation.json", Status: http.StatusBadRequest, Shape: errorShape}),
 		errAt(modclient.RouteContract{Module: m1, Route: tplSubmit, Case: "unauthenticated", Fixture: "submit-error-unauthenticated.json", Status: http.StatusUnauthorized, Shape: errorShape}),
+		errAt(modclient.RouteContract{Module: m1, Route: tplSubmit, Case: "idempotency_key_reused", Fixture: "submit-error-key-reused.json", Status: http.StatusConflict, Shape: errorShape}),
 		errAt(modclient.RouteContract{Module: m1, Route: tplSubmit, Case: "payload_too_large", Fixture: "submit-error-too-large.json", Status: http.StatusRequestEntityTooLarge, Shape: errorShape}),
 		errAt(modclient.RouteContract{Module: m1, Route: tplSubmit, Case: "paused", Fixture: "submit-error-paused.json", Status: http.StatusServiceUnavailable, Shape: errorShape}),
 		errAt(modclient.RouteContract{Module: m1, Route: tplSubmit, Case: "unavailable", Fixture: "submit-error-unavailable.json", Status: http.StatusServiceUnavailable, Shape: errorShape}),
@@ -166,5 +218,11 @@ func Contracts() []modclient.RouteContract {
 		errAt(modclient.RouteContract{Module: m1, Route: tplResults, Case: "bad_cursor", Fixture: "results-error-bad-cursor.json", Status: http.StatusBadRequest, Shape: errorShape}),
 		errAt(modclient.RouteContract{Module: m1, Route: tplResults, Case: "unauthenticated", Fixture: "results-error-unauthenticated.json", Status: http.StatusUnauthorized, Shape: errorShape}),
 		errAt(modclient.RouteContract{Module: m1, Route: tplResults, Case: "not_found", Fixture: "results-error-not-found.json", Status: http.StatusNotFound, Shape: errorShape}),
+
+		with(modclient.RouteContract{Module: m1, Route: tplDescribe, Case: "ok", Fixture: "describe-ok.json", Status: http.StatusOK, Shape: describeShape},
+			"status", described("status"), "reason", described("reason"), "recommendation", described("recommendation"), "failure_origin", described("failure_origin"),
+			"smtp_skipped_reason", described("smtp_skipped_reason"), "job_status", described("job_status"), "submit_status", described("submit_status"),
+			"error_code", "error_codes[].code"),
+		errAt(modclient.RouteContract{Module: m1, Route: tplDescribe, Case: "unauthenticated", Fixture: "describe-error-unauthenticated.json", Status: http.StatusUnauthorized, Shape: errorShape}),
 	}
 }

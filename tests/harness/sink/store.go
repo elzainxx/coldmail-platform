@@ -249,6 +249,18 @@ func (s *Store) Reset() int {
 	return n
 }
 
+// Raw returns a copy of the raw bytes of the accepted message with that seq (false when there is none).
+func (s *Store) Raw(seq int64) ([]byte, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, m := range s.messages {
+		if m.Seq == seq {
+			return append([]byte(nil), m.body...), true
+		}
+	}
+	return nil, false
+}
+
 // Messages returns a copy of every accepted message, oldest first.
 func (s *Store) Messages() []Message {
 	s.mu.Lock()

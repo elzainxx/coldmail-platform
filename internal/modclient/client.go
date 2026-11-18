@@ -42,6 +42,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -65,6 +66,9 @@ const (
 
 	maxRetries = 100
 	userAgent  = "platform-modclient"
+
+	maxExtraHeaders     = 8
+	maxHeaderValueBytes = 256
 )
 
 // Options are the dials of a Client. The zero value is valid: the default timeout and body limit and no retries (so a zero Retries is "none", the dial's own 0). FromConfig and
@@ -112,8 +116,9 @@ type Request struct {
 	Query url.Values
 	// Body, when non-nil, is sent as JSON (encoding/json). A GET or DELETE carries none.
 	Body any
-	// Idempotent says that sending this request twice has the effect of sending it once (a read; module 2 and 3's run, which the module deduplicates by job_item_id). Only
-	// then is a failed request retried. Module 1's bulk submission is NOT idempotent: leave it false.
+	// Idempotent says that sending this request twice has the effect of sending it once (a read; module 2 and 3's run, which the module deduplicates by job_item_id; module 1's
+	// bulk submission WHEN it carries an Idempotency-Key in Header, which makes a repeat the same job). Only then is a failed request retried. A write the module cannot
+	// deduplicate (module 1's synchronous verification, which is billed) is NOT idempotent: leave it false.
 	Idempotent bool
 	// Timeout, when positive, replaces Options.Timeout for this call's attempts (at most MaxRequestTimeout).
 	Timeout time.Duration
@@ -121,6 +126,11 @@ type Request struct {
 	Expect []int
 	// Anonymous sends no Authorization header (the modules' /healthz and /readyz need none, and a probe route must not be handed the credential).
 	Anonymous bool
+	// Header holds the extra request headers a route's contract asks for beyond the bearer credential (module 1's `Idempotency-Key` on a bulk submission), at most
+	// maxExtraHeaders. A name is letters, digits and '-' and may not be one the client sets itself (Authorization, Content-Type, Content-Length, Accept, User-Agent, Host, ...); a
+	// value is 1 to maxHeaderValueBytes printable ASCII characters (no space, no control character). Anything else is an Invalid refusal made before anything is sent, which never
+	// quotes the value. Every attempt of a retried request carries the same headers.
+	Header map[string]string
 }
 
 // Format renders a Request without its Body, Query or Path: a body can carry a credential (module 3's account creation carries an SMTP password) and a path an id.
@@ -253,6 +263,44 @@ type prepared struct {
 	idempotent bool
 	anonymous  bool
 	path       string
+	headers    []extraHeader
+}
+
+// extraHeader is one validated Request.Header entry, canonical name first.
+type extraHeader struct{ name, value string }
+
+// ownedHeaders are the headers the client sets (or the transport owns): a Request.Header may not name one, so a caller can neither replace the credential nor smuggle a framing
+// header. Names are in canonical form (http.CanonicalHeaderKey).
+var ownedHeaders = map[string]bool{
+	"Authorization": true, "Proxy-Authorization": true, "Content-Type": true, "Content-Length": true, "Accept": true, "User-Agent": true, "Host": true,
+	"Transfer-Encoding": true, "Connection": true, "Upgrade": true, "Expect": true, "Te": true, "Trailer": true, "Cookie": true,
+}
+
+// validHeaderName: letters, digits and '-' (a token of the safe alphabet), at most 64 bytes.
+func validHeaderName(s string) bool {
+	if s == "" || len(s) > 64 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+// validHeaderValue: 1 to maxHeaderValueBytes printable ASCII characters, no space.
+func validHeaderValue(s string) bool {
+	if s == "" || len(s) > maxHeaderValueBytes {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; c <= 0x20 || c >= 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 func (p *prepared) expects(status int) bool {
@@ -314,7 +362,29 @@ func (c *Client) prepare(req Request) (*prepared, *Error) {
 	if req.Timeout < 0 || req.Timeout > MaxRequestTimeout {
 		return nil, c.invalid(req.Route, "the per-request timeout must be positive and at most MaxRequestTimeout")
 	}
-	p := &prepared{route: req.Route, method: req.Method, path: req.Path, timeout: c.opts.Timeout, idempotent: req.Idempotent, anonymous: req.Anonymous}
+	if len(req.Header) > maxExtraHeaders {
+		return nil, c.invalid(req.Route, "the request carries more extra headers than the client allows")
+	}
+	var headers []extraHeader
+	for name, value := range req.Header {
+		canon := http.CanonicalHeaderKey(name)
+		switch {
+		case !validHeaderName(name):
+			return nil, c.invalid(req.Route, "an extra header name must be letters, digits and '-'")
+		case ownedHeaders[canon]:
+			return nil, c.invalid(req.Route, "an extra header may not be one the client sets itself (credential, content type, length, accept, user agent, host, framing)")
+		case !validHeaderValue(value):
+			return nil, c.invalid(req.Route, "an extra header value must be 1 to 256 printable ASCII characters without a space")
+		}
+		headers = append(headers, extraHeader{canon, value})
+	}
+	sort.Slice(headers, func(i, j int) bool { return headers[i].name < headers[j].name })
+	for i := 1; i < len(headers); i++ {
+		if headers[i].name == headers[i-1].name {
+			return nil, c.invalid(req.Route, "an extra header is named twice (names differing only in case are one name)")
+		}
+	}
+	p := &prepared{route: req.Route, method: req.Method, path: req.Path, timeout: c.opts.Timeout, idempotent: req.Idempotent, anonymous: req.Anonymous, headers: headers}
 	if req.Timeout > 0 {
 		p.timeout = req.Timeout
 	}
@@ -476,6 +546,9 @@ func (c *Client) roundTrip(ctx context.Context, p *prepared) (*rawResponse, *Err
 	hreq.Header.Set("User-Agent", userAgent)
 	if p.body != nil {
 		hreq.Header.Set("Content-Type", "application/json")
+	}
+	for _, h := range p.headers {
+		hreq.Header.Set(h.name, h.value)
 	}
 	if !p.anonymous {
 		hreq.Header.Set("Authorization", "Bearer "+c.token.Reveal())

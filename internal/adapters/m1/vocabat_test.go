@@ -239,6 +239,8 @@ func TestEveryVocabularyConstrainsSomethingInItsOwnFixture(t *testing.T) {
 			return "signals"
 		case c.Route == tplResults:
 			return "results"
+		case c.Route == tplDescribe:
+			return "capabilities"
 		}
 		return "counts"
 	}

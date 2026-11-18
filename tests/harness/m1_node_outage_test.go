@@ -76,10 +76,11 @@ func TestM1Node_OutagePhase1Start(t *testing.T) {
 
 	fxBase := s.fx.seq()
 	submitted := time.Now()
-	jobID, counts, err := tn.ad.Submit(s.ctx, plan)
+	accepted, err := tn.ad.Submit(s.ctx, plan, m1eKey("outage"))
 	if err != nil {
 		t.Fatalf("Submit failed (kind %v): %v", modclient.KindOf(err), err)
 	}
+	jobID, counts := accepted.JobID, accepted.Counts
 
 	// IN FLIGHT, proved by the adapter's own Status and not assumed: progress has started (a row is settled) and the job is not complete
 	var js m1ad.JobStatus
@@ -135,7 +136,7 @@ func m1oSelfCheck(t *testing.T) {
 		{"a value beside an error", m1oObs{name: "Results", err: unavailable, noValue: false}, "came back beside the error"},
 		{"a wrong kind of error", m1oObs{name: "Status", err: &modclient.Error{Kind: modclient.Refused}, noValue: true}, "want unavailable or timeout"},
 		{"an error that is not typed", m1oObs{name: "Status", err: fmt.Errorf("boom"), noValue: true}, "want unavailable or timeout"},
-		{"a Submit that was sent but is not called an orphan", m1oObs{name: "Submit", err: &modclient.Error{Kind: modclient.Timeout, Sent: true}, noValue: true, sent: true, orphan: false}, "possible orphan"},
+		{"a Submit that was sent whose error does not say the key may be sent again", m1oObs{name: "Submit", err: &modclient.Error{Kind: modclient.Timeout, Sent: true, Message: "x"}, noValue: true, sent: true}, "may be sent again"},
 	} {
 		if p := m1oCallProblems(c.obs); !m1eContains(p, c.want) {
 			t.Fatalf("the outage assertion on %s said %v, want a line containing %q: it cannot fail", c.name, p, c.want)
@@ -146,7 +147,10 @@ func m1oSelfCheck(t *testing.T) {
 		t.Fatalf("the control: a typed Unavailable with no value is what a stopped module gives, the assertion said %v", p)
 	}
 	if p := m1oCallProblems(m1oObs{name: "Submit", err: unavailable, noValue: true}); len(p) != 0 {
-		t.Fatalf("the control: a Submit that never left (Unavailable, not sent) is not an orphan, the assertion said %v", p)
+		t.Fatalf("the control: a Submit that never left (Unavailable, not sent) needs no word about the key, the assertion said %v", p)
+	}
+	if p := m1oCallProblems(m1oObs{name: "Submit", err: &modclient.Error{Kind: modclient.Timeout, Sent: true, Message: "x; the submission is not confirmed, and the same Idempotency-Key may be sent again"}, noValue: true, sent: true, again: true}); len(p) != 0 {
+		t.Fatalf("the control: a Submit that was sent and says the key may be sent again is what the adapter gives, the assertion said %v", p)
 	}
 	before := m1oSnapshot{Ledger: 2, Reserves: 1, Available: 440, Reserved: 60, ModuleJobs: 1, ModuleRows: 29, Items: 28, Terminal: 4}
 	if p := m1oBooksProblems(before, before); len(p) != 0 {
@@ -222,7 +226,7 @@ func TestM1Node_OutagePhase2Down(t *testing.T) {
 		if me, ok := asModclientErr(o.err); ok {
 			sent = me.Sent
 		}
-		t.Logf("NOTE B12 p2 %-28s kind=%s, request left=%t, orphan possible=%t, no value beside the error=%t", o.name, kind, sent, o.orphan, o.noValue)
+		t.Logf("NOTE B12 p2 %-28s kind=%s, request left=%t, says the same key may be sent again=%t, no value beside the error=%t", o.name, kind, sent, o.again, o.noValue)
 	}
 
 	// a polling loop that loops on the error stops by the context it was given
@@ -457,8 +461,8 @@ func TestM1Node_OutageChecksBite(t *testing.T) {
 		if p := m1oCallProblems(o); len(p) != 0 {
 			t.Fatalf("a real adapter against a module that is not there: %v (the error: %v)", p, o.err)
 		}
-		if o.name == "Submit" && (o.orphan || o.sent) {
-			t.Fatalf("a Submit whose connection was refused is reported sent=%t orphan=%t: a request that never left is not an orphan", o.sent, o.orphan)
+		if o.name == "Submit" && (o.again || o.sent) {
+			t.Fatalf("a Submit whose connection was refused is reported sent=%t, says the key may be sent again=%t: a request that never left is not an unconfirmed submission", o.sent, o.again)
 		}
 	}
 	if m1oDialClass(goneURL) == "" {

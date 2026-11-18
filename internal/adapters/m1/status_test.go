@@ -74,8 +74,9 @@ func TestStatus_TheStatusWordIsClosedAndTheBooleanDecides(t *testing.T) {
 	}
 }
 
-// TestJobRoutes_ANonUUIDIDIsRefusedBeforeAnyRequest: module 1 answers a job route with a non-uuid id by 500 (a store error), so Status and Results refuse the id locally with an
-// Invalid error and send nothing (M1-F1). Control: a uuid, in either letter case, goes out, and the request carries the id escaped as one path segment.
+// TestJobRoutes_ANonUUIDIDIsRefusedBeforeAnyRequest: Status and Results check the shape of the id locally (plain input validation: module 1 answers a non-uuid id with a 400 since the
+// Phase 3 close-out, where it used to be a 500) and refuse it with an Invalid error before any request. Control: a uuid, in either letter case, goes out, and the request carries the id
+// escaped as one path segment.
 func TestJobRoutes_ANonUUIDIDIsRefusedBeforeAnyRequest(t *testing.T) {
 	f := newFakeM1(t, func(c call) (int, string) {
 		if strings.HasSuffix(c.Path, "/results") {
@@ -141,5 +142,104 @@ func TestStatus_IsRetriedPerTheDialsAndTheModuleSaysWhatItIs(t *testing.T) {
 	js, err := f.adapter(t).Status(testCtx(t), testJob)
 	if e := asModclient(err); e == nil || e.Kind != modclient.NotFound || e.Code != "not_found" || js != (JobStatus{}) {
 		t.Fatalf("an unknown job: got %+v %v, want a NotFound error with code not_found and no value", js, err)
+	}
+}
+
+// TestJobRoutes_AMalformedIDTheModuleRefusesIsRefusedNotInternal: module 1 answers a job route called with an id that is not a uuid by 400 validation_failed with the detail
+// {field id, issue malformed} (the Phase 3 close-out; it used to answer 500 internal_error). The adapter checks the id's shape itself, so the answer is staged here by a stand-in for a
+// module that judges an id stricter than the adapter does: Status and Results return a Refused error (never Internal) that carries the module's code and the detail, are sent once (a
+// refusal is not retried, whatever the dials), and no value. Paired control: the same stand-in answering 500 internal_error is Internal (the class the old answer for a bad id had), so
+// the two are told apart by what the module said and not by the stand-in.
+func TestJobRoutes_AMalformedIDTheModuleRefusesIsRefusedNotInternal(t *testing.T) {
+	const malformed = `{"error":{"code":"validation_failed","message":"One or more fields are invalid.","details":[{"field":"id","issue":"malformed"}],"request_id":"00000000-0000-7000-8000-0000000000d1"}}`
+	calls := map[string]func(a *Adapter) error{
+		"Status":  func(a *Adapter) error { _, err := a.Status(testCtx(t), testJob); return err },
+		"Results": func(a *Adapter) error { _, _, err := a.Results(testCtx(t), testJob, "", 0); return err },
+	}
+	for name, call := range calls {
+		f := serve(t, 400, malformed)
+		err := call(f.adapterWith(t, modclient.Options{Retries: 2, Sleep: noWait}))
+		e := asModclient(err)
+		if e == nil || e.Kind != modclient.Refused || e.Status != 400 || e.Code != "validation_failed" || !e.Enveloped || modclient.KindOf(err) == modclient.Internal {
+			t.Errorf("%s: got %v, want a Refused 400 validation_failed from the module's envelope, never Internal", name, err)
+			continue
+		}
+		if len(e.Details) != 1 || e.Details[0] != (modclient.Detail{Field: "id", Issue: "malformed"}) {
+			t.Errorf("%s: the details are %+v, want the id/malformed detail the module sent", name, e.Details)
+		}
+		if f.count() != 1 {
+			t.Errorf("%s: a refusal was sent %d time(s), want once", name, f.count())
+		}
+		g := serve(t, 500, fixtureErr("internal_error"))
+		gerr := call(g.adapterWith(t, modclient.Options{Retries: 2, Sleep: noWait}))
+		if modclient.KindOf(gerr) != modclient.Internal || g.count() != 1 {
+			t.Errorf("%s control: a 500 gave %v after %d request(s), want Internal", name, gerr, g.count())
+		}
+	}
+}
+
+// TestStatus_ReadsTheTotalsAsTheModuleSaidThem: every number of `totals` lands in its own field (the values are all different, so a swapped pair is seen), the four statuses of by_status
+// too, and the cross-checked identities hold for what is read. Control: the recorded running and finished jobs read the same way, against an independent parse of the files.
+func TestStatus_ReadsTheTotalsAsTheModuleSaidThem(t *testing.T) {
+	body := `{"job_id":"` + testJob + `","status":"running","complete":false,"caller_ref":"","counts":{"total":40,"settled":16,"pending":24},` +
+		`"totals":{"submitted":40,"settled":16,"pending":24,"duplicates":5,"malformed":3,"by_status":{"valid":6,"invalid":7,"risky":2,"unknown":1}},"processing_paused":true}`
+	js, err := serve(t, 200, body).adapter(t).Status(testCtx(t), testJob)
+	want := JobTotals{Submitted: 40, Settled: 16, Pending: 24, Duplicates: 5, Malformed: 3, ByStatus: StatusCounts{Valid: 6, Invalid: 7, Risky: 2, Unknown: 1}}
+	if err != nil || js.Totals != want || js.Counts != (JobCounts{Total: 40, Settled: 16, Pending: 24}) || !js.ProcessingPaused || js.Complete || js.Totals.ByStatus.Sum() != js.Totals.Settled {
+		t.Fatalf("got %+v %v, want totals %+v", js, err, want)
+	}
+	for _, name := range []string{"job-running.json", "job-complete.json"} {
+		got, err := serve(t, 200, fixture(t, name)).adapter(t).Status(testCtx(t), testJob)
+		if err != nil || got != recordedStatus(t, name) || got.Totals.Submitted == 0 || got.Totals.ByStatus.Sum() != got.Totals.Settled {
+			t.Errorf("control: %s read as %+v %v, want what the file says: %+v", name, got, err, recordedStatus(t, name))
+		}
+	}
+}
+
+// TestStatus_AnAnswerThatContradictsItselfIsAContractError: the counts, the totals and `complete` come from one snapshot, so numbers that break its identities are the module
+// contradicting itself, and a key that is missing or retyped is the module changing its shape. Each case starts from the recorded running job and changes one thing, and gets a Contract
+// error that names the key and no value: totals.submitted that is not settled + pending, a by_status that does not sum to settled, counts.total, counts.settled or counts.pending that
+// is not its totals twin, a negative count anywhere in totals, and a totals key removed or retyped. Control: the recorded job unchanged is read, and so is the same job with the
+// identities repaired (two numbers changed together keep every identity).
+func TestStatus_AnAnswerThatContradictsItselfIsAContractError(t *testing.T) {
+	base := fixture(t, "job-running.json") // 220 submitted, 20 settled, 200 pending, by_status invalid 20
+	cases := []mutation{
+		retype("totals.submitted", 221),
+		retype("totals.pending", 199).naming("totals.submitted"),
+		retype("totals.settled", 21).naming("totals.submitted"),
+		retype("totals.by_status.valid", 5).naming("totals.by_status"),
+		retype("totals.by_status.invalid", 19).naming("totals.by_status"),
+		retype("counts.total", 221),
+		retype("counts.settled", 21).naming("counts.settled"),
+		retype("counts.pending", 199),
+		retype("totals.duplicates", -1),
+		retype("totals.malformed", -1),
+		retype("totals.by_status.risky", -1),
+		retype("totals.by_status.unknown", -3),
+		remove("totals"),
+		remove("totals.submitted"), remove("totals.settled"), remove("totals.pending"), remove("totals.duplicates"), remove("totals.malformed"),
+		remove("totals.by_status"), remove("totals.by_status.valid"), remove("totals.by_status.invalid"), remove("totals.by_status.risky"), remove("totals.by_status.unknown"),
+		retype("totals", []any{}), retype("totals.by_status", 20), retype("totals.submitted", "220"), retype("totals.settled", 20.5), retype("totals.by_status.invalid", nil),
+	}
+	// a case that names another key than the one it changed is one where the changed number breaks the identity Status checks first (`naming` says which): the totals are checked
+	// against themselves before the counts are checked against the totals
+	for _, m := range cases {
+		mutated := m.apply(t, base)
+		js, err := serve(t, 200, mutated).adapter(t).Status(testCtx(t), testJob)
+		kind, key := kindAndKey(err)
+		if kind != modclient.Contract || key != m.key || js != (JobStatus{}) {
+			t.Errorf("%s: got %+v kind %v key %q (%v), want no value and a Contract error naming %q", m.name, js, kind, key, err, m.key)
+		}
+	}
+	if js, err := serve(t, 200, base).adapter(t).Status(testCtx(t), testJob); err != nil || js != recordedStatus(t, "job-running.json") {
+		t.Fatalf("control: the recorded job gave %+v %v", js, err)
+	}
+	// control: two numbers changed together keep every identity (submitted and counts.total, 220 to 230, with pending 200 to 210 in both places)
+	repaired := base
+	for _, m := range []mutation{retype("totals.submitted", 230), retype("totals.pending", 210), retype("counts.total", 230), retype("counts.pending", 210)} {
+		repaired = m.apply(t, repaired)
+	}
+	if js, err := serve(t, 200, repaired).adapter(t).Status(testCtx(t), testJob); err != nil || js.Totals.Submitted != 230 || js.Totals.Pending != 210 {
+		t.Fatalf("control: a consistent job of 230 rows was refused or misread: %+v %v", js, err)
 	}
 }

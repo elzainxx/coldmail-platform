@@ -37,6 +37,9 @@ M1N_TESTS=(
   TestM1Node_E2EPaginationBoundaries
   TestM1Node_E2ECrossTenant
   TestM1Node_E2EChecksBite
+  TestM1Node_Tier4DescribeAndVocabulariesAreTheModulesOwn
+  TestM1Node_Tier4IdempotentCreateAndTotals
+  TestM1Node_Tier4ABadJobIDIsA400NotA500
   TestM1Node_OutageChecksBite
   TestM1Node_ContractEdgeCases
   TestM1Node_ZContractDrift

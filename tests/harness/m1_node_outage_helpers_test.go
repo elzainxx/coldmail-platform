@@ -202,13 +202,13 @@ func m1oWhileDownProblems(before, a, b m1oSnapshot) []string {
 // ---- the calls against the stopped module -------------------------------------------------------------------------------------------------------------------------
 
 // m1oObs is what one call returned: the error, whether every value beside it was the zero value, whether the request had left (the modclient error's Sent), and, for Submit, whether the
-// adapter called the outcome a possible orphan job.
+// error says the submission is not confirmed and the same idempotency key may be sent again.
 type m1oObs struct {
 	name    string
 	err     error
 	noValue bool
 	sent    bool
-	orphan  bool
+	again   bool
 }
 
 func m1oObserve(name string, err error, noValue bool) m1oObs {
@@ -217,7 +217,7 @@ func m1oObserve(name string, err error, noValue bool) m1oObs {
 	if errors.As(err, &me) {
 		o.sent = me.Sent
 	}
-	o.orphan = errors.Is(err, m1ad.ErrOrphanPossible)
+	o.again = err != nil && strings.Contains(err.Error(), "may be sent again")
 	return o
 }
 
@@ -238,8 +238,8 @@ func m1oDownCalls(ctx context.Context, ad *m1ad.Adapter, jobID string, plan m1ad
 	st, err := ad.Drain(dctx, jobID, func(page []m1ad.Row) error { delivered += len(page); return nil })
 	cancel()
 	out = append(out, m1oObserve("Drain", err, delivered == 0 && st == (m1ad.DrainStats{})))
-	id, counts, err := ad.Submit(ctx, plan)
-	out = append(out, m1oObserve("Submit", err, id == "" && counts == (m1ad.SubmitCounts{})))
+	submitted, err := ad.Submit(ctx, plan, m1eKey("down"))
+	out = append(out, m1oObserve("Submit", err, submitted == (m1ad.SubmitResult{})))
 	h, err := ad.Health(ctx)
 	out = append(out, m1oObserve("Health", err, h == nil))
 	rd, err := ad.Ready(ctx)
@@ -260,8 +260,8 @@ func m1oCallProblems(o m1oObs) []string {
 	if !o.noValue {
 		p = append(p, o.name+": a value (a status, a row, a cursor, a count or an id) came back beside the error")
 	}
-	if o.name == "Submit" && o.err != nil && o.orphan != o.sent {
-		p = append(p, fmt.Sprintf("Submit: the adapter calls the outcome a possible orphan job (%t) but the request had left (%t): a request that never left is not an orphan, and one that left may be", o.orphan, o.sent))
+	if o.name == "Submit" && o.err != nil && o.again != o.sent {
+		p = append(p, fmt.Sprintf("Submit: the error says the same key may be sent again (%t) but the request had left (%t): a request that never left is not an unconfirmed submission, and one that left is", o.again, o.sent))
 	}
 	return p
 }

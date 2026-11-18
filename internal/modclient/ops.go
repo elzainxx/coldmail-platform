@@ -10,7 +10,8 @@ import (
 	"time"
 )
 
-// The operations every module serves (or, for describe, two of the three): liveness, readiness and self-description. Each returns (value, error) and on any error the value is nil.
+// The operations every module serves: liveness, readiness and self-description (module 1 gained its describe in the Phase 3 close-out). Each returns (value, error) and on any
+// error the value is nil.
 
 // ---- health ----------------------------------------------------------------------------------------------------------
 
@@ -195,50 +196,68 @@ type Pricing struct {
 	CostFieldsInert bool
 }
 
-// Describe is a module's self-description: GET /v1/describe on modules 2 and 3 (their handleDescribe in platformapi/handlers.go), decoded to the keys the two share. Module 3
-// publishes more (extension_routes, schemas, bulk_add); those are tolerated and not decoded.
+// Describe is a module's self-description: GET /v1/describe, decoded to the keys the three modules share. Module 3 publishes more (extension_routes, schemas, bulk_add) and
+// module 1 publishes routes, schemas and idempotency; those are tolerated and not decoded here: Raw holds the whole body for the adapter that reads a module-specific key.
 type Describe struct {
 	Module     string
 	APIVersion string
-	// Capabilities are the module's feature flags (single_send, sequences, ...).
+	// Capabilities are the module's feature flags (single_send, sequences, ...; module 1: sync_verify, bulk_verify, idempotent_bulk_create, job_totals, quote, run, report).
 	Capabilities map[string]bool
-	Pricing      Pricing
-	// Vocabularies are the value sets the module's responses can carry (job_state, error_class, item_reason, ...), read live from its database by the module.
+	// Pricing is the module's published pricing (modules 2 and 3). Module 1 publishes none: its Pricing is the zero value.
+	Pricing Pricing
+	// Vocabularies are the value sets the module's responses can carry (job_state, error_class, item_reason, ...; module 1: status, reason, recommendation, ...), read live
+	// from its database by modules 2 and 3 and built from its own constants by module 1.
 	Vocabularies Vocabularies
 	ErrorCodes   []ErrorCode
 	RequestID    string
+	// Raw is the whole response body, exactly as it came, for the keys only one module has (module 1's `idempotency` and `routes`). It is a copy: the caller may keep it.
+	Raw json.RawMessage
 }
 
+// pricingShape is the pricing object of modules 2 and 3. Module 1 has none.
+var pricingShape = Object(
+	Req("currency", Str),
+	Req("model", Str),
+	Req("unit_price_credits", Int),
+	Opt("models", ArrayOf(Str)),
+	Opt("cost_fields_inert", Bool),
+)
+
+// describeShape is what a client built for module 2 or 3 demands of its describe: pricing is required and a vocabulary's values are optional (an entry without a list is read as
+// "not a vocabulary"). It is never relaxed for those two modules.
 var describeShape = Object(
 	Req("module", Str),
 	Req("api_version", Str),
 	Req("capabilities", MapOf(Bool)),
-	Req("pricing", Object(
-		Req("currency", Str),
-		Req("model", Str),
-		Req("unit_price_credits", Int),
-		Opt("models", ArrayOf(Str)),
-		Opt("cost_fields_inert", Bool),
-	)),
+	Req("pricing", pricingShape),
 	Req("vocabularies", MapOf(Object(Opt("values", ArrayOf(Str))))),
 	Req("error_codes", ArrayOf(Object(Req("code", Str), Req("http_status", Int)))),
 )
 
-// notSupported is the error of an operation the module does not have. Nothing is sent.
-func (c *Client) notSupported(op, why string) *Error {
-	return &Error{Kind: NotSupported, Module: c.module, Route: string(c.module) + "." + op, Message: why}
-}
+// describeShapeM1 is what a client built for module 1 demands of its describe (control-plane/internal/api/describe.go): module 1 is a verifier with nothing to quote (what is
+// charged depends on the answer), so `pricing` may be absent (and, when present, has the family's shape); and every vocabulary entry MUST carry its `values`, because module 1
+// publishes closed value sets and nothing else, so an entry that lost its list would read as "nothing to compare". `source` and `fields` of an entry, and the keys only module 1
+// has (`routes`, `schemas`, `idempotency`), are tolerated and not decoded here (Describe.Raw carries them).
+var describeShapeM1 = Object(
+	Req("module", Str),
+	Req("api_version", Str),
+	Req("capabilities", MapOf(Bool)),
+	Opt("pricing", pricingShape),
+	Req("vocabularies", MapOf(Object(Req("values", ArrayOf(Str))))),
+	Req("error_codes", ArrayOf(Object(Req("code", Str), Req("http_status", Int)))),
+)
 
-// Describe calls GET /v1/describe (idempotent, with the credential). Module 1 has no describe: a client built for M1 returns an *Error of Kind NotSupported
-// (errors.Is(err, ErrNotSupported)) WITHOUT any network call, and the adapter synthesises module 1's vocabulary from constants.
+// Describe calls GET /v1/describe (idempotent, with the credential; module 1 refuses the legacy static token here, so its client must carry a per-caller key).
 //
-// The document is decoded strictly: `module`, `api_version`, `capabilities` (booleans), `pricing` (currency, model, unit_price_credits), `vocabularies` (each an object whose
-// `values`, when present, is an array of strings) and `error_codes` ({code, http_status}) must be present with those types, or the call is a Contract error. Keys it does not
-// list are ignored. Whether `module` is the module the adapter expects ("send_managed", "send_byo") is the adapter's check: a describe of module 3 answered at module 2's address
-// is a wiring mistake that only the adapter knows how to name.
+// The document is decoded strictly: `module`, `api_version`, `capabilities` (booleans), `vocabularies` and `error_codes` ({code, http_status}) must be present with those types
+// or the call is a Contract error; so must `pricing` (currency, model, unit_price_credits) for modules 2 and 3, whose vocabulary entries may omit `values`, and each vocabulary
+// entry's `values` (an array of strings) for module 1, whose `pricing` is optional. Keys it does not list are ignored. Whether `module` is the module the adapter expects
+// ("send_managed", "send_byo", "verify") is the adapter's check: a describe of module 3 answered at module 2's address is a wiring mistake that only the adapter knows how to
+// name. ON ANY ERROR THE RESULT IS NIL.
 func (c *Client) Describe(ctx context.Context) (*Describe, error) {
+	shape := describeShape
 	if c.module == M1 {
-		return nil, c.notSupported("describe", "module 1 has no describe route (its API has six routes and none describes the module); the adapter supplies its vocabulary from constants")
+		shape = describeShapeM1
 	}
 	resp, e := c.do(ctx, Request{Route: string(c.module) + ".describe", Method: http.MethodGet, Path: "/v1/describe", Idempotent: true}, c.judgeDefault)
 	if e != nil {
@@ -263,11 +282,11 @@ func (c *Client) Describe(ctx context.Context) (*Describe, error) {
 			HTTPStatus int    `json:"http_status"`
 		} `json:"error_codes"`
 	}
-	if err := Decode(resp, &w, describeShape); err != nil {
+	if err := Decode(resp, &w, shape); err != nil {
 		return nil, err
 	}
 	d := &Describe{
-		Module: w.Module, APIVersion: w.APIVersion, Capabilities: w.Capabilities, RequestID: resp.RequestID,
+		Module: w.Module, APIVersion: w.APIVersion, Capabilities: w.Capabilities, RequestID: resp.RequestID, Raw: append(json.RawMessage(nil), resp.Body...),
 		Pricing: Pricing{
 			Currency: w.Pricing.Currency, Model: w.Pricing.Model, UnitPriceCredits: w.Pricing.UnitPriceCredits,
 			Models: w.Pricing.Models, CostFieldsInert: w.Pricing.CostFieldsInert,
@@ -286,8 +305,7 @@ func (c *Client) Describe(ctx context.Context) (*Describe, error) {
 }
 
 // Vocabularies calls Describe and returns the value sets the module advertises (the item states, error classes and reasons its responses can carry), so an adapter can compare
-// them with what it was written against (Vocabularies.Diff) and see contract drift before it meets an unknown state. For module 1 it is NotSupported, with no network call.
-// ON ANY ERROR THE RESULT IS NIL.
+// them with what it was written against (Vocabularies.Diff) and see contract drift before it meets an unknown state. ON ANY ERROR THE RESULT IS NIL.
 func (c *Client) Vocabularies(ctx context.Context) (Vocabularies, error) {
 	d, err := c.Describe(ctx)
 	if err != nil {

@@ -15,8 +15,9 @@ var (
 	ErrNoDeadline = errors.New("m1: Drain needs a context with a deadline")
 	// ErrCursorStuck (Contract): a page named, as the next position, the position it was asked from.
 	ErrCursorStuck = errors.New("m1: the next cursor is the cursor that was sent: the listing does not advance")
-	// ErrIncomplete (Contract): the job reports complete, but the rows read do not add up to the job's own total.
-	ErrIncomplete = errors.New("m1: the job is complete but the results read do not match its total")
+	// ErrIncomplete (Contract): the job reports complete, but the rows read are not the rows its totals say are settled (totals.settled), or its settled rows are not all of the rows it
+	// says were submitted (totals.settled != totals.submitted).
+	ErrIncomplete = errors.New("m1: the job is complete but the results read do not match its totals")
 )
 
 // withCause is a typed refusal that errors.Is can also match against one of the causes above.
@@ -46,13 +47,14 @@ type DrainStats struct {
 // A job that is NOT complete is not given up on and not read as if it were finished: Drain polls it (the one deliberate wait; the context's deadline bounds it) and hands over rows as
 // they settle. Any read that fails (a page, the status) ends the whole drain with that typed error: rows already delivered stay delivered, none is ever reported as the rest.
 //
-// Why it is more than a loop over next_cursor. Module 1 lists a row once its work item has settled, in ordinal order, and a cursor is a position: a row that settles at a position the
-// cursor already passed is not revisited. So Drain
+// Why it is more than a loop over next_cursor. Module 1 lists a row once its work item has settled, in ordinal order, and a cursor is a position: while the job runs, a row that
+// settles at a position the cursor already passed is not revisited by that walk. So Drain
 //
 //  1. follows next_cursor while there is one, handing fn the rows it has not delivered before (an ordinal is delivered once, whatever the page it appears on);
 //  2. when the list is exhausted, asks the job: not complete means wait Poll and look again from the SAME cursor (the first position it has not finished);
-//  3. complete means the listing is immutable: if the rows delivered are not the job's own total, one full walk from the start delivers whatever settled behind the cursor; and if
-//     they still are not, ErrIncomplete: the platform never reports a job it did not read in full.
+//  3. complete means the listing is stable (module 1 documents and tests that two full walks of a complete job's results are identical): if the rows delivered are not the number of
+//     rows the job's totals say are settled, one full walk from the start delivers whatever settled behind the cursor; and if they are still not, or the job's settled rows are not all
+//     of its submitted rows, ErrIncomplete: the platform never reports a job it did not read in full.
 //
 // A callback error stops the drain and is returned unchanged. The context must carry a deadline (ErrNoDeadline otherwise); when it expires the error says what module 1 last
 // reported, so a stuck job explains itself.
@@ -98,7 +100,7 @@ func (a *Adapter) Drain(ctx context.Context, jobID string, fn func(rows []Row) e
 			return err
 		}
 		return fmt.Errorf("%w (module 1 last said status %q, total %d, settled %d, pending %d, processing_paused %t; %d row(s) delivered)",
-			err, last.Status, last.Counts.Total, last.Counts.Settled, last.Counts.Pending, last.ProcessingPaused, len(seen))
+			err, last.Status, last.Totals.Submitted, last.Totals.Settled, last.Totals.Pending, last.ProcessingPaused, len(seen))
 	}
 	cursor := ""
 	for {
@@ -123,18 +125,20 @@ func (a *Adapter) Drain(ctx context.Context, jobID string, fn func(rows []Row) e
 		}
 		last, haveLast = job, true
 		if job.Complete {
-			if len(seen) != job.Counts.Total {
+			if len(seen) != job.Totals.Settled {
 				before := st.Rows
-				// MODULE-FORCED(M1-F4): while a job runs, module 1's listing is a moving target: a row that settles at an ordinal BELOW a cursor already issued is never revisited and
-				// next_cursor "" does not mean done, so once the job says complete the adapter walks the whole listing once more from the start and delivers what settled behind the
-				// cursor, and refuses a job whose rows still do not add up to its total.
+				// MODULE-FORCED(M1-F4): while a job RUNS, module 1's listing is a moving target (documented: a row that settles at an ordinal BELOW a cursor already issued is not revisited
+				// by that walk, and next_cursor "" means "nothing further as the listing stands now", not "done"), so a job that completes after the streaming pass is read once more
+				// from the start and what settled behind the cursor is delivered. The re-walk is sound because module 1 now documents and tests that the listing is STABLE from the
+				// moment the status says complete: two full walks of a complete job are identical, so the second walk is the whole listing and no later one can differ.
 				if err := a.walk(ctx, jobID, limit, deliver); err != nil {
 					return st, explain(err)
 				}
 				st.CatchUp = st.Rows - before
 			}
-			if len(seen) != job.Counts.Total {
-				return st, withCause(modclient.Contract, ErrIncomplete, "the job is complete but %d row(s) were read and it says total %d, settled %d, pending %d", len(seen), job.Counts.Total, job.Counts.Settled, job.Counts.Pending)
+			// complete means every submitted row is settled and every settled row was read: the totals come from one snapshot with `complete`, so rows delivered = settled = submitted
+			if len(seen) != job.Totals.Settled || job.Totals.Settled != job.Totals.Submitted {
+				return st, withCause(modclient.Contract, ErrIncomplete, "the job is complete but %d row(s) were read and it says total %d, settled %d, pending %d", len(seen), job.Totals.Submitted, job.Totals.Settled, job.Totals.Pending)
 			}
 			return st, nil
 		}

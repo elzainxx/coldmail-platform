@@ -57,7 +57,7 @@ func TestPrepare_AMalformedAddressIsNeverSentAndIsFree(t *testing.T) {
 	}
 
 	a := f.adapter(t)
-	if _, _, err := a.Submit(testCtx(t), plan); err != nil {
+	if _, err := a.Submit(testCtx(t), plan, newIdemKey(t)); err != nil {
 		t.Fatal(err)
 	}
 	body := string(f.seen()[0].Body)
@@ -76,9 +76,9 @@ func TestPrepare_AMalformedAddressIsNeverSentAndIsFree(t *testing.T) {
 	for i, in := range inputs {
 		raw[i] = Item{ItemID: in.ItemRef, Address: in.Address}
 	}
-	id, counts, err := g.adapter(t).SubmitRaw(testCtx(t), raw)
-	if err != nil || id != testJob || counts != (SubmitCounts{Total: 5, Enqueued: 2, Malformed: 3}) {
-		t.Fatalf("control: SubmitRaw gave %q %+v %v", id, counts, err)
+	res, err := g.adapter(t).SubmitRaw(testCtx(t), raw, newIdemKey(t))
+	if err != nil || res.JobID != testJob || res.Counts != (SubmitCounts{Total: 5, Enqueued: 2, Malformed: 3}) {
+		t.Fatalf("control: SubmitRaw gave %+v %v", res, err)
 	}
 	if rawBody := string(g.seen()[0].Body); !strings.Contains(rawBody, "no-at-sign.example") || !strings.Contains(rawBody, "two@@signs.example") {
 		t.Fatalf("control: SubmitRaw did not send the malformed rows: %s", rawBody)
@@ -138,7 +138,7 @@ func TestPrepare_ARefusedBatchNamesTheInput(t *testing.T) {
 		if len(plan.Items) != 0 || len(plan.Malformed) != 0 {
 			t.Errorf("%s: a refused plan still lists rows (%d to send, %d malformed)", c.name, len(plan.Items), len(plan.Malformed))
 		}
-		if _, _, err := a.Submit(testCtx(t), plan); modclient.KindOf(err) != modclient.Invalid {
+		if _, err := a.Submit(testCtx(t), plan, newIdemKey(t)); modclient.KindOf(err) != modclient.Invalid {
 			t.Errorf("%s: Submit of a refused plan gave %v", c.name, err)
 		}
 	}
@@ -224,9 +224,9 @@ func TestSubmit_NothingToSendIsRefusedNotSubmitted(t *testing.T) {
 	f := serve(t, 202, `{"job_id":"`+testJob+`","status":"accepted","counts":{"total":1,"enqueued":1,"duplicate":0,"malformed":0}}`)
 	a := f.adapter(t)
 	for name, plan := range map[string]Plan{"empty": Prepare(nil), "all malformed": Prepare([]Input{{"a", "nope"}, {"b", "also nope"}})} {
-		id, counts, err := a.Submit(testCtx(t), plan)
-		if modclient.KindOf(err) != modclient.Invalid || id != "" || counts != (SubmitCounts{}) {
-			t.Errorf("%s: got %q %+v %v, want an Invalid error and no value", name, id, counts, err)
+		res, err := a.Submit(testCtx(t), plan, newIdemKey(t))
+		if modclient.KindOf(err) != modclient.Invalid || res != (SubmitResult{}) {
+			t.Errorf("%s: got %+v %v, want an Invalid error and no value", name, res, err)
 		}
 	}
 	if f.count() != 0 {
@@ -235,7 +235,7 @@ func TestSubmit_NothingToSendIsRefusedNotSubmitted(t *testing.T) {
 	if n := len(Prepare([]Input{{"a", "nope"}, {"b", "also nope"}}).MalformedSettleItems()); n != 2 {
 		t.Fatalf("the all-malformed plan lists %d settle item(s), want 2", n)
 	}
-	if _, _, err := a.Submit(testCtx(t), Prepare([]Input{{"a", "ada@acme.example"}})); err != nil {
+	if _, err := a.Submit(testCtx(t), Prepare([]Input{{"a", "ada@acme.example"}}), newIdemKey(t)); err != nil {
 		t.Fatalf("control: %v", err)
 	}
 }
@@ -281,7 +281,7 @@ func TestPrepare_AnAddressModuleOneWouldAnswerInvalidSyntaxIsNeverSentAndIsFree(
 		t.Fatalf("control: module 1's own invalid_syntax answer decides %+v, want a charge by M1-10", d)
 	}
 	f := serve(t, 202, `{"job_id":"`+testJob+`","status":"accepted","counts":{"total":2,"enqueued":2,"duplicate":0,"malformed":0},"malformed_rows":[],"malformed_rows_truncated":false,"processing_paused":false}`)
-	if _, _, err := f.adapter(t).Submit(testCtx(t), plan); err != nil {
+	if _, err := f.adapter(t).Submit(testCtx(t), plan, newIdemKey(t)); err != nil {
 		t.Fatal(err)
 	}
 	calls := f.seen()

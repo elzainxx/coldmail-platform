@@ -12,12 +12,14 @@ file itself (see "How the unit tests use them"), never from a literal.
 
 | File | Route | Case |
 |---|---|---|
-| `submit-accepted.json` | `POST /v1/verify/bulk` | the 202 of a raw submission of three rows, two of them malformed (counts 3 / 1 / 0 / 2), so it is NOT the 202 a plan would get: a plan never sends a malformed row (`TestSubmit_ACountThatDisagreesWithThePlanIsAContractError` uses it as exactly that case) |
+| `submit-accepted.json` | `POST /v1/verify/bulk` | the 202 of a raw submission of three rows, two of them malformed (counts 3 / 1 / 0 / 2), so it is NOT the 202 a plan would get: a plan never sends a malformed row (`TestSubmit_ACountThatDisagreesWithThePlanIsAContractError` uses it as exactly that case). It was recorded before the idempotent create existed and a request with no key answers exactly so; the answer to a keyed request is the same body |
 | `submit-error-unauthenticated.json` | `POST /v1/verify/bulk` | 401 `unauthenticated` |
 | `submit-error-validation.json` | `POST /v1/verify/bulk` | 400 `validation_failed`, details `items[0].item_id` and `items[1].item_id` both `duplicate` (the module names EVERY row that shares the label) |
+| `submit-error-key-reused.json` | `POST /v1/verify/bulk` | 409 `idempotency_key_reused`, detail `Idempotency-Key` / `conflict`: HAND-WRITTEN from module 1's code (Phase 3 close-out), to be replaced by a recording |
+| `describe-error-unauthenticated.json` | `GET /v1/describe` | 401 `unauthenticated`: HAND-WRITTEN, to be replaced by a recording |
 | `submit-error-too-large.json` | `POST /v1/verify/bulk` | 413 `payload_too_large`, detail `items` / `out_of_range` |
-| `job-running.json` | `GET /v1/jobs/{id}` | a job in progress (220 rows, 20 settled, 200 pending) |
-| `job-complete.json` | `GET /v1/jobs/{id}` | a finished job (2 rows) |
+| `job-running.json` | `GET /v1/jobs/{id}` | a job in progress (220 rows, 20 settled, 200 pending); its `totals` object was added by hand, see "HAND-WRITTEN for the Phase 3 close-out" |
+| `job-complete.json` | `GET /v1/jobs/{id}` | a finished job (2 rows); its `totals` object was added by hand, likewise |
 | `status-error-not-found.json` | `GET /v1/jobs/{id}` | 404 `not_found` (absent, or another tenant's job) |
 | `status-error-unauthenticated.json` | `GET /v1/jobs/{id}` | 401 `unauthenticated` |
 | `results-page.json` | `GET /v1/jobs/{id}/results` | contract case `page`: a FULL last page, 220 rows and `next_cursor` `""` (about 170 KB). See "The two results recordings" |
@@ -69,6 +71,21 @@ them (`tests/harness/zz_m1_node_contract_drift_test.go`). They are written from 
 | `submit-error-unavailable.json` | `POST /v1/verify/bulk` | 503 `unavailable` (needs the queue key missing) |
 | `submit-error-internal.json` | `POST /v1/verify/bulk` | 500 `internal_error` |
 
+## HAND-WRITTEN for the Phase 3 close-out (module 1 at `fad942e`), to be re-recorded from the real module by the harness
+
+Module 1 gained three additive features (partial Tier 4: `GET /v1/describe`, an idempotent bulk create on an `Idempotency-Key` header, `totals` on the job status) after the recordings above
+were made. Nothing below was recorded: it was written from the module's handlers (`control-plane/internal/api/describe.go`, `api.go`) and its `api-contract.md`, and the values come
+from the module's own constants (the vocabularies as the adapter's `vocab.go` lists them; `reason` and `smtp_skipped_reason` sorted as the module sorts them). Until the record run
+replaces them, the live drift gate would report any difference between these files and the real module, which is what it is for.
+
+| File | Route | Case |
+|---|---|---|
+| `describe-ok.json` | `GET /v1/describe` | the whole self-description: module `verify`, capabilities (`idempotent_bulk_create` and `job_totals` true; `quote`, `run`, `report` false), seven routes, the schemas, eight vocabularies, ten error codes, and the `idempotency` contract. No `pricing`. A new contract, `Contracts()` case `ok` |
+| `job-running.json`, `job-complete.json` | `GET /v1/jobs/{id}` | the recordings above WITH a `totals` object ADDED BY HAND (the only edit of a recorded file in this directory; the rest of each file is the recording): `submitted`, `settled`, `pending`, `duplicates`, `malformed` and the four `by_status` keys, consistent with the file's own `counts` (the job of 220 rows has 20 settled, all `invalid`, and the three repeats the results recording holds; the finished job of 2 rows has both settled `invalid`) |
+
+The replay of an idempotent create (a repeat of the same key and request) is the 202 above again, byte for byte, plus the response header `Idempotent-Replayed: true`: it is no contract of
+its own, and a 409 `idempotency_key_reused` is the same error envelope as the others (the adapter's `errorCodeValues` lists the code, and `describe-ok.json` lists it in `error_codes`).
+
 ## Vocabularies and where they live (`VocabAt`)
 
 A contract lists a vocabulary only when its own fixture has a string at the path the set constrains (`RouteContract.VocabAt`; a bare set name would be read by the drift gate as a path to a
@@ -80,12 +97,13 @@ top-level key, which most of these bodies do not have, and the vocabulary would 
 | `submit_status` | `status` | `POST /v1/verify/bulk` `accepted` |
 | `job_status` | `status` | `GET /v1/jobs/{id}` `running`, `complete` |
 | `status`, `reason` | `results[].status`, `results[].reason` | `GET /v1/jobs/{id}/results` `page` (the page with rows) |
-| `error_code` (module 1's nine codes) | `error.code` | every error contract (11) |
+| `error_code` (module 1's ten codes) | `error.code` | every error contract (13) |
+| the seven sets the adapter maps (`status`, `reason`, `recommendation`, `failure_origin`, `smtp_skipped_reason`, `job_status`, `submit_status`) | `vocabularies.<name>.values[]` | `GET /v1/describe` `ok` |
+| `error_code` | `error_codes[].code` | `GET /v1/describe` `ok` |
 
-NOT published on any contract: `failure_origin` and `smtp_skipped_reason`. They live in `signals`, on an unknown answer and on an answer that skipped the SMTP stage, and no recorded verdict
-or results row is either, so a contract that listed them would constrain nothing. The adapter still maps both (`vocab.go`) and the tests prove it on inline bodies; they are NOT checked
-against a live response. `GET /v1/jobs/{id}/results` `empty_page` lists no row set either: it has no row to hold one. When a recording holds one of these keys, a contract lists it and
-`TestVocabListsAreTheSwitches` says to remove it from `unpublishedSets`.
+`failure_origin` and `smtp_skipped_reason` live in `signals`, on an unknown answer and on an answer that skipped the SMTP stage, and no recorded verdict or results row is either, so a
+contract that listed them at a row would constrain nothing. They are published on the describe contract only (module 1 lists every set it has there), which is the first body in this
+directory that holds them; the tests also prove the adapter's handling of both on inline bodies. `GET /v1/jobs/{id}/results` `empty_page` lists no row set: it has no row to hold one.
 
 ## How the unit tests use them
 

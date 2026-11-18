@@ -1,10 +1,11 @@
 package modclient
 
 import (
-	"errors"
+	"context"
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -290,46 +291,77 @@ func TestDescribe_AResponseThatBreaksTheShapeIsAContractError(t *testing.T) {
 	}
 }
 
-func TestDescribe_Module1HasNoneAndMakesNoNetworkCall(t *testing.T) {
+// TestDescribe_Module1IsAskedNotAssumed replaces the Phase 3 test that pinned "module 1 has no describe, so nothing is sent": a client built for module 1 now USES its transport for
+// describe and for vocabularies (one call each, to GET /v1/describe), a client that cannot reach the module is Unavailable (never NotSupported, never a built-in answer), a
+// cancelled context is Canceled with no request, and every one of them returns no value. Paired controls: Health of the same client uses the transport too (so the count says
+// something), and modules 2 and 3 still make their one call.
+func TestDescribe_Module1IsAskedNotAssumed(t *testing.T) {
 	tok := mustToken(t)
 	var calls atomic.Int64
+	var paths []string
+	var mu sync.Mutex
 	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		calls.Add(1)
-		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(healthOK)), Request: r}, nil
+		mu.Lock()
+		paths = append(paths, r.URL.Path)
+		mu.Unlock()
+		body := healthOK
+		if r.URL.Path == "/v1/describe" {
+			body = describeM1
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
 	})
 	c, err := New(M1, "http://module-one.test:8080", config.Secret(tok), &http.Client{Transport: rt}, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The paired control: the same client DOES use its transport for an operation module 1 has.
 	if h, err := c.Health(ctxT(t, 5*time.Second)); err != nil || h == nil || calls.Load() != 1 {
 		t.Fatalf("control failed: %+v, %v, %d call(s)", h, err, calls.Load())
 	}
 	d, err := c.Describe(ctxT(t, 5*time.Second))
-	if d != nil {
-		t.Fatal("a Describe came back for a module that has none")
-	}
-	e := wantKind(t, err, NotSupported)
-	if !errors.Is(err, ErrNotSupported) || e.Module != M1 || e.Route != "m1.describe" || e.Sent || e.Status != 0 {
-		t.Fatalf("%+v", *e)
+	if err != nil || d == nil || d.Module != "verify" || calls.Load() != 2 {
+		t.Fatalf("describe of module 1: %+v, %v, %d call(s) in all, want an answer after one more", d, err, calls.Load())
 	}
 	v, err := c.Vocabularies(ctxT(t, 5*time.Second))
-	if v != nil {
-		t.Fatalf("a Vocabularies came back for a module that has none: %v", v)
+	if err != nil || len(v) != 8 || calls.Load() != 3 {
+		t.Fatalf("vocabularies of module 1: %d sets, %v, %d call(s) in all, want an answer after one more", len(v), err, calls.Load())
 	}
-	wantKind(t, err, NotSupported)
-	if calls.Load() != 1 {
-		t.Fatalf("describe and vocabularies of module 1 made %d network call(s)", calls.Load()-1)
+	mu.Lock()
+	if len(paths) != 3 || paths[1] != "/v1/describe" || paths[2] != "/v1/describe" {
+		t.Fatalf("the paths asked for were %v", paths)
 	}
-	// even with a cancelled context, and from a client that cannot reach anything, the answer is the same one
-	dead, err := New(M1, "http://127.0.0.1:1", config.Secret(tok), transport(t), Options{})
-	if err != nil {
-		t.Fatal(err)
+	mu.Unlock()
+
+	// a module that cannot be reached is Unavailable and gives no value: not NotSupported, and no vocabulary of the client's own
+	dead := serve(t, 200, "application/json", describeM1)
+	dc := dead.client(t, M1, tok, Options{})
+	dead.srv.Close()
+	dc.CloseIdleConnections()
+	if d, err := dc.Describe(ctxT(t, 5*time.Second)); d != nil {
+		t.Fatal("a Describe came back from a module that is not there")
+	} else if e := wantKind(t, err, Unavailable); e.Route != "m1.describe" || e.Module != M1 || e.Sent {
+		t.Fatalf("%+v", *e)
 	}
-	if _, err := dead.Describe(ctxT(t, time.Second)); !errors.Is(err, ErrNotSupported) {
-		t.Fatalf("an unreachable module 1 client answered %v", err)
+	if v, err := dc.Vocabularies(ctxT(t, 5*time.Second)); v != nil {
+		t.Fatalf("a Vocabularies came back from a module that is not there: %v", v)
+	} else {
+		wantKind(t, err, Unavailable)
 	}
-	// and modules 2 and 3 DO have one
+
+	// a cancelled context sends nothing
+	before := calls.Load()
+	cctx, cancel := context.WithCancel(ctxT(t, 5*time.Second))
+	cancel()
+	if d, err := c.Describe(cctx); d != nil {
+		t.Fatal("a Describe came back for a cancelled context")
+	} else {
+		wantKind(t, err, Canceled)
+	}
+	if calls.Load() != before {
+		t.Fatalf("a cancelled describe made %d call(s)", calls.Load()-before)
+	}
+
+	// and modules 2 and 3 make their one call, as before
 	s := serve(t, 200, "application/json", describeM3)
 	if _, err := s.client(t, M3, tok, Options{}).Describe(ctxT(t, 5*time.Second)); err != nil || s.count() != 1 {
 		t.Fatalf("%v, %d hit(s)", err, s.count())

@@ -56,22 +56,20 @@ func TestHealth_IsLivenessWithNoCredential(t *testing.T) {
 	}
 }
 
-// TestDescribe_IsNotSupportedAndSendsNothing: module 1 has no describe route, so Describe is NotSupported without a request even when the stand-in would answer one. The
-// vocabularies the adapter maps from are what Contracts() publishes instead. Control: a describe-shaped answer on the stand-in is never asked for (zero requests).
-func TestDescribe_IsNotSupportedAndSendsNothing(t *testing.T) {
+// TestDescribe_IsAskedForAndAnIncompleteAnswerIsRefused replaces the Phase 3 test that pinned "module 1 has no describe, so Describe is NotSupported and sends nothing" (describe_test.go
+// holds the module checks): Describe now sends ONE GET /v1/describe with the per-caller key, and a stand-in that would only have answered the old way, with a describe-shaped body that
+// lacks what the shape needs, is a Contract error and no value (never NotSupported). Control: the recorded describe is read by the same call.
+func TestDescribe_IsAskedForAndAnIncompleteAnswerIsRefused(t *testing.T) {
 	f := serve(t, 200, `{"module":"verify","api_version":"v1"}`)
 	d, err := f.adapter(t).Describe(testCtx(t))
-	if d != nil || modclient.KindOf(err) != modclient.NotSupported {
-		t.Fatalf("got %+v %v, want NotSupported and no value", d, err)
+	if d != nil || modclient.KindOf(err) != modclient.Contract || modclient.KindOf(err) == modclient.NotSupported {
+		t.Fatalf("got %+v %v, want a Contract error and no value", d, err)
 	}
-	if f.count() != 0 {
-		t.Fatalf("%d request(s) for a route module 1 does not have", f.count())
+	if c := f.seen(); len(c) != 1 || c[0].Method != http.MethodGet || c[0].Path != "/v1/describe" || c[0].Auth != "Bearer "+f.key {
+		t.Fatalf("the describe call was %+v, want one GET /v1/describe with the key", c)
 	}
-	published := 0
-	for _, c := range Contracts() {
-		published += len(c.Vocab)
-	}
-	if published == 0 {
-		t.Fatal("no vocabulary is published in place of describe")
+	g := serve(t, 200, fixture(t, "describe-ok.json"))
+	if d, err := g.adapter(t).Describe(testCtx(t)); err != nil || d == nil || d.Module != "verify" {
+		t.Fatalf("control: the recorded describe gave %+v %v", d, err)
 	}
 }

@@ -1,12 +1,12 @@
 package m1
 
-// The closed vocabularies the adapter maps from. Each set exists twice on purpose: as a list (what Contracts() publishes in RouteContract.Vocab, for the live drift gate) and as the
-// switch of a known* function (what the adapter's decoding actually accepts). TestVocabListsAreTheSwitches parses this file and fails when the two differ, in either direction, so
-// a value cannot be added to one and forgotten in the other.
+// The closed vocabularies the adapter maps from. Each set exists twice on purpose: as a list (what Contracts() publishes in RouteContract.Vocab, for the live drift gate, and what
+// CheckVocabularies compares with the module's own describe) and as the switch of a known* function (what the adapter's decoding actually accepts). TestVocabListsAreTheSwitches
+// parses this file and fails when the two differ, in either direction, so a value cannot be added to one and forgotten in the other.
 //
-// MODULE-FORCED(M1-F3): module 1 has no describe, vocabulary or policy route (its API has six routes and none lists values), so unlike modules 2 and 3 the platform cannot ask the
-// module what it may say; the sets are copied from its code (internal/vocab/vocab.go and signals.go, internal/api/api.go handleJobStatus, migration 0009) and a value outside them
-// is a contract error, never a guess.
+// Module 1 publishes these sets itself since the Phase 3 close-out (GET /v1/describe, vocabularies{}: built from the module's own constants, internal/vocab), and the adapter asks
+// it exactly as it asks modules 2 and 3 (Adapter.CheckVocabularies). The constants here are only the set the adapter HANDLES: a value outside them is a contract error at decode
+// time, never a guess, and a describe that lists one the adapter does not know is a break found before a live row meets it.
 
 var (
 	// statusValues is the verdict status (vocab.go Status). Exactly four, frozen.
@@ -92,7 +92,10 @@ func knownSubmitStatus(s string) bool {
 	return false
 }
 
-// vocabSets is every set by the name Contracts() publishes it under, as fresh copies (a caller that edits one changes nothing here).
+// vocabOrder is the order CheckVocabularies reports the sets in, by the names module 1's describe publishes them under.
+var vocabOrder = []string{"status", "reason", "recommendation", "failure_origin", "smtp_skipped_reason", "job_status", "submit_status"}
+
+// vocabSets is every set by the name Contracts() publishes it under (the name module 1's describe uses), as fresh copies (a caller that edits one changes nothing here).
 func vocabSets() map[string][]string {
 	return map[string][]string{
 		"status":              append([]string(nil), statusValues...),

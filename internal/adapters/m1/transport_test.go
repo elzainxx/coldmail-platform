@@ -69,7 +69,7 @@ func TestErrors_NameStatusAndRouteNeverTheKeyOrAnAddress(t *testing.T) {
 		var cerr error
 		switch s.call {
 		case "submit":
-			_, _, cerr = a.Submit(testCtx(t), threeRowPlan())
+			_, cerr = a.Submit(testCtx(t), threeRowPlan(), newIdemKey(t))
 		case "status":
 			_, cerr = a.Status(testCtx(t), testJob)
 		case "results":
@@ -339,7 +339,7 @@ func TestEveryCallHasADeadline(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls := map[string]func(ctx context.Context) error{
-		"POST /v1/verify/bulk": func(ctx context.Context) error { _, _, err := a.Submit(ctx, threeRowPlan()); return err },
+		"POST /v1/verify/bulk": func(ctx context.Context) error { _, err := a.Submit(ctx, threeRowPlan(), newIdemKey(t)); return err },
 		"POST /v1/verify":      func(ctx context.Context) error { _, err := a.Verify(ctx, "ada@acme.example"); return err },
 		"status":               func(ctx context.Context) error { _, err := a.Status(ctx, testJob); return err },
 		"GET /v1/jobs/" + testJob + "/results": func(ctx context.Context) error {
@@ -396,7 +396,7 @@ func TestEveryCallHasADeadline(t *testing.T) {
 func TestBadShapes_AreRefused(t *testing.T) {
 	ctx := testCtx(t)
 	submit := func(status int, body string) error {
-		_, _, err := serve(t, status, body).adapter(t).Submit(ctx, threeRowPlan())
+		_, err := serve(t, status, body).adapter(t).Submit(ctx, threeRowPlan(), newIdemKey(t))
 		return err
 	}
 	status := func(body string) error {
@@ -416,6 +416,7 @@ func TestBadShapes_AreRefused(t *testing.T) {
 			t.Errorf("%s was refused: %v", name, err)
 		}
 	}
+	running := statusBody(testJob, "running", false, 1, 0) // a good status body that the cases below take one key out of
 	type bad struct {
 		err error
 		key string
@@ -425,10 +426,13 @@ func TestBadShapes_AreRefused(t *testing.T) {
 		"submit: no counts":                   {submit(202, `{"job_id":"`+testJob+`","status":"accepted"}`), "counts"},
 		"submit: a counts object without one": {submit(202, `{"job_id":"`+testJob+`","status":"accepted","counts":{"total":3,"enqueued":2,"duplicate":1}}`), "counts.malformed"},
 		"submit: not JSON":                    {submit(202, `accepted`), ""},
-		"status: no complete flag":            {status(`{"job_id":"` + testJob + `","status":"running","counts":{"total":1,"settled":0,"pending":1},"processing_paused":false}`), "complete"},
-		"status: no counts":                   {status(`{"job_id":"` + testJob + `","status":"running","complete":false,"processing_paused":false}`), "counts"},
-		"status: counts without pending":      {status(`{"job_id":"` + testJob + `","status":"running","complete":false,"counts":{"total":1,"settled":0},"processing_paused":false}`), "counts.pending"},
-		"status: no processing_paused":        {status(`{"job_id":"` + testJob + `","status":"running","complete":false,"counts":{"total":1,"settled":0,"pending":1}}`), "processing_paused"},
+		"status: no complete flag":            {status(remove("complete").apply(t, running)), "complete"},
+		"status: no counts":                   {status(remove("counts").apply(t, running)), "counts"},
+		"status: counts without pending":      {status(remove("counts.pending").apply(t, running)), "counts.pending"},
+		"status: no totals":                   {status(remove("totals").apply(t, running)), "totals"},
+		"status: totals without by_status":    {status(remove("totals.by_status").apply(t, running)), "totals.by_status"},
+		"status: totals without submitted":    {status(remove("totals.submitted").apply(t, running)), "totals.submitted"},
+		"status: no processing_paused":        {status(remove("processing_paused").apply(t, running)), "processing_paused"},
 		"status: another job":                 {status(statusBody("00000000-0000-7000-8000-0000000000ff", "complete", true, 1, 1)), "job_id"},
 		"results: no results key":             {results(`{"job_id":"` + testJob + `","next_cursor":""}`), "results"},
 		"results: results is null":            {results(`{"job_id":"` + testJob + `","results":null,"next_cursor":""}`), "results"},
@@ -442,9 +446,9 @@ func TestBadShapes_AreRefused(t *testing.T) {
 			t.Errorf("%s: got kind %v key %q (%v), want a Contract error naming %q", name, kind, key, c.err, c.key)
 		}
 	}
-	// a 200 where the route answers 202 is a status the route does not use: Contract, and the module said it created something, so an orphan is possible
+	// a 200 where the route answers 202 is a status the route does not use: Contract, and the module may have created something, so the message says the same key may be sent again
 	err := submit(200, submit202)
-	if e := asModclient(err); e == nil || e.Kind != modclient.Contract || e.Status != 200 || !errors.Is(err, ErrOrphanPossible) {
-		t.Errorf("a 200 where the route answers 202: got %v, want a Contract error (HTTP 200) that is an orphan possibility", err)
+	if e := asModclient(err); e == nil || e.Kind != modclient.Contract || e.Status != 200 || !strings.Contains(err.Error(), unconfirmedPhrase) {
+		t.Errorf("a 200 where the route answers 202: got %v, want a Contract error (HTTP 200) that says the same key may be sent again", err)
 	}
 }

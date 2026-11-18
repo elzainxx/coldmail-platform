@@ -253,10 +253,11 @@ func (e *m1nEnv) rawResults(jobID string) []m1nRow {
 // runJob submits the rows as ONE bulk job, waits until module 1 says it is complete, and returns the 202's counts and the rows by item_id.
 func (e *m1nEnv) runJob(items []m1results.Item) (string, m1results.SubmitCounts, map[string]m1nRow) {
 	e.t.Helper()
-	jobID, counts, err := e.m1.SubmitRaw(e.ctx, items)
+	submitted, err := e.m1.SubmitRaw(e.ctx, items, m1eKey("runjob"))
 	if err != nil {
 		e.t.Fatalf("submitting the bulk job to module 1 failed: %v", err)
 	}
+	jobID, counts := submitted.JobID, submitted.Counts
 	ctx, cancel := context.WithTimeout(e.ctx, m1nJobWait)
 	defer cancel()
 	var js m1results.JobStatus

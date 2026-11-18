@@ -42,21 +42,23 @@ func runVerify(t *testing.T, status int, body string) (string, error) {
 }
 
 func runSubmit(t *testing.T, status int, body string) (string, error) {
-	id, c, err := serve(t, status, body).adapter(t).Submit(testCtx(t), threeRowPlan())
+	res, err := serve(t, status, body).adapter(t).Submit(testCtx(t), threeRowPlan(), newIdemKey(t))
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%s %d/%d/%d/%d", id, c.Total, c.Enqueued, c.Duplicate, c.Malformed), nil
+	c := res.Counts
+	return fmt.Sprintf("%s %d/%d/%d/%d", res.JobID, c.Total, c.Enqueued, c.Duplicate, c.Malformed), nil
 }
 
 // runSubmitRaw is the call the recorded 202 is decoded with: the recording is that of a raw submission (two of its three rows malformed), which a plan never sends and
 // Submit would refuse as a count that disagrees with its prediction (TestSubmit_ACountThatDisagreesWithThePlanIsAContractError).
 func runSubmitRaw(t *testing.T, status int, body string) (string, error) {
-	id, c, err := serve(t, status, body).adapter(t).SubmitRaw(testCtx(t), []Item{{"a", "ada@acme.example"}, {"b", "bob@acme.example"}, {"c", "cyd@acme.example"}})
+	res, err := serve(t, status, body).adapter(t).SubmitRaw(testCtx(t), []Item{{"a", "ada@acme.example"}, {"b", "bob@acme.example"}, {"c", "cyd@acme.example"}}, newIdemKey(t))
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%s %d/%d/%d/%d", id, c.Total, c.Enqueued, c.Duplicate, c.Malformed), nil
+	c := res.Counts
+	return fmt.Sprintf("%s %d/%d/%d/%d", res.JobID, c.Total, c.Enqueued, c.Duplicate, c.Malformed), nil
 }
 
 func runStatus(t *testing.T, status int, body string) (string, error) {
@@ -64,7 +66,22 @@ func runStatus(t *testing.T, status int, body string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%s complete=%t %d/%d/%d paused=%t", js.Status, js.Complete, js.Counts.Total, js.Counts.Settled, js.Counts.Pending, js.ProcessingPaused), nil
+	tt := js.Totals
+	return fmt.Sprintf("%s complete=%t %d/%d/%d paused=%t totals=%d/%d/%d/%d/%d by=%d/%d/%d/%d", js.Status, js.Complete, js.Counts.Total, js.Counts.Settled, js.Counts.Pending, js.ProcessingPaused,
+		tt.Submitted, tt.Settled, tt.Pending, tt.Duplicates, tt.Malformed, tt.ByStatus.Valid, tt.ByStatus.Invalid, tt.ByStatus.Risky, tt.ByStatus.Unknown), nil
+}
+
+// runDescribe is the adapter's own describe: the summary is what it decoded (module, version, how many vocabularies, error codes and routes, the idempotency header).
+func runDescribe(t *testing.T, status int, body string) (string, error) {
+	d, err := serve(t, status, body).adapter(t).Describe(testCtx(t))
+	if err != nil {
+		return "", err
+	}
+	var x describeExtra
+	if err := json.Unmarshal(d.Raw, &x); err != nil {
+		t.Fatal(err)
+	}
+	return fmt.Sprintf("%s %s vocabularies=%d error_codes=%d routes=%d header=%s", d.Module, d.APIVersion, len(d.Vocabularies), len(d.ErrorCodes), len(x.Routes), x.Idempotency.Header), nil
 }
 
 func runResults(t *testing.T, status int, body string) (string, error) {
@@ -99,7 +116,18 @@ func submitSummary(t *testing.T, body string) string {
 func statusSummary(t *testing.T, body string) string {
 	d := docOf(t, body)
 	c := obj(t, d["counts"])
-	return fmt.Sprintf("%s complete=%t %d/%d/%d paused=%t", d["status"], d["complete"], num(t, c["total"]), num(t, c["settled"]), num(t, c["pending"]), d["processing_paused"])
+	tt := obj(t, d["totals"])
+	by := obj(t, tt["by_status"])
+	return fmt.Sprintf("%s complete=%t %d/%d/%d paused=%t totals=%d/%d/%d/%d/%d by=%d/%d/%d/%d", d["status"], d["complete"], num(t, c["total"]), num(t, c["settled"]), num(t, c["pending"]), d["processing_paused"],
+		num(t, tt["submitted"]), num(t, tt["settled"]), num(t, tt["pending"]), num(t, tt["duplicates"]), num(t, tt["malformed"]),
+		num(t, by["valid"]), num(t, by["invalid"]), num(t, by["risky"]), num(t, by["unknown"]))
+}
+
+func describeSummary(t *testing.T, body string) string {
+	d := docOf(t, body)
+	routes := d["routes"].([]any)
+	idem := obj(t, d["idempotency"])
+	return fmt.Sprintf("%s %s vocabularies=%d error_codes=%d routes=%d header=%s", d["module"], d["api_version"], len(obj(t, d["vocabularies"])), len(d["error_codes"].([]any)), len(routes), idem["header"])
 }
 
 func resultsSummary(t *testing.T, body string) string {
@@ -112,23 +140,26 @@ func contractKey(route, c string) string { return route + " | " + c }
 // contractTable is what every entry of Contracts() is exercised with. A contract with no entry here, and an entry with no contract, are both red (TestContracts_EveryFixtureDecodes...).
 func contractTable() map[string]contractExpect {
 	return map[string]contractExpect{
-		contractKey(tplVerify, "ok"):                {run: runVerify, summarize: verifySummary},
-		contractKey(tplSubmit, "accepted"):          {run: runSubmitRaw, summarize: submitSummary},
-		contractKey(tplSubmit, "validation_failed"): {run: runSubmit, kind: modclient.Refused, code: "validation_failed"},
-		contractKey(tplSubmit, "unauthenticated"):   {run: runSubmit, kind: modclient.Refused, code: "unauthenticated"},
-		contractKey(tplSubmit, "payload_too_large"): {run: runSubmit, kind: modclient.Refused, code: "payload_too_large"},
-		contractKey(tplSubmit, "paused"):            {run: runSubmit, kind: modclient.Paused, code: "paused"},
-		contractKey(tplSubmit, "unavailable"):       {run: runSubmit, kind: modclient.Unavailable, code: "unavailable"},
-		contractKey(tplSubmit, "internal_error"):    {run: runSubmit, kind: modclient.Internal, code: "internal_error"},
-		contractKey(tplStatus, "running"):           {run: runStatus, summarize: statusSummary},
-		contractKey(tplStatus, "complete"):          {run: runStatus, summarize: statusSummary},
-		contractKey(tplStatus, "not_found"):         {run: runStatus, kind: modclient.NotFound, code: "not_found"},
-		contractKey(tplStatus, "unauthenticated"):   {run: runStatus, kind: modclient.Refused, code: "unauthenticated"},
-		contractKey(tplResults, "page"):             {run: runResults, summarize: resultsSummary},
-		contractKey(tplResults, "empty_page"):       {run: runResults, summarize: resultsSummary},
-		contractKey(tplResults, "bad_cursor"):       {run: runResults, kind: modclient.Refused, code: "validation_failed"},
-		contractKey(tplResults, "unauthenticated"):  {run: runResults, kind: modclient.Refused, code: "unauthenticated"},
-		contractKey(tplResults, "not_found"):        {run: runResults, kind: modclient.NotFound, code: "not_found"},
+		contractKey(tplVerify, "ok"):                     {run: runVerify, summarize: verifySummary},
+		contractKey(tplSubmit, "accepted"):               {run: runSubmitRaw, summarize: submitSummary},
+		contractKey(tplSubmit, "validation_failed"):      {run: runSubmit, kind: modclient.Refused, code: "validation_failed"},
+		contractKey(tplSubmit, "unauthenticated"):        {run: runSubmit, kind: modclient.Refused, code: "unauthenticated"},
+		contractKey(tplSubmit, "payload_too_large"):      {run: runSubmit, kind: modclient.Refused, code: "payload_too_large"},
+		contractKey(tplSubmit, "idempotency_key_reused"): {run: runSubmit, kind: modclient.Refused, code: "idempotency_key_reused"},
+		contractKey(tplSubmit, "paused"):                 {run: runSubmit, kind: modclient.Paused, code: "paused"},
+		contractKey(tplSubmit, "unavailable"):            {run: runSubmit, kind: modclient.Unavailable, code: "unavailable"},
+		contractKey(tplSubmit, "internal_error"):         {run: runSubmit, kind: modclient.Internal, code: "internal_error"},
+		contractKey(tplStatus, "running"):                {run: runStatus, summarize: statusSummary},
+		contractKey(tplStatus, "complete"):               {run: runStatus, summarize: statusSummary},
+		contractKey(tplStatus, "not_found"):              {run: runStatus, kind: modclient.NotFound, code: "not_found"},
+		contractKey(tplStatus, "unauthenticated"):        {run: runStatus, kind: modclient.Refused, code: "unauthenticated"},
+		contractKey(tplResults, "page"):                  {run: runResults, summarize: resultsSummary},
+		contractKey(tplResults, "empty_page"):            {run: runResults, summarize: resultsSummary},
+		contractKey(tplResults, "bad_cursor"):            {run: runResults, kind: modclient.Refused, code: "validation_failed"},
+		contractKey(tplResults, "unauthenticated"):       {run: runResults, kind: modclient.Refused, code: "unauthenticated"},
+		contractKey(tplResults, "not_found"):             {run: runResults, kind: modclient.NotFound, code: "not_found"},
+		contractKey(tplDescribe, "ok"):                   {run: runDescribe, summarize: describeSummary},
+		contractKey(tplDescribe, "unauthenticated"):      {run: runDescribe, kind: modclient.Refused, code: "unauthenticated"},
 	}
 }
 
@@ -545,9 +576,20 @@ func TestContracts_AMutatedFixtureIsRefusedNamingTheKey(t *testing.T) {
 			remove("complete"), retype("complete", "false"),
 			remove("counts"), remove("counts.total"), remove("counts.settled"), remove("counts.pending"), retype("counts.pending", "2"),
 			remove("processing_paused"), retype("processing_paused", "no"),
+			remove("totals"), retype("totals", []any{}), remove("totals.submitted"), remove("totals.settled"), remove("totals.pending"), remove("totals.duplicates"), remove("totals.malformed"),
+			retype("totals.duplicates", "3"), retype("totals.malformed", 1.5), remove("totals.by_status"), remove("totals.by_status.valid"), remove("totals.by_status.invalid"),
+			remove("totals.by_status.risky"), remove("totals.by_status.unknown"), retype("totals.by_status.risky", "0"), retype("totals.by_status", []any{}),
 		},
 		contractKey(tplStatus, "complete"): {
 			remove("complete"), outside("status", "running"), outside("status", "done"), remove("counts.settled"),
+			remove("totals"), remove("totals.by_status.unknown"), retype("totals.settled", "2"),
+		},
+		contractKey(tplDescribe, "ok"): {
+			remove("module"), retype("module", 5), remove("api_version"), retype("api_version", 1), remove("capabilities"), retype("capabilities.job_totals", "yes"),
+			remove("routes"), retype("routes", map[string]any{}), remove("routes[0].method"), remove("routes[1].path"),
+			remove("vocabularies"), retype("vocabularies", []any{}), remove("vocabularies.status.values"), retype("vocabularies.job_status.values", "submitted"), retype("vocabularies.reason.values[2]", 7),
+			remove("error_codes"), remove("error_codes[0].code"), retype("error_codes[3].http_status", "405"),
+			remove("idempotency"), remove("idempotency.header"), retype("idempotency.header", 3), remove("idempotency.replay_response_header"), retype("idempotency", []any{}),
 		},
 	}
 	total, populated, empty := 0, 0, 0
@@ -747,7 +789,7 @@ func TestContracts_EveryVocabValueIsAcceptedAndASiblingIsRefused(t *testing.T) {
 		}},
 		"submit_status": {"status", func(v string) error {
 			b := mustReplace(t, acceptedFor(t, threeRowPlan().Expected()), `"accepted"`, `"`+v+`"`)
-			_, _, err := serve(t, 202, b).adapter(t).Submit(testCtx(t), threeRowPlan())
+			_, err := serve(t, 202, b).adapter(t).Submit(testCtx(t), threeRowPlan(), newIdemKey(t))
 			return err
 		}},
 	}
@@ -772,17 +814,18 @@ func TestContracts_EveryVocabValueIsAcceptedAndASiblingIsRefused(t *testing.T) {
 	if checked != len(statusValues)+len(reasonValues)+len(originValues)+len(skipValues)+len(recommendationValues)+len(jobStatusValues)+len(submitStatusValues) {
 		t.Fatalf("%d value(s) checked, want every value of every set", checked)
 	}
-	// the error codes are data to the adapter: each published code, and a code module 1 may add later, comes back on the typed error with the class of its STATUS (the adapter has no
-	// switch on it; modclient decides by status, and only `paused` changes a class)
+	// the error codes are data to the adapter: each published code, and a code module 1 may add later, comes back on the typed error with the class of its STATUS (modclient decides by
+	// status, and only `paused` changes a class). The one switch the adapter has is Submit's: a 409 with the code idempotency_key_reused is ErrIdempotencyKeyReused
+	// (TestSubmit_TheSameKeyWithAnotherRequestIsRefusedAndNothingIsCreated); on a 400 every code, that one included, is just carried.
 	for _, code := range append(append([]string(nil), errorCodeValues...), "some_new_code") {
 		f := serve(t, 400, `{"error":{"code":"`+code+`","message":"x","request_id":"00000000-0000-4000-8000-000000000001"}}`)
 		_, err := f.adapter(t).Status(testCtx(t), testJob)
-		if e := asModclient(err); e == nil || e.Kind != modclient.Refused || e.Code != code {
-			t.Errorf("the code %q on a 400: got %v, want a Refused error that carries it", code, err)
+		if e := asModclient(err); e == nil || e.Kind != modclient.Refused || e.Code != code || errors.Is(err, ErrIdempotencyKeyReused) {
+			t.Errorf("the code %q on a 400: got %v, want a Refused error that carries it and is not a reused key", code, err)
 		}
 	}
-	if len(errorCodeValues) != 9 {
-		t.Fatalf("module 1 has 9 error codes (api/errors.go), the list holds %d", len(errorCodeValues))
+	if len(errorCodeValues) != 10 {
+		t.Fatalf("module 1 has 10 error codes (api/errors.go, the ten `code*` constants), the list holds %d", len(errorCodeValues))
 	}
 	// the module's own counts, so a silent edit of a list is seen: 4 statuses and 27 reasons (vocab.go), 3 origins, 6 skip tokens (signals.go), 3 recommendations, 4 job words
 	if len(statusValues) != 4 || len(reasonValues) != 27 || len(originValues) != 3 || len(skipValues) != 6 || len(recommendationValues) != 3 || len(jobStatusValues) != 4 || len(submitStatusValues) != 1 {
@@ -914,13 +957,11 @@ func TestVocabListsAreTheSwitches(t *testing.T) {
 }
 
 // unpublishedSets are the sets the adapter maps that NO contract publishes, and why. A set is published only on a contract whose recorded body has a string at the path it
-// constrains (TestEveryVocabularyConstrainsSomethingInItsOwnFixture); neither of these keys is in any recording of the real node, so listing them would make them inert. They are
-// tested on inline bodies (TestContracts_EveryVocabValueIsAcceptedAndASiblingIsRefused) and NOT checked against a live response. When a recording holds one, a contract lists it
-// and TestVocabListsAreTheSwitches says to remove it from here.
-var unpublishedSets = map[string]string{
-	"failure_origin":      "signals.failure_origin is on unknown answers only, and no recorded verdict or results row is one",
-	"smtp_skipped_reason": "signals.smtp_skipped_reason is on answers that skipped the SMTP stage only, and no recorded verdict or results row is one",
-}
+// constrains (TestEveryVocabularyConstrainsSomethingInItsOwnFixture), and a set no recording holds would be inert if listed. It is EMPTY since the describe contract: module 1's
+// describe publishes the values of every set the adapter maps (failure_origin and smtp_skipped_reason included, which no verdict or results row of the real node holds), at
+// `vocabularies.<name>.values[]`. The machinery stays so that a set that stops being published has to be declared here, with its reason, and TestVocabListsAreTheSwitches says to remove
+// an entry as soon as a contract lists it.
+var unpublishedSets = map[string]string{}
 
 func sortedCopy(in []string) []string {
 	out := append([]string(nil), in...)
@@ -968,6 +1009,8 @@ func TestContracts_TheRoutesTheAdapterCallsAreCoveredOrDeclaredUncovered(t *test
 			return 200, fixture(t, "verify-ok.json")
 		case c.Path == "/v1/verify/bulk":
 			return 202, fixture(t, "submit-accepted.json")
+		case c.Path == "/v1/describe":
+			return 200, fixture(t, "describe-ok.json")
 		case strings.HasSuffix(c.Path, "/results"):
 			return 200, fixture(t, "results-empty.json")
 		}
@@ -978,17 +1021,18 @@ func TestContracts_TheRoutesTheAdapterCallsAreCoveredOrDeclaredUncovered(t *test
 	_, _ = a.Health(ctx)
 	_, _ = a.Ready(ctx)
 	_, _ = a.Verify(ctx, "ada@acme.example")
-	_, _, _ = a.Submit(ctx, threeRowPlan())
+	_, _ = a.Submit(ctx, threeRowPlan(), newIdemKey(t))
 	_, _ = a.Status(ctx, testJob)
 	_, _, _ = a.Results(ctx, testJob, "", 0)
-	_, _ = a.Describe(ctx) // sends nothing
+	_, _ = a.Describe(ctx)
+	_, _ = a.CheckVocabularies(ctx)
 	called := map[string]bool{}
 	for _, c := range f.seen() {
 		p := strings.ReplaceAll(c.Path, testJob, "{id}")
 		called[c.Method+" "+p] = true
 	}
-	if len(called) != 6 {
-		t.Fatalf("the adapter's methods called %d distinct route(s) (%v), want 6", len(called), called)
+	if len(called) != 7 {
+		t.Fatalf("the adapter's methods called %d distinct route(s) (%v), want 7", len(called), called)
 	}
 	covered := map[string]bool{}
 	for _, c := range Contracts() {
@@ -1005,9 +1049,12 @@ func TestContracts_TheRoutesTheAdapterCallsAreCoveredOrDeclaredUncovered(t *test
 	if gap := routesGap(called, covered, uncovered); !containsSub(gap, "GET /readyz: called, covered by no contract") {
 		t.Fatalf("control: an undeclared route gave %v", gap)
 	}
-	covered["GET /v1/describe"] = true
-	if gap := routesGap(called, covered, map[string]bool{"GET /readyz": true, "GET /healthz": true}); !containsSub(gap, "GET /v1/describe: covered by a contract and never called") {
+	covered["GET /v1/nothing"] = true
+	if gap := routesGap(called, covered, map[string]bool{"GET /readyz": true, "GET /healthz": true}); !containsSub(gap, "GET /v1/nothing: covered by a contract and never called") {
 		t.Fatalf("control: a contract for a route nothing calls gave %v", gap)
+	}
+	if !covered["GET /v1/describe"] {
+		t.Fatal("the describe route the adapter now calls has no contract")
 	}
 	for r, why := range UncoveredRoutes() {
 		if strings.TrimSpace(why) == "" {
@@ -1080,17 +1127,28 @@ func checkForced(dir, registry string) (problems []string, tags, lines int) {
 	return problems, tags, lines
 }
 
-// TestForcedSpecialCasesAreRegistered: every MODULE-FORCED tag of the package's non-test source has a line in forced.txt (with the file it is in), every line has a tag, and there is at
-// least one of each. Paired controls on scratch directories: an unregistered tag, a line with no tag, a tag in another file than the registry says, a repeated ID and an empty
-// package are each reported for what they are.
+// TestForcedSpecialCasesAreRegistered: every MODULE-FORCED tag of the package's non-test source has a line in forced.txt (with the file it is in), every line has a tag, and there are
+// exactly the nine cases that remain of the thirteen after the Phase 3 close-out (partial Tier 4 took away M1-F1, M1-F2, M1-F3 and M1-F8): the four removed IDs are in neither the
+// source nor the registry, and the nine kept are in both. Paired controls on scratch directories: an unregistered tag, a line with no tag, a tag in another file than the registry says,
+// a repeated ID and an empty package are each reported for what they are.
 func TestForcedSpecialCasesAreRegistered(t *testing.T) {
 	reg, err := os.ReadFile("forced.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
 	problems, tags, lines := checkForced(".", string(reg))
-	if len(problems) != 0 || tags < 10 || tags != lines {
-		t.Fatalf("%d tag(s), %d registry line(s), problems %v", tags, lines, problems)
+	if len(problems) != 0 || tags != 9 || tags != lines {
+		t.Fatalf("%d tag(s), %d registry line(s), problems %v: want exactly the nine kept cases, each registered", tags, lines, problems)
+	}
+	for _, removed := range []string{"M1-F1", "M1-F2", "M1-F3", "M1-F8"} {
+		if strings.Contains(string(reg), removed+"|") {
+			t.Errorf("%s is back in the registry: the module now does what it was forced around", removed)
+		}
+	}
+	for _, kept := range []string{"M1-F4", "M1-F5", "M1-F6", "M1-F7", "M1-F9", "M1-F10", "M1-F11", "M1-F12", "M1-F13"} {
+		if !strings.Contains(string(reg), kept+"|") {
+			t.Errorf("%s is missing from the registry", kept)
+		}
 	}
 	t.Logf("%d MODULE-FORCED tag(s), all registered", tags)
 
@@ -1144,20 +1202,24 @@ func TestErrorsAreTypedModclientErrors(t *testing.T) {
 	_, e1 := a.Status(ctx, "nope")
 	_, _, e2 := a.Results(ctx, testJob, "", 5000)
 	_, e3 := a.Verify(ctx, "ada@acme.example")
-	_, _, e4 := a.Submit(ctx, Prepare(nil))
+	_, e4 := a.Submit(ctx, Prepare(nil), newIdemKey(t))
 	_, e5 := a.Drain(context.Background(), testJob, nil)
 	_, e6 := a.Describe(ctx)
 	_, e7 := a.Status(ctx, testJob)
 	_, e8 := ToSettleItems([]Row{{}})
-	for i, err := range []error{e1, e2, e3, e4, e5, e6, e7, e8} {
+	_, e9 := a.Submit(ctx, threeRowPlan(), "a key with spaces")
+	_, e10 := a.CheckVocabularies(ctx)
+	for i, err := range []error{e1, e2, e3, e4, e5, e6, e7, e8, e9, e10} {
 		if err == nil || asModclient(err) == nil || modclient.KindOf(err) == 0 {
 			t.Errorf("error %d is not a typed modclient error: %v", i+1, err)
 		}
 	}
-	if !errors.Is(e6, modclient.ErrNotSupported) {
-		t.Errorf("Describe: got %v, want NotSupported", e6)
+	for name, err := range map[string]error{"Describe": e6, "CheckVocabularies": e10} {
+		if modclient.KindOf(err) != modclient.Internal || errors.Is(err, modclient.ErrNotSupported) {
+			t.Errorf("%s of a module that answers 500: got %v, want its Internal error (describe is asked for now, never NotSupported)", name, err)
+		}
 	}
-	if f.count() != 2 { // Verify and the one Status that carried a uuid; every refusal above was made before a request
-		t.Errorf("%d request(s), want 2", f.count())
+	if f.count() != 4 { // Verify, the one Status that carried a uuid, Describe and CheckVocabularies' describe; every refusal above was made before a request
+		t.Errorf("%d request(s), want 4", f.count())
 	}
 }

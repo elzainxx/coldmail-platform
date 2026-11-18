@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -37,6 +38,14 @@ import (
 //     row is invalid/invalid_syntax, charged, and the two repeats are duplicate_of it, free;
 //   - six addresses at six distinct domains: their outcome is the environment's (dns_error own, remote or something else), and the oracle follows the module's
 //     report, whatever it is.
+
+// m1bKeySeq makes every idempotency key of this file's submissions its own: module 1 scopes a key to the caller, and a repeat of a key with another request is a 409.
+var m1bKeySeq atomic.Int64
+
+// m1bKey is the Idempotency-Key of one submission of this test: the label, the clock and a counter (letters, digits, '.' and '-', well inside module 1's 128).
+func m1bKey(label string) string {
+	return fmt.Sprintf("m1b.%s.%d.%d", label, time.Now().UnixNano(), m1bKeySeq.Add(1))
+}
 
 const (
 	m1bEnvURL = "HARNESS_M1_URL" // module 1's control plane on the private network
@@ -392,10 +401,11 @@ func TestM1Live_BulkJobSettlesItemByItem(t *testing.T) {
 	t.Logf("money: granted %d credits; reserved %d for %d row(s) at %d per unit (%s, the dearest of the frozen snapshot %v)", m1bGrant, rsv.Reserved, total, rsv.UnitCost, rsv.Unit, rsv.Prices)
 
 	// ---- module 1: submit ----
-	m1Job, counts, err := m1.SubmitRaw(ctx, items)
+	submitted, err := m1.SubmitRaw(ctx, items, m1bKey("settle"))
 	if err != nil {
 		t.Fatalf("submitting the bulk job to module 1 failed: %v\n(a 400 here means module 1 does not take the `items` shape: is the pinned module 1 at the commit that has A1, the per-item identity?)", err)
 	}
+	m1Job, counts := submitted.JobID, submitted.Counts
 	if want := (m1results.SubmitCounts{Total: total, Enqueued: total - len(m1bOrdinals(m1bMalformed)) - len(m1bOrdinals(m1bDupRepeat)), Duplicate: len(m1bOrdinals(m1bDupRepeat)), Malformed: len(m1bOrdinals(m1bMalformed))}); counts != want {
 		t.Fatalf("module 1's 202 counts are %+v, want %+v (total = enqueued + duplicate + malformed, over input rows)", counts, want)
 	}

@@ -44,6 +44,16 @@ func newToken(t testing.TB) string {
 	return "k-" + hex.EncodeToString(b[:])
 }
 
+// newIdemKey makes an idempotency key at run time, unique per call: a valid key (letters, digits, '.', '_', ':', '-') that no other call of any test shares.
+func newIdemKey(t testing.TB) string {
+	t.Helper()
+	var b [12]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		t.Fatal(err)
+	}
+	return "test.job:" + hex.EncodeToString(b[:])
+}
+
 func ctxFor(t testing.TB, d time.Duration) context.Context {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), d)
@@ -76,10 +86,11 @@ func leaks(text string, secrets ...string) bool {
 	return false
 }
 
-// call is one request a stand-in received.
+// call is one request a stand-in received. IdemKey is its Idempotency-Key header ("" when it carried none), Header every header it carried.
 type call struct {
-	Method, Path, Query, Auth, ContentType string
-	Body                                   []byte
+	Method, Path, Query, Auth, ContentType, IdemKey string
+	Body                                            []byte
+	Header                                          http.Header
 }
 
 func (c call) params() url.Values {
@@ -93,19 +104,34 @@ type fakeM1 struct {
 	key    string
 	mu     sync.Mutex
 	calls  []call
-	handle func(c call) (status int, body string)
+	handle func(c call) (status int, body string, header http.Header)
 }
 
 func newFakeM1(t testing.TB, handle func(c call) (int, string)) *fakeM1 {
 	t.Helper()
+	return newFakeM1H(t, func(c call) (int, string, http.Header) {
+		status, body := handle(c)
+		return status, body, nil
+	})
+}
+
+// newFakeM1H is newFakeM1 for a stand-in that also sets response headers (the replay marker of an idempotent create).
+func newFakeM1H(t testing.TB, handle func(c call) (int, string, http.Header)) *fakeM1 {
+	t.Helper()
 	f := &fakeM1{handle: handle, key: newToken(t)}
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
-		c := call{Method: r.Method, Path: r.URL.Path, Query: r.URL.RawQuery, Auth: r.Header.Get("Authorization"), ContentType: r.Header.Get("Content-Type"), Body: b}
+		c := call{Method: r.Method, Path: r.URL.Path, Query: r.URL.RawQuery, Auth: r.Header.Get("Authorization"), ContentType: r.Header.Get("Content-Type"),
+			IdemKey: r.Header.Get("Idempotency-Key"), Body: b, Header: r.Header.Clone()}
 		f.mu.Lock()
 		f.calls = append(f.calls, c)
 		f.mu.Unlock()
-		status, body := f.handle(c)
+		status, body, header := f.handle(c)
+		for k, vs := range header {
+			for _, v := range vs {
+				w.Header().Add(k, v)
+			}
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		_, _ = io.WriteString(w, body)
@@ -168,10 +194,13 @@ func row(ordinal int) string {
 	return element("valid", "accepted", "row-"+strconv.Itoa(ordinal), ordinal, "")
 }
 
-// statusBody is a status answer of the shape handleJobStatus writes.
+// statusBody is a status answer of the shape handleJobStatus writes, with the counts and the totals of ONE snapshot: total rows submitted of which settled have an outcome (all of them
+// valid, none a duplicate or malformed row).
 func statusBody(jobID, status string, complete bool, total, settled int) string {
 	return `{"job_id":` + strconv.Quote(jobID) + `,"status":` + strconv.Quote(status) + `,"complete":` + strconv.FormatBool(complete) +
-		`,"caller_ref":"","counts":{"total":` + strconv.Itoa(total) + `,"settled":` + strconv.Itoa(settled) + `,"pending":` + strconv.Itoa(total-settled) + `},"processing_paused":false}`
+		`,"caller_ref":"","counts":{"total":` + strconv.Itoa(total) + `,"settled":` + strconv.Itoa(settled) + `,"pending":` + strconv.Itoa(total-settled) + `},` +
+		`"totals":{"submitted":` + strconv.Itoa(total) + `,"settled":` + strconv.Itoa(settled) + `,"pending":` + strconv.Itoa(total-settled) + `,"duplicates":0,"malformed":0,` +
+		`"by_status":{"valid":` + strconv.Itoa(settled) + `,"invalid":0,"risky":0,"unknown":0}},"processing_paused":false}`
 }
 
 func completeBody(total int) string { return statusBody(testJob, "complete", true, total, total) }
@@ -244,9 +273,15 @@ func recordedStatus(t testing.TB, name string) JobStatus {
 	t.Helper()
 	doc := recordedDoc(t, name)
 	cm := obj(t, doc["counts"])
+	tm := obj(t, doc["totals"])
+	bm := obj(t, tm["by_status"])
 	return JobStatus{
 		JobID: doc["job_id"].(string), Status: doc["status"].(string), Complete: doc["complete"].(bool), ProcessingPaused: doc["processing_paused"].(bool),
 		Counts: JobCounts{Total: num(t, cm["total"]), Settled: num(t, cm["settled"]), Pending: num(t, cm["pending"])},
+		Totals: JobTotals{
+			Submitted: num(t, tm["submitted"]), Settled: num(t, tm["settled"]), Pending: num(t, tm["pending"]), Duplicates: num(t, tm["duplicates"]), Malformed: num(t, tm["malformed"]),
+			ByStatus: StatusCounts{Valid: num(t, bm["valid"]), Invalid: num(t, bm["invalid"]), Risky: num(t, bm["risky"]), Unknown: num(t, bm["unknown"])},
+		},
 	}
 }
 

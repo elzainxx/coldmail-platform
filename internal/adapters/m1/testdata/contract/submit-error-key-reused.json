@@ -1,0 +1,13 @@
+{
+  "error": {
+    "code": "idempotency_key_reused",
+    "message": "This Idempotency-Key was already used for a different request.",
+    "details": [
+      {
+        "field": "Idempotency-Key",
+        "issue": "conflict"
+      }
+    ],
+    "request_id": "00000000-0000-4000-8000-000000000001"
+  }
+}

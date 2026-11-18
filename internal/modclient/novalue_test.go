@@ -40,7 +40,9 @@ func valueViolation(val any, err error) string {
 
 type valueOp struct {
 	name string
-	call func(ctx context.Context, c *Client) (any, error)
+	// module is the module the operation's client is built for; the zero value means module 2 (every operation but the two of module 1 below).
+	module Module
+	call   func(ctx context.Context, c *Client) (any, error)
 }
 
 // targetShape and target stand for what an adapter decodes a response into.
@@ -53,11 +55,11 @@ type target struct {
 
 func realOps() []valueOp {
 	return []valueOp{
-		{"Do", func(ctx context.Context, c *Client) (any, error) {
+		{"Do", "", func(ctx context.Context, c *Client) (any, error) {
 			r, err := c.Do(ctx, getReq("m2.report", "/v1/report"))
 			return r, err
 		}},
-		{"Do then Decode", func(ctx context.Context, c *Client) (any, error) {
+		{"Do then Decode", "", func(ctx context.Context, c *Client) (any, error) {
 			r, err := c.Do(ctx, getReq("m2.report", "/v1/report"))
 			if err != nil {
 				return nil, err
@@ -71,10 +73,13 @@ func realOps() []valueOp {
 			}
 			return &v, nil
 		}},
-		{"Health", func(ctx context.Context, c *Client) (any, error) { h, err := c.Health(ctx); return h, err }},
-		{"Ready", func(ctx context.Context, c *Client) (any, error) { r, err := c.Ready(ctx); return r, err }},
-		{"Describe", func(ctx context.Context, c *Client) (any, error) { d, err := c.Describe(ctx); return d, err }},
-		{"Vocabularies", func(ctx context.Context, c *Client) (any, error) { v, err := c.Vocabularies(ctx); return v, err }},
+		{"Health", "", func(ctx context.Context, c *Client) (any, error) { h, err := c.Health(ctx); return h, err }},
+		{"Ready", "", func(ctx context.Context, c *Client) (any, error) { r, err := c.Ready(ctx); return r, err }},
+		{"Describe", "", func(ctx context.Context, c *Client) (any, error) { d, err := c.Describe(ctx); return d, err }},
+		{"Vocabularies", "", func(ctx context.Context, c *Client) (any, error) { v, err := c.Vocabularies(ctx); return v, err }},
+		// Phase 3 close-out: module 1 has a describe now, with a shape of its own (describeShapeM1), so its two operations are in the table too, on a client built for module 1.
+		{"Describe (module 1)", M1, func(ctx context.Context, c *Client) (any, error) { d, err := c.Describe(ctx); return d, err }},
+		{"Vocabularies (module 1)", M1, func(ctx context.Context, c *Client) (any, error) { v, err := c.Vocabularies(ctx); return v, err }},
 	}
 }
 
@@ -88,7 +93,7 @@ func mutantOps() []valueOp {
 	}
 	wrap := func(name string, fallback func() any) valueOp {
 		inner := byName[name]
-		return valueOp{"mutant " + name, func(ctx context.Context, c *Client) (any, error) {
+		return valueOp{"mutant " + name, inner.module, func(ctx context.Context, c *Client) (any, error) {
 			v, err := inner.call(ctx, c)
 			if err != nil {
 				return fallback(), err
@@ -103,6 +108,9 @@ func mutantOps() []valueOp {
 		wrap("Ready", func() any { return &Readiness{Ready: true, Status: "ready"} }),
 		wrap("Describe", func() any { return &Describe{Module: "send_managed", APIVersion: "v1"} }),
 		wrap("Vocabularies", func() any { return Vocabularies{"job_state": {"queued", "sent"}} }),
+		// the fallbacks module 1's two operations must never produce: "the module's own vocabulary, built in" (the very thing module 1 had before it had a describe)
+		wrap("Describe (module 1)", func() any { return &Describe{Module: "verify", APIVersion: "v1", Raw: []byte(`{}`)} }),
+		wrap("Vocabularies (module 1)", func() any { return Vocabularies{"status": {"valid", "invalid", "risky", "unknown"}} }),
 	}
 }
 
@@ -203,7 +211,11 @@ func runNoValueTable(t *testing.T, ops []valueOp) (violations []string, cells in
 			} else {
 				s = newStub(t, func(w http.ResponseWriter, r *http.Request, n int) {})
 			}
-			c := s.client(t, M2, mustToken(t), Options{Timeout: 150 * time.Millisecond, MaxBodyBytes: 2048})
+			module := op.module
+			if module == "" {
+				module = M2
+			}
+			c := s.client(t, module, mustToken(t), Options{Timeout: 150 * time.Millisecond, MaxBodyBytes: 2048})
 			if cell.refused {
 				s.srv.Close()
 				c.CloseIdleConnections()
@@ -256,9 +268,12 @@ func TestNoErrorPathReturnsAValue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cancelled, cancel := context.WithCancel(ctxT(t, time.Second))
+	cancel()
 	for name, call := range map[string]func() (any, error){
-		"Describe of module 1":     func() (any, error) { v, err := c.Describe(ctxT(t, time.Second)); return v, err },
-		"Vocabularies of module 1": func() (any, error) { v, err := c.Vocabularies(ctxT(t, time.Second)); return v, err },
+		// module 1 has a describe now: with a context that is already over, the call is not made and the answer is Canceled with no value (never NotSupported, never a built-in set)
+		"Describe of module 1, context over":     func() (any, error) { v, err := c.Describe(cancelled); return v, err },
+		"Vocabularies of module 1, context over": func() (any, error) { v, err := c.Vocabularies(cancelled); return v, err },
 		"Do of an invalid request": func() (any, error) {
 			v, err := c.Do(ctxT(t, time.Second), Request{Route: "BAD", Method: "GET", Path: "/"})
 			return v, err

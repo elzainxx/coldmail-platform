@@ -47,6 +47,12 @@ const (
 
 var m1eSeq atomic.Int64
 
+// m1eKey is the Idempotency-Key of one submission of these tests: the label, the clock and the run's counter (letters, digits, '.' and '-', well inside module 1's 128), so no two
+// submissions of any test share one: module 1 scopes a key to the caller, and a repeat of a key with another request is a 409.
+func m1eKey(label string) string {
+	return fmt.Sprintf("m1e.%s.%d.%d", label, time.Now().UnixNano(), m1eSeq.Add(1))
+}
+
 func m1eShort(id string) string {
 	if len(id) > 8 {
 		return id[:8]
@@ -368,10 +374,11 @@ func (s *m1eStack) settleThrough(tn *m1eTenant, items []m1eItem, grant int64) *m
 
 	r.fxBase = s.fx.seq()
 	var err error
-	r.jobID, r.counts, err = tn.ad.Submit(s.ctx, r.plan)
+	submitted, err := tn.ad.Submit(s.ctx, r.plan, m1eKey("run-"+tn.name))
 	if err != nil {
 		t.Fatalf("Submit as tenant %s failed (kind %v): %v", tn.name, modclient.KindOf(err), err)
 	}
+	r.jobID, r.counts = submitted.JobID, submitted.Counts
 	r.status, r.polls, r.waited = s.waitComplete(tn, r.jobID, len(r.plan.Items), m1eJobWait)
 	s.drainAndSettle(r)
 	return r

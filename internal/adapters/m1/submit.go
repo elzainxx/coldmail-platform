@@ -18,23 +18,47 @@ type SubmitCounts struct {
 	Malformed int
 }
 
-// ErrOrphanPossible is what errors.Is(err, ErrOrphanPossible) finds in the error of a bulk submission that was not confirmed: the request may have reached module 1 and a job may
-// exist that the platform has no id for. Module 1 cannot be asked ("which jobs did I submit?": there is no listing and no lookup by caller_ref), so the caller must record the
-// intent BEFORE calling Submit and treat this error as "a job of this batch may exist; it will be charged only if its results are ever read".
-var ErrOrphanPossible = errors.New("m1: an orphan job is possible: the bulk submission was not confirmed")
-
-// OrphanError is the error of an unconfirmed submission: a request that was sent and got no usable answer (a timeout, a connection reset, a 5xx, an answer that is not the 202 of the
-// contract). It wraps the *modclient.Error (modclient.KindOf and errors.As see through it) and is ErrOrphanPossible.
-type OrphanError struct {
-	Err *modclient.Error
+// SubmitResult is what a confirmed bulk submission returns: module 1's job id (a validated uuid), the counts of its 202, and whether the module said the answer is a REPLAY.
+type SubmitResult struct {
+	// JobID is module 1's id of the job.
+	JobID string
+	// Counts are the 202's counts (for Submit, exactly the plan's Expected counts).
+	Counts SubmitCounts
+	// Replayed is true when module 1 answered with `Idempotent-Replayed: true`: a job already existed for this caller, this key and this request, and no second job was made. It is
+	// how a caller that sent the same key again after an unconfirmed answer learns that the first request had in fact created the job. A first answer is false.
+	Replayed bool
 }
 
-func (e *OrphanError) Error() string { return ErrOrphanPossible.Error() + ": " + e.Err.Error() }
+// ErrIdempotencyKeyReused is what errors.Is(err, ErrIdempotencyKeyReused) finds in the error of a submission whose Idempotency-Key was already used, by this caller, for a DIFFERENT
+// request: module 1 answered 409 `idempotency_key_reused` and created nothing (the other job's id is not disclosed, and the key still names the original job). The error is a Refused
+// *modclient.Error carrying the module's code. A repeat of the SAME request is no error: it is a replay.
+var ErrIdempotencyKeyReused = errors.New("m1: the idempotency key was already used for a different request: nothing was created")
 
-func (e *OrphanError) Unwrap() error { return e.Err }
+// IdempotencyKeyPattern is module 1's rule for the key: one header value of 1 to 128 characters of [A-Za-z0-9._:-] (published by its describe as idempotency.key_pattern).
+const IdempotencyKeyPattern = "^[A-Za-z0-9._:-]{1,128}$"
 
-// Is makes errors.Is(err, ErrOrphanPossible) true.
-func (e *OrphanError) Is(target error) bool { return target == ErrOrphanPossible }
+// ValidIdempotencyKey says whether key is one module 1 takes (IdempotencyKeyPattern). Submit and SubmitRaw refuse any other before a request, so a bad key is never sent to be
+// answered with a 400.
+func ValidIdempotencyKey(key string) bool {
+	if len(key) < 1 || len(key) > 128 {
+		return false
+	}
+	for i := 0; i < len(key); i++ {
+		c := key[i]
+		if !(c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '.' || c == '_' || c == ':' || c == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+// checkKey refuses a key module 1 would refuse, before any request. The message never quotes the key (it may be derived from something an operator should not see in a log).
+func checkKey(key string) *modclient.Error {
+	if !ValidIdempotencyKey(key) {
+		return newErr(modclient.Invalid, routeSubmit, "the idempotency key must be 1 to 128 characters of letters, digits, '.', '_', ':' and '-' (module 1 refuses any other with a 400); every bulk submission carries one")
+	}
+	return nil
+}
 
 // MismatchError is a Contract error about a CONFIRMED submission: module 1 accepted the job (JobID is its id, a validated uuid) but its counts are not the ones the platform's plan
 // predicted, or do not add up. The job exists; a caller that gets this error has the id it needs to account for it.
@@ -49,63 +73,88 @@ func (e *MismatchError) Error() string {
 
 func (e *MismatchError) Unwrap() error { return e.Err }
 
-// orphanIfUnconfirmed wraps err in an OrphanError when the request was sent and the module did not say, in terms the contract defines, that it created nothing.
-//
-// MODULE-FORCED(M1-F2): module 1's bulk submission is not idempotent (no key, no lookup by caller_ref): a retry after a lost answer creates a second full job that is verified,
-// stored and paid for by the platform's vendor and node budget, so the adapter never retries it and reports every unconfirmed outcome as "an orphan job is possible".
-//
-// Not unconfirmed: a request that never left (Sent false: connection refused, name not found, TLS refused), and an answer in which module 1 refused (Refused, RateLimited,
-// NotFound) or said it is paused (503 `paused`, which its contract defines as "retry unchanged later"). Unconfirmed: a timeout, a reset or truncated connection, any other 503, a
-// 502, 504 or 500, the caller's context ending after the send, and a 2xx that is not the documented 202.
-func orphanIfUnconfirmed(err error) error {
+// unconfirmedNote is added to the message of an error whose request was sent and got no usable answer.
+const unconfirmedNote = "; the submission is not confirmed, and the same Idempotency-Key may be sent again with the same request (a repeat returns the job if it was created and makes one if it was not)"
+
+// unconfirmed says, in the message of a submission error, that the outcome is not known and the same key may be sent again. It changes nothing else: the Kind, the status, the code and
+// the cause stay as modclient made them, so Timeout and Unavailable (and the other classes of a request that was sent) are still what the caller branches on. An error of a request
+// that never left (Sent false: connection refused, name not found, TLS refused), and an answer in which module 1 refused (Refused, RateLimited, NotFound) or said it is paused (503
+// `paused`, "retry unchanged later"), are not unconfirmed and are returned as they are.
+func unconfirmed(err error) error {
 	e := asModclient(err)
 	if e == nil || !e.Sent {
 		return err
 	}
 	switch e.Kind {
 	case modclient.Timeout, modclient.Unavailable, modclient.Internal, modclient.Contract, modclient.Canceled:
-		return &OrphanError{Err: e}
+		c := *e
+		c.Message += unconfirmedNote
+		return &c
 	}
 	return err
+}
+
+// reusedKey turns module 1's 409 `idempotency_key_reused` into an error that errors.Is(err, ErrIdempotencyKeyReused) finds. It stays the Refused *modclient.Error modclient made (status,
+// code, request id and details intact); only its cause and its message are set. Any other error, and a 409 with another code, is returned as it is.
+func reusedKey(err error) error {
+	e := asModclient(err)
+	if e == nil || e.Kind != modclient.Refused || e.Status != http.StatusConflict || e.Code != "idempotency_key_reused" {
+		return err
+	}
+	c := *e
+	c.Cause = ErrIdempotencyKeyReused
+	c.Message += ": this Idempotency-Key already holds a job of a different request, and nothing was created"
+	return &c
 }
 
 type submitBody struct {
 	Items []Item `json:"items"`
 }
 
-// Submit sends the plan's rows as ONE bulk job and returns module 1's job id and the counts of its 202, which must be exactly the plan's Expected counts: a difference is a
-// *MismatchError (Contract kind, naming the counts key, carrying the job id) and not a shrug. The request is never retried by anything (M1-F2). A plan with no rows to send is an
-// Invalid error (a batch of malformed rows has nothing to submit: settle MalformedSettleItems), and a plan that Err refused returns that error; neither makes a request.
+// Submit sends the plan's rows as ONE bulk job under key and returns module 1's job id, the counts of its 202 (which must be exactly the plan's Expected counts: a difference is a
+// *MismatchError, Contract kind, naming the counts key, carrying the job id) and whether the answer was a replay. A plan with no rows to send is an Invalid error (a batch of malformed rows
+// has nothing to submit: settle MalformedSettleItems), a plan that Err refused returns that error, and a key that module 1 would refuse (ValidIdempotencyKey) is an Invalid error; none
+// of the three makes a request.
 //
-// The job id is a validated uuid: module 1 answers a job route with 500 for anything else (M1-F1), so a 202 whose id is not one is a contract error.
-func (a *Adapter) Submit(ctx context.Context, plan Plan) (string, SubmitCounts, error) {
+// EVERY SUBMISSION CARRIES AN IDEMPOTENCY KEY, and that is what makes the request safe to repeat: module 1 scopes the key to the authenticated caller, a repeat of the same request returns
+// the original job (Replayed true, no second job), and the same key with another request is a 409 (ErrIdempotencyKeyReused, Refused, nothing created). So the POST is marked
+// idempotent for modclient and is RETRIED per the dials after a failure that leaves the outcome unknown (a timeout, a reset connection, a 502/503/504), always with the same key.
+// When the retries are exhausted the error is the typed Unavailable or Timeout (or Internal, Contract, Canceled) of the last attempt, with a message that says the submission is not
+// confirmed and the same key may be sent again; the caller, who owns the key, sends it again later. The key must be unique to ONE logical batch (derive it from the platform's job id and
+// a version, never from a clock) and must be kept for as long as the batch can be retried.
+//
+// The job id is a validated uuid: a 202 whose id is not one is a contract error, because no job route can be called with it.
+func (a *Adapter) Submit(ctx context.Context, plan Plan, key string) (SubmitResult, error) {
 	if plan.refusal != nil {
-		return "", SubmitCounts{}, plan.refusal
+		return SubmitResult{}, plan.refusal
 	}
 	if len(plan.Items) == 0 {
-		return "", SubmitCounts{}, newErr(modclient.Invalid, routeSubmit, "the plan has no rows to send (every row is malformed, or there are none): settle the malformed rows and do not submit")
+		return SubmitResult{}, newErr(modclient.Invalid, routeSubmit, "the plan has no rows to send (every row is malformed, or there are none): settle the malformed rows and do not submit")
 	}
-	id, got, err := a.submit(ctx, plan.Items)
+	if e := checkKey(key); e != nil {
+		return SubmitResult{}, e
+	}
+	res, err := a.submit(ctx, plan.Items, key)
 	if err != nil {
-		return "", SubmitCounts{}, err
+		return SubmitResult{}, err
 	}
-	// MODULE-FORCED(M1-F8): module 1 reports how many rows were duplicates and how many it judged malformed only in the 202 (the status route repeats neither and the results
-	// carry them per row), so the 202 is the one place the adapter can check module 1's norm/v1 against its own, and it does it here, before the job is believed.
-	if key := countsDisagree(plan.Expected(), got); key != "" {
-		e := contractErr(routeSubmit, nil, key, fmt.Sprintf("module 1 counted %s differently from the plan (module 1 says %d)", key, countOf(got, key)))
+	// The 202's counts are checked against the prediction of the plan here, before the job is believed: module 1 judges rows with the same frozen norm/v1 rule the platform does, so a
+	// difference means the two implementations have drifted (a validation, not a workaround: the counts are also on the job status as totals).
+	if k := countsDisagree(plan.Expected(), res.Counts); k != "" {
+		e := contractErr(routeSubmit, nil, k, fmt.Sprintf("module 1 counted %s differently from the plan (module 1 says %d)", k, countOf(res.Counts, k)))
 		e.Status = http.StatusAccepted
-		return "", SubmitCounts{}, &MismatchError{JobID: id, Err: e}
+		return SubmitResult{}, &MismatchError{JobID: res.JobID, Err: e}
 	}
-	return id, got, nil
+	return res, nil
 }
 
-// SubmitRaw sends exactly these rows, with none of Prepare's filtering: malformed addresses go to module 1 too, which answers them itself (invalid/invalid_syntax) and counts them.
-// It is NOT the production path (Submit is: a malformed address is never sent, row P-08). It exists for the harness tests that prove module 1's own handling of such rows and its
-// agreement with internal/norm, and for nothing else. It applies module 1's limits on item_ids, rows and body, never retries, and returns the 202's counts unchecked against any
-// prediction (the caller has none).
-func (a *Adapter) SubmitRaw(ctx context.Context, items []Item) (string, SubmitCounts, error) {
+// SubmitRaw sends exactly these rows under key, with none of Prepare's filtering: malformed addresses go to module 1 too, which answers them itself (invalid/invalid_syntax) and counts
+// them. It is NOT the production path (Submit is: a malformed address is never sent, row P-08). It exists for the harness tests that prove module 1's own handling of such rows and its
+// agreement with internal/norm, and for nothing else. It applies module 1's limits on item_ids, rows and body and the same key rule and retry rule as Submit, and returns the 202's counts
+// unchecked against any prediction (the caller has none).
+func (a *Adapter) SubmitRaw(ctx context.Context, items []Item, key string) (SubmitResult, error) {
 	if len(items) == 0 {
-		return "", SubmitCounts{}, newErr(modclient.Invalid, routeSubmit, "there are no rows to send")
+		return SubmitResult{}, newErr(modclient.Invalid, routeSubmit, "there are no rows to send")
 	}
 	refs := make([]string, len(items))
 	bodyBytes := len(`{"items":[]}`) + len(items) - 1
@@ -114,27 +163,32 @@ func (a *Adapter) SubmitRaw(ctx context.Context, items []Item) (string, SubmitCo
 		bodyBytes += itemBytes(it)
 	}
 	if e := checkRefs(refs, "items", "item_id"); e != nil {
-		return "", SubmitCounts{}, e
+		return SubmitResult{}, e
 	}
 	if e := checkLimits(len(items), bodyBytes, module1Limits); e != nil {
-		return "", SubmitCounts{}, e
+		return SubmitResult{}, e
 	}
-	id, got, err := a.submit(ctx, items)
+	if e := checkKey(key); e != nil {
+		return SubmitResult{}, e
+	}
+	res, err := a.submit(ctx, items, key)
 	if err != nil {
-		return "", SubmitCounts{}, err
+		return SubmitResult{}, err
 	}
-	return id, got, nil
+	return res, nil
 }
 
-// submit makes the one POST and decodes its 202. On a failure the error is an *OrphanError when the outcome is unconfirmed, else the modclient error as it came.
-func (a *Adapter) submit(ctx context.Context, items []Item) (string, SubmitCounts, error) {
+// submit makes the POST (retried per the dials, with the same key every time) and decodes its 202. On a failure the error is the modclient error as it came, with a 409
+// idempotency_key_reused made findable (ErrIdempotencyKeyReused) and an unconfirmed outcome said so in its message.
+func (a *Adapter) submit(ctx context.Context, items []Item, key string) (SubmitResult, error) {
 	resp, err := a.c.Do(ctx, modclient.Request{
 		Module: modclient.M1, Route: routeSubmit, Method: http.MethodPost, Path: "/v1/verify/bulk",
 		Body: submitBody{Items: items}, Expect: []int{http.StatusAccepted},
-		Timeout: max(a.timeout, submitTimeoutFloor), Idempotent: false,
+		Timeout: max(a.timeout, submitTimeoutFloor), Idempotent: true,
+		Header: map[string]string{idempotencyHeader: key},
 	})
 	if err != nil {
-		return "", SubmitCounts{}, orphanIfUnconfirmed(err)
+		return SubmitResult{}, unconfirmed(reusedKey(err))
 	}
 	var w struct {
 		JobID  string `json:"job_id"`
@@ -147,24 +201,32 @@ func (a *Adapter) submit(ctx context.Context, items []Item) (string, SubmitCount
 		} `json:"counts"`
 	}
 	if err := modclient.Decode(resp, &w, submitShape); err != nil {
-		return "", SubmitCounts{}, orphanIfUnconfirmed(err)
+		return SubmitResult{}, unconfirmed(err)
+	}
+	replayed := false
+	switch resp.Header.Get(replayedHeader) {
+	case "":
+	case "true":
+		replayed = true
+	default:
+		return SubmitResult{}, unconfirmed(contractErr(routeSubmit, resp, replayedHeader, "the response header that marks a replay is neither absent nor true"))
 	}
 	switch {
 	case !knownSubmitStatus(w.Status):
-		return "", SubmitCounts{}, orphanIfUnconfirmed(contractErr(routeSubmit, resp, "status", "the 202 does not say accepted"))
+		return SubmitResult{}, unconfirmed(contractErr(routeSubmit, resp, "status", "the 202 does not say accepted"))
 	case !validJobID(w.JobID):
-		return "", SubmitCounts{}, orphanIfUnconfirmed(contractErr(routeSubmit, resp, "job_id", "the 202 carries a job id that is not a uuid, so no job route could be called with it"))
+		return SubmitResult{}, unconfirmed(contractErr(routeSubmit, resp, "job_id", "the 202 carries a job id that is not a uuid, so no job route could be called with it"))
 	}
 	c := SubmitCounts{Total: w.Counts.Total, Enqueued: w.Counts.Enqueued, Duplicate: w.Counts.Duplicate, Malformed: w.Counts.Malformed}
 	for _, k := range []string{"total", "enqueued", "duplicate", "malformed"} {
 		if countOf(c, "counts."+k) < 0 {
-			return "", SubmitCounts{}, &MismatchError{JobID: w.JobID, Err: contractErr(routeSubmit, resp, "counts."+k, "a count in the 202 is negative")}
+			return SubmitResult{}, &MismatchError{JobID: w.JobID, Err: contractErr(routeSubmit, resp, "counts."+k, "a count in the 202 is negative")}
 		}
 	}
 	if c.Total != c.Enqueued+c.Duplicate+c.Malformed {
-		return "", SubmitCounts{}, &MismatchError{JobID: w.JobID, Err: contractErr(routeSubmit, resp, "counts.total", "the counts of the 202 do not add up (total is not enqueued + duplicate + malformed)")}
+		return SubmitResult{}, &MismatchError{JobID: w.JobID, Err: contractErr(routeSubmit, resp, "counts.total", "the counts of the 202 do not add up (total is not enqueued + duplicate + malformed)")}
 	}
-	return w.JobID, c, nil
+	return SubmitResult{JobID: w.JobID, Counts: c, Replayed: replayed}, nil
 }
 
 // countsDisagree names the first key of the 202's counts that differs from the plan's prediction ("" when they agree).

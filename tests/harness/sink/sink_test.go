@@ -1065,3 +1065,44 @@ func TestSMTP_ReplyDelayPausesEveryReply(t *testing.T) {
 		t.Fatalf("the default reply delay is %s, want none", d)
 	}
 }
+
+// TestAPI_RawMessageServesTheBytesThatWereSent: the raw message of an accepted seq is exactly what DATA carried (the control: two different messages give two different bodies), a seq that is not a
+// number is 400 and one that was never accepted is 404, and the list endpoint still never carries a body.
+func TestAPI_RawMessageServesTheBytesThatWereSent(t *testing.T) {
+	s := startSink(t, nil)
+	c := s.authed(t)
+	first, second := message("one", "id-1@example.test"), message("two", "id-2@example.test")
+	for _, m := range []string{first, second} {
+		if code, _ := c.deliver("sender@example.test", "someone@example.test", m); code != 250 {
+			t.Fatalf("delivery refused with %d", code)
+		}
+	}
+	code, list := s.get(t, "/api/messages")
+	if code != http.StatusOK || strings.Contains(list, "hello") {
+		t.Fatalf("the list endpoint answered %d %q: it must never carry a body", code, list)
+	}
+	msgs := s.st.Messages()
+	if len(msgs) != 2 {
+		t.Fatalf("%d messages recorded, want 2", len(msgs))
+	}
+	var got [2]string
+	for i, m := range msgs {
+		code, body := s.get(t, "/api/message?seq="+strconv.FormatInt(m.Seq, 10))
+		if code != http.StatusOK || !strings.Contains(body, "Subject: "+[]string{"one", "two"}[i]) || !strings.Contains(body, "hello") {
+			t.Fatalf("raw message %d: HTTP %d %q", m.Seq, code, body)
+		}
+		got[i] = body
+	}
+	if got[0] == got[1] {
+		t.Fatalf("the two raw messages are the same text: the endpoint does not look the message up by seq")
+	}
+	for _, bad := range []string{"", "seq=abc", "seq=0", "seq=-3", "seq=99999"} {
+		want := http.StatusBadRequest
+		if bad == "seq=99999" {
+			want = http.StatusNotFound
+		}
+		if code, _ := s.get(t, "/api/message?"+bad); code != want {
+			t.Errorf("GET /api/message?%s: HTTP %d, want %d", bad, code, want)
+		}
+	}
+}

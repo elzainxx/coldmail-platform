@@ -8,5 +8,18 @@
   },
   "job_id": "00000000-0000-4000-8000-000000000001",
   "processing_paused": false,
-  "status": "running"
+  "status": "running",
+  "totals": {
+    "by_status": {
+      "invalid": 20,
+      "risky": 0,
+      "unknown": 0,
+      "valid": 0
+    },
+    "duplicates": 3,
+    "malformed": 0,
+    "pending": 200,
+    "settled": 20,
+    "submitted": 220
+  }
 }

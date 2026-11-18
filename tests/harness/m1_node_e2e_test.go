@@ -69,10 +69,11 @@ func TestM1Node_E2EBulkSettleThroughAdapter(t *testing.T) {
 	warm := fresh("e2ewarm") + "@valid.fixture.test"
 	cacheBefore := s.cacheRows("valid.fixture.test")
 	w0 := s.fx.seq()
-	wID, _, err := a.ad.Submit(s.ctx, m1ad.Prepare([]m1ad.Input{{ItemRef: "warm-1", Address: warm}}))
+	warmed, err := a.ad.Submit(s.ctx, m1ad.Prepare([]m1ad.Input{{ItemRef: "warm-1", Address: warm}}), m1eKey("warm"))
 	if err != nil {
 		t.Fatalf("the warm-up job was refused (kind %v): %v", modclient.KindOf(err), err)
 	}
+	wID := warmed.JobID
 	s.waitComplete(a, wID, 1, m1eJobWait)
 	wRows, _ := s.drainAll(a.ad, wID)
 	if len(wRows) != 1 || wRows[0].Status != "valid" || wRows[0].Reason != "accepted" || wRows[0].FromCache {
@@ -121,10 +122,11 @@ func TestM1Node_E2EBulkSettleThroughAdapter(t *testing.T) {
 		{ItemID: "c1", Address: "not-an-address"},
 		{ItemID: "c2", Address: "first@second@valid.fixture.test"},
 	}
-	cID, cCounts, err := a.ad.SubmitRaw(s.ctx, sent)
+	rawJob, err := a.ad.SubmitRaw(s.ctx, sent, m1eKey("rawcontrol"))
 	if err != nil {
 		t.Fatalf("the raw control job was refused (kind %v): %v", modclient.KindOf(err), err)
 	}
+	cID, cCounts := rawJob.JobID, rawJob.Counts
 	s.waitDone(a, cID, m1eJobWait)
 	cRows, cMal, _, _ := s.moduleJob(cID)
 	cProblems := m1eCheckModuleRows(cRows, cMal, 1)
@@ -401,10 +403,11 @@ func TestM1Node_E2EPaginationBoundaries(t *testing.T) {
 	if err := plan.Err(); err != nil || len(plan.Items) != n || len(plan.Malformed) != 0 || plan.Duplicates != 3 {
 		t.Fatalf("Prepare of the %d pagination rows: err %v, %d to send, %d malformed, %d repeat(s), want %d, 0 and 3", n, err, len(plan.Items), len(plan.Malformed), plan.Duplicates, n)
 	}
-	jobID, counts, err := tn.ad.Submit(s.ctx, plan)
+	paged, err := tn.ad.Submit(s.ctx, plan, m1eKey("pagination"))
 	if err != nil {
 		t.Fatalf("Submit of the pagination job failed (kind %v): %v", modclient.KindOf(err), err)
 	}
+	jobID, counts := paged.JobID, paged.Counts
 	js, polls, took := s.waitComplete(tn, jobID, n, m1eJobWait)
 	rows, malformed, repeats, owner := s.moduleJob(jobID)
 	t.Logf("NOTE B10 job: %d rows (%d of them repeats), module job %s, the 202 counted %+v; complete after %d poll(s) in %v with counts %+v; module 1 holds %d job_rows (%d malformed, %d repeats), owner is the tenant: %t",
@@ -631,10 +634,10 @@ func TestM1Node_E2ECrossTenant(t *testing.T) {
 	_, _, err = c.ad.Results(ctx, aID, "", 0)
 	typed("C's Results on A's job", err, modclient.Refused, http.StatusUnauthorized, "unauthenticated")
 	jobsBefore := s.moduleJobCount()
-	_, _, err = c.ad.Submit(ctx, m1ad.Prepare([]m1ad.Input{{ItemRef: "c-1", Address: fresh("e2ec") + "@nomx.fixture.test"}}))
+	_, err = c.ad.Submit(ctx, m1ad.Prepare([]m1ad.Input{{ItemRef: "c-1", Address: fresh("e2ec") + "@nomx.fixture.test"}}), m1eKey("stranger"))
 	typed("C's Submit", err, modclient.Refused, http.StatusUnauthorized, "unauthenticated")
-	if errors.Is(err, m1ad.ErrOrphanPossible) {
-		problems = append(problems, "C's refused Submit is reported as a possible orphan job: a 401 created nothing and must not look like an unconfirmed submission")
+	if err != nil && strings.Contains(err.Error(), "may be sent again") {
+		problems = append(problems, "C's refused Submit says the same key may be sent again: a 401 created nothing and must not look like an unconfirmed submission")
 	}
 	if jobsAfter := s.moduleJobCount(); jobsAfter != jobsBefore {
 		problems = append(problems, fmt.Sprintf("module 1 holds %d job(s) after C's refused Submit, %d before: the 401 must create nothing", jobsAfter, jobsBefore))
@@ -671,11 +674,11 @@ func (s *m1eStack) submitItems(tn *m1eTenant, items []m1eItem) string {
 	for i, it := range items {
 		inputs[i] = m1ad.Input{ItemRef: it.ref, Address: it.address}
 	}
-	id, _, err := tn.ad.Submit(s.ctx, m1ad.Prepare(inputs))
+	submitted, err := tn.ad.Submit(s.ctx, m1ad.Prepare(inputs), m1eKey("items-"+tn.name))
 	if err != nil {
 		s.t.Fatalf("Submit as tenant %s failed (kind %v): %v", tn.name, modclient.KindOf(err), err)
 	}
-	return id
+	return submitted.JobID
 }
 
 func (s *m1eStack) freshUUID() (string, error) {

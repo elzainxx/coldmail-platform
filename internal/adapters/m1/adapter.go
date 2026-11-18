@@ -7,11 +7,15 @@
 // THE VERBS.
 //
 //	Prepare   (pure) normalises every address with internal/norm; a malformed address is NEVER sent: it is counted in the Plan and mapped to the free outcome of charge row P-08.
-//	Submit    POST /v1/verify/bulk. NOT idempotent, so never retried; an unconfirmed answer is an *OrphanError (errors.Is(err, ErrOrphanPossible)).
-//	Status    GET /v1/jobs/{id}. Idempotent, retried per the dials.
-//	Results   one page of GET /v1/jobs/{id}/results; Drain walks every page and settles as rows arrive (the catch-up walk).
+//	Submit    POST /v1/verify/bulk under a caller-supplied Idempotency-Key that EVERY submission carries, so the request is idempotent and retried per the dials with the same key; a repeat
+//	          is the same job (SubmitResult.Replayed), the same key with another request is a 409 (errors.Is(err, ErrIdempotencyKeyReused)), and an outcome still unconfirmed after the
+//	          retries is the typed Unavailable or Timeout error of the last attempt, which says the same key may be sent again.
+//	Status    GET /v1/jobs/{id}: status, counts and totals from one snapshot, cross-checked. Idempotent, retried per the dials.
+//	Results   one page of GET /v1/jobs/{id}/results; Drain walks every page and settles as rows arrive (and walks again once a job completes behind the cursor).
 //	Verify    POST /v1/verify for one address, synchronously. Billed, so never retried.
-//	Health, Ready, Describe   pass-throughs on the modclient (Describe is NotSupported: module 1 has none).
+//	Describe, CheckVocabularies   GET /v1/describe: the module says what it may say; the adapter checks it is module 1 offering what it relies on, and compares its vocabularies and error
+//	          codes with the sets it handles, exactly as the adapter of modules 2 and 3 does.
+//	Health, Ready   pass-throughs on the modclient.
 //
 // WHAT IT NEVER DOES. It never invents an outcome: a module that is down, slow, paused or answering an unexpected shape yields a typed *modclient.Error (modclient.KindOf), never a
 // default verdict and never a zero count that looks like an answer. A function that returns an error returns no value beside it. It holds no state between calls and has no job logic
@@ -39,8 +43,9 @@ const (
 	// DefaultPoll is how long Drain waits before it looks again when the list is exhausted but the job is not complete.
 	DefaultPoll = time.Second
 
-	// submitTimeoutFloor is the least time one bulk submission may take: module 1 stores up to 100,000 rows in the request, and a timeout that fires while it is still working leaves
-	// an orphan job. The dial (PLATFORM_MODULE_TIMEOUT_MS) applies when it is larger.
+	// submitTimeoutFloor is the least time one bulk submission may take: module 1 stores up to 100,000 rows in the request, and a timeout that fires while it is still working is an
+	// unconfirmed outcome that has to be repeated with the same key (safe, but a wasted attempt of a job it may well have stored). The dial (PLATFORM_MODULE_TIMEOUT_MS) applies when
+	// it is larger.
 	submitTimeoutFloor = 2 * time.Minute
 	// verifyTimeoutFloor is the least time one synchronous verification may take: the module holds the request for its DNS lookups and the node's SMTP session (the control plane's
 	// node deadline is 15 s by default and 30 s in the harness).
@@ -143,11 +148,6 @@ func (a *Adapter) Health(ctx context.Context) (*modclient.Health, error) { retur
 // Ready is module 1's readiness (GET /readyz): its checks (db, pepper, and queue where declared) and its reasons, as modclient.Readiness. "Not ready" is an answer, not an error. It
 // says nothing about the verifier node or the SMTP stage (research m1 1.7): only verdicts show that.
 func (a *Adapter) Ready(ctx context.Context) (*modclient.Readiness, error) { return a.c.Ready(ctx) }
-
-// Describe is NotSupported for module 1, without any network call: it has no describe route. The vocabularies the adapter maps from are published by Contracts().
-func (a *Adapter) Describe(ctx context.Context) (*modclient.Describe, error) {
-	return a.c.Describe(ctx)
-}
 
 // contractErr is a Contract error about an answer that was received and judged a success but whose content the adapter refuses: key names the response key, msg is a sentence
 // written here (never a value from the response).

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 )
 
 // The control API (HTTP, no authentication: the sink only exists on the harness's private network, which publishes no port).
@@ -38,6 +39,22 @@ func (s *Server) APIHandler() http.Handler {
 			msgs = []Message{}
 		}
 		writeJSON(w, http.StatusOK, msgs)
+	})
+	// GET /api/message?seq=N: the raw bytes of one accepted message (dot-stuffing undone, exactly what the SMTP DATA carried), as message/rfc822. Phase 3 close-out D5: the plain-text part
+	// travels from the platform's public.job_items through module 2 to the wire, and only the bytes can show the multipart structure. 400 for a seq that is not a number, 404 for one the sink never accepted.
+	mux.HandleFunc("GET /api/message", func(w http.ResponseWriter, r *http.Request) {
+		seq, err := strconv.ParseInt(r.URL.Query().Get("seq"), 10, 64)
+		if err != nil || seq < 1 {
+			writeError(w, http.StatusBadRequest, "seq must be the number of an accepted message (see GET /api/messages)")
+			return
+		}
+		raw, ok := s.st.Raw(seq)
+		if !ok {
+			writeError(w, http.StatusNotFound, "no accepted message has that seq")
+			return
+		}
+		w.Header().Set("Content-Type", "message/rfc822")
+		_, _ = w.Write(raw)
 	})
 	mux.HandleFunc("POST /api/reset", func(w http.ResponseWriter, r *http.Request) {
 		n := s.st.Reset()

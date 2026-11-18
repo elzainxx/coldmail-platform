@@ -1,10 +1,8 @@
 --- a/internal/adapters/m1/forced.txt
 +++ b/internal/adapters/m1/forced.txt
-@@ -2,7 +2,6 @@
- M1-F2|submit.go|the bulk submission is not idempotent, so it is never retried and every unconfirmed outcome is reported as "an orphan job is possible"
- M1-F3|vocab.go|module 1 has no describe, vocabulary or policy route, so the adapter holds its closed vocabularies as constants and refuses a value outside them
- M1-F4|drain.go|a running job's results are a moving target (a row that settles behind an issued cursor is never revisited), so a complete job is walked again from the start
+@@ -1,5 +1,4 @@
+ M1-F4|drain.go|while a job runs its results are a moving target (a row that settles behind an issued cursor is not revisited by that walk), so a job that completes after the streaming pass is walked again once from the start; the module documents and tests that the listing is stable once complete is true, which the re-walk relies on
 -M1-F5|results.go|every repeat of an address is answered with the first row's full verdict and marked only by duplicate_of, so the adapter maps it to the free platform duplicate outcome
  M1-F6|results.go|a bulk result's meta.from_cache is always false, so the cache signal is read from flags.from_cache
  M1-F7|results.go|failure_origin and smtp_skipped_reason live in the open signals bag and are absent when they do not apply, so absence is a normal answer and presence is checked against the closed vocabulary
- M1-F8|submit.go|the 202 is the only place module 1 reports its duplicate and malformed counts, so Submit checks them against the plan's prediction there
+ M1-F9|plan.go|one bad item_id rejects the whole job with a 400 and labels must be unique, non-blank, at most 200 bytes and without control characters, so the adapter checks every label first
