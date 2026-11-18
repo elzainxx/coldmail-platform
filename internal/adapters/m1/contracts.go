@@ -170,8 +170,9 @@ var errorCodeValues = []string{
 // each set constrains IN THAT RESPONSE (a bare set name is read by the drift gate as a path to a top-level key, which most of these bodies do not have).
 //
 // A set is listed on a contract only when the contract's recorded body has a string at that path: a vocabulary that constrains nothing in its own fixture would be inert. The
-// signals of an unknown or degraded answer (failure_origin, smtp_skipped_reason) are in no recorded verdict or results row (the real node's pages have no unknown row and no row
-// that skipped the SMTP stage), so they are listed only on the describe contract, where module 1 publishes every set it has (`vocabularies.<name>.values[]`): that is the one body
+// signals of an unknown or degraded answer (failure_origin, smtp_skipped_reason) are in no recorded verdict (the one synchronous verdict is a valid one); the 7-row results page recorded
+// in the Phase 3 close-out D1 DOES hold two `failure_origin: remote` rows and one skip token, but they sit in the open `signals` bag, which the Shape does not list key by key, so they
+// are listed only on the describe contract, where module 1 publishes every set it has (`vocabularies.<name>.values[]`): that is the one body
 // that holds all seven the adapter maps, and the live drift gate compares the live values of each with the adapter's. The results page recorded WITHOUT rows (case empty_page) lists
 // no row set at all (it has no row to hold a status). The describe contract also lists the error codes at `error_codes[].code`. The replay of an idempotent create is the same body
 // as its first answer and is not a contract of its own.

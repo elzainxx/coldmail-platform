@@ -22,8 +22,8 @@ import (
 	"github.com/coldmail-platform/platform/internal/modclient"
 )
 
-// These tests are unit tests: they decode the fixtures of testdata/contract (seven RECORDED from the real module in run 44211659227 and normalised by contractcheck.Normalise, the rest
-// hand-written from the module's code: see testdata/README.md) served by in-process stand-ins. Module 1 itself is never mocked in the harness, where the live tests drive this adapter against the real module.
+// These tests are unit tests: they decode the fixtures of testdata/contract (most of them RECORDED from the real module and normalised by contractcheck.Normalise, the rest
+// hand-written from the module's code: see testdata/README.md for which is which) served by in-process stand-ins. Module 1 itself is never mocked in the harness, where the live tests drive this adapter against the real module.
 
 const (
 	// testJob is the job id of every recorded fixture: contractcheck.Normalise rewrites each uuid of a recording to 00000000-0000-4000-8000-00000000000N by order of first
@@ -227,8 +227,10 @@ func kindAndKey(err error) (modclient.Kind, string) {
 
 // ---- values derived from the recorded fixtures ------------------------------------------------------------------------------------------------------------
 //
-// A recorded fixture holds real values (a job of 220 rows, counts of 3/1/0/2) that the hand-written ones did not. Tests that serve one never repeat those values as literals: they
-// parse the fixture with encoding/json into generic maps (a decoder independent of the adapter's own) and compare what the adapter decoded with what that parse says.
+// A recorded fixture holds real values (a running job of 2 rows with nothing settled, a results page of 7 rows that starts at ordinal 7, counts of 3/1/0/2) that the hand-written ones
+// did not. Tests that serve one never repeat those values as literals: they parse the fixture with encoding/json into generic maps (a decoder independent of the adapter's own) and
+// compare what the adapter decoded with what that parse says. A test that needs a job or a page of another size or shape than the recording (a job with rows settled, say) builds the
+// body inline by editing the parsed tree of the recording (mutation.apply), with the numbers derived from the recording's own.
 
 // recordedDoc is a fixture of testdata/contract as a generic JSON document.
 func recordedDoc(t testing.TB, name string) map[string]any {

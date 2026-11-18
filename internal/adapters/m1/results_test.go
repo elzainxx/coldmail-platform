@@ -13,9 +13,11 @@ import (
 	"github.com/coldmail-platform/platform/internal/money"
 )
 
-// handPage is a page of results written by hand, because the real node's recordings (testdata/contract) hold none of its cases: a first answer, an unknown with its origin, a repeat of
-// row 0 (the recorded repeats point at rows 10, 100 and 150), a degraded answer with its skip token and origin, and a malformed row. It keeps the shapes of module 1's handler
-// (api.go handleJobResults, bulk_rows.go, queue/enqueue.go rejectTemplate).
+// handPage is a page of results written by hand, for the cases the real node's recording (testdata/contract/results-page.json: seven rows from the middle of a job, ordinals 7 to 13)
+// does not hold: a page that starts at the first row of the job (ordinal 0), an origin other than `remote` (`own`), a skip token that comes together with an origin, a repeat whose
+// original is on the same page, and a malformed row. (The recording does hold an unknown with origin `remote`, a skip token and a repeat of row 0 that is not on its page: those
+// are compared row for row with the file in TestResults_ReadsEveryRecordedPage.) It keeps the shapes of module 1's handler (api.go handleJobResults, bulk_rows.go,
+// queue/enqueue.go rejectTemplate).
 const handPage = `{"job_id":"` + testJob + `","results":[
 {"api_version":"v1","status":"valid","reason":"accepted","confidence":90,"recommendation":"send","email":"","domain":"acme.example","flags":{"from_cache":false},"signals":{"smtp_code":"250"},"raw":null,"item_id":"row-0","ordinal":0},
 {"api_version":"v1","status":"unknown","reason":"dns_error","confidence":10,"recommendation":"review","email":"","domain":"gone.example","flags":{"from_cache":false},"signals":{"failure_origin":"remote","retry_after_hint_s":300},"raw":null,"item_id":"row-1","ordinal":1},
@@ -25,7 +27,7 @@ const handPage = `{"job_id":"` + testJob + `","results":[
 ],"next_cursor":"4"}`
 
 // recordedResultsPages names the recorded fixtures of the two results contracts that answered 200, split by what the FILE holds: the ones with rows and the ones with none. The
-// split is made from the content, never from the case name (in an earlier recording the two were filed the wrong way round: `page` held no row and `empty_page` held 220).
+// split is made from the content, never from the case name (in an earlier recording the two were filed the wrong way round: `page` held no row and `empty_page` held all the rows).
 func recordedResultsPages(t *testing.T) (populated, empty []string) {
 	t.Helper()
 	for _, c := range Contracts() {
@@ -41,8 +43,8 @@ func recordedResultsPages(t *testing.T) (populated, empty []string) {
 	return populated, empty
 }
 
-// TestResults_ReadsTheCasesTheRecordingsDoNotHold: a hand-written page (handPage: a first answer, an unknown with its origin, a repeat of row 0, a degraded answer with its skip
-// token and origin, a malformed row) decodes to exactly the fields the platform acts on, in order, with the cursor; every key it does not read (email, meta, raw, confidence, ...)
+// TestResults_ReadsTheCasesTheRecordingsDoNotHold: a hand-written page (handPage: a first answer at ordinal 0, an unknown with its origin, a repeat of row 0 on the same page, a
+// degraded answer with its skip token and origin, a malformed row) decodes to exactly the fields the platform acts on, in order, with the cursor; every key it does not read (email, meta, raw, confidence, ...)
 // is ignored. Paired control: a page with nothing on it (the recorded empty page) decodes to NO rows and "" (not an error), and two different elements decode to different Rows,
 // so the decoder is not returning a constant; duplicate_of 0 is a pointer to 0, never an absent key.
 func TestResults_ReadsTheCasesTheRecordingsDoNotHold(t *testing.T) {
@@ -86,8 +88,11 @@ func TestResults_ReadsTheCasesTheRecordingsDoNotHold(t *testing.T) {
 
 // TestResults_ReadsEveryRecordedPage: each page RECORDED from the real module decodes row for row to what an independent parse of the same file says: ordinal, item_id, status,
 // reason, the duplicate_of of the rows that repeat an address (a pointer to the value, 0 included), the cache flag, the skip token and the failure origin, and the page's next
-// cursor; the rows are one per ordinal, in order. The recordings must include a page with rows (220 of them) and a page with none: a set of one kind only is red. Paired controls:
-// the same comparison over a copy with one row changed, and a page with its rows against the expectation of one without, each fail, so it is a comparison that can see a difference.
+// cursor; the rows are one per ordinal, in order: a row's ordinal is the file's own (the page's first ordinal plus the row's position), never its position in the page, so a recording
+// of a page from the middle of a job (its first ordinal is not 0) is read by the same expectation as one from the start. The recordings must include a page with rows and a page with
+// none: a set of one kind only is red. Paired controls: the same comparison over a copy with one row changed, and a page with its rows against the expectation of one without, each
+// fail, so it is a comparison that can see a difference. What the recording does and does not exercise (repeats, origins, skip tokens, cache hits) is logged, so a recording that
+// holds none of a provenance field is visibly a comparison of empty against empty on that field.
 func TestResults_ReadsEveryRecordedPage(t *testing.T) {
 	read := func(body string) ([]Row, string, error) {
 		return serve(t, 200, body).adapter(t).Results(testCtx(t), testJob, "", 0)
@@ -98,6 +103,10 @@ func TestResults_ReadsEveryRecordedPage(t *testing.T) {
 		if len(rows) != len(want) {
 			return []string{fmt.Sprintf("%d row(s), the file has %d", len(rows), len(want))}
 		}
+		if len(want) == 0 {
+			return nil
+		}
+		first := num(t, want[0]["ordinal"]) // the ordinal the page starts at: 0 for the first page of a job, anything for a page from the middle of one
 		for i, w := range want {
 			sig := w["signals"].(map[string]any)
 			origin, _ := sig["failure_origin"].(string)
@@ -109,8 +118,8 @@ func TestResults_ReadsEveryRecordedPage(t *testing.T) {
 				dup = &n
 			}
 			switch {
-			case r.Ordinal != num(t, w["ordinal"]) || r.Ordinal != i:
-				out = append(out, fmt.Sprintf("row %d: ordinal %d", i, r.Ordinal))
+			case r.Ordinal != num(t, w["ordinal"]) || r.Ordinal != first+i:
+				out = append(out, fmt.Sprintf("row %d: ordinal %d, the file has %d and its page starts at %d", i, r.Ordinal, num(t, w["ordinal"]), first))
 			case r.ItemID != w["item_id"].(string):
 				out = append(out, fmt.Sprintf("row %d: item_id %q", i, r.ItemID))
 			case r.Status != w["status"].(string) || r.Reason != w["reason"].(string):
@@ -164,7 +173,28 @@ func TestResults_ReadsEveryRecordedPage(t *testing.T) {
 			t.Fatalf("%s control: no rows against a page with rows reported no difference", name)
 		}
 	}
-	t.Logf("recorded pages with rows: %v (%d row(s) in the first); without: %v", populated, len(recordedRows(t, populated[0])), empty)
+	// what the recordings exercise: a provenance field no recorded row carries was compared as empty against empty
+	var nRows, nDup, nOrigin, nSkip, nCache int
+	for _, name := range populated {
+		for _, w := range recordedRows(t, name) {
+			sig := w["signals"].(map[string]any)
+			nRows++
+			if _, ok := w["duplicate_of"]; ok {
+				nDup++
+			}
+			if _, ok := sig["failure_origin"]; ok {
+				nOrigin++
+			}
+			if _, ok := sig["smtp_skipped_reason"]; ok {
+				nSkip++
+			}
+			if w["flags"].(map[string]any)["from_cache"].(bool) {
+				nCache++
+			}
+		}
+	}
+	t.Logf("recorded pages with rows: %v (%d row(s) in the first, ordinals from %d); without: %v; over all %d recorded row(s): %d repeat(s), %d with a failure origin, %d with a skip token, %d from the cache (a count of 0 is a field this test only compared as empty)",
+		populated, len(recordedRows(t, populated[0])), num(t, recordedRows(t, populated[0])[0]["ordinal"]), empty, nRows, nDup, nOrigin, nSkip, nCache)
 }
 
 // TestResults_ReadsOriginSkipTokenAndCache: the three provenance fields the charge table reads come out of their nested places (flags.from_cache, signals.smtp_skipped_reason,

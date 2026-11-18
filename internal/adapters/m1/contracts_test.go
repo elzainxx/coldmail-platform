@@ -958,8 +958,8 @@ func TestVocabListsAreTheSwitches(t *testing.T) {
 
 // unpublishedSets are the sets the adapter maps that NO contract publishes, and why. A set is published only on a contract whose recorded body has a string at the path it
 // constrains (TestEveryVocabularyConstrainsSomethingInItsOwnFixture), and a set no recording holds would be inert if listed. It is EMPTY since the describe contract: module 1's
-// describe publishes the values of every set the adapter maps (failure_origin and smtp_skipped_reason included, which no verdict or results row of the real node holds), at
-// `vocabularies.<name>.values[]`. The machinery stays so that a set that stops being published has to be declared here, with its reason, and TestVocabListsAreTheSwitches says to remove
+// describe publishes the values of every set the adapter maps (failure_origin and smtp_skipped_reason included, which no verdict of the real node holds and which only some rows of the
+// recorded results page carry), at `vocabularies.<name>.values[]`. The machinery stays so that a set that stops being published has to be declared here, with its reason, and TestVocabListsAreTheSwitches says to remove
 // an entry as soon as a contract lists it.
 var unpublishedSets = map[string]string{}
 

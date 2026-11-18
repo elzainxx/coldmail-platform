@@ -3,6 +3,7 @@ package m1
 import (
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -197,49 +198,97 @@ func TestStatus_ReadsTheTotalsAsTheModuleSaidThem(t *testing.T) {
 }
 
 // TestStatus_AnAnswerThatContradictsItselfIsAContractError: the counts, the totals and `complete` come from one snapshot, so numbers that break its identities are the module
-// contradicting itself, and a key that is missing or retyped is the module changing its shape. Each case starts from the recorded running job and changes one thing, and gets a Contract
-// error that names the key and no value: totals.submitted that is not settled + pending, a by_status that does not sum to settled, counts.total, counts.settled or counts.pending that
-// is not its totals twin, a negative count anywhere in totals, and a totals key removed or retyped. Control: the recorded job unchanged is read, and so is the same job with the
-// identities repaired (two numbers changed together keep every identity).
+// contradicting itself, and a key that is missing or retyped is the module changing its shape. Each case starts from a job read from the recording of a running job and changes one
+// thing, and gets a Contract error that names the key and no value: totals.submitted that is not settled + pending, a by_status that does not sum to settled, counts.total,
+// counts.settled or counts.pending that is not its totals twin, a negative count anywhere in totals, and a totals key removed or retyped.
+//
+// The recording is a job that has settled nothing (every row pending, every by_status count 0), so by itself it cannot say "one fewer than settled" without a negative count: the
+// numeric cases start from a job BUILT from it inline (the recorded body with more rows submitted and some of the pending rows settled as `invalid`, every number that the change
+// touches changed together), and every number a case writes is that job's own number plus or minus one, derived, never a literal of a recording. The cases about the shape of
+// `totals` (a key removed, a value of the wrong type) do not depend on any number and are run on BOTH the recorded body and the built one. Paired controls: the recorded job
+// unchanged is read (to what the file says), and so is the built job (to the numbers it was built with): the same numbers, changed together in every place that holds them, keep every
+// identity, so what the cases are refused for is the one thing each changed; and each mutated body is checked to differ from the body it started from.
 func TestStatus_AnAnswerThatContradictsItselfIsAContractError(t *testing.T) {
-	base := fixture(t, "job-running.json") // 220 submitted, 20 settled, 200 pending, by_status invalid 20
-	cases := []mutation{
-		retype("totals.submitted", 221),
-		retype("totals.pending", 199).naming("totals.submitted"),
-		retype("totals.settled", 21).naming("totals.submitted"),
-		retype("totals.by_status.valid", 5).naming("totals.by_status"),
-		retype("totals.by_status.invalid", 19).naming("totals.by_status"),
-		retype("counts.total", 221),
-		retype("counts.settled", 21).naming("counts.settled"),
-		retype("counts.pending", 199),
+	recorded := fixture(t, "job-running.json")
+	rec := recordedStatus(t, "job-running.json") // what the file says, read without the adapter
+
+	// the built job: the recording with extra more rows submitted, settle of the pending rows settled as invalid
+	const extra, settle = 10, 4
+	built := rec
+	built.Totals.Submitted += extra
+	built.Totals.Settled += settle
+	built.Totals.Pending += extra - settle
+	built.Totals.ByStatus.Invalid += settle
+	built.Counts = JobCounts{Total: built.Totals.Submitted, Settled: built.Totals.Settled, Pending: built.Totals.Pending}
+	if built.Totals.Pending < 2 || built.Totals.Settled < 2 || built.Totals.ByStatus.Invalid < 1 || built == rec {
+		t.Fatalf("setup: the built job %+v cannot say one fewer or one more of any of its numbers without a negative count, or it is the recording %+v", built, rec)
+	}
+	t0 := built.Totals
+	grown := recorded
+	for _, m := range []mutation{
+		retype("totals.submitted", t0.Submitted), retype("totals.settled", t0.Settled), retype("totals.pending", t0.Pending), retype("totals.by_status.invalid", t0.ByStatus.Invalid),
+		retype("counts.total", built.Counts.Total), retype("counts.settled", built.Counts.Settled), retype("counts.pending", built.Counts.Pending),
+	} {
+		grown = m.apply(t, grown)
+	}
+
+	// the cases about shape: no number of these is the recording's
+	shape := func(b JobStatus) []mutation {
+		return []mutation{
+			remove("totals"),
+			remove("totals.submitted"), remove("totals.settled"), remove("totals.pending"), remove("totals.duplicates"), remove("totals.malformed"),
+			remove("totals.by_status"), remove("totals.by_status.valid"), remove("totals.by_status.invalid"), remove("totals.by_status.risky"), remove("totals.by_status.unknown"),
+			retype("totals", []any{}), retype("totals.by_status", b.Totals.Settled), retype("totals.submitted", strconv.Itoa(b.Totals.Submitted)),
+			retype("totals.settled", float64(b.Totals.Settled)+0.5), retype("totals.by_status.invalid", nil),
+		}
+	}
+	// the cases about the identities, on the built job. A case that names another key than the one it changed is one where the changed number breaks the identity Status checks first
+	// (`naming` says which): the totals are checked against themselves before the counts are checked against the totals.
+	identities := []mutation{
+		retype("totals.submitted", t0.Submitted+1),
+		retype("totals.pending", t0.Pending-1).naming("totals.submitted"),
+		retype("totals.settled", t0.Settled+1).naming("totals.submitted"),
+		retype("totals.by_status.valid", t0.ByStatus.Valid+1).naming("totals.by_status"),
+		retype("totals.by_status.invalid", t0.ByStatus.Invalid-1).naming("totals.by_status"),
+		retype("counts.total", built.Counts.Total+1),
+		retype("counts.settled", built.Counts.Settled+1),
+		retype("counts.pending", built.Counts.Pending-1),
 		retype("totals.duplicates", -1),
 		retype("totals.malformed", -1),
 		retype("totals.by_status.risky", -1),
 		retype("totals.by_status.unknown", -3),
-		remove("totals"),
-		remove("totals.submitted"), remove("totals.settled"), remove("totals.pending"), remove("totals.duplicates"), remove("totals.malformed"),
-		remove("totals.by_status"), remove("totals.by_status.valid"), remove("totals.by_status.invalid"), remove("totals.by_status.risky"), remove("totals.by_status.unknown"),
-		retype("totals", []any{}), retype("totals.by_status", 20), retype("totals.submitted", "220"), retype("totals.settled", 20.5), retype("totals.by_status.invalid", nil),
 	}
-	// a case that names another key than the one it changed is one where the changed number breaks the identity Status checks first (`naming` says which): the totals are checked
-	// against themselves before the counts are checked against the totals
-	for _, m := range cases {
-		mutated := m.apply(t, base)
-		js, err := serve(t, 200, mutated).adapter(t).Status(testCtx(t), testJob)
-		kind, key := kindAndKey(err)
-		if kind != modclient.Contract || key != m.key || js != (JobStatus{}) {
-			t.Errorf("%s: got %+v kind %v key %q (%v), want no value and a Contract error naming %q", m.name, js, kind, key, err, m.key)
+	groups := []struct {
+		label string
+		body  string
+		job   JobStatus
+		cases []mutation
+	}{
+		{"the recorded job", recorded, rec, shape(rec)},
+		{"the job built from the recording", grown, built, append(shape(built), identities...)},
+	}
+	checked := 0
+	for _, g := range groups {
+		unchanged := encodeDoc(t, decodeDoc(t, g.body)) // a mutated body is written back by the same encoder, so this is what "no change" looks like
+		for _, m := range g.cases {
+			mutated := m.apply(t, g.body)
+			if mutated == unchanged {
+				t.Errorf("%s, %s: the mutation changed nothing, so it proves nothing", g.label, m.name)
+				continue
+			}
+			js, err := serve(t, 200, mutated).adapter(t).Status(testCtx(t), testJob)
+			kind, key := kindAndKey(err)
+			if kind != modclient.Contract || key != m.key || js != (JobStatus{}) {
+				t.Errorf("%s, %s: got %+v kind %v key %q (%v), want no value and a Contract error naming %q", g.label, m.name, js, kind, key, err, m.key)
+			}
+			checked++
+		}
+		// control: the body each case started from is accepted, and is read as the numbers it holds
+		if js, err := serve(t, 200, g.body).adapter(t).Status(testCtx(t), testJob); err != nil || js != g.job {
+			t.Fatalf("control: %s gave %+v %v, want %+v", g.label, js, err, g.job)
 		}
 	}
-	if js, err := serve(t, 200, base).adapter(t).Status(testCtx(t), testJob); err != nil || js != recordedStatus(t, "job-running.json") {
-		t.Fatalf("control: the recorded job gave %+v %v", js, err)
-	}
-	// control: two numbers changed together keep every identity (submitted and counts.total, 220 to 230, with pending 200 to 210 in both places)
-	repaired := base
-	for _, m := range []mutation{retype("totals.submitted", 230), retype("totals.pending", 210), retype("counts.total", 230), retype("counts.pending", 210)} {
-		repaired = m.apply(t, repaired)
-	}
-	if js, err := serve(t, 200, repaired).adapter(t).Status(testCtx(t), testJob); err != nil || js.Totals.Submitted != 230 || js.Totals.Pending != 210 {
-		t.Fatalf("control: a consistent job of 230 rows was refused or misread: %+v %v", js, err)
+	if checked < 40 {
+		t.Fatalf("%d case(s) ran, want at least 40 (16 of shape on each of two jobs, 12 of identity on the built one)", checked)
 	}
 }
