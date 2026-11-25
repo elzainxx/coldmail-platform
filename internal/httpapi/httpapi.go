@@ -35,6 +35,10 @@ type Deps struct {
 	Draining     func() bool
 	ReadyTimeout time.Duration
 	Now          func() time.Time
+	// Mount, when set, registers the routes of another package (the job API, internal/api) on the handler's mux. They sit beneath the same middleware as the probes: a request id on every
+	// response, the access log (without the query string) and the panic recovery. nil mounts nothing and the catch-all answers every other path with the 404 envelope, as before. Such a
+	// package writes its errors with WriteError so that they have the envelope of this one.
+	Mount func(mux *http.ServeMux)
 }
 
 type service struct {
@@ -77,6 +81,9 @@ func newHandler(d Deps, extra func(*http.ServeMux)) http.Handler {
 	// or a curl -X POST never gets a 405 from them.
 	mux.HandleFunc("/healthz", s.healthz)
 	mux.HandleFunc("/readyz", s.readyz)
+	if d.Mount != nil {
+		d.Mount(mux)
+	}
 	if extra != nil {
 		extra(mux)
 	}

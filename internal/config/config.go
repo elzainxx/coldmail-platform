@@ -77,6 +77,12 @@ const (
 	VarJWTAudience  = "PLATFORM_JWT_AUDIENCE"
 	VarJWTLeewaySec = "PLATFORM_JWT_LEEWAY_SEC"
 
+	// The limits of a job and of the job API (internal/app builds the job store and the API from them, Phase 4 B14b): the longest list one job holds, how long a confirmed or scheduled job waits for the
+	// engine before it expires, and the largest page of results the API serves.
+	VarJobMaxRows          = "PLATFORM_JOB_MAX_ROWS"
+	VarJobMaxStartDelayMin = "PLATFORM_JOB_MAX_START_DELAY_MIN"
+	VarResultsPageMax      = "PLATFORM_RESULTS_PAGE_MAX"
+
 	// Which instance this is, when more than one platform instance runs (Phase 2 close-out D9): the name of the session that holds the leader lock of the loops.
 	VarInstanceID = "PLATFORM_INSTANCE_ID"
 )
@@ -102,6 +108,14 @@ const (
 	maxJWTLeewaySec = 300
 	maxJWTClaimText = 512
 	jwtAudienceDef  = "authenticated"
+)
+
+// The bounds of the job dials. A job holds at most 100,000 rows (module 1's own limit for one job, and the store's default: internal/jobs.DefaultMaxRows, pinned equal by a test); a start may be
+// waited for at most a day; a page of results is at most 1,000 (the page the CSV download reads, internal/jobs.ResultsPageSize, pinned equal by a test).
+const (
+	maxJobRows          = 100000
+	maxJobStartDelayMin = 1440
+	maxResultsPage      = 1000
 )
 
 // Upper bounds on the integer dials. They are sanity guards, not tuning: they keep a typo (an extra digit,
@@ -212,6 +226,12 @@ func Vars() []Var {
 			Doc: "The audience (aud) every access token must include; Supabase gives a signed-in user's token authenticated. Printable ASCII with no spaces, at most 512 bytes. Consumed by `internal/auth.FromConfig`."},
 		{Name: VarJWTLeewaySec, Default: "30",
 			Doc: fmt.Sprintf("Seconds of clock difference between the token's issuer and this process that exp, nbf and iat are judged with: a token is expired at exp plus this, and not yet valid before nbf minus this. Integer, 0 to %d. Consumed by `internal/auth.FromConfig`.", maxJWTLeewaySec)},
+		{Name: VarJobMaxRows, Default: "100000",
+			Doc: fmt.Sprintf("The most rows one job may hold. A longer list is refused when the job is created, with the limit named: the job API answers 413 `too_many_rows`, and a CSV body is cut off at the limit while it is read. Integer, 1 to %d (100000 is module 1's own limit for one job). Consumed by `internal/app` (`jobs.WithMaxRows`, on the one job store) and, through the store's `MaxRows`, by `internal/api`.", maxJobRows)},
+		{Name: VarJobMaxStartDelayMin, Default: "30",
+			Doc: fmt.Sprintf("Minutes after its start that a confirmed or scheduled job may wait for the engine to start it before it expires and its credits are released. The start deadline is the scheduled start (the moment of the confirm for a job with none) plus this, added by the database's clock when the job is confirmed; a job confirmed before the dial was changed keeps the deadline it was given. Integer, 1 to %d. Consumed by `internal/app` (`jobs.WithMaxStartDelay`, on the one job store).", maxJobStartDelayMin)},
+		{Name: VarResultsPageMax, Default: "1000",
+			Doc: fmt.Sprintf("The most results one page of the job API's `GET /v1/jobs/{id}/results` may hold: the largest `limit` it accepts (a larger one is refused with 400 `validation_failed`); without a `limit` a page is 100, or this when it is smaller. The CSV download is not paged by it: it streams every result, 1000 at a time. Integer, 1 to %d. Consumed by `internal/app` (`api.New`, `Deps.ResultsPageMax`).", maxResultsPage)},
 		{Name: VarInstanceID, Default: instanceIDDefault,
 			Doc: fmt.Sprintf("Name of this platform instance, 1 to %d printable ASCII characters. With more than one instance running, only the one holding the leader lock runs the expiry and reconcile loops; the name is the application_name of the database session that holds it (pg_stat_activity) and appears in the loop log lines. Each instance needs its own. The default (hostname) means this machine's host name.", maxInstanceIDBytes)},
 	}
@@ -256,6 +276,10 @@ type Config struct {
 	JWTIssuer   string        // the iss every access token must carry; "" means not checked (internal/auth FromConfig)
 	JWTAudience string        // the aud every access token must include (internal/auth FromConfig)
 	JWTLeeway   time.Duration // the clock skew exp, nbf and iat are judged with (internal/auth FromConfig)
+
+	JobMaxRows       int           // the longest list one job holds (internal/app: jobs.WithMaxRows)
+	JobMaxStartDelay time.Duration // how long after its start a confirmed or scheduled job waits for the engine before it expires (internal/app: jobs.WithMaxStartDelay)
+	ResultsPageMax   int           // the largest page of results the API serves (internal/app: api.New, Deps.ResultsPageMax)
 
 	InstanceID string // this instance's name; "" means the default, the host name, which the service resolves (internal/entitlements ResolveInstanceID)
 }
@@ -477,6 +501,18 @@ func Load(getenv func(string) string) (Config, error) {
 			if n, ok := intIn(v.Name, raw, 0, maxJWTLeewaySec); ok {
 				c.JWTLeeway = time.Duration(n) * time.Second
 			}
+		case VarJobMaxRows:
+			if n, ok := intIn(v.Name, raw, 1, maxJobRows); ok {
+				c.JobMaxRows = n
+			}
+		case VarJobMaxStartDelayMin:
+			if n, ok := intIn(v.Name, raw, 1, maxJobStartDelayMin); ok {
+				c.JobMaxStartDelay = time.Duration(n) * time.Minute
+			}
+		case VarResultsPageMax:
+			if n, ok := intIn(v.Name, raw, 1, maxResultsPage); ok {
+				c.ResultsPageMax = n
+			}
 		case VarInstanceID:
 			if raw != v.Default { // the default stands for the host name, which Load does not read (see instanceIDDefault)
 				if !validInstanceID(raw) {
@@ -611,6 +647,9 @@ func (c Config) attrs() []slog.Attr {
 		slog.String("jwt_issuer", urlState(c.JWTIssuer)), // the issuer is a URL in practice and holds no credential: it is not a secret
 		slog.String("jwt_audience", c.JWTAudience),
 		slog.Duration("jwt_leeway", c.JWTLeeway),
+		slog.Int("job_max_rows", c.JobMaxRows),
+		slog.Duration("job_max_start_delay", c.JobMaxStartDelay),
+		slog.Int("results_page_max", c.ResultsPageMax),
 		slog.String("instance_id", c.InstanceID),
 	}
 }

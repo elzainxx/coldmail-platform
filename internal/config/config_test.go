@@ -105,7 +105,7 @@ func TestVars_AreWellFormed(t *testing.T) {
 			t.Errorf("%s must be declared optional, with the default (unset) and Secret=%v, got %+v", c.name, c.secret, v)
 		}
 	}
-	for name, def := range map[string]string{VarJWTAudience: "authenticated", VarJWTLeewaySec: "30"} {
+	for name, def := range map[string]string{VarJWTAudience: "authenticated", VarJWTLeewaySec: "30", VarJobMaxRows: "100000", VarJobMaxStartDelayMin: "30", VarResultsPageMax: "1000"} {
 		if v, ok := byName[name]; !ok || v.Secret || v.Required || v.Default != def {
 			t.Errorf("%s must be declared optional, not secret, with the default %q, got %+v", name, def, v)
 		}
@@ -163,6 +163,10 @@ func TestLoad_DefaultsAreTheDocumentedOnes(t *testing.T) {
 		"PLATFORM_JWT_AUDIENCE":   "authenticated",
 		"PLATFORM_JWT_LEEWAY_SEC": "30",
 
+		"PLATFORM_JOB_MAX_ROWS":            "100000",
+		"PLATFORM_JOB_MAX_START_DELAY_MIN": "30",
+		"PLATFORM_RESULTS_PAGE_MAX":        "1000",
+
 		"PLATFORM_INSTANCE_ID": "(hostname)",
 	}
 	got := map[string]string{}
@@ -210,6 +214,9 @@ func TestLoad_DefaultsAreTheDocumentedOnes(t *testing.T) {
 	}
 	if cfg.JWTSecret != "" || cfg.JWKSURL != "" || cfg.JWTIssuer != "" {
 		t.Fatalf("an optional token-verification dial's default did not load as empty: %v", cfg)
+	}
+	if cfg.JobMaxRows != 100000 || cfg.JobMaxStartDelay != 30*time.Minute || cfg.ResultsPageMax != 1000 {
+		t.Fatalf("the job dials' defaults did not reach the Config: %v", cfg)
 	}
 
 	// Paired control: a blank value means "unset", so an environment that spells every default out loud
@@ -355,6 +362,10 @@ var alternatives = map[string]string{
 	VarJWTIssuer:    "https://idp.internal/auth/v1",
 	VarJWTAudience:  "platform",
 	VarJWTLeewaySec: "45",
+
+	VarJobMaxRows:          "5000",
+	VarJobMaxStartDelayMin: "45",
+	VarResultsPageMax:      "250",
 
 	VarInstanceID: "platform-2",
 }
@@ -523,6 +534,17 @@ func TestLoad_InvalidValuesNameTheVariableAndNeverEchoTheValue(t *testing.T) {
 		{VarJWTLeewaySec, "1.5", "integer"},
 		{VarJWTLeewaySec, "-1", "between 0 and 300"},
 		{VarJWTLeewaySec, "301", "between 0 and 300"},
+		// The job dials (Phase 4 B14b): whole numbers inside their ranges.
+		{VarJobMaxRows, "many-XYZ123", "integer"},
+		{VarJobMaxRows, "1.5", "integer"},
+		{VarJobMaxRows, "0", "between 1 and 100000"},
+		{VarJobMaxRows, "100001", "between 1 and 100000"},
+		{VarJobMaxStartDelayMin, "soon-XYZ123", "integer"},
+		{VarJobMaxStartDelayMin, "0", "between 1 and 1440"},
+		{VarJobMaxStartDelayMin, "1441", "between 1 and 1440"},
+		{VarResultsPageMax, "big-XYZ123", "integer"},
+		{VarResultsPageMax, "0", "between 1 and 1000"},
+		{VarResultsPageMax, "1001", "between 1 and 1000"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name+"="+tc.value, func(t *testing.T) {

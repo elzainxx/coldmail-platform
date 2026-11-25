@@ -365,7 +365,7 @@ func TestReachabilityClass_NamesTheKindNeverTheText(t *testing.T) {
 // ---- the service: the dial reaches the call, and the loop stops before the pool closes -------------------------------------------------------
 
 // withReachabilitySetter replaces the builder of the loop's setter for one test.
-func withReachabilitySetter(t *testing.T, build func(pool *pgxpool.Pool, cfg config.Config) reachabilitySetter) {
+func withReachabilitySetter(t *testing.T, build func(pool *pgxpool.Pool, mny *money.Store, cfg config.Config) reachabilitySetter) {
 	t.Helper()
 	old := newReachabilitySetter
 	newReachabilitySetter = build
@@ -411,7 +411,7 @@ func TestRun_TheVendorReachableDialReachesTheSetterAndTheLoopStopsBeforeThePoolC
 			finished.Store(true)
 			return false, ctx.Err()
 		}}
-		withReachabilitySetter(t, func(pool *pgxpool.Pool, cfg config.Config) reachabilitySetter {
+		withReachabilitySetter(t, func(pool *pgxpool.Pool, _ *money.Store, cfg config.Config) reachabilitySetter {
 			lastPool.Store(pool)
 			pools.Add(1)
 			return f
@@ -478,7 +478,7 @@ func TestRun_AnInvalidVendorReachableValueStopsTheProcessWithExitStatus2(t *test
 
 	// the twins: the two accepted spellings start the service (the setter is a fake, so no loop touches a database)
 	withSuspender(t, &fakeSuspender{}, nil)
-	withReachabilitySetter(t, func(*pgxpool.Pool, config.Config) reachabilitySetter { return &fakeReach{} })
+	withReachabilitySetter(t, func(*pgxpool.Pool, *money.Store, config.Config) reachabilitySetter { return &fakeReach{} })
 	for _, ok := range []string{"true", "false"} {
 		r := startApp(t, merge(base(closedPortDSN(t)), map[string]string{config.VarM1VendorReachable: ok}))
 		if err := r.stop(t); err != nil {
@@ -487,7 +487,9 @@ func TestRun_AnInvalidVendorReachableValueStopsTheProcessWithExitStatus2(t *test
 	}
 }
 
-func TestDefaultReachabilitySetterIsTheMoneyStore(t *testing.T) {
+// The reachability loop writes through THE money store of the process: the one newMoneyStore builds (waiting as long as PLATFORM_MONEY_LOCK_TIMEOUT_MS says) and apiDeps.Money keeps for the job
+// store, not a second one of its own.
+func TestDefaultReachabilitySetterIsTheOneMoneyStore(t *testing.T) {
 	cfg, err := config.Load(envOf(base("postgres://platform_app:x@h/db")))
 	if err != nil {
 		t.Fatal(err)
@@ -497,11 +499,7 @@ func TestDefaultReachabilitySetterIsTheMoneyStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pool.Close()
-	s := newReachabilitySetter(pool, cfg)
-	st, ok := s.(*money.Store)
-	if !ok || st == nil {
-		t.Fatalf("the default builder returned %T, want *money.Store", s)
-	}
+	st := newMoneyStore(pool, cfg)
 	if st.LockTimeout() != cfg.MoneyLockTimeout {
 		t.Errorf("the store waits %s, want PLATFORM_MONEY_LOCK_TIMEOUT_MS's %s", st.LockTimeout(), cfg.MoneyLockTimeout)
 	}
@@ -510,7 +508,14 @@ func TestDefaultReachabilitySetterIsTheMoneyStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := newReachabilitySetter(pool, cfg2).(*money.Store).LockTimeout(); got != 2500*time.Millisecond || got == st.LockTimeout() {
+	if got := newMoneyStore(pool, cfg2).LockTimeout(); got != 2500*time.Millisecond || got == st.LockTimeout() {
 		t.Errorf("a configured lock timeout of 2.5s reached the store as %s", got)
+	}
+	// the default setter IS the store it is handed (one store, not a copy of it), and a store that was not handed is not made up
+	if s, ok := newReachabilitySetter(pool, st, cfg).(*money.Store); !ok || s != st {
+		t.Fatalf("the default builder returned %T (%p), want the very store it was given (%p)", s, s, st)
+	}
+	if other := newMoneyStore(pool, cfg); other == st {
+		t.Fatal("two calls of newMoneyStore returned one store: the identity check above proves nothing")
 	}
 }

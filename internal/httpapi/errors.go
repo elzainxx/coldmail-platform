@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+
+	"github.com/coldmail-platform/platform/internal/logging"
 )
 
 // RequestIDHeader is set on every response.
@@ -38,9 +40,10 @@ type errorEnvelope struct {
 }
 
 type errorBody struct {
-	Code      string `json:"code"`
-	Message   string `json:"message"`
-	RequestID string `json:"request_id"`
+	Code      string         `json:"code"`
+	Message   string         `json:"message"`
+	RequestID string         `json:"request_id"`
+	Details   map[string]any `json:"details,omitempty"` // present ONLY when a caller gave some (WriteError); never on the envelopes this package writes itself
 }
 
 // newRequestID mints an opaque correlation id of the shape req_<32 hex>, the same as the modules', so one
@@ -56,6 +59,27 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// WriteError writes the error envelope for a route another package mounts (Deps.Mount): the status, the machine code and the fixed message the caller chose, and the request id of r (the
+// middleware minted it before the handler ran). The envelope is the same one the catch-all writes, `{"error":{"code","message","request_id"}}`.
+//
+// details are key/value pairs in the style of log/slog (a string key, then its value); with none the envelope has NO `details` member, exactly as the envelopes this package writes itself.
+// A trailing key without a value and a pair whose key is not a string are dropped, never guessed at. The caller owns what goes into them: nothing a client sent, no address, no internal
+// text (they are part of the response).
+func WriteError(w http.ResponseWriter, r *http.Request, status int, code, message string, details ...any) {
+	body := errorBody{Code: code, Message: message, RequestID: logging.RequestID(r.Context())}
+	for i := 0; i+1 < len(details); i += 2 {
+		k, ok := details[i].(string)
+		if !ok || k == "" {
+			continue
+		}
+		if body.Details == nil {
+			body.Details = map[string]any{}
+		}
+		body.Details[k] = details[i+1]
+	}
+	writeJSON(w, status, errorEnvelope{Error: body})
 }
 
 func writeError(w http.ResponseWriter, requestID, code string) {

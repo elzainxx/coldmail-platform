@@ -39,6 +39,9 @@ start-up with exit status 2, and the message names the variable and the reason, 
 | `PLATFORM_JWT_ISSUER` | `(unset)` | no | no | The issuer (iss) every access token must carry, exactly, for example `https://<project-ref>.supabase.co/auth/v1`. Printable ASCII with no spaces, at most 512 bytes. The default (unset) means the issuer is not checked: a token is judged by its signature, audience and times alone. Set it in production. Consumed by `internal/auth.FromConfig`. |
 | `PLATFORM_JWT_AUDIENCE` | `authenticated` | no | no | The audience (aud) every access token must include; Supabase gives a signed-in user's token authenticated. Printable ASCII with no spaces, at most 512 bytes. Consumed by `internal/auth.FromConfig`. |
 | `PLATFORM_JWT_LEEWAY_SEC` | `30` | no | no | Seconds of clock difference between the token's issuer and this process that exp, nbf and iat are judged with: a token is expired at exp plus this, and not yet valid before nbf minus this. Integer, 0 to 300. Consumed by `internal/auth.FromConfig`. |
+| `PLATFORM_JOB_MAX_ROWS` | `100000` | no | no | The most rows one job may hold. A longer list is refused when the job is created, with the limit named: the job API answers 413 `too_many_rows`, and a CSV body is cut off at the limit while it is read. Integer, 1 to 100000 (100000 is module 1's own limit for one job). Consumed by `internal/app` (`jobs.WithMaxRows`, on the one job store) and, through the store's `MaxRows`, by `internal/api`. |
+| `PLATFORM_JOB_MAX_START_DELAY_MIN` | `30` | no | no | Minutes after its start that a confirmed or scheduled job may wait for the engine to start it before it expires and its credits are released. The start deadline is the scheduled start (the moment of the confirm for a job with none) plus this, added by the database's clock when the job is confirmed; a job confirmed before the dial was changed keeps the deadline it was given. Integer, 1 to 1440. Consumed by `internal/app` (`jobs.WithMaxStartDelay`, on the one job store). |
+| `PLATFORM_RESULTS_PAGE_MAX` | `1000` | no | no | The most results one page of the job API's `GET /v1/jobs/{id}/results` may hold: the largest `limit` it accepts (a larger one is refused with 400 `validation_failed`); without a `limit` a page is 100, or this when it is smaller. The CSV download is not paged by it: it streams every result, 1000 at a time. Integer, 1 to 1000. Consumed by `internal/app` (`api.New`, `Deps.ResultsPageMax`). |
 | `PLATFORM_INSTANCE_ID` | `(hostname)` | no | no | Name of this platform instance, 1 to 63 printable ASCII characters. With more than one instance running, only the one holding the leader lock runs the expiry and reconcile loops; the name is the application_name of the database session that holds it (pg_stat_activity) and appears in the loop log lines. Each instance needs its own. The default (hostname) means this machine's host name. |
 
 Column notes. Default `(none)` means the variable has no default. Secret means the value is never written
@@ -180,6 +183,14 @@ nor `PLATFORM_JWKS_URL` set the service starts as before and the job API is simp
   **`PLATFORM_JWT_LEEWAY_SEC`** (default 30, 0 to 300) is the clock difference tolerated on `exp`, `nbf` and `iat`: a token is expired when now is at or after `exp` plus the leeway.
 - A verified token proves only who the user is (`sub`, a canonical lower-case uuid). The `role` and `email` claims are carried and never trusted for authorisation: the API resolves `sub` to a platform user and an
   inactive or unknown login is refused.
+
+## The limits of a job and of the job API
+
+Three variables bound what a job and its API serve; each has a default that needs no change, and an out-of-range value stops the process at start-up with exit status 2 (the message names the variable, never the value). The API they bound is described in [`jobs-api.md`](jobs-api.md).
+
+- **`PLATFORM_JOB_MAX_ROWS`** (default 100000, 1 to 100000) is the longest list one job holds: `internal/app` gives it to the one job store (`jobs.WithMaxRows`), and the API reads the store's limit while it reads a CSV, so a list far over the limit is refused (413 `too_many_rows`, with the limit in `details`) without being read to its end. 100000 is module 1's own limit for one job.
+- **`PLATFORM_JOB_MAX_START_DELAY_MIN`** (default 30, 1 to 1440) is how long, in minutes, a confirmed or scheduled job may wait for the engine to start it before it expires and its reserve is released: the database adds it to the scheduled start (or to the moment of the confirm) when the job is confirmed, so changing the dial moves no job already confirmed.
+- **`PLATFORM_RESULTS_PAGE_MAX`** (default 1000, 1 to 1000) is the largest `limit` of `GET /v1/jobs/{id}/results`. It does not page the CSV download, which streams every result a page of 1000 at a time, so the memory of a download does not depend on the size of the list.
 
 ## What the service does with the database at start-up
 

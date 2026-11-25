@@ -84,7 +84,6 @@ func Run(ctx context.Context, getenv func(string) string, logw io.Writer) error 
 	if err != nil {
 		return err
 	}
-	_ = deps // the job API (Phase 4, chunk B14b) is built from it; until then nothing serves it
 
 	m3, err := newSuspender(cfg)
 	if err != nil {
@@ -96,6 +95,12 @@ func Run(ctx context.Context, getenv func(string) string, logw io.Writer) error 
 		return err
 	}
 	defer pool.Close() // runs after the loops (the entitlement loops and the reachability sync) have stopped, and after the leader has returned its connection: see stopLoops below
+
+	// THE money store, the job store and the tenant resolver, built once over the pool and shared by everything that needs them (Phase 4 B14b). The job API is built here too, only when a key
+	// source is set; without one its routes are not mounted.
+	if err := deps.build(pool, cfg, log); err != nil {
+		return err
+	}
 
 	instance, err := entitlements.ResolveInstanceID(cfg.InstanceID)
 	if err != nil {
@@ -122,6 +127,7 @@ func Run(ctx context.Context, getenv func(string) string, logw io.Writer) error 
 		Draining:     draining.Load,
 		ReadyTimeout: cfg.ReadyzTimeout,
 		Now:          time.Now,
+		Mount:        deps.mount(), // the job API's routes, or nil: then every one of them is the catch-all's 404
 	})
 
 	// The startup line names what an operator needs and nothing from the Config struct as a whole.
@@ -133,7 +139,7 @@ func Run(ctx context.Context, getenv func(string) string, logw io.Writer) error 
 	sc := serverConfig(cfg)
 	sc.Ready = ready
 	// The reachability sync (Phase 4, chunk B3) is not a leader's loop: it runs in EVERY instance, from the start and whether or not the server is listening yet, and it stops with the others.
-	reach := newReachabilitySetter(pool, cfg)
+	reach := newReachabilitySetter(pool, deps.Money, cfg)
 	stopLoops := runLoops(ctx, ent, ready, func(loopCtx context.Context) {
 		syncReachability(loopCtx, reach, cfg.M1VendorReachable, log, sleepContext)
 	})

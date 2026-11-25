@@ -1,17 +1,36 @@
 package app
 
 import (
+	"fmt"
 	"log/slog"
+	"net/http"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/coldmail-platform/platform/internal/api"
 	"github.com/coldmail-platform/platform/internal/auth"
 	"github.com/coldmail-platform/platform/internal/config"
+	"github.com/coldmail-platform/platform/internal/jobs"
+	"github.com/coldmail-platform/platform/internal/money"
+	"github.com/coldmail-platform/platform/internal/tenant"
 )
 
-// apiDeps is what the job API (Phase 4, chunk B14b) is built from. This chunk puts in it the one dependency that exists so far, the verifier of Supabase access tokens; the API chunk takes
-// it from here and adds what it needs beside it.
+// apiDeps is what the job API (Phase 4, chunk B14b) and, later, the job engine are built from. It is built in two steps: the verifier at start-up, before anything is opened (newAPIDeps),
+// and the stores once the pool exists (build).
 type apiDeps struct {
 	// Auth verifies the bearer token of a request. nil means neither PLATFORM_JWT_SECRET nor PLATFORM_JWKS_URL is set: the job API is not served.
 	Auth *auth.Verifier
+
+	// Money is THE money store of the process: the reachability loop, the job store and (later) the engine all share this one, so that they wait for a lock as long as one dial says
+	// (PLATFORM_MONEY_LOCK_TIMEOUT_MS) and take the (user, module) advisory lock in one way.
+	Money *money.Store
+	// Jobs is the job store, built with the three limits (PLATFORM_JOB_MAX_ROWS, PLATFORM_JOB_MAX_START_DELAY_MIN) and with NO module 3 pre-check: PreChecks stays nil until the engine's wiring
+	// adds the module 3 adapter. The API and, later, the engine use this one store.
+	Jobs *jobs.Store
+	// Tenants resolves a login to a platform user (the API's authentication) and, later, builds each module's scope for the engine.
+	Tenants *tenant.Resolver
+	// API is the job API's handler set; nil unless Auth is set (a service with no key source does not serve it).
+	API *api.API
 }
 
 // newAPIDeps builds the verifier from the configuration at start-up, so that an invalid combination stops the process before anything is served (exit status 2, naming the variable, never a
@@ -29,4 +48,48 @@ func newAPIDeps(cfg config.Config, log *slog.Logger) (apiDeps, error) {
 	log.Info("job API authentication configured",
 		"hs256", s.HMAC, "jwks", s.JWKS, "issuer_pinned", s.IssuerPinned, "audience", s.Audience, "leeway", s.Leeway.String())
 	return apiDeps{Auth: v}, nil
+}
+
+// newMoneyStore builds THE money store over the pool, waiting for a lock as long as PLATFORM_MONEY_LOCK_TIMEOUT_MS says. It is the one place a money store is made.
+func newMoneyStore(pool *pgxpool.Pool, cfg config.Config) *money.Store {
+	return money.New(pool, money.WithLockTimeout(cfg.MoneyLockTimeout))
+}
+
+// newJobStore builds the job store over the pool and the money store with the dials that bound a job: the longest list and how long a start may wait. It has no PreChecks (module 3's
+// feasibility check is the engine wiring's) and logs through the service's logger (the store logs no address, no secret and no SQL).
+func newJobStore(pool *pgxpool.Pool, mny *money.Store, cfg config.Config, log *slog.Logger) (*jobs.Store, error) {
+	return jobs.New(pool, mny, jobs.WithMaxRows(cfg.JobMaxRows), jobs.WithMaxStartDelay(cfg.JobMaxStartDelay), jobs.WithLogger(log))
+}
+
+// apiResolver is what the API authenticates logins through: the tenant resolver. It is a variable only so that a test of the whole service, which has no database to resolve a login in,
+// can put a fake in its place; nothing else assigns it.
+var apiResolver = func(t *tenant.Resolver) api.Resolver { return t }
+
+// build makes what needs the pool: the money store, the job store, the tenant resolver and, when the verifier exists, the job API. It runs once, after the pool is open and before the server
+// listens. With no key source the API is not built and its routes are not mounted: a request for one is the 404 of any unknown path.
+func (d *apiDeps) build(pool *pgxpool.Pool, cfg config.Config, log *slog.Logger) error {
+	d.Money = newMoneyStore(pool, cfg)
+	var err error
+	if d.Jobs, err = newJobStore(pool, d.Money, cfg, log); err != nil {
+		return fmt.Errorf("build the job store: %w", err)
+	}
+	if d.Tenants, err = tenant.NewResolver(pool, cfg.M1KeySecret, tenant.WithM1KeyVersion(cfg.M1KeyVersion)); err != nil {
+		return fmt.Errorf("build the tenant resolver: %w", err)
+	}
+	if d.Auth == nil {
+		return nil
+	}
+	if d.API, err = api.New(api.Deps{Service: d.Jobs, Verifier: d.Auth, Resolver: apiResolver(d.Tenants), Logger: log, ResultsPageMax: cfg.ResultsPageMax}); err != nil {
+		return fmt.Errorf("build the job API: %w", err)
+	}
+	log.Info("job API mounted", "routes", len(api.Routes()), "max_rows", d.Jobs.MaxRows(), "max_start_delay", d.Jobs.MaxStartDelay().String(), "results_page_max", cfg.ResultsPageMax)
+	return nil
+}
+
+// mount is httpapi.Deps.Mount: the API's routes, or nil when there is no API to mount.
+func (d apiDeps) mount() func(*http.ServeMux) {
+	if d.API == nil {
+		return nil
+	}
+	return d.API.Mount
 }

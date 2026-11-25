@@ -51,11 +51,10 @@ type reachabilitySetter interface {
 	SetUnitReachable(ctx context.Context, unit string, reachable bool, source string) (changed bool, err error)
 }
 
-// newReachabilitySetter builds what the loop writes through: the money store over the platform's pool, waiting for a reserve in progress as long as PLATFORM_MONEY_LOCK_TIMEOUT_MS says. It is a variable only
-// so that a test can supply a fake (and see which pool it was handed); nothing else assigns it.
-var newReachabilitySetter = func(pool *pgxpool.Pool, cfg config.Config) reachabilitySetter {
-	return money.New(pool, money.WithLockTimeout(cfg.MoneyLockTimeout))
-}
+// newReachabilitySetter builds what the loop writes through. By default that is THE money store of the process (the one the job store is built over: newMoneyStore, apiDeps.Money), so the loop
+// waits for a reserve in progress exactly as long as PLATFORM_MONEY_LOCK_TIMEOUT_MS says and there is one money store, not one per consumer. It is a variable only so that a test can supply a
+// fake (and see which pool and which store it was handed); nothing else assigns it.
+var newReachabilitySetter = func(_ *pgxpool.Pool, mny *money.Store, _ config.Config) reachabilitySetter { return mny }
 
 // waitFunc waits for d and reports true, or returns false as soon as ctx is done. It is the loop's only clock, injected so that a test drives the rhythm without waiting for it.
 type waitFunc func(ctx context.Context, d time.Duration) bool
