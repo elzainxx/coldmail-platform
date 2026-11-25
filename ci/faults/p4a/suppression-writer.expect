@@ -1,0 +1,11 @@
+# Phase 4, part A item A2: no code may write platform.suppressions except the one store function that validates the address first (internal/suppress Add), because the table's CHECK cannot decode punycode
+# and the Go validator is the only wall for two address shapes. The fault adds a second non-test Go file under internal/ that holds a raw string with an INSERT INTO platform.suppressions and never calls the
+# validator; the gate must name the file and the line and say it is outside the sanctioned writer. The control side is the real repository, which must be green. Needs bash only: no database, no module, no Go.
+# The patch adds a new file, so it depends on no committed file; the control needs internal/suppress/store.go, scripts/check-suppression-writers.sh and tests/suppression-writer-exceptions.txt at HEAD.
+GATE=suppression-writer
+TARGET=platform
+SETUP=
+STEP=check-suppression-writers on the real repository
+CMD=bash scripts/check-suppression-writers.sh
+MESSAGE=internal/app/zz_suppression_writer.go:4: write to platform.suppressions (INSERT INTO) outside the sanctioned writer internal/suppress/store.go
+MESSAGE=check-suppression-writers: RED

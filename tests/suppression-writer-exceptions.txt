@@ -1,0 +1,6 @@
+# Migrations that may write rows into platform.suppressions (scripts/check-suppression-writers.sh). One entry per line: relative/path|reason
+# The path is relative to the repository root and must be a db/migrations/*.sql file. No migration writes a row today: a migration creates the table and its constraints, and the one place the
+# platform writes the table is internal/suppress/store.go (Add), which validates the address first. That file needs no entry here, and no entry can excuse any other file: the gate reads exceptions
+# for migrations only.
+# An entry is RED when its file does not exist, is not a migration, contains no such write, or has a blank reason (a register that rots hides the next miss). A row seeded by a migration would bypass
+# the Go validator, which is the only wall for two punycode shapes the table's CHECK cannot see, so the reason must say why the rows seeded are valid by construction.

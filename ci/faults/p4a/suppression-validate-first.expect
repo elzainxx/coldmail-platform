@@ -1,0 +1,13 @@
+# Phase 4, part A item A2: the sanctioned writer (internal/suppress/store.go) must call norm.Validate before it writes platform.suppressions. The fault replaces that call with norm.Normalize (a refactor that
+# "simplifies" the call and drops module 1's syntax layer, so a 65-byte local part or a one-label domain would be stored): the file still compiles, and the gate must say the write is not preceded by a call of
+# norm.Validate( and name the file. The control side is the real repository, which must be green. Needs bash only: no database, no module, no Go.
+# The patch changes ONE line of internal/suppress/store.go (the call), so it applies only to a HEAD whose store.go carries that exact line and its two neighbours; the messages carry no line number, so an edit of
+# the file's comments does not move them.
+GATE=suppression-validate-first
+TARGET=platform
+SETUP=
+STEP=check-suppression-writers on the real repository
+CMD=bash scripts/check-suppression-writers.sh
+MESSAGE=write to platform.suppressions (INSERT INTO) is not preceded by a call of norm.Validate( earlier in the same function
+MESSAGE=no norm.Validate( call outside a comment
+MESSAGE=0 write(s) outside internal/suppress/store.go, 1 not preceded by norm.Validate(

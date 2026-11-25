@@ -1,0 +1,9 @@
+diff --git a/internal/app/zz_suppression_writer.go b/internal/app/zz_suppression_writer.go
+new file mode 100644
+--- /dev/null
++++ b/internal/app/zz_suppression_writer.go
+@@ -0,0 +1,4 @@
++package app
++
++// FAULT: a second writer of platform.suppressions, one that never calls the validator.
++const zzSuppressionWriter = `INSERT INTO platform.suppressions (user_id, email, source) VALUES ($1, $2, 'manual')`

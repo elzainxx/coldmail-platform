@@ -1,0 +1,11 @@
+--- a/internal/suppress/store.go
++++ b/internal/suppress/store.go
+@@ -69,7 +69,7 @@
+ // The statement is one insert with ON CONFLICT DO NOTHING and every value a parameter, so a second Add of the same (user, address) is not an error: it returns Created=false. A refusal by
+ // the database is mapped by constraint name: ErrCannotStore, ErrSystemUser, ErrUnknownUser (see errors.go).
+ func Add(ctx context.Context, q Execer, userID, email, source string) (Result, error) {
+-	normalised, err := norm.Validate(email)
++	normalised, err := norm.Normalize(email)
+ 	if err != nil {
+ 		return Result{}, opErr("add", invalidAddress(err))
+ 	}
