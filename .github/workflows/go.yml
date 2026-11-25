@@ -93,7 +93,7 @@ jobs:
         run: |
           go vet ./...
           go vet -tags harness ./...
-          go vet -tags "harness m1node m2worker" ./tests/harness/    # the scoped stages' tests (dormant in the full harness, tests/harness/run.sh FULL_INCLUDES) must keep compiling
+          go vet -tags "harness m1node m2worker gotrue" ./tests/harness/    # the scoped stages' tests (dormant in the full harness, tests/harness/run.sh FULL_INCLUDES) must keep compiling
 
       - name: Unit tests (verbose log captured for the floor gate)
         run: |

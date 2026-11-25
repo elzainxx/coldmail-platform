@@ -1,0 +1,95 @@
+# A REAL GoTrue in the platform harness (Phase 4, chunk B15; Docs/phase-4-spec.md "Locked here" 29): a compose override file that run.sh merges after docker-compose.yml
+# (`-f docker-compose.yml -f docker-compose.gotrue.yml --profile gotrue`) ONLY when the stage is on: under H_SCOPE=gotrue, or in the full run once `gotrue` is named in FULL_INCLUDES (run.sh,
+# one place). In the normal full run this file is not read at all, so nothing here exists. The service also carries `profiles: [gotrue]`, so that even a merge without the profile flag could not
+# start it by accident (a service named on the command line starts regardless).
+#
+# WHY. The platform's token verification (internal/auth) is written from the documented shape of a Supabase access token. This service issues the REAL ones: the digest-pinned supabase/gotrue,
+# on the same digest-pinned supabase/postgres every other stage runs on (its own `auth` schema, owned by the role supabase_auth_admin, which GoTrue's own migrations alter at its start). The tests
+# (tests/harness/gotrue_test.go, build tag gotrue) sign users up, take their tokens and put them through auth.Verifier and tenant.Resolver.
+#
+# Everything here is additive: one service of its own and the environment the test container needs. Nothing of docker-compose.yml is changed. The image is `name:tag@sha256:<64 hex>` (the stable
+# tag's multi-arch index digest; scripts/check-image-pins.sh reads it): the runner pulls THAT digest or the run is red, and nobody changes it from the runner's side.
+#
+# NOTHING LEAVES THE PRIVATE NETWORK. No port is published (the exposure check lists `gotrue`); the network is `internal: true`. No mail is sent: GOTRUE_SMTP_HOST is empty (as far as the image's source is remembered, GoTrue then
+# uses a no-op mail client; the first runner run confirms it), and GOTRUE_MAILER_AUTOCONFIRM=true means a sign-up never waits for a mail. Every social provider is off, and so are phone and anonymous sign-in.
+#
+# THE SECRETS are minted per run by tests/harness/gotrue/stage.sh (gotrue_mint), written mode 600 to the env file and masked in the log: H_JWT_SECRET (48 random bytes in hex: the HS256 key GoTrue signs
+# with and the test verifies with) and H_GOTRUE_DB_PASSWORD (the password the stage gives the role supabase_auth_admin: the image sets none, and giving GoTrue the harness's own database password
+# would hand a third-party container the password of the superuser supabase_admin, which shares it).
+#
+# PATHS. GoTrue serves its API at the ROOT (/signup, /token, /user, /admin/users, /health, /settings): the `/auth/v1` of a hosted project is added by the gateway in front of it, and nothing here has a
+# gateway. The issuer is a NAME, not a path GoTrue serves: GOTRUE_JWT_ISSUER makes every token carry that `iss`, and the platform is configured with the same string (PLATFORM_JWT_ISSUER). The test reads
+# the `iss` of the first token and asserts it equals this value, so a mismatch is a named failure.
+
+x-gotrue-issuer: &gotrue-issuer "http://gotrue:9999/auth/v1"
+
+services:
+  gotrue:
+    profiles: [gotrue]
+    image: supabase/gotrue:v2.198.0@sha256:ba8c0c82c574756c835c696df2a2c698020cc408a42034013d3712e34de7964d
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: "9999"
+      API_EXTERNAL_URL: http://gotrue:9999
+      GOTRUE_SITE_URL: http://gotrue:9999
+      GOTRUE_DB_DRIVER: postgres
+      # the role the image creates for GoTrue (it owns auth.users and the other objects of the auth schema, which GoTrue's migrations alter); its password is set by the stage (gotrue_stage) to H_GOTRUE_DB_PASSWORD
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${H_GOTRUE_DB_PASSWORD:?}@postgres:5432/postgres
+      DB_NAMESPACE: auth
+      # the token: HS256 with the per-run secret, audience and default role `authenticated`, an hour, and the issuer the platform is configured with
+      GOTRUE_JWT_SECRET: ${H_JWT_SECRET:?}
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_JWT_EXP: "3600"
+      GOTRUE_JWT_ISSUER: *gotrue-issuer
+      GOTRUE_JWT_ADMIN_ROLES: service_role
+      # e-mail and password sign-up, confirmed at once; no mail leaves (see the header); every other way to sign in is off
+      GOTRUE_DISABLE_SIGNUP: "false"
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      GOTRUE_MAILER_AUTOCONFIRM: "true"
+      GOTRUE_SMTP_HOST: ""
+      GOTRUE_SMTP_ADMIN_EMAIL: admin@example.test
+      GOTRUE_EXTERNAL_PHONE_ENABLED: "false"
+      GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED: "false"
+      GOTRUE_SMS_AUTOCONFIRM: "false"
+      GOTRUE_EXTERNAL_GOOGLE_ENABLED: "false"
+      GOTRUE_EXTERNAL_GITHUB_ENABLED: "false"
+      GOTRUE_EXTERNAL_GITLAB_ENABLED: "false"
+      GOTRUE_EXTERNAL_BITBUCKET_ENABLED: "false"
+      GOTRUE_EXTERNAL_FACEBOOK_ENABLED: "false"
+      GOTRUE_EXTERNAL_APPLE_ENABLED: "false"
+      GOTRUE_EXTERNAL_AZURE_ENABLED: "false"
+      GOTRUE_EXTERNAL_DISCORD_ENABLED: "false"
+      GOTRUE_EXTERNAL_TWITTER_ENABLED: "false"
+      GOTRUE_EXTERNAL_SLACK_ENABLED: "false"
+      GOTRUE_EXTERNAL_LINKEDIN_ENABLED: "false"
+      GOTRUE_SAML_ENABLED: "false"
+      # a test that signs up twenty users must not be throttled (the defaults are 30 mails an hour and 30 sign-ins or sign-ups per five minutes per address; a name this version does not know is ignored)
+      GOTRUE_RATE_LIMIT_EMAIL_SENT: "1000"
+      GOTRUE_RATE_LIMIT_SIGN_IN_SIGN_UPS: "1000"
+      GOTRUE_RATE_LIMIT_VERIFY: "1000"
+      GOTRUE_RATE_LIMIT_TOKEN_REFRESH: "1000"
+      GOTRUE_RATE_LIMIT_OTP: "1000"
+      GOTRUE_LOG_LEVEL: info
+    # the official image has busybox wget (the self-hosted Supabase compose file health-checks it the same way); 127.0.0.1 and not `localhost`, which may resolve to ::1 while GoTrue listens on IPv4 only
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:9999/health"]
+      interval: 3s
+      timeout: 3s
+      retries: 60
+      start_period: 15s
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    stop_grace_period: 10s
+    depends_on: { postgres: { condition: service_healthy } }
+    networks: [private]
+    restart: "no"
+
+  # The test container: GoTrue's address (inside the private network), the secret its tokens are signed with (the test verifies them with it and mints the service-role key from it) and the issuer
+  # GoTrue is configured with. HARNESS_ADMIN_DATABASE_URL and HARNESS_PLATFORM_APP_PASSWORD already exist in docker-compose.yml: the test reads auth.users with the first and resolves logins as platform_app with the second.
+  harness-tests:
+    environment:
+      HARNESS_GOTRUE_URL: http://gotrue:9999
+      HARNESS_GOTRUE_JWT_SECRET: ${H_JWT_SECRET:?}
+      HARNESS_GOTRUE_ISSUER: *gotrue-issuer
