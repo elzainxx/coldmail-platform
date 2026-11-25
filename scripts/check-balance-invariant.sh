@@ -58,7 +58,7 @@ SELECT id, id, email FROM auth.users WHERE id IN (current_setting('bi.u')::uuid,
 INSERT INTO platform.admins (id, display_name) VALUES (current_setting('bi.a')::uuid, 'balance-invariant exercise (rolled back)');
 INSERT INTO platform.jobs (id, user_id, module_id) VALUES (current_setting('bi.j')::uuid, current_setting('bi.u')::uuid, 'm1');
 INSERT INTO platform.job_unit_prices (job_id, module_id, unit, cost)
-SELECT current_setting('bi.j')::uuid, module_id, unit, cost FROM platform.unit_costs WHERE module_id = 'm1';
+SELECT current_setting('bi.j')::uuid, module_id, unit, cost FROM platform.unit_costs WHERE module_id = 'm1' AND reachable;
 SELECT 'PRICES', set_config('bi.c', p.cost::text, true), set_config('bi.d', (SELECT max(cost) FROM platform.job_unit_prices WHERE job_id = current_setting('bi.j')::uuid)::text, true)
 FROM platform.job_unit_prices p WHERE p.job_id = current_setting('bi.j')::uuid AND p.unit = 'm1_own';
 INSERT INTO platform.ledger (user_id, module_id, kind, available_delta, acting_admin_id, reason, idempotency_key)

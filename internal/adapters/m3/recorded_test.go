@@ -638,15 +638,15 @@ var recordedFixtures = []string{
 	"accounts.get.ok.json", "accounts.get.error.not_found.json",
 	"accounts.create.created.json", "accounts.create.created_failed.json", "accounts.create.error.validation_failed.json", "accounts.create.error.duplicate.json", "accounts.create.error.conflict.json",
 	"accounts.create.error.unprocessable.json",
-	"accounts.test.ok.json", "accounts.test.failed.json", "accounts.test.indeterminate.json", "accounts.test.error.rate_limited.json", "accounts.test.error.conflict.json", "accounts.test.error.not_found.json",
+	"accounts.test.ok.json", "accounts.test.failed.json", "accounts.test.indeterminate.json", "accounts.test.unavailable.json", "accounts.test.error.rate_limited.json", "accounts.test.error.conflict.json", "accounts.test.error.not_found.json",
 	"accounts.bulk.ok.json", "accounts.bulk.error.batch_too_large.json", "accounts.bulk.error.conflict.json", "accounts.bulk.error.validation_failed.json",
 	"accounts.events.empty.json", "accounts.events.last_page.json",
 	"cancel.ok.json", "cancel.error.validation_failed.json", "describe.ok.json", "quote.ok.json", "quote.feasible.json", "quote.infeasible.json",
 }
 
-// handWrittenFixtures are the three files no record run has reached, and why (the README repeats it).
+// handWrittenFixtures are the two files no record run has reached, and why (the README repeats it).
 var handWrittenFixtures = []string{
-	"run.error.internal_error.json", "accounts.test.unavailable.json", "accounts.events.page.json",
+	"run.error.internal_error.json", "accounts.events.page.json",
 }
 
 // readmeSections splits testdata/README.md into the file names it lists under "## Recorded" and under "## Hand-written" (one backticked name per list item).
@@ -702,7 +702,7 @@ func TestReadmeNamesWhichFixturesAreRecorded(t *testing.T) {
 		if !slices.Equal(hand, wantHand) {
 			p = append(p, fmt.Sprintf("the hand-written list is %v, want %v", hand, wantHand))
 		}
-		for _, run := range []string{"44395876225", "44225747596"} {
+		for _, run := range []string{"44395876225", "44225747596", "45706128441"} {
 			if !strings.Contains(text, run) {
 				p = append(p, "the record run "+run+" is not cited")
 			}
@@ -712,7 +712,7 @@ func TestReadmeNamesWhichFixturesAreRecorded(t *testing.T) {
 		}
 		return p
 	}
-	if len(wantRec) != 45 || len(wantHand) != 3 {
+	if len(wantRec) != 46 || len(wantHand) != 2 {
 		t.Fatalf("%d recorded and %d hand-written: the subject changed", len(wantRec), len(wantHand))
 	}
 	for _, f := range recordedFixtures {
@@ -730,7 +730,7 @@ func TestReadmeNamesWhichFixturesAreRecorded(t *testing.T) {
 	if p := problems(moved); len(p) == 0 {
 		t.Fatal("a README that does not list a recorded file was not caught")
 	}
-	for _, run := range []string{"44395876225", "44225747596"} {
+	for _, run := range []string{"44395876225", "44225747596", "45706128441"} {
 		if p := problems(strings.ReplaceAll(text, run, "1")); len(p) != 1 || !strings.Contains(p[0], "the record run "+run+" is not cited") {
 			t.Fatalf("a README that does not cite the run %s: %v", run, p)
 		}

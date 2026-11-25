@@ -9,7 +9,7 @@ Ids and times are synthetic or normalised, addresses are in the documentation, p
 
 ## Recorded
 
-These 45 files are RECORDINGS of the real module 3 in the harness, normalised by `contractcheck.Normalise`: every uuid of a file becomes `00000000-0000-4000-8000-00000000000N` (N counting by first
+These 46 files are RECORDINGS of the real module 3 in the harness, normalised by `contractcheck.Normalise`: every uuid of a file becomes `00000000-0000-4000-8000-00000000000N` (N counting by first
 appearance in that file), every timestamp `2026-01-01T00:00:00Z`, every request id a run of `a`. They come from two full record runs, both of 2026-11-18:
 
 - Record run 44395876225 (the Phase 3 close-out D1 run: module 3 at its close-out pin, the From gate on in the adapter tests) recorded 46 files of the 49 then in the directory (the three that are
@@ -20,6 +20,7 @@ appearance in that file), every timestamp `2026-01-01T00:00:00Z`, every request 
   hand-written before: `accounts.create.error.unprocessable.json`, `accounts.events.last_page.json`, `accounts.test.indeterminate.json`, `cancel.ok.json`, `describe.ok.json`, `quote.ok.json`,
   `quote.infeasible.json`, `report.campaign.page.json`, `report.campaign.last_page.json`, `report.campaign.empty.json`, `run.error.conflict.json`); two were hand-written and the module answered
   exactly what they held (`cancel.error.validation_failed.json`, `quote.feasible.json`), so they are recordings now; and 21 were already recordings of the earlier run and came out byte for byte the same.
+- Record run 45706128441 (Phase 4 A3, the full harness in record mode on platform `fe595f3`) recorded `accounts.test.unavailable.json`: the test button's answer when the credential check could not run (`verification` `unavailable` with `verify_error`, `from_alignment` `indeterminate` with `from_dns_unavailable`), which `TestM3Adapter_TestButtonSaysUnavailableWhenTheCredentialCheckCannotRun` makes the module give on purpose. The file is that run's printed block installed byte for byte; it replaces the hand-written one.
 - Record run 44225747596 (the third record run of `platform` Phase 3 B6) recorded the earlier files. Four of them keep their recording of that run, because the answer of the new run had the same shape
   (only values differed): `accounts.bulk.ok.json`, `accounts.create.error.validation_failed.json`, `report.job.error.not_found.json`, `report.job.sent.json`.
 
@@ -101,16 +102,14 @@ campaign, a stranger's quote, an injected provider text or acknowledgment instan
 - `accounts.bulk.error.validation_failed.json`
 - `accounts.events.empty.json`
 - `accounts.events.last_page.json`
+- `accounts.test.unavailable.json`
 
 ## Hand-written
 
-These 3 files are hand-written (`Docs/history/p3-research/m3-api.md`, checked against the module at the pinned commit), to be replaced by a recording when the harness reaches them. Neither
-record run reached these responses (record run 44395876225 produced the other 45):
+These 2 files are hand-written (`Docs/history/p3-research/m3-api.md`, checked against the module at the pinned commit), to be replaced by a recording when the harness reaches them. Neither
+record run reached these responses (the record runs produced the other 46):
 
 - `run.error.internal_error.json`: a 500 on run needs a fault inside module 3, which the harness does not provoke.
-- `accounts.test.unavailable.json`: the test button answers `unavailable` only when its credential check cannot run (`verify_error`, `verification_unavailable`), which needs the module's own verifier
-  to fail; the harness has a worker and cannot make it. (The other half of that answer, a From check that cannot get an answer from DNS, does happen since the From gate runs in the adapter tests against a
-  fixture DNS that answers SERVFAIL on command, and is recorded as `accounts.test.indeterminate.json`.) The drift gate counts the contract as exercised, on purpose: `TestM3Adapter_TestButtonSaysUnavailableWhenTheCredentialCheckCannotRun` damages the stored credential of one account in module 3's own table (its AEAD tag), so the module cannot decrypt it and answers `unavailable` with `verify_error` and the From verdict `indeterminate` (the account's domain answers SERVFAIL in the fixture DNS), with the same click verifying before the damage and after it is undone. (Before that test existed the contract was exercised only on the runs where a slow DNS answer happened to make the module give that answer, which turned the gate red either way.) The file stays hand-written until a record run takes that answer.
 - `accounts.events.page.json`: a page with a next cursor and a PAUSE event (`pause_reason` `daily_limit`). The contract matcher gives a live body to the fixture it differs from least, and a page of this
   module never carries a pause reason (the harness does not pause an account) or a cursor (a page of 200), so every populated page lands on `accounts.events.last_page.json` (or, for a page of one event, on
   the empty one) and this case stays unexercised: the file is allowlisted for the drift gate.
@@ -119,5 +118,4 @@ They use the same normalised ids as the recordings of the account files (`000000
 and cursors are the normalised forms too (a run of `a`): contractcheck's no-rot check reads a long opaque run as secret-shaped.
 
 - `run.error.internal_error.json`
-- `accounts.test.unavailable.json`
 - `accounts.events.page.json`
