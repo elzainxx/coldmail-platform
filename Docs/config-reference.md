@@ -33,6 +33,11 @@ start-up with exit status 2, and the message names the variable and the reason, 
 | `PLATFORM_M2_URL` | `(unset)` | no | no | Base URL of module 2's platform API (http or https, with a host and no credentials, query or fragment), for example http://m2:8080. The default (unset) means no module 2 call can be made and its adapter refuses with a typed error; the service still starts. Consumed by `internal/adapters/m2.FromConfig`. |
 | `PLATFORM_M2_SERVICE_TOKEN` | `(unset)` | no | yes | Module 2's service token (its Domain A bearer), sent on every platform call to module 2. Printable ASCII with no spaces. The default (unset) means no module 2 call can be made and its adapter refuses with a typed error; the service still starts. Consumed by `internal/adapters/m2.FromConfig`. Never printed or logged. |
 | `PLATFORM_M3_SERVICE_TOKEN` | `(unset)` | no | yes | Module 3's Domain A service token, sent as the bearer on the platform's user-facing calls to module 3. NOT the operator key PLATFORM_M3_ADMIN_TOKEN, which stays a different credential. Printable ASCII with no spaces. The default (unset) means no user-facing module 3 call can be made and its adapter refuses with a typed error; the service still starts. Consumed by `internal/adapters/m3.FromConfig`. Never printed or logged. |
+| `PLATFORM_JWT_SECRET` | `(unset)` | no | yes | The HS256 secret of the Supabase project (its "legacy JWT secret"), used as the raw bytes of the string, with which the job API verifies the access tokens users present. At least 32 bytes of printable ASCII with no spaces. The default (unset) means no HS256 token is accepted; the service still starts, and the job API is not served until this or PLATFORM_JWKS_URL is set. Consumed by `internal/auth.FromConfig`. Never printed or logged. |
+| `PLATFORM_JWKS_URL` | `(unset)` | no | no | Where the Supabase project publishes the public keys its access tokens are signed with (a project with asymmetric signing keys): `https://<project-ref>.supabase.co/auth/v1/.well-known/jwks.json`. An http or https URL with a host and no credentials, query or fragment; `internal/auth` fetches it only over https, at most every 30 seconds, with a 10 second timeout, no proxy and no redirect, and refuses it at start-up when it is http. Keys are used for ES256 (P-256) and RS256 (at least 2048 bits) only. The default (unset) means no asymmetric token is accepted; the service still starts, and the job API is not served until this or PLATFORM_JWT_SECRET is set. Consumed by `internal/auth.FromConfig`. |
+| `PLATFORM_JWT_ISSUER` | `(unset)` | no | no | The issuer (iss) every access token must carry, exactly, for example `https://<project-ref>.supabase.co/auth/v1`. Printable ASCII with no spaces, at most 512 bytes. The default (unset) means the issuer is not checked: a token is judged by its signature, audience and times alone. Set it in production. Consumed by `internal/auth.FromConfig`. |
+| `PLATFORM_JWT_AUDIENCE` | `authenticated` | no | no | The audience (aud) every access token must include; Supabase gives a signed-in user's token authenticated. Printable ASCII with no spaces, at most 512 bytes. Consumed by `internal/auth.FromConfig`. |
+| `PLATFORM_JWT_LEEWAY_SEC` | `30` | no | no | Seconds of clock difference between the token's issuer and this process that exp, nbf and iat are judged with: a token is expired at exp plus this, and not yet valid before nbf minus this. Integer, 0 to 300. Consumed by `internal/auth.FromConfig`. |
 | `PLATFORM_INSTANCE_ID` | `(hostname)` | no | no | Name of this platform instance, 1 to 63 printable ASCII characters. With more than one instance running, only the one holding the leader lock runs the expiry and reconcile loops; the name is the application_name of the database session that holds it (pg_stat_activity) and appears in the loop log lines. Each instance needs its own. The default (hostname) means this machine's host name. |
 
 Column notes. Default `(none)` means the variable has no default. Secret means the value is never written
@@ -157,6 +162,23 @@ newline or a pasted non-ASCII character stops the process at start-up, not at th
 All four are optional, so that a deployment that makes no call to a module starts without them. A module whose URL or token is not set is not reached by default: its adapter answers with a typed
 error, never a made-up verdict. The consumers are `internal/adapters/m1.FromConfig` (`PLATFORM_M1_URL`), `internal/adapters/m2.FromConfig` (`PLATFORM_M2_URL` and `PLATFORM_M2_SERVICE_TOKEN`) and
 `internal/adapters/m3.FromConfig` (`PLATFORM_M3_SERVICE_TOKEN`, with `PLATFORM_M3_URL`). The M3 service token is a different credential from `PLATFORM_M3_ADMIN_TOKEN` (see above).
+
+## How the job API verifies a login
+
+The job API (Phase 4) authenticates the Supabase access token each request carries as `Authorization: Bearer <token>`. Five variables say how, and **all five are optional**: with neither `PLATFORM_JWT_SECRET`
+nor `PLATFORM_JWKS_URL` set the service starts as before and the job API is simply not served. They reach `internal/auth` as `auth.FromConfig(cfg)`, which `internal/app` calls at start-up to validate them
+(one log line, `job API authentication configured`, says which sources are on and never a value; `job API authentication is not configured` says there are none).
+
+- **`PLATFORM_JWT_SECRET`** is the project's legacy JWT secret, the key of **HS256** tokens, used as the raw bytes of the string (it is not base64-decoded). At least 32 bytes; a shorter one stops the process with exit status 2.
+- **`PLATFORM_JWKS_URL`** is where the project publishes the public keys of its **asymmetric** signing keys (ES256 on P-256, RS256 with a modulus of at least 2048 bits). It is fetched only over https (an http URL is a
+  start-up error naming the variable, exit status 2), at most once every 30 seconds, with a 10 second timeout, no proxy, no redirect and a 1 MiB cap on the answer; a fetched key set is trusted for an hour, an unknown `kid`
+  makes one refresh, and while the issuer cannot be reached the keys already held keep serving.
+- **The two sources may both be set** (a project that is moving from the legacy secret to asymmetric keys): an HS256 token is judged by the secret alone and an ES256 or RS256 token by the key set alone. No other
+  algorithm is accepted, `none` least of all, and a published public key is never used as an HMAC key.
+- **`PLATFORM_JWT_ISSUER`** pins `iss` exactly; unset means it is not checked, so set it in production. **`PLATFORM_JWT_AUDIENCE`** (default `authenticated`) must be one of the token's `aud` values.
+  **`PLATFORM_JWT_LEEWAY_SEC`** (default 30, 0 to 300) is the clock difference tolerated on `exp`, `nbf` and `iat`: a token is expired when now is at or after `exp` plus the leeway.
+- A verified token proves only who the user is (`sub`, a canonical lower-case uuid). The `role` and `email` claims are carried and never trusted for authorisation: the API resolves `sub` to a platform user and an
+  inactive or unknown login is refused.
 
 ## What the service does with the database at start-up
 

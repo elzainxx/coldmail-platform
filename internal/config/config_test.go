@@ -91,11 +91,26 @@ func TestVars_AreWellFormed(t *testing.T) {
 			t.Errorf("%s must be declared optional, with the default (unset) and Secret=%v, got %+v", c.name, c.secret, v)
 		}
 	}
+	// The token-verification dials (Phase 4 B14a): the HS256 secret is a secret, the JWKS URL and the issuer are not, and all three are optional with the (unset) marker; the audience and the
+	// leeway are optional with a real default.
+	for _, c := range []struct {
+		name   string
+		secret bool
+	}{{VarJWTSecret, true}, {VarJWKSURL, false}, {VarJWTIssuer, false}} {
+		if v, ok := byName[c.name]; !ok || v.Secret != c.secret || v.Required || v.Default != "(unset)" {
+			t.Errorf("%s must be declared optional, with the default (unset) and Secret=%v, got %+v", c.name, c.secret, v)
+		}
+	}
+	for name, def := range map[string]string{VarJWTAudience: "authenticated", VarJWTLeewaySec: "30"} {
+		if v, ok := byName[name]; !ok || v.Secret || v.Required || v.Default != def {
+			t.Errorf("%s must be declared optional, not secret, with the default %q, got %+v", name, def, v)
+		}
+	}
 	// Every other variable is a non-secret dial: a new secret must be added to the list above on purpose.
-	knownSecrets := map[string]bool{VarDatabaseURL: true, VarM3AdminToken: true, VarM1KeySecret: true, VarM2ServiceToken: true, VarM3ServiceToken: true}
+	knownSecrets := map[string]bool{VarDatabaseURL: true, VarM3AdminToken: true, VarM1KeySecret: true, VarM2ServiceToken: true, VarM3ServiceToken: true, VarJWTSecret: true}
 	for _, v := range vars {
 		if v.Secret && !knownSecrets[v.Name] {
-			t.Errorf("%s is Secret but is not one of the five known secrets: extend this test deliberately", v.Name)
+			t.Errorf("%s is Secret but is not one of the six known secrets: extend this test deliberately", v.Name)
 		}
 	}
 
@@ -136,6 +151,12 @@ func TestLoad_DefaultsAreTheDocumentedOnes(t *testing.T) {
 		"PLATFORM_M2_SERVICE_TOKEN": "(unset)",
 		"PLATFORM_M3_SERVICE_TOKEN": "(unset)",
 
+		"PLATFORM_JWT_SECRET":     "(unset)",
+		"PLATFORM_JWKS_URL":       "(unset)",
+		"PLATFORM_JWT_ISSUER":     "(unset)",
+		"PLATFORM_JWT_AUDIENCE":   "authenticated",
+		"PLATFORM_JWT_LEEWAY_SEC": "30",
+
 		"PLATFORM_INSTANCE_ID": "(hostname)",
 	}
 	got := map[string]string{}
@@ -173,6 +194,13 @@ func TestLoad_DefaultsAreTheDocumentedOnes(t *testing.T) {
 	}
 	if cfg.M1URL != "" || cfg.M2URL != "" || cfg.M2ServiceToken != "" || cfg.M3ServiceToken != "" || cfg.M1KeySecret != "" || cfg.InstanceID != "" {
 		t.Fatalf("an optional dial's default did not load as empty: %v", cfg)
+	}
+
+	if cfg.JWTAudience != "authenticated" || cfg.JWTLeeway != 30*time.Second {
+		t.Fatalf("the token-verification defaults did not reach the Config: %v", cfg)
+	}
+	if cfg.JWTSecret != "" || cfg.JWKSURL != "" || cfg.JWTIssuer != "" {
+		t.Fatalf("an optional token-verification dial's default did not load as empty: %v", cfg)
 	}
 
 	// Paired control: a blank value means "unset", so an environment that spells every default out loud
@@ -310,6 +338,12 @@ var alternatives = map[string]string{
 	VarM2URL:          "https://m2.internal:9444/api",
 	VarM2ServiceToken: "alt-m2-service-token",
 	VarM3ServiceToken: "alt-m3-service-token",
+
+	VarJWTSecret:    strings.Repeat("jwt-", 9), // 36 bytes
+	VarJWKSURL:      "https://idp.internal/auth/v1/.well-known/jwks.json",
+	VarJWTIssuer:    "https://idp.internal/auth/v1",
+	VarJWTAudience:  "platform",
+	VarJWTLeewaySec: "45",
 
 	VarInstanceID: "platform-2",
 }
@@ -449,6 +483,28 @@ func TestLoad_InvalidValuesNameTheVariableAndNeverEchoTheValue(t *testing.T) {
 		{VarM3ServiceToken, "two words-XYZ123", "printable ASCII"},
 		{VarM3ServiceToken, "café-token-XYZ123", "printable ASCII"},
 		{VarM3ServiceToken, "inner\ttab-XYZ123", "printable ASCII"},
+		// The token-verification dials (Phase 4 B14a): the secret's length and alphabet, the URL's shape, the issuer's and audience's alphabet and length, the leeway's range.
+		{VarJWTSecret, "short-XYZ123", "at least 32 bytes"},
+		{VarJWTSecret, strings.Repeat("a", 31), "at least 32 bytes"},
+		{VarJWTSecret, strings.Repeat("a", 20) + " " + strings.Repeat("b", 20), "printable ASCII"},
+		{VarJWTSecret, strings.Repeat("a", 20) + "\n" + strings.Repeat("b", 20), "printable ASCII"},
+		{VarJWTSecret, strings.Repeat("é", 20), "printable ASCII"},
+		{VarJWKSURL, "ftp://idp-XYZ123/jwks.json", "http or https URL"},
+		{VarJWKSURL, "idp-XYZ123/jwks.json", "http or https URL"},
+		{VarJWKSURL, "https://", "http or https URL"},
+		{VarJWKSURL, "https://user-XYZ123:pw-XYZ123@idp/jwks.json", "no credentials"},
+		{VarJWKSURL, "https://idp-XYZ123/jwks.json?apikey=1", "http or https URL"},
+		{VarJWKSURL, "https://idp-XYZ123/jwks.json#f", "http or https URL"},
+		{VarJWTIssuer, "two words-XYZ123", "printable ASCII"},
+		{VarJWTIssuer, "café-issuer-XYZ123", "printable ASCII"},
+		{VarJWTIssuer, strings.Repeat("i", 513), "at most 512"},
+		{VarJWTAudience, "two words-XYZ123", "printable ASCII"},
+		{VarJWTAudience, "café-XYZ123", "printable ASCII"},
+		{VarJWTAudience, strings.Repeat("a", 513), "at most 512"},
+		{VarJWTLeewaySec, "soon-XYZ123", "integer"},
+		{VarJWTLeewaySec, "1.5", "integer"},
+		{VarJWTLeewaySec, "-1", "between 0 and 300"},
+		{VarJWTLeewaySec, "301", "between 0 and 300"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name+"="+tc.value, func(t *testing.T) {
@@ -858,7 +914,7 @@ func TestConfig_LogValueShowsTheNonSecretsAndRedactsTheSecret(t *testing.T) {
 	}
 
 	// The optional module dials say "(unset)" when they are not configured (and never an empty string that could be mistaken for a value that was lost).
-	for _, key := range []string{"m1_key_secret", "m1_url", "m2_url", "m2_service_token", "m3_service_token"} {
+	for _, key := range []string{"m1_key_secret", "m1_url", "m2_url", "m2_service_token", "m3_service_token", "jwt_secret", "jwks_url", "jwt_issuer"} {
 		if line.Config[key] != "(unset)" {
 			t.Errorf("%s = %v, want (unset) for a dial that was not configured", key, line.Config[key])
 		}

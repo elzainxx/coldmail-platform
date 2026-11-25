@@ -67,6 +67,13 @@ const (
 	VarM2ServiceToken = "PLATFORM_M2_SERVICE_TOKEN"
 	VarM3ServiceToken = "PLATFORM_M3_SERVICE_TOKEN"
 
+	// How the job API verifies the Supabase access tokens it is shown (internal/auth, Phase 4 B14a): the HS256 secret and/or the JWKS URL of the asymmetric keys, and the rules a token must meet.
+	VarJWTSecret    = "PLATFORM_JWT_SECRET"
+	VarJWKSURL      = "PLATFORM_JWKS_URL"
+	VarJWTIssuer    = "PLATFORM_JWT_ISSUER"
+	VarJWTAudience  = "PLATFORM_JWT_AUDIENCE"
+	VarJWTLeewaySec = "PLATFORM_JWT_LEEWAY_SEC"
+
 	// Which instance this is, when more than one platform instance runs (Phase 2 close-out D9): the name of the session that holds the leader lock of the loops.
 	VarInstanceID = "PLATFORM_INSTANCE_ID"
 )
@@ -80,6 +87,18 @@ const MinM1KeySecretBytes = 32
 const (
 	MinM1KeyVersion = 1
 	MaxM1KeyVersion = 999
+)
+
+// MinJWTSecretBytes is the shortest PLATFORM_JWT_SECRET accepted (internal/auth refuses the same: auth.MinHMACSecretBytes, pinned equal by a test there). 32 bytes is the size of the HMAC-SHA256
+// output the token signature is made of.
+const MinJWTSecretBytes = 32
+
+// The bounds of the token-verification dials: the largest leeway the clocks of the issuer and of this process may be allowed to differ by (five minutes; a token is valid for an hour, so more would
+// be a window, not a tolerance), the longest a configured issuer or audience may be, and the audience the access token of a signed-in Supabase user carries.
+const (
+	maxJWTLeewaySec = 300
+	maxJWTClaimText = 512
+	jwtAudienceDef  = "authenticated"
 )
 
 // Upper bounds on the integer dials. They are sanity guards, not tuning: they keep a typo (an extra digit,
@@ -178,6 +197,16 @@ func Vars() []Var {
 			Doc: "Module 2's service token (its Domain A bearer), sent on every platform call to module 2. Printable ASCII with no spaces. The default (unset) means no module 2 call can be made and its adapter refuses with a typed error; the service still starts. Consumed by `internal/adapters/m2.FromConfig`. Never printed or logged."},
 		{Name: VarM3ServiceToken, Default: unsetMarker, Secret: true,
 			Doc: "Module 3's Domain A service token, sent as the bearer on the platform's user-facing calls to module 3. NOT the operator key PLATFORM_M3_ADMIN_TOKEN, which stays a different credential. Printable ASCII with no spaces. The default (unset) means no user-facing module 3 call can be made and its adapter refuses with a typed error; the service still starts. Consumed by `internal/adapters/m3.FromConfig`. Never printed or logged."},
+		{Name: VarJWTSecret, Default: unsetMarker, Secret: true,
+			Doc: fmt.Sprintf("The HS256 secret of the Supabase project (its \"legacy JWT secret\"), used as the raw bytes of the string, with which the job API verifies the access tokens users present. At least %d bytes of printable ASCII with no spaces. The default (unset) means no HS256 token is accepted; the service still starts, and the job API is not served until this or PLATFORM_JWKS_URL is set. Consumed by `internal/auth.FromConfig`. Never printed or logged.", MinJWTSecretBytes)},
+		{Name: VarJWKSURL, Default: unsetMarker,
+			Doc: "Where the Supabase project publishes the public keys its access tokens are signed with (a project with asymmetric signing keys): `https://<project-ref>.supabase.co/auth/v1/.well-known/jwks.json`. An http or https URL with a host and no credentials, query or fragment; `internal/auth` fetches it only over https, at most every 30 seconds, with a 10 second timeout, no proxy and no redirect, and refuses it at start-up when it is http. Keys are used for ES256 (P-256) and RS256 (at least 2048 bits) only. The default (unset) means no asymmetric token is accepted; the service still starts, and the job API is not served until this or PLATFORM_JWT_SECRET is set. Consumed by `internal/auth.FromConfig`."},
+		{Name: VarJWTIssuer, Default: unsetMarker,
+			Doc: "The issuer (iss) every access token must carry, exactly, for example `https://<project-ref>.supabase.co/auth/v1`. Printable ASCII with no spaces, at most 512 bytes. The default (unset) means the issuer is not checked: a token is judged by its signature, audience and times alone. Set it in production. Consumed by `internal/auth.FromConfig`."},
+		{Name: VarJWTAudience, Default: jwtAudienceDef,
+			Doc: "The audience (aud) every access token must include; Supabase gives a signed-in user's token authenticated. Printable ASCII with no spaces, at most 512 bytes. Consumed by `internal/auth.FromConfig`."},
+		{Name: VarJWTLeewaySec, Default: "30",
+			Doc: fmt.Sprintf("Seconds of clock difference between the token's issuer and this process that exp, nbf and iat are judged with: a token is expired at exp plus this, and not yet valid before nbf minus this. Integer, 0 to %d. Consumed by `internal/auth.FromConfig`.", maxJWTLeewaySec)},
 		{Name: VarInstanceID, Default: instanceIDDefault,
 			Doc: fmt.Sprintf("Name of this platform instance, 1 to %d printable ASCII characters. With more than one instance running, only the one holding the leader lock runs the expiry and reconcile loops; the name is the application_name of the database session that holds it (pg_stat_activity) and appears in the loop log lines. Each instance needs its own. The default (hostname) means this machine's host name.", maxInstanceIDBytes)},
 	}
@@ -214,6 +243,12 @@ type Config struct {
 	M2URL          string // base URL of module 2's platform API; "" means not configured (internal/adapters/m2 FromConfig)
 	M2ServiceToken Secret // module 2's service token (Domain A bearer); "" means not configured (internal/adapters/m2 FromConfig)
 	M3ServiceToken Secret // module 3's Domain A service token, not the admin token M3AdminToken; "" means not configured (internal/adapters/m3 FromConfig)
+
+	JWTSecret   Secret        // the HS256 secret the job API verifies access tokens with; "" means not configured (internal/auth FromConfig)
+	JWKSURL     string        // where the asymmetric keys of the access tokens are published; "" means not configured (internal/auth FromConfig)
+	JWTIssuer   string        // the iss every access token must carry; "" means not checked (internal/auth FromConfig)
+	JWTAudience string        // the aud every access token must include (internal/auth FromConfig)
+	JWTLeeway   time.Duration // the clock skew exp, nbf and iat are judged with (internal/auth FromConfig)
 
 	InstanceID string // this instance's name; "" means the default, the host name, which the service resolves (internal/entitlements ResolveInstanceID)
 }
@@ -388,6 +423,44 @@ func Load(getenv func(string) string) (Config, error) {
 				}
 				c.M3ServiceToken = Secret(raw)
 			}
+		case VarJWTSecret:
+			if raw != v.Default { // the default stands for "not configured", which leaves the field empty (see unsetMarker)
+				if len(raw) < MinJWTSecretBytes {
+					fail(v.Name, fmt.Sprintf("must be at least %d bytes", MinJWTSecretBytes))
+					continue
+				}
+				if !validClaimText(raw, len(raw)) {
+					fail(v.Name, "must be printable ASCII with no spaces (the secret is used as the raw bytes of the string)")
+					continue
+				}
+				c.JWTSecret = Secret(raw)
+			}
+		case VarJWKSURL:
+			if raw != v.Default {
+				if !validModuleURL(raw) {
+					fail(v.Name, "must be an http or https URL with a host and no credentials, query or fragment, for example the project's /auth/v1/.well-known/jwks.json")
+					continue
+				}
+				c.JWKSURL = raw
+			}
+		case VarJWTIssuer:
+			if raw != v.Default {
+				if !validClaimText(raw, maxJWTClaimText) {
+					fail(v.Name, fmt.Sprintf("must be printable ASCII with no spaces, at most %d bytes", maxJWTClaimText))
+					continue
+				}
+				c.JWTIssuer = raw
+			}
+		case VarJWTAudience:
+			if !validClaimText(raw, maxJWTClaimText) {
+				fail(v.Name, fmt.Sprintf("must be printable ASCII with no spaces, at most %d bytes", maxJWTClaimText))
+				continue
+			}
+			c.JWTAudience = raw
+		case VarJWTLeewaySec:
+			if n, ok := intIn(v.Name, raw, 0, maxJWTLeewaySec); ok {
+				c.JWTLeeway = time.Duration(n) * time.Second
+			}
 		case VarInstanceID:
 			if raw != v.Default { // the default stands for the host name, which Load does not read (see instanceIDDefault)
 				if !validInstanceID(raw) {
@@ -440,6 +513,20 @@ func validInstanceID(s string) bool {
 	}
 	for i := 0; i < len(s); i++ {
 		if s[i] < 0x20 || s[i] > 0x7e {
+			return false
+		}
+	}
+	return true
+}
+
+// validClaimText accepts 1 to limit bytes of printable ASCII without spaces: what an issuer, an audience and an HMAC secret are (internal/auth applies the same rule to the first two). A
+// stray line break or a pasted non-ASCII character would make the value differ from the one the issuer signs and names, and fails at start-up with the variable named.
+func validClaimText(s string, limit int) bool {
+	if len(s) < 1 || len(s) > limit {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] <= 0x20 || s[i] >= 0x7f {
 			return false
 		}
 	}
@@ -502,6 +589,11 @@ func (c Config) attrs() []slog.Attr {
 		slog.String("m2_url", urlState(c.M2URL)),
 		slog.String("m2_service_token", secretState(c.M2ServiceToken)),
 		slog.String("m3_service_token", secretState(c.M3ServiceToken)),
+		slog.String("jwt_secret", secretState(c.JWTSecret)),
+		slog.String("jwks_url", urlState(c.JWKSURL)),
+		slog.String("jwt_issuer", urlState(c.JWTIssuer)), // the issuer is a URL in practice and holds no credential: it is not a secret
+		slog.String("jwt_audience", c.JWTAudience),
+		slog.Duration("jwt_leeway", c.JWTLeeway),
 		slog.String("instance_id", c.InstanceID),
 	}
 }

@@ -75,6 +75,13 @@ func Run(ctx context.Context, getenv func(string) string, logw io.Writer) error 
 		return fmt.Errorf("build logger: %w", err)
 	}
 
+	// The job API's authentication dials are validated here, before anything is opened: an invalid combination is a configuration error (exit status 2), and one log line says which sources are on.
+	deps, err := newAPIDeps(cfg, log)
+	if err != nil {
+		return err
+	}
+	_ = deps // the job API (Phase 4, chunk B14b) is built from it; until then nothing serves it
+
 	m3, err := newSuspender(cfg)
 	if err != nil {
 		return err
