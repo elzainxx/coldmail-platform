@@ -110,7 +110,7 @@ docker() {   # docker inspect -f <format> <container>
 gt_psql_su() {
   local n
   case "$1" in
-    *rolcanlogin*) case "${SC_ROLE:-ok}" in ok) echo "t|f|t";; none) echo "";; super) echo "t|t|t";; nologin) echo "f|f|t";; esac;;
+    *rolcanlogin*) case "${SC_ROLE:-ok}" in ok) echo "true|false|true";; none) echo "";; super) echo "true|true|true";; nologin) echo "false|false|true";; esac;;
     *"from auth.schema_migrations"*) n="$(bump mig)"; if [ "$n" = 1 ]; then echo "${SC_MIG_BEFORE:-12}"; else echo "${SC_MIG_AFTER:-87}"; fi;;
     *pg_stat_activity*) echo 2;;
     *tableowner*) echo "auth.users is owned by supabase_auth_admin, the schema auth by supabase_auth_admin";;
@@ -135,7 +135,7 @@ verdict "gotrue_pull: ... and the pull's own error is printed" 1 "manifest for t
 # ── gotrue_stage ──
 out="$(sg gotrue_stage)"; rc=$?
 verdict "gotrue_stage: a good start" 0 "GoTrue answers /health from a container on the private network, by name:" "$out" "$rc"
-verdict "gotrue_stage: ... the role is read and printed" 0 "the role supabase_auth_admin: (login, superuser, createrole) = (t|f|t)" "$out" "$rc"
+verdict "gotrue_stage: ... the role is read and printed" 0 "the role supabase_auth_admin: (login, superuser, createrole) = (true|false|true)" "$out" "$rc"
 verdict "gotrue_stage: ... the migrations are read back, before and after" 0 "GoTrue's own migrations: auth.schema_migrations held 12 row(s) before GoTrue started and holds 87 now" "$out" "$rc"
 out="$( ( rm -rf "$T/sw"; rm -f "$T"/sc.*; mkdir -p "$T/sw"; SC_PASS=deadbeefdeadbeefdeadbeefdeadbeef; export SC_PASS; sg gotrue_stage >/dev/null; cat "$T/sc.alter-stdin" ) 2>&1 )"
 verdict "gotrue_stage: the SQL on stdin sets the role's password from a psql variable and never carries it" 0 "ALTER ROLE supabase_auth_admin WITH PASSWORD :'pw';" "$out" 0 "deadbeefdeadbeef"
@@ -145,9 +145,9 @@ verdict "gotrue_stage: ... and as the variable pw" 0 "-v pw=deadbeefdeadbeef" "$
 out="$(SC_ROLE=none sg gotrue_stage)"; rc=$?
 verdict "gotrue_stage: the image has no such role" 1 "the database has no role supabase_auth_admin" "$out" "$rc"
 out="$(SC_ROLE=super sg gotrue_stage)"; rc=$?
-verdict "gotrue_stage: a superuser role is refused" 1 "is (login, superuser, createrole) = (t|t|t), expected a login role that is NOT a superuser" "$out" "$rc"
+verdict "gotrue_stage: a superuser role is refused" 1 "is (login, superuser, createrole) = (true|true|true), expected a login role that is NOT a superuser" "$out" "$rc"
 out="$(SC_ROLE=nologin sg gotrue_stage)"; rc=$?
-verdict "gotrue_stage: a role that cannot log in is refused" 1 "is (login, superuser, createrole) = (f|f|t), expected a login role" "$out" "$rc"
+verdict "gotrue_stage: a role that cannot log in is refused" 1 "is (login, superuser, createrole) = (false|false|true), expected a login role" "$out" "$rc"
 out="$( SC_ALTER_FAIL=1 SC_PASS=cafebabecafebabecafebabecafebabe sg gotrue_stage )"; rc=$?
 verdict "gotrue_stage: a password that cannot be set" 1 "could not set the password of supabase_auth_admin as the image's superuser supabase_admin" "$out" "$rc" "cafebabecafebabe"
 out="$(SC_UP_FAIL=1 sg gotrue_stage)"; rc=$?

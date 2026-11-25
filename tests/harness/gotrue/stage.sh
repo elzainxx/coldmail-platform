@@ -80,7 +80,7 @@ gotrue_stage() {
   out="$(gt_psql_su "select rolcanlogin::text || '|' || rolsuper::text || '|' || rolcreaterole::text from pg_roles where rolname = '$GT_ROLE'" 2>&1)" || die "could not read pg_roles: $out"
   [ -n "$out" ] || die "the database has no role $GT_ROLE: the Supabase image's init scripts create it for GoTrue (it owns the auth schema's tables), and GoTrue's migrations cannot run without it"
   case "$out" in
-    "t|f|"*) ;;
+    "true|false|"*) ;;
     *) die "the role $GT_ROLE is (login, superuser, createrole) = ($out), expected a login role that is NOT a superuser: GoTrue's migrations must pass on ownership, never on a superuser";;
   esac
   echo "  the role $GT_ROLE: (login, superuser, createrole) = ($out)"
