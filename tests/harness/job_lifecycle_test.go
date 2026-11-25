@@ -1378,7 +1378,7 @@ func TestJobLifecycle_LifecycleColumnsMoveWithATransition(t *testing.T) {
 	_, admin := migratedScratch(t)
 	tx := ledgerBegin(t, admin)
 	ledgerSeed(t, tx)
-	next := jobIDs("9h")
+	next := jobIDs("8a")
 	a := ledgerUserA
 	moves := ledgerWhy{Constraint: "job_lifecycle_columns_move_with_a_transition"}
 	guardOff := func(sp pgx.Tx) { ledgerMust(t, sp, "ALTER TABLE platform.jobs DISABLE TRIGGER jobs_transition_guard") }
@@ -1474,7 +1474,7 @@ func TestJobLifecycle_FrozenColumns(t *testing.T) {
 	_, admin := migratedScratch(t)
 	tx := ledgerBegin(t, admin)
 	ledgerSeed(t, tx)
-	next := jobIDs("9g")
+	next := jobIDs("8b")
 	a := ledgerUserA
 	cols := []struct{ name, value string }{
 		{"frozen_settings", `{"b":2}`}, {"preview", `{"x":1}`}, {"preview_fingerprint", strings.Repeat("b", 64)}, {"confirm_key", "changed"},
@@ -1605,12 +1605,13 @@ func TestJobLifecycle_TheSlotThroughALife(t *testing.T) {
 	for _, life := range []struct {
 		name  string
 		steps []step
+		opts  jobOpts // the choices of every hop of the walk: a job that nothing could start is confirmed with a start deadline that is already past (a job expires only after its start deadline)
 	}{
-		{"a job that runs and succeeds", []step{{"previewed", false}, {"confirmed", true}, {"running", true}, {"completing", true}, {"succeeded", false}}},
-		{"a job that is cancelled while it runs (module 2 can cancel)", []step{{"previewed", false}, {"confirmed", true}, {"running", true}, {"cancelling", true}, {"completing", true}, {"cancelled", false}}},
-		{"a scheduled job that is paused, resumed and fails", []step{{"previewed", false}, {"scheduled", true}, {"paused", true}, {"scheduled", true}, {"running", true}, {"failed", false}}},
-		{"a confirmed job that nothing could start", []step{{"previewed", false}, {"confirmed", true}, {"expired", false}}},
-		{"a job discarded before it was confirmed", []step{{"previewed", false}, {"draft", false}, {"previewed", false}, {"cancelled", false}}},
+		{"a job that runs and succeeds", []step{{"previewed", false}, {"confirmed", true}, {"running", true}, {"completing", true}, {"succeeded", false}}, jobOpts{}},
+		{"a job that is cancelled while it runs (module 2 can cancel)", []step{{"previewed", false}, {"confirmed", true}, {"running", true}, {"cancelling", true}, {"completing", true}, {"cancelled", false}}, jobOpts{}},
+		{"a scheduled job that is paused, resumed and fails", []step{{"previewed", false}, {"scheduled", true}, {"paused", true}, {"scheduled", true}, {"running", true}, {"failed", false}}, jobOpts{}},
+		{name: "a confirmed job that nothing could start", steps: []step{{"previewed", false}, {"confirmed", true}, {"expired", false}}, opts: jobOpts{Deadline: jobDeadlinePast}},
+		{"a job discarded before it was confirmed", []step{{"previewed", false}, {"draft", false}, {"previewed", false}, {"cancelled", false}}, jobOpts{}},
 	} {
 		life := life
 		t.Run(life.name, func(t *testing.T) {
@@ -1622,7 +1623,7 @@ func TestJobLifecycle_TheSlotThroughALife(t *testing.T) {
 				}
 				probes++
 				for _, s := range life.steps {
-					jobWalkTo(t, sp, first, s.to)
+					jobWalkToWith(t, sp, first, s.to, life.opts)
 					probes++
 					if got := held(sp); got != s.held {
 						t.Fatalf("while the first job is %s the slot is held = %v, want %v", s.to, got, s.held)

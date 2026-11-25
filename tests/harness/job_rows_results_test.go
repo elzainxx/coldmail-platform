@@ -18,21 +18,30 @@ const (
 	jrResults = "platform.job_results"
 )
 
-// jrRow is a legal pending row of a job: a fresh id, the next ordinal of the job, a raw and a normalised address. next gives the ids and the ordinals.
+// jrRow is a legal pending row of a job: a fresh id, the next ordinal of the job and an address of its own (row<ordinal>@example.com, raw with its case and spaces): a job never sends one address twice
+// (job_rows_one_pending_per_address), so two pending rows of one job must not share one, and the ordinal counter never repeats within a test. next gives the ids and the ordinals.
 func jrRow(next func() string, ordinal *int, job, user string, kv ...any) ledgerCols {
 	*ordinal++
-	return ledgerCols{"id": next(), "job_id": job, "user_id": user, "ordinal": *ordinal, "email_raw": " Ada@Example.com ", "email_norm": "ada@example.com"}.with(kv...)
+	n := *ordinal
+	return ledgerCols{"id": next(), "job_id": job, "user_id": user, "ordinal": n, "email_raw": fmt.Sprintf(" Row%d@Example.com ", n), "email_norm": fmt.Sprintf("row%d@example.com", n)}.with(kv...)
 }
 
-// jrResult is a legal FREE result for the row: written by the module, state sent.
-func jrResult(job, user, row string, ordinal int, kv ...any) ledgerCols {
-	return ledgerCols{"job_id": job, "user_id": user, "item_ref": row, "ordinal": ordinal, "email": "ada@example.com", "origin": "module", "module_state": "sent", "decision": "free", "rule": "M2-04"}.with(kv...)
+// jrResultOf is a legal FREE result for the row, written by the module, state sent: it names the ROW's job, user, item reference and ordinal (the composite foreign keys) and the ROW's address, the normalised one
+// or, for a row that has none (a malformed one), the raw text (job_results_match_their_row). kv overrides a column, which is how a test says "another row's address" or "another ordinal".
+func jrResultOf(row ledgerCols, kv ...any) ledgerCols {
+	email := row["email_raw"]
+	if row["email_norm"] != nil {
+		email = row["email_norm"]
+	}
+	return ledgerCols{"job_id": row["job_id"], "user_id": row["user_id"], "item_ref": row["id"], "ordinal": row["ordinal"], "email": email, "origin": "module", "module_state": "sent", "decision": "free", "rule": "M2-04"}.with(kv...)
 }
 
 // TestJobRows_Checks: each CHECK of platform.job_rows refuses its row for ITS name beside the legal row, and the row that would make it evaluate to NULL is refused too (a CHECK that evaluates to NULL passes): the
 // ordinal starts at 1 and is unique in the job; the state is one of five; the raw address is bounded in BYTES (4096 accepted, 4097 not, and a letter of two bytes counts twice); the normalised address is NULL
 // exactly when the row is malformed (a pending row with none, a malformed one with one); a row is a duplicate exactly when it names the row it repeats, and that row is a row of the same job; a malformed or
-// excluded row says why (NULL, blank); only a pending row is submitted; the fields are an object; NOT NULL columns refuse NULL.
+// excluded row says why (NULL, blank); only a pending row is submitted; the fields are an object; NOT NULL columns refuse NULL; a row is never its own duplicate; and an address holds ONE seat in a
+// job (a unique index over the pending and the suppressed rows: a second one is 23505 and the index is named, the same address in another job, as a duplicate, as an excluded row, or once the first is
+// malformed is accepted, and two malformed rows are accepted: both have no address, the NULL case).
 // It fails if a constraint is missing, weaker than its design, or lets a NULL through.
 func TestJobRows_Checks(t *testing.T) {
 	_, admin := migratedScratch(t)
@@ -83,7 +92,9 @@ func TestJobRows_Checks(t *testing.T) {
 	t.Run("a row is a duplicate exactly when it names the row it repeats, in the same job", func(t *testing.T) {
 		ledgerRefusedInsert(t, tx, "a duplicate that names no row (the NULL case)", "23514", check("job_rows_duplicate_shape"), jrRows, row("state", "duplicate"))
 		ledgerRefusedInsert(t, tx, "a pending row that names a row it repeats", "23514", check("job_rows_duplicate_shape"), jrRows, row("duplicate_of", first["id"]))
-		ledgerOKInsert(t, tx, "control: a duplicate of the first row", jrRows, row("state", "duplicate", "duplicate_of", first["id"]))
+		ledgerOKInsert(t, tx, "control: a duplicate of the first row (it repeats its address: a duplicate takes no seat)", jrRows, row("state", "duplicate", "duplicate_of", first["id"], "email_norm", first["email_norm"]))
+		self := next()
+		ledgerRefusedInsert(t, tx, "a duplicate of itself", "23514", check("job_rows_duplicate_not_itself"), jrRows, row("id", self, "state", "duplicate", "duplicate_of", self))
 		elsewhere := ledgerCols{"id": next(), "job_id": other, "user_id": a, "ordinal": 7, "email_raw": "z@example.com", "email_norm": "z@example.com"}
 		ledgerOKInsert(t, tx, "control: a row of another job", jrRows, elsewhere)
 		ledgerRefusedInsert(t, tx, "a duplicate of a row of ANOTHER job", "23503", check("job_rows_duplicate_fk"), jrRows, row("state", "duplicate", "duplicate_of", elsewhere["id"]))
@@ -92,14 +103,32 @@ func TestJobRows_Checks(t *testing.T) {
 
 	t.Run("a malformed or excluded row says why", func(t *testing.T) {
 		for _, s := range []string{"malformed", "excluded"} {
-			norm := any("ada@example.com")
+			kv := []any{"state", s} // an excluded row keeps the address of its own (it takes no seat); a malformed one has none
 			if s == "malformed" {
-				norm = nil
+				kv = append(kv, "email_norm", nil)
 			}
-			ledgerRefusedInsert(t, tx, "a "+s+" row with no reason (the NULL case)", "23514", check("job_rows_reason_shape"), jrRows, row("state", s, "email_norm", norm))
-			ledgerRefusedInsert(t, tx, "a "+s+" row with a blank reason", "23514", check("job_rows_reason_shape"), jrRows, row("state", s, "email_norm", norm, "reason", "   "))
-			ledgerOKInsert(t, tx, "control: a "+s+" row with a reason", jrRows, row("state", s, "email_norm", norm, "reason", "because"))
+			ledgerRefusedInsert(t, tx, "a "+s+" row with no reason (the NULL case)", "23514", check("job_rows_reason_shape"), jrRows, row(kv...))
+			ledgerRefusedInsert(t, tx, "a "+s+" row with a blank reason", "23514", check("job_rows_reason_shape"), jrRows, row(append(append([]any{}, kv...), "reason", "   ")...))
+			ledgerOKInsert(t, tx, "control: a "+s+" row with a reason", jrRows, row(append(append([]any{}, kv...), "reason", "because")...))
 		}
+	})
+
+	t.Run("an address holds one seat in a job", func(t *testing.T) {
+		const seat = "job_rows_one_pending_per_address"
+		norm := first["email_norm"]
+		ledgerRefusedInsert(t, tx, "a second pending row with the address of the first", "23505", check(seat), jrRows, row("email_norm", norm))
+		ledgerRefusedInsert(t, tx, "a suppressed row with the address of a pending row (a suppressed row is a pending one that the user's own list took out: the index covers both)", "23505", check(seat), jrRows, row("state", "suppressed", "email_norm", norm))
+		ledgerOKInsert(t, tx, "control: the same address as a pending row of ANOTHER job", jrRows, ledgerCols{"id": next(), "job_id": other, "user_id": a, "ordinal": 20, "email_raw": "x", "email_norm": norm})
+		ledgerOKInsert(t, tx, "control: the same address as a duplicate row (it names the row it repeats)", jrRows, row("state", "duplicate", "duplicate_of", first["id"], "email_norm", norm))
+		ledgerOKInsert(t, tx, "control: and a second duplicate of it (a duplicate takes no seat)", jrRows, row("state", "duplicate", "duplicate_of", first["id"], "email_norm", norm))
+		ledgerOKInsert(t, tx, "control: the same address as an excluded row (it takes no seat)", jrRows, row("state", "excluded", "reason", "not selected", "email_norm", norm))
+		ledgerOKInsert(t, tx, "control: a malformed row (it has no address)", jrRows, row("state", "malformed", "reason", "no domain", "email_norm", nil))
+		ledgerOKInsert(t, tx, "a second malformed row: two NULL addresses are two rows (the NULL case)", jrRows, row("state", "malformed", "reason", "no at sign", "email_norm", nil))
+		ledgerTrial(t, tx, func(sp pgx.Tx) { // the seat is the row's while it is pending, and free again when the row is not
+			ledgerRefusedInsert(t, sp, "before: a second pending row with the address", "23505", check(seat), jrRows, row("email_norm", norm))
+			ledgerExpectOK(t, sp, "the first row becomes malformed (it keeps no address)", "UPDATE platform.job_rows SET state = 'malformed', email_norm = NULL, reason = 'no longer valid' WHERE id = $1", first["id"])
+			ledgerOKInsert(t, sp, "after: the address is free again", jrRows, row("email_norm", norm))
+		})
 	})
 
 	t.Run("only a pending row is submitted", func(t *testing.T) {
@@ -189,9 +218,11 @@ func TestJobRows_FrozenWithTheJob(t *testing.T) {
 	})
 }
 
-// TestJobRows_CompositeForeignKeys: a row and a result carry their user and name their job by the pair (id, user_id), so neither can name another user's job (23503 job_rows_job_fk, job_results_job_fk), a result must
-// name a row OF ITS OWN JOB (23503 job_results_row_fk: a row of another job, a row that does not exist), and the legal twin of each is accepted.
-// It fails if a tenant filter on user_id could be bypassed by a row that names another user's job.
+// TestJobRows_CompositeForeignKeys: a row and a result carry their user and name their job by the pair (id, user_id), so neither can name another user's job (23503 job_rows_job_fk, job_results_job_fk), and a result
+// names a row OF ITS OWN JOB at ITS OWN POSITION (23503 job_results_row_fk: an ordinal that is not its row's); the guard of the results answers first for a row of another job and a row that does not exist
+// (23514 job_results_match_their_row: no such row in the job has no address to match), so those two are proved again with the guard disabled (a savepoint that is rolled back), where the foreign key
+// refuses them. The legal twin of each is accepted.
+// It fails if a tenant filter on user_id could be bypassed by a row that names another user's job, or if a result could carry a position other than its row's.
 func TestJobRows_CompositeForeignKeys(t *testing.T) {
 	_, admin := migratedScratch(t)
 	tx := ledgerBegin(t, admin)
@@ -208,18 +239,32 @@ func TestJobRows_CompositeForeignKeys(t *testing.T) {
 	jobWalkTo(t, tx, m1job, "confirmed")
 	jobWalkTo(t, tx, m2job, "confirmed")
 
-	ledgerOKInsert(t, tx, "control: the result of a row of its own job", jrResults, jrResult(m1job, a, r1["id"].(string), 1))
-	ledgerRefusedInsert(t, tx, "a result that names user A's job and user B", "23503", ledgerWhy{Constraint: "job_results_job_fk"}, jrResults, jrResult(m2job, b, r2["id"].(string), 1))
-	ledgerRefusedInsert(t, tx, "a result of a row of ANOTHER job", "23503", ledgerWhy{Constraint: "job_results_row_fk"}, jrResults, jrResult(m2job, a, r1["id"].(string), 1))
-	ledgerRefusedInsert(t, tx, "a result of a row that does not exist", "23503", ledgerWhy{Constraint: "job_results_row_fk"}, jrResults, jrResult(m2job, a, ledgerNoSuchID, 1))
-	ledgerOKInsert(t, tx, "control: the result of a row of the other job", jrResults, jrResult(m2job, a, r2["id"].(string), 1))
-	ledgerRefusedInsert(t, tx, "a second result of the same row (the key is the row)", "23505", ledgerWhy{Constraint: "job_results_pk"}, jrResults, jrResult(m2job, a, r2["id"].(string), 1, "module_state", "bounced"))
+	rowFK, matches := ledgerWhy{Constraint: "job_results_row_fk"}, ledgerWhy{Constraint: "job_results_match_their_row"}
+	ledgerOKInsert(t, tx, "control: the result of a row of its own job", jrResults, jrResultOf(r1))
+	ledgerRefusedInsert(t, tx, "a result that names user A's job and user B", "23503", ledgerWhy{Constraint: "job_results_job_fk"}, jrResults, jrResultOf(r2, "user_id", b))
+	ledgerRefusedInsert(t, tx, "a result whose ordinal is not its row's", "23503", rowFK, jrResults, jrResultOf(r2, "ordinal", 99))
+	ledgerRefusedInsert(t, tx, "a result at the ordinal of another row of its job", "23503", rowFK, jrResults, jrResultOf(r2, "ordinal", r1["ordinal"]))
+	ledgerRefusedInsert(t, tx, "a result of a row of ANOTHER job (the guard of the results: that job has no such row)", "23514", matches, jrResults, jrResultOf(r1, "job_id", m2job))
+	ledgerRefusedInsert(t, tx, "a result of a row that does not exist (the guard of the results)", "23514", matches, jrResults, jrResultOf(r2, "item_ref", ledgerNoSuchID))
+	ledgerTrial(t, tx, func(sp pgx.Tx) { // the second wall, with the first one down
+		ledgerMust(t, sp, "ALTER TABLE platform.job_results DISABLE TRIGGER job_results_after_confirm")
+		ledgerTrial(t, sp, func(sp2 pgx.Tx) {
+			ledgerOKInsert(t, sp2, "control (the guard disabled): the result of a row of its own job", jrResults, jrResultOf(r2))
+		})
+		ledgerRefusedInsert(t, sp, "the guard disabled: a result of a row of ANOTHER job", "23503", rowFK, jrResults, jrResultOf(r1, "job_id", m2job))
+		ledgerRefusedInsert(t, sp, "the guard disabled: a result of a row that does not exist", "23503", rowFK, jrResults, jrResultOf(r2, "item_ref", ledgerNoSuchID))
+		ledgerRefusedInsert(t, sp, "the guard disabled: a result whose ordinal is not its row's", "23503", rowFK, jrResults, jrResultOf(r2, "ordinal", 99))
+	})
+	ledgerOKInsert(t, tx, "control: the result of a row of the other job", jrResults, jrResultOf(r2))
+	ledgerRefusedInsert(t, tx, "a second result of the same row (the key is the row)", "23505", ledgerWhy{Constraint: "job_results_pk"}, jrResults, jrResultOf(r2, "module_state", "bounced"))
 }
 
 // TestJobResults_Checks: each CHECK of platform.job_results refuses its row for ITS name beside a legal result and with its NULL case: the origin is module or platform; the decision is charge, free or unmapped; a
 // charged result names its unit and no other result does (jobs_charged_names_its_unit is built from IS NOT NULL: a charge with a NULL unit and a free result with one are both refused); the module state and the
-// rule are not blank; the detail is an object; the NOT NULL columns refuse NULL; the reason may be NULL.
-// It fails if a result can say less than the design demands, or lets a NULL through.
+// rule are not blank; the detail is an object; the NOT NULL columns refuse NULL; the reason may be NULL; the result names the address of ITS row (23514 job_results_match_their_row: another row's address, the
+// raw text of a row that has a normalised one, and no address at all are refused; the normalised address of a row, and the raw text of a malformed row that has none, are accepted). The guard of the results
+// answers before the NOT NULL check for a NULL job, a NULL item reference and a NULL address, so those three NOT NULLs are proved with the guard disabled (a savepoint that is rolled back).
+// It fails if a result can say less than the design demands, name another row's address, or let a NULL through.
 func TestJobResults_Checks(t *testing.T) {
 	_, admin := migratedScratch(t)
 	tx := ledgerBegin(t, admin)
@@ -233,11 +278,13 @@ func TestJobResults_Checks(t *testing.T) {
 		ledgerOKInsert(t, tx, "a row of the draft job", jrRows, r)
 		rows = append(rows, r)
 	}
+	malformed := jrRow(next, &ord, job, a, "state", "malformed", "email_norm", nil, "email_raw", "no-at-sign", "reason", "no domain")
+	ledgerOKInsert(t, tx, "a malformed row of the draft job", jrRows, malformed)
 	jobWalkTo(t, tx, job, "confirmed")
 	used := 0
-	res := func(kv ...any) ledgerCols { // a result of the next unused row
+	res := func(kv ...any) ledgerCols { // a result of the next unused row (rows[used] before the call is the row it will name)
 		used++
-		return jrResult(job, a, rows[used-1]["id"].(string), used, kv...)
+		return jrResultOf(rows[used-1], kv...)
 	}
 	check := func(c string) ledgerWhy { return ledgerWhy{Constraint: c} }
 	ledgerOKInsert(t, tx, "control: a free result written by the module", jrResults, res())
@@ -255,11 +302,29 @@ func TestJobResults_Checks(t *testing.T) {
 	for _, d := range []string{`[]`, `"x"`, `null`, `1`} {
 		ledgerRefusedInsert(t, tx, "the detail "+d, "23514", check("job_results_detail_is_an_object"), jrResults, res("detail", d))
 	}
-	for _, col := range []string{"email", "origin", "module_state", "decision", "rule", "detail", "ordinal", "user_id", "item_ref"} {
+	for _, col := range []string{"origin", "module_state", "decision", "rule", "detail", "ordinal", "user_id"} {
 		ledgerRefusedInsert(t, tx, "a NULL "+col, "23502", ledgerWhy{Column: col}, jrResults, res(col, nil))
 	}
-	// a NULL job is no job: the guard of the results (BEFORE INSERT, ahead of the NOT NULL check) finds no status and answers first
+	// the guard of the results (BEFORE INSERT, ahead of the NOT NULL check) answers first: a NULL job is no job (no status), a NULL item reference is no row and a NULL address is not the row's
+	matches := check("job_results_match_their_row")
 	ledgerRefusedInsert(t, tx, "a NULL job_id", "23514", check("jobs_results_after_confirm"), jrResults, res("job_id", nil))
+	ledgerRefusedInsert(t, tx, "a NULL item_ref", "23514", matches, jrResults, res("item_ref", nil))
+	ledgerRefusedInsert(t, tx, "a NULL email", "23514", matches, jrResults, res("email", nil))
+	ledgerTrial(t, tx, func(sp pgx.Tx) { // the NOT NULLs behind the guard, with the guard down
+		ledgerMust(t, sp, "ALTER TABLE platform.job_results DISABLE TRIGGER job_results_after_confirm")
+		ledgerTrial(t, sp, func(sp2 pgx.Tx) {
+			ledgerOKInsert(t, sp2, "control (the guard disabled): a legal result", jrResults, res())
+		})
+		for _, col := range []string{"job_id", "item_ref", "email"} {
+			ledgerRefusedInsert(t, sp, "the guard disabled: a NULL "+col, "23502", ledgerWhy{Column: col}, jrResults, res(col, nil))
+		}
+	})
+	// the result names the address of its own row
+	ledgerRefusedInsert(t, tx, "a result with ANOTHER row's address", "23514", matches, jrResults, res("email", rows[len(rows)-1]["email_norm"]))
+	ledgerRefusedInsert(t, tx, "a result with the RAW text of a row that has a normalised address", "23514", matches, jrResults, res("email", rows[used]["email_raw"]))
+	ledgerRefusedInsert(t, tx, "a result with an address that is no row's", "23514", matches, jrResults, res("email", "nobody@example.com"))
+	ledgerRefusedInsert(t, tx, "a result of the malformed row with an address that is not its raw text", "23514", matches, jrResults, jrResultOf(malformed, "email", "no-at-sign@example.com"))
+	ledgerOKInsert(t, tx, "control: a result of the malformed row names its raw text (it has no normalised address)", jrResults, jrResultOf(malformed, "origin", "platform", "module_state", "malformed", "rule", "P-01", "reason", "no domain"))
 	ledgerOKInsert(t, tx, "control: the reason and the unit may be NULL (a free result of the module with no reason)", jrResults, res("reason", nil, "unit", nil))
 }
 
@@ -283,7 +348,7 @@ func TestJobResults_AfterConfirmAndAppendOnly(t *testing.T) {
 			r := jrRow(next, &ord, job, a)
 			ledgerOKInsert(t, sp, "a row of the draft job", jrRows, r)
 			jobWalkTo(t, sp, job, s)
-			result := jrResult(job, a, r["id"].(string), 1)
+			result := jrResultOf(r)
 			if s == "draft" || s == "previewed" {
 				ledgerRefusedInsert(t, sp, "a result for a "+s+" job", "23514", ledgerWhy{Constraint: "jobs_results_after_confirm"}, jrResults, result)
 				return
@@ -298,9 +363,9 @@ func TestJobResults_AfterConfirmAndAppendOnly(t *testing.T) {
 		r := jrRow(next, &ord, job, a)
 		ledgerOKInsert(t, sp, "a row of the draft job", jrRows, r)
 		jobWalkTo(t, sp, job, "previewed")
-		ledgerRefusedInsert(t, sp, "a result for the previewed job", "23514", ledgerWhy{Constraint: "jobs_results_after_confirm"}, jrResults, jrResult(job, a, r["id"].(string), 1))
+		ledgerRefusedInsert(t, sp, "a result for the previewed job", "23514", ledgerWhy{Constraint: "jobs_results_after_confirm"}, jrResults, jrResultOf(r))
 		jobWalkTo(t, sp, job, "confirmed")
-		ledgerOKInsert(t, sp, "control: the result of the same row once the job is confirmed", jrResults, jrResult(job, a, r["id"].(string), 1))
+		ledgerOKInsert(t, sp, "control: the result of the same row once the job is confirmed", jrResults, jrResultOf(r))
 	})
 
 	job := next()
@@ -310,7 +375,7 @@ func TestJobResults_AfterConfirmAndAppendOnly(t *testing.T) {
 	ledgerOKInsert(t, tx, "a row", jrRows, r1)
 	ledgerOKInsert(t, tx, "a row", jrRows, r2)
 	jobWalkTo(t, tx, job, "confirmed")
-	ledgerOKInsert(t, tx, "a result", jrResults, jrResult(job, a, r1["id"].(string), 1))
+	ledgerOKInsert(t, tx, "a result", jrResults, jrResultOf(r1))
 	mutations := []string{"UPDATE platform.job_results SET rule = 'edited'", "DELETE FROM platform.job_results", "TRUNCATE platform.job_results"}
 	for _, role := range []string{"", "platform_owner"} { // the superuser, then the table's owner: the privileges are theirs and the triggers still refuse
 		if role != "" {
@@ -331,11 +396,11 @@ func TestJobResults_AfterConfirmAndAppendOnly(t *testing.T) {
 		ledgerResetRole(t, tx)
 	}
 	ledgerSwitchRole(t, tx, "platform_app")
-	sql, args := ledgerInsertInto(jrResults, jrResult(job, a, r2["id"].(string), 2))
+	sql, args := ledgerInsertInto(jrResults, jrResultOf(r2))
 	ledgerExpectOK(t, tx, "control: platform_app records a result", sql, args...)
 	ledgerResetRole(t, tx)
 	ledgerSwitchRole(t, tx, "platform_admin")
-	sql, args = ledgerInsertInto(jrResults, jrResult(job, a, r2["id"].(string), 2, "module_state", "bounced"))
+	sql, args = ledgerInsertInto(jrResults, jrResultOf(r2, "module_state", "bounced"))
 	ledgerExpectRefused(t, tx, "platform_admin records a result", "42501", ledgerWhy{Message: "permission denied for table job_results"}, sql, args...)
 	ledgerResetRole(t, tx)
 }
@@ -390,6 +455,7 @@ func TestJobResults_SettlementDrift(t *testing.T) {
 	e.fund(mnyUserB, "m2", 1000)
 	e.fund(mnyUserC, "m2", 1000)
 	seq := 0
+	ordOf, mailOf := map[string]int{}, map[string]string{} // the position and the address of every row built, which its result must carry (job_results_row_fk, job_results_match_their_row)
 	// a metered module 2 job with n rows, reserved and running
 	build := func(user string, n int) (string, []string) {
 		e.t.Helper()
@@ -398,20 +464,22 @@ func TestJobResults_SettlementDrift(t *testing.T) {
 		for i := 1; i <= n; i++ {
 			seq++
 			id := fmt.Sprintf("c9000000-0000-4000-8000-%012d", seq)
-			e.exec("INSERT INTO platform.job_rows (id, job_id, user_id, ordinal, email_raw, email_norm) VALUES ($1, $2, $3, $4, $5, $5)", id, job, user, i, fmt.Sprintf("row%d@example.com", seq))
+			mail := fmt.Sprintf("row%d@example.com", seq)
+			e.exec("INSERT INTO platform.job_rows (id, job_id, user_id, ordinal, email_raw, email_norm) VALUES ($1, $2, $3, $4, $5, $5)", id, job, user, i, mail)
+			ordOf[id], mailOf[id] = i, mail
 			rows = append(rows, id)
 		}
 		e.reserve(job, n)
 		e.setStatus(job, "running")
 		return job, rows
 	}
-	result := func(job, user, row string, ordinal int, decision, unit, rule string) {
+	result := func(job, user, row, decision, unit, rule string) {
 		e.t.Helper()
 		var u any
 		if unit != "" {
 			u = unit
 		}
-		e.exec("INSERT INTO platform.job_results (job_id, user_id, item_ref, ordinal, email, origin, module_state, decision, unit, rule) VALUES ($1, $2, $3, $4, 'x@example.com', 'module', 'sent', $5, $6, $7)", job, user, row, ordinal, decision, u, rule)
+		e.exec("INSERT INTO platform.job_results (job_id, user_id, item_ref, ordinal, email, origin, module_state, decision, unit, rule) VALUES ($1, $2, $3, $4, $5, 'module', 'sent', $6, $7, $8)", job, user, row, ordOf[row], mailOf[row], decision, u, rule)
 	}
 	drift := func(job string) []string {
 		e.t.Helper()
@@ -431,10 +499,10 @@ func TestJobResults_SettlementDrift(t *testing.T) {
 	if n := e.chargeRows(clean); n != 2 {
 		t.Fatalf("the clean job holds %d charge rows, want 2", n)
 	}
-	result(clean, mnyUserA, cr[0], 1, "charge", "m2_accepted", "M2-01")
-	result(clean, mnyUserA, cr[1], 2, "charge", "m2_accepted", "M2-01")
+	result(clean, mnyUserA, cr[0], "charge", "m2_accepted", "M2-01")
+	result(clean, mnyUserA, cr[1], "charge", "m2_accepted", "M2-01")
 	requireDrift("the control: a clean job with two of its three results (it is running, so the missing one is not yet a drift)", clean)
-	result(clean, mnyUserA, cr[2], 3, "free", "", "M2-03")
+	result(clean, mnyUserA, cr[2], "free", "", "M2-03")
 	requireDrift("the control: a clean running job", clean)
 	e.setStatus(clean, "succeeded")
 	requireDrift("the control: the clean job, ended with as many results as rows", clean)
@@ -442,9 +510,9 @@ func TestJobResults_SettlementDrift(t *testing.T) {
 	// a ledger charge with no result
 	j1, r1 := build(mnyUserB, 2)
 	e.settle(j1, mnyItem(r1[0], mnyM2Sent), mnyItem(r1[1], mnyM2Sent))
-	result(j1, mnyUserB, r1[0], 1, "charge", "m2_accepted", "M2-01")
+	result(j1, mnyUserB, r1[0], "charge", "m2_accepted", "M2-01")
 	requireDrift("a charge whose result was never written", j1, r1[1]+"|charge_without_result")
-	result(j1, mnyUserB, r1[1], 2, "charge", "m2_accepted", "M2-01")
+	result(j1, mnyUserB, r1[1], "charge", "m2_accepted", "M2-01")
 	requireDrift("control: the same job once the result is written", j1)
 	e.setStatus(j1, "succeeded")
 	requireDrift("control: that job, ended", j1)
@@ -452,17 +520,17 @@ func TestJobResults_SettlementDrift(t *testing.T) {
 	// a result that names another unit than the charge
 	j2, r2 := build(mnyUserC, 1)
 	e.settle(j2, mnyItem(r2[0], mnyM2Sent))
-	result(j2, mnyUserC, r2[0], 1, "charge", "m2_bounced", "M2-02")
+	result(j2, mnyUserC, r2[0], "charge", "m2_bounced", "M2-02")
 	requireDrift("a result that names another unit than the charge", j2, r2[0]+"|charge_without_result", r2[0]+"|result_without_charge")
 
 	// a charged result with no ledger charge
 	j3, r3 := build(mnyUserA, 1)
-	result(j3, mnyUserA, r3[0], 1, "charge", "m2_accepted", "M2-01")
+	result(j3, mnyUserA, r3[0], "charge", "m2_accepted", "M2-01")
 	requireDrift("a charged result of a row the ledger never charged", j3, r3[0]+"|result_without_charge")
 
 	// a terminal confirmed job with fewer results than rows (the user B job above has ended, so its slot is free)
 	j4, r4 := build(mnyUserB, 2)
-	result(j4, mnyUserB, r4[0], 1, "free", "", "M2-03")
+	result(j4, mnyUserB, r4[0], "free", "", "M2-03")
 	requireDrift("control: a running job with one result of two rows is not yet a drift", j4)
 	e.setStatus(j4, "succeeded")
 	requireDrift("a terminal job with one result for two rows", j4, "-|terminal_job_missing_results")
