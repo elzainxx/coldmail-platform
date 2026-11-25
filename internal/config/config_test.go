@@ -502,7 +502,7 @@ func TestLoad_InvalidValuesNameTheVariableAndNeverEchoTheValue(t *testing.T) {
 		{VarM3ServiceToken, "café-token-XYZ123", "printable ASCII"},
 		{VarM3ServiceToken, "inner\ttab-XYZ123", "printable ASCII"},
 		// The token-verification dials (Phase 4 B14a): the secret's length and alphabet, the URL's shape, the issuer's and audience's alphabet and length, the leeway's range.
-		{VarJWTSecret, "short-XYZ123", "at least 32 bytes"},
+		{VarJWTSecret, strings.Repeat("s", 12), "at least 32 bytes"}, // built at run time: a quoted literal next to a secret's name is what the history scan flags (see .gitleaks.toml, commit 114b9e7)
 		{VarJWTSecret, strings.Repeat("a", 31), "at least 32 bytes"},
 		{VarJWTSecret, strings.Repeat("a", 20) + " " + strings.Repeat("b", 20), "printable ASCII"},
 		{VarJWTSecret, strings.Repeat("a", 20) + "\n" + strings.Repeat("b", 20), "printable ASCII"},
