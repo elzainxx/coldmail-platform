@@ -24,3 +24,4 @@ c6b53b9|commit of the parent repository (outside the four-repository layout): th
 99c06a3|commit of the parent repository (outside the four-repository layout): the Part A re-pin, cited by Docs/phase-3-spec.md
 aaaaaaaaaa|a run of the letter a: the normalised request id and provider message id inside the recorded contract fixtures (internal/adapters/*/testdata/contract), not a commit
 6bd8d73|commit of the parent repository (outside the four-repository layout): the Phase 3 re-pin, cited by Docs/phase-3-spec.md
+7b2fc0b|commit of the parent repository (outside the four-repository layout): the Phase 3 close-out re-pin, cited by Docs/phase-4-spec.md
