@@ -4,18 +4,21 @@
 # WHY IT EXISTS. Every rule about a job is enforced where every writer passes (Docs/phase-4-spec.md, Locked 28): the lifecycle by the database's guard, the rest by the store. The store's
 # functions take the acting user from the authenticated principal, scope every statement by it, and are the ONLY code that moves a job, writes its rows, its results and its events. A second
 # writer (the API, the engine, the admin console of Phase 7, a script) would be a parallel write path that none of those rules pass through. This gate fails when anything outside internal/jobs/
-# writes platform.jobs, platform.job_rows, platform.job_results, platform.job_events or platform.job_transitions, or moves a job through the function platform.job_transition().
+# writes platform.jobs, platform.job_rows, platform.job_results, platform.job_events, platform.job_transitions or public.job_items, or moves a job through the function platform.job_transition().
+# public.job_items is the one policed table of SCHEMA PUBLIC (never platform): the shared table modules 2 and 3 read (CLAUDE.md rule 15), so the same single writer, the job store, fills it for every job.
 #
 # WHAT IT SCANS (printed on every run): every non-test *.go (not *_test.go) under <root>/internal and <root>/cmd, and every *.sql under <root>/db EXCEPT <root>/db/migrations/. Each file is
 # normalised to one line first (CR, tab and newline become spaces, byte for byte), so a Go raw string that splits its SQL across lines is read as one statement and the line of the FIRST keyword is
 # recovered from the byte offset.
-# WHAT IT FLAGS: a write statement naming one of the five tables, case-insensitively, as a whole word, with the schema optional (an unqualified name would resolve through search_path) and every
-# identifier optionally quoted, or quoted and escaped inside a Go string ("platform"."jobs", \"platform\".\"jobs\"): INSERT INTO, UPDATE [ONLY], DELETE FROM [ONLY], TRUNCATE [TABLE] (also in a list
-# of tables), COPY <table> [(columns)] FROM, MERGE INTO [ONLY], a pgx.Identifier{"platform", "<table>"} (what CopyFrom writes through), and a CALL of platform.job_transition( (the one function that
-# updates platform.jobs.status for its caller: granted to platform_app, so a caller outside the store could move a job through it). platform.jobs_archive, platform.job_rows2, another schema's jobs
-# (verify.jobs, send_managed.jobs), a longer word before the keyword, COPY ... TO (a read), SELECT, FOR UPDATE [OF], GRANT, ALTER, COMMENT and REFERENCES are not matched.
-# THE SANCTIONED WRITER: every non-test file under internal/jobs/. The package must exist, must hold at least one non-test Go file and at least one write ("the instrument matched nothing" is red: a
-# store that never writes, or a matcher that no longer reads it). internal/money only SELECTs platform.jobs (FOR UPDATE is a read lock, not a write): it is flagged by nothing here.
+# WHAT IT FLAGS: a write statement naming one of the six tables, case-insensitively, as a whole word, with the schema optional (an unqualified name would resolve through search_path) and every
+# identifier optionally quoted, or quoted and escaped inside a Go string ("platform"."jobs", "public"."job_items", \"platform\".\"jobs\"): INSERT INTO, UPDATE [ONLY], DELETE FROM [ONLY], TRUNCATE [TABLE]
+# (also in a list of tables), COPY <table> [(columns)] FROM, MERGE INTO [ONLY], a pgx.Identifier{"platform", "<table>"} or pgx.Identifier{"public", "job_items"} (what CopyFrom writes through), and a CALL
+# of platform.job_transition( (the one function that updates platform.jobs.status for its caller: granted to platform_app, so a caller outside the store could move a job through it). The schema, when
+# named, must be the table's own: platform for the five job tables, public for job_items. platform.jobs_archive, platform.job_rows2, public.job_items_archive, public.job_items2, another schema's
+# tables (verify.jobs, send_managed.jobs, send_managed.job_items, platform.job_items), a longer word before the keyword, COPY ... TO (a read), SELECT, FOR UPDATE [OF], GRANT, ALTER, COMMENT, CREATE INDEX
+# ... ON and REFERENCES are not matched. The finding names the table as platform.<name>, or public.job_items.
+# THE SANCTIONED WRITER: every non-test file under internal/jobs/. The package must exist, must hold at least one non-test Go file and at least one write, on any of the six tables ("the instrument
+# matched nothing" is red: a store that never writes, or a matcher that no longer reads it). internal/money only SELECTs platform.jobs (FOR UPDATE is a read lock, not a write): it is flagged by nothing here.
 # EXCEPTIONS: tests/job-writer-exceptions.txt (or --exceptions FILE), lines `relative/path|reason` (`#` comments and blank lines allowed), for a scanned file OUTSIDE internal/jobs/ that must write. An
 # exception is RED when it is STALE (the file does not exist, is not a scanned file, lies inside internal/jobs/ and needs none, or contains no write: a register that rots hides the next miss, false-green
 # class 17), when its reason is blank, when its line is malformed, and when the same file is listed twice. The register starts with comments only: nothing outside the store writes a job table.
@@ -23,11 +26,12 @@
 # canary (known positives and negatives, including two matches in a row) before it is trusted on the real tree.
 #
 # Output: `check-job-writers: scanned ...` lines, one line per finding `path:line: reason`, a `NOT CHECKED:` line, and `check-job-writers: OK` or `RED`. Exit status: 0 clean, 1 red, 2 usage error.
-# Paired control: scripts/check-job-writers-selftest.sh. Fault proof: ci/faults/p4b/job-writer.
+# Paired control: scripts/check-job-writers-selftest.sh. Fault proofs: ci/faults/p4b/job-writer (platform.jobs) and ci/faults/p4b/job-items-writer (public.job_items).
 #
 # NOT CHECKED (also printed on every run): test files and everything under tests/; shell scripts and Docs; db/migrations/*.sql (they create the tables, seed platform.job_transitions and define the
 # lifecycle's function: DDL by the privileged migrator, not a path of the application); SQL built by string concatenation, fmt.Sprintf or a variable around the table name; a write through a view, a
-# rule or another function than platform.job_transition (a trigger writes platform.job_events by design); a SQL comment between the keywords; whether the store scopes a statement by the user or
+# rule or another function than platform.job_transition (a trigger writes platform.job_events by design); a SQL comment between the keywords; what the modules themselves write to public.job_items
+# (module 3's test-send inserts a row from its own code: only the platform's source is read here); whether the store scopes a statement by the user or
 # sets the three lifecycle settings (the harness tests prove that against a real database); the database's own walls (the grants and the guard): this gate reads source, not the database.
 # COMMENTS ARE NOT STRIPPED: a comment that contains a write statement IS flagged (the gate fails closed; reword the comment).
 set -u
@@ -50,17 +54,22 @@ T="$(mktemp -d)" || exit 2; trap 'rm -rf "$T"' EXIT
 
 SAN_DIR="internal/jobs"
 SCOPE="non-test *.go under internal/ and cmd/, and *.sql under db/ except db/migrations/"
-NOT_CHECKED="NOT CHECKED: test files (*_test.go) and everything under tests/; shell scripts and Docs; db/migrations/*.sql (DDL by the privileged migrator: they create the tables and seed platform.job_transitions); SQL built by string concatenation, fmt.Sprintf or a variable around the table name; a write through a view, a rule or another function than platform.job_transition; a SQL comment between the keywords; whether the store scopes a statement by the user or sets the lifecycle settings (the harness tests prove that); the database's own walls (the grants and the guard). Comments are NOT stripped: a comment containing a write statement IS flagged"
+NOT_CHECKED="NOT CHECKED: test files (*_test.go) and everything under tests/; shell scripts and Docs; db/migrations/*.sql (DDL by the privileged migrator: they create the tables and seed platform.job_transitions); SQL built by string concatenation, fmt.Sprintf or a variable around the table name; a write through a view, a rule or another function than platform.job_transition; a SQL comment between the keywords; what the modules themselves write to public.job_items (module 3's test-send inserts a row from its own code: only the platform's source is read); whether the store scopes a statement by the user or sets the lifecycle settings (the harness tests prove that); the database's own walls (the grants and the guard). Comments are NOT stripped: a comment containing a write statement IS flagged"
 
 # ---- the matcher ------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 # The ERE has no word boundaries (ERE has no lookaround, and a consumed boundary character would hide a second match that follows closely); they are checked on the normalised text afterwards.
 # (\\?")? is an optional double quote, which inside a Go interpreted string may be escaped. The schema is optional: an unqualified name resolves through search_path, and CLAUDE.md rule 12 says every
-# statement names its schema, so the bare name is flagged too (another schema's table, verify.jobs, is not: the match must start at the keyword and the schema, if any, must be platform).
+# statement names its schema, so the bare name is flagged too (another schema's table, verify.jobs, is not: the match must start at the keyword and the schema, if any, must be the table's own).
+# TBL is ONE group of two alternatives, so every statement form below picks both: the five tables of schema platform (NAMES), and public.job_items (the shared table of schema public; its schema is
+# public, never platform, and the two alternatives are not crossed: platform.job_items and public.jobs match neither).
 Q='(\\?")?'
 S='[[:space:]]+'
 OPT_ONLY='(only[[:space:]]+)?'
 NAMES='(job_transitions|job_results|job_events|job_rows|jobs)'
-TBL='('"$Q"'platform'"$Q"'[[:space:]]*\.[[:space:]]*)?'"$Q""$NAMES""$Q"
+PUB_NAMES='(job_items)'
+TBL_PLAT='('"$Q"'platform'"$Q"'[[:space:]]*\.[[:space:]]*)?'"$Q""$NAMES""$Q"
+TBL_PUB='('"$Q"'public'"$Q"'[[:space:]]*\.[[:space:]]*)?'"$Q""$PUB_NAMES""$Q"
+TBL='('"$TBL_PLAT"'|'"$TBL_PUB"')'
 LIST_ITEM='[A-Za-z0-9_."\]+'
 F_INSERT="insert${S}into${S}${TBL}"
 F_UPDATE="update${S}${OPT_ONLY}${TBL}"
@@ -68,26 +77,32 @@ F_DELETE="delete${S}from${S}${OPT_ONLY}${TBL}"
 F_TRUNCATE="truncate${S}(table${S})?(${LIST_ITEM}[[:space:]]*,[[:space:]]*)*${OPT_ONLY}${TBL}"
 F_COPY="copy${S}${TBL}[[:space:]]*(\([^)]*\))?[[:space:]]*from"
 F_MERGE="merge${S}into${S}${OPT_ONLY}${TBL}"
-F_IDENT='identifier[[:space:]]*\{[[:space:]]*"platform"[[:space:]]*,[[:space:]]*"(job_transitions|job_results|job_events|job_rows|jobs)"[[:space:]]*\}'
+F_IDENT='identifier[[:space:]]*\{[[:space:]]*("platform"[[:space:]]*,[[:space:]]*"'"$NAMES"'"|"public"[[:space:]]*,[[:space:]]*"'"$PUB_NAMES"'")[[:space:]]*\}'
 F_FUNC='('"$Q"'platform'"$Q"'[[:space:]]*\.[[:space:]]*)?'"$Q"'job_transition'"$Q"'[[:space:]]*\('
 ERE="${F_INSERT}|${F_UPDATE}|${F_DELETE}|${F_TRUNCATE}|${F_COPY}|${F_MERGE}|${F_IDENT}|${F_FUNC}"
 
 # normalise <in> <out>: CR, tab and newline become spaces, byte for byte, so an offset in <out> is an offset in <in>
 normalise() { tr '\r\t\n' '   ' < "$1" > "$2"; }
-# kind_of <matched text>: what the write is, from its first word
+# kind_of <matched text>: what the write is, from its first word (sets KIND_R; no command substitution, so no process is forked per match)
+KIND_R=""; TARGET_R=""
 kind_of() {
   local t="${1,,}"
   case "$t" in
-    insert*) echo "INSERT INTO";; update*) echo "UPDATE";; delete*) echo "DELETE FROM";; truncate*) echo "TRUNCATE";;
-    copy*) echo "COPY ... FROM";; merge*) echo "MERGE INTO";; identifier*) echo "pgx.Identifier, as CopyFrom writes through it";;
-    *) echo "a call of platform.job_transition()";;
+    insert*) KIND_R="INSERT INTO";; update*) KIND_R="UPDATE";; delete*) KIND_R="DELETE FROM";; truncate*) KIND_R="TRUNCATE";;
+    copy*) KIND_R="COPY ... FROM";; merge*) KIND_R="MERGE INTO";; identifier*) KIND_R="pgx.Identifier, as CopyFrom writes through it";;
+    *) KIND_R="a call of platform.job_transition()";;
   esac
 }
-# target_of <matched text>: the table (or function) the match names: the first job table named in the text
+# target_of <matched text>: the table (or function) the match flags (sets TARGET_R): the LAST whole-word table name in the text. A TRUNCATE list names the flagged table last (the tables before it are
+# other tables, perhaps another schema's jobs or job_items), every other form names one table, and a COPY column list is cut off first (a column may be called anything). A longer name that merely
+# contains a table name (job_items_archive, jobs_old) is not that table; job_items is public.job_items and the five others are platform.<name>.
 target_of() {
   local t="${1,,}"
-  case "$t" in *'(') echo "platform.job_transition()"; return;; esac   # only a call of the function matches up to an opening parenthesis
-  if [[ "$t" =~ (job_transitions|job_results|job_events|job_rows|jobs) ]]; then echo "platform.${BASH_REMATCH[1]}"; else echo "a job table"; fi
+  case "$t" in *'(') TARGET_R="platform.job_transition()"; return;; esac   # only a call of the function matches up to an opening parenthesis
+  case "$t" in copy*) t="${t%%(*}";; esac
+  if [[ "$t" =~ ^(.*[^a-z0-9_])?(job_transitions|job_results|job_events|job_rows|jobs|job_items)([^a-z0-9_].*)?$ ]]; then
+    case "${BASH_REMATCH[2]}" in job_items) TARGET_R="public.job_items";; *) TARGET_R="platform.${BASH_REMATCH[2]}";; esac
+  else TARGET_R="a job table"; fi
 }
 # offsets <normalised file> <out file>: writes one `offset|kind|target` line for every match whose edges are word boundaries; returns non-zero when grep ITSELF failed (a crashed grep prints no match,
 # which would read as a clean file: grep exits 0 when it matched, 1 when it did not, and anything else is a failure)
@@ -101,7 +116,8 @@ offsets() {
     off="${rec%%:*}"; text="${rec#*:}"
     if [ "$off" -gt 0 ]; then prev="${S_:$((off-1)):1}"; case "$prev" in [A-Za-z0-9_]) continue;; esac; fi
     next="${S_:$((off+${#text})):1}"; case "$next" in [A-Za-z0-9_]) continue;; esac
-    printf '%s|%s|%s\n' "$off" "$(kind_of "$text")" "$(target_of "$text")" >> "$out"
+    kind_of "$text"; target_of "$text"
+    printf '%s|%s|%s\n' "$off" "$KIND_R" "$TARGET_R" >> "$out"
   done < "$T/g.out"
   return 0
 }
@@ -168,6 +184,39 @@ canary 1 'SELECT "platform"."job_transition"($1)'
 canary 1 'SELECT job_transition ($1)'
 canary 2 'INSERT INTO platform.jobs (user_id) VALUES ($1); DELETE FROM platform.job_rows'
 canary 2 'UPDATE platform.jobs SET status = $1; SELECT platform.job_transition($1)'
+# the positives on public.job_items (schema public): every write form, every quoting, the bare name
+canary 1 'INSERT INTO public.job_items (campaign_id, user_id) VALUES ($1, $2)'
+canary 1 'insert into public.job_items'
+canary 1 "$(printf 'INSERT\n\tINTO\n\t\tpublic.job_items (id)')"
+canary 1 'INSERT INTO "public"."job_items" (user_id)'
+canary 1 'INSERT INTO public."job_items" (user_id)'
+canary 1 'INSERT INTO "public".job_items (user_id)'
+canary 1 'q := "INSERT INTO \"public\".\"job_items\" (user_id)"'
+canary 1 'INSERT INTO public . job_items (user_id)'
+canary 1 'INSERT INTO job_items (user_id)'
+canary 1 'INSERT INTO "job_items" (user_id)'
+canary 1 'WITH x AS (INSERT INTO public.job_items (user_id) VALUES ($1) RETURNING id) SELECT 1'
+canary 1 'UPDATE public.job_items SET status = $1'
+canary 1 'UPDATE ONLY public.job_items SET status = $1'
+canary 1 'UPDATE job_items SET status = $1'
+canary 1 'DELETE FROM public.job_items WHERE id = $1'
+canary 1 'DELETE FROM ONLY public.job_items'
+canary 1 'TRUNCATE public.job_items'
+canary 1 'TRUNCATE TABLE public.job_items'
+canary 1 'TRUNCATE TABLE ONLY public.job_items CASCADE'
+canary 1 'TRUNCATE platform.ledger, public.job_items'
+canary 1 'TRUNCATE public.job_items, platform.ledger'
+canary 1 'TRUNCATE public.users, "public"."job_items" RESTART IDENTITY'
+canary 1 'COPY public.job_items (campaign_id, user_id) FROM STDIN'
+canary 1 'COPY public.job_items FROM STDIN'
+canary 1 'MERGE INTO public.job_items j USING x ON true WHEN NOT MATCHED THEN INSERT VALUES (1)'
+canary 1 'MERGE INTO ONLY public.job_items j USING x ON true WHEN MATCHED THEN DELETE'
+canary 1 'tx.CopyFrom(ctx, pgx.Identifier{"public", "job_items"}, cols, src)'
+canary 1 'tx.CopyFrom(ctx, pgx.Identifier{"public","job_items"}, cols, src)'
+canary 1 'tx.CopyFrom(ctx, pgx.Identifier{ "public" , "job_items" }, cols, src)'
+canary 2 'INSERT INTO public.job_items (user_id) VALUES ($1); DELETE FROM public.job_items'
+canary 2 'INSERT INTO platform.jobs (user_id) VALUES ($1); UPDATE public.job_items SET status = $1'
+canary 2 'UPDATE public.job_items SET status = $1; INSERT INTO platform.job_events (job_id) VALUES ($1)'
 # the negatives: reads, locks, grants, DDL, a longer name, another schema, a longer word before the keyword, a trigger that merely names the table
 canary 0 'SELECT status FROM platform.jobs WHERE id = $1 FOR UPDATE'
 canary 0 'SELECT 1 FROM platform.jobs j WHERE j.id = $1 FOR UPDATE OF j'
@@ -203,6 +252,40 @@ canary 0 'pgx.Identifier{"platform", "job_rows_archive"}'
 canary 0 'pgx.Identifier{"platform", "ledger"}'
 canary 0 'SELECT my_job_transition($1)'
 canary 0 'SELECT platform.job_transition_log($1)'
+# the negatives on public.job_items: reads, locks, grants, DDL, a longer name, another schema (and the crossed pairs platform.job_items, public.jobs), a longer word before the keyword
+canary 0 'SELECT campaign_id FROM public.job_items WHERE id = $1 AND user_id = $2 FOR UPDATE'
+canary 0 'SELECT 1 FROM public.job_items j WHERE j.id = $1 FOR UPDATE OF j'
+canary 0 'SELECT 1 FROM public.job_items FOR UPDATE OF public.job_items'
+canary 0 'INSERT INTO public.job_items_archive (id) VALUES ($1)'
+canary 0 'INSERT INTO public.job_items2 (id) VALUES ($1)'
+canary 0 'INSERT INTO "public"."job_items_old" (id)'
+canary 0 'INSERT INTO send_managed.job_items (id)'
+canary 0 'INSERT INTO send_byo.job_items (id)'
+canary 0 'INSERT INTO platform.job_items (id)'
+canary 0 'UPDATE send_managed.job_items SET status = $1'
+canary 0 'UPDATE platform.job_items SET status = $1'
+canary 0 'DELETE FROM "send_managed"."job_items"'
+canary 0 'INSERT INTO mypublic.job_items (id)'
+canary 0 'xinsert into public.job_items'
+canary 0 'UPDATE public.job_items_guard SET x = 1'
+canary 0 'TRUNCATE public.job_items_archive'
+canary 0 'INSERT INTO public.jobs_items (id)'
+canary 0 'INSERT INTO public.job_item (id)'
+canary 0 'COPY public.job_items TO STDOUT'
+canary 0 'COPY (SELECT id FROM public.job_items) TO STDOUT'
+canary 0 'COPY send_byo.job_items (id) FROM STDIN'
+canary 0 'GRANT SELECT, INSERT, UPDATE ON public.job_items TO platform_app'
+canary 0 'GRANT UPDATE (status) ON public.job_items TO platform_app'
+canary 0 'GRANT TRUNCATE ON public.job_items TO platform_admin'
+canary 0 'CREATE INDEX job_items_user_idx ON public.job_items (user_id)'
+canary 0 'ALTER TABLE public.job_items ADD COLUMN note text'
+canary 0 'COMMENT ON TABLE public.job_items IS $$the shared table$$'
+canary 0 'FOREIGN KEY (item_id) REFERENCES public.job_items (id) ON DELETE RESTRICT'
+canary 0 'pgx.Identifier{"public", "job_items_archive"}'
+canary 0 'pgx.Identifier{"public", "users"}'
+canary 0 'pgx.Identifier{"send_managed", "job_items"}'
+canary 0 'pgx.Identifier{"platform", "job_items"}'
+canary 0 'DELETE FROM public.users'
 run_canaries; canary_bad=$?
 if [ "$canary_bad" -gt 0 ]; then
   echo "check-job-writers: RED — the matcher failed its own canary ($canary_bad case(s) above): the instrument cannot be trusted (is grep -o -b -E available?)"
@@ -248,7 +331,7 @@ nbad_files=0
 while IFS= read -r rel; do
   f="$ROOT/$rel"
   # every match contains one of these words: a file without any of them (in any case) cannot hold one, and is skipped without spawning a process (checked in bash itself, so no external tool can fail silently here)
-  content="$(<"$f")"; case "${content,,}" in *job_transition*|*jobs*|*job_rows*|*job_results*|*job_events*) ;; *) continue;; esac
+  content="$(<"$f")"; case "${content,,}" in *job_transition*|*jobs*|*job_rows*|*job_results*|*job_events*|*job_items*) ;; *) continue;; esac
   normalise "$f" "$T/n"
   offsets "$T/n" "$T/off"; rc=$?
   if [ "$rc" -ne 0 ]; then

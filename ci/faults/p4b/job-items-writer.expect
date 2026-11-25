@@ -1,0 +1,11 @@
+# Phase 4, Part B chunk B6 (second proof): the job-writer gate also polices the shared table public.job_items (schema public, read by modules 2 and 3), with internal/jobs/ the only sanctioned writer.
+# The fault adds a second non-test Go file under internal/jobengine/ that holds a raw string with an INSERT INTO public.job_items (a row written without the store's user scope, its transaction or the
+# job's lifecycle); the gate must name the file and the line and say it is outside the sanctioned writer. The control side is the real repository, which must be green. Needs bash only: no database,
+# no module, no Go. The patch adds a new file, so it depends on no committed file; the control needs internal/jobs/ (the store), scripts/check-job-writers.sh and tests/job-writer-exceptions.txt at HEAD.
+GATE=job-items-writer
+TARGET=platform
+SETUP=
+STEP=check-job-writers on the real repository
+CMD=bash scripts/check-job-writers.sh
+MESSAGE=internal/jobengine/zz_job_items_writer.go:4: write to public.job_items (INSERT INTO) outside the sanctioned writer internal/jobs/
+MESSAGE=check-job-writers: RED

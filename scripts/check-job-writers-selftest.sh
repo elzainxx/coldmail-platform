@@ -9,7 +9,7 @@ set -u
 export LC_ALL=C
 HERE="$(cd "$(dirname "$0")" && pwd)"; GATE="$HERE/check-job-writers.sh"
 T="$(mktemp -d)" || exit 2; trap 'rm -rf "$T"' EXIT
-MIN_CASES=79; cases=0; ok=0; bad_expect=0
+MIN_CASES=117; cases=0; ok=0; bad_expect=0
 
 SAN=internal/jobs
 OUT_TAIL="outside the sanctioned writer $SAN/ — write through the job store (internal/jobs), the one package that writes the job tables"
@@ -463,6 +463,270 @@ EOF
 d=$(mk crashsan); printf '\n// POISON\n' >> "$d/internal/jobs/store.go"
                 out="$(PATH="$T/shim2:$PATH" bash "$GATE" --root "$d" 2>&1)"; rc=$?
                 check "grep crashing on a file of the store itself is red (it cannot be read, so nothing about it is proven)" "$rc" 1 "the matcher failed on internal/jobs/store.go (grep exit status 3)@@!check-job-writers: OK" "$out"
+
+# ---- public.job_items: the shared table of schema public is policed like the job tables (the same sanctioned writer, the same reason, the table named public.job_items) --------------------------------
+d=$(mk jins);   w "$d" internal/app/q.go '"INSERT INTO public.job_items (campaign_id, user_id, recipient_email) VALUES ($1, $2, $3)"'
+                expect "INSERT INTO public.job_items in another file names the file, the line, the kind and the table (schema public)" 1 "$(outside internal/app/q.go 3 public.job_items 'INSERT INTO')@@check-job-writers: 1 write(s) outside the sanctioned writer@@RED — 1 problem(s): 1 write(s) outside $SAN/, 0 sanctioned-writer problem(s), 0 exception problem(s), 0 file(s) the matcher failed on@@!write to platform." "$d"
+d=$(mk jupd);   w "$d" internal/app/q.go '"UPDATE public.job_items SET status = $1 WHERE id = $2"'
+                expect "UPDATE public.job_items" 1 "$(outside internal/app/q.go 3 public.job_items 'UPDATE')" "$d"
+d=$(mk jupdonly); w "$d" internal/app/q.go '"UPDATE ONLY public.job_items SET status = $1"'
+                expect "UPDATE ONLY public.job_items" 1 "$(outside internal/app/q.go 3 public.job_items 'UPDATE')" "$d"
+d=$(mk jdel);   w "$d" internal/app/q.go '"DELETE FROM public.job_items WHERE id = $1"'
+                expect "DELETE FROM public.job_items" 1 "$(outside internal/app/q.go 3 public.job_items 'DELETE FROM')" "$d"
+d=$(mk jdelonly); w "$d" internal/app/q.go '"DELETE FROM ONLY public.job_items"'
+                expect "DELETE FROM ONLY public.job_items" 1 "$(outside internal/app/q.go 3 public.job_items 'DELETE FROM')" "$d"
+d=$(mk jtrunc); put "$d" internal/app/q.go <<'EOF'
+package app
+
+const a = "TRUNCATE public.job_items"
+const b = "TRUNCATE TABLE public.job_items"
+const c = "TRUNCATE TABLE ONLY public.job_items CASCADE"
+const d = "TRUNCATE platform.ledger, public.job_items"
+const e = "TRUNCATE public.job_items, platform.ledger"
+const f = "TRUNCATE public.users, \"public\".\"job_items\" RESTART IDENTITY"
+EOF
+                expect "TRUNCATE public.job_items: plain, TABLE, TABLE ONLY, in a list after another table, in a list before another, and quoted at the end of a list" 1 "$(outside internal/app/q.go 3 public.job_items TRUNCATE)@@$(outside internal/app/q.go 4 public.job_items TRUNCATE)@@$(outside internal/app/q.go 5 public.job_items TRUNCATE)@@$(outside internal/app/q.go 6 public.job_items TRUNCATE)@@$(outside internal/app/q.go 7 public.job_items TRUNCATE)@@$(outside internal/app/q.go 8 public.job_items TRUNCATE)@@RED — 6 problem(s): 6 write(s) outside $SAN/" "$d"
+d=$(mk jlist);  put "$d" internal/app/q.go <<'EOF'
+package app
+
+const a = "TRUNCATE send_managed.jobs, public.job_items"
+const b = "TRUNCATE public.job_items_archive, platform.job_rows"
+const c = "TRUNCATE public.job_items, send_byo.job_items"
+const d = "TRUNCATE send_managed.job_items, send_byo.job_items"
+EOF
+                expect "a TRUNCATE list names the table that is flagged, not a longer name or another schema's table before it: public.job_items after send_managed.jobs, platform.job_rows after public.job_items_archive, public.job_items before send_byo.job_items, and a list of other schemas' job_items passes" 1 "$(outside internal/app/q.go 3 public.job_items TRUNCATE)@@$(outside internal/app/q.go 4 platform.job_rows TRUNCATE)@@$(outside internal/app/q.go 5 public.job_items TRUNCATE)@@!internal/app/q.go:6:@@RED — 3 problem(s): 3 write(s) outside $SAN/" "$d"
+d=$(mk jcopy);  put "$d" internal/app/q.go <<'EOF'
+package app
+
+const a = "COPY public.job_items (campaign_id, user_id, recipient_email) FROM STDIN"
+const b = `COPY public.job_items
+	FROM STDIN`
+EOF
+                expect "COPY public.job_items ... FROM, with a column list, and split over lines (reported at the COPY line)" 1 "$(outside internal/app/q.go 3 public.job_items 'COPY ... FROM')@@$(outside internal/app/q.go 4 public.job_items 'COPY ... FROM')@@RED — 2 problem(s)" "$d"
+d=$(mk jmerge); w "$d" internal/app/q.go '"MERGE INTO public.job_items j USING src ON j.id = src.id WHEN NOT MATCHED THEN DO NOTHING"'
+                expect "MERGE INTO public.job_items" 1 "$(outside internal/app/q.go 3 public.job_items 'MERGE INTO')" "$d"
+d=$(mk jident); put "$d" internal/app/q.go <<'EOF'
+package app
+
+func load(tx pgx.Tx, rows pgx.CopyFromSource) {
+	tx.CopyFrom(ctx, pgx.Identifier{"public", "job_items"}, []string{"campaign_id"}, rows)
+	tx.CopyFrom(ctx, pgx.Identifier{"public","job_items"}, []string{"campaign_id"}, rows)
+	tx.CopyFrom(ctx, pgx.Identifier{ "public" , "job_items" }, []string{"campaign_id"}, rows)
+}
+EOF
+                expect "pgx.Identifier{\"public\", \"job_items\"} (what CopyFrom writes through) is flagged, spaced and unspaced" 1 "$(outside internal/app/q.go 4 public.job_items 'pgx.Identifier, as CopyFrom writes through it')@@$(outside internal/app/q.go 5 public.job_items 'pgx.Identifier, as CopyFrom writes through it')@@$(outside internal/app/q.go 6 public.job_items 'pgx.Identifier, as CopyFrom writes through it')@@RED — 3 problem(s)" "$d"
+d=$(mk jidentok); put "$d" internal/app/q.go <<'EOF'
+package app
+
+func load(tx pgx.Tx, rows pgx.CopyFromSource) {
+	tx.CopyFrom(ctx, pgx.Identifier{"public", "users"}, []string{"id"}, rows)
+	tx.CopyFrom(ctx, pgx.Identifier{"public", "job_items_archive"}, []string{"id"}, rows)
+	tx.CopyFrom(ctx, pgx.Identifier{"send_managed", "job_items"}, []string{"id"}, rows)
+	tx.CopyFrom(ctx, pgx.Identifier{"platform", "job_items"}, []string{"id"}, rows)
+}
+EOF
+                expect "the control of the previous case: a CopyFrom into public.users, a longer name, another schema's job_items or platform.job_items is not flagged" 0 "check-job-writers: OK" "$d"
+d=$(mk jquoted); put "$d" internal/app/q.go <<'EOF'
+package app
+
+const a = `INSERT INTO "public"."job_items" (user_id) VALUES ($1)`
+const b = `INSERT INTO public."job_items" (user_id) VALUES ($1)`
+const c = `INSERT INTO "public".job_items (user_id) VALUES ($1)`
+const d = `INSERT INTO public . job_items (user_id) VALUES ($1)`
+EOF
+                expect "quoted and spaced identifiers: \"public\".\"job_items\", public.\"job_items\", \"public\".job_items, public . job_items" 1 "$(outside internal/app/q.go 3 public.job_items 'INSERT INTO')@@$(outside internal/app/q.go 4 public.job_items 'INSERT INTO')@@$(outside internal/app/q.go 5 public.job_items 'INSERT INTO')@@$(outside internal/app/q.go 6 public.job_items 'INSERT INTO')@@RED — 4 problem(s)" "$d"
+d=$(mk jescaped); w "$d" internal/app/q.go '"INSERT INTO \"public\".\"job_items\" (user_id) VALUES ($1)"'
+                expect "quoted public.job_items escaped inside a Go interpreted string" 1 "$(outside internal/app/q.go 3 public.job_items 'INSERT INTO')" "$d"
+d=$(mk jbare);  put "$d" internal/app/q.go <<'EOF'
+package app
+
+const a = "INSERT INTO job_items (user_id) VALUES ($1)"
+const b = "UPDATE job_items SET status = $1"
+const c = "DELETE FROM job_items WHERE id = $1"
+const d = `INSERT INTO "job_items" (user_id) VALUES ($1)`
+EOF
+                expect "an unqualified job_items (INSERT INTO, UPDATE, DELETE FROM, quoted) is flagged as public.job_items (it would resolve through search_path)" 1 "$(outside internal/app/q.go 3 public.job_items 'INSERT INTO')@@$(outside internal/app/q.go 4 public.job_items 'UPDATE')@@$(outside internal/app/q.go 5 public.job_items 'DELETE FROM')@@$(outside internal/app/q.go 6 public.job_items 'INSERT INTO')@@RED — 4 problem(s)" "$d"
+d=$(mk jlower); w "$d" internal/app/q.go '"insert into public.job_items (user_id) values ($1)"'
+                expect "public.job_items in lower case" 1 "$(outside internal/app/q.go 3 public.job_items 'INSERT INTO')" "$d"
+d=$(mk jmixed); w "$d" internal/app/q.go '"InSeRt InTo PuBlIc.JoB_iTeMs (user_id) values ($1)"'
+                expect "public.job_items in mixed case" 1 "$(outside internal/app/q.go 3 public.job_items 'INSERT INTO')" "$d"
+d=$(mk jraw);   put "$d" internal/app/q.go <<'EOF'
+package app
+
+const q = `
+	INSERT
+	  INTO
+		public
+		.job_items (campaign_id, user_id)
+	VALUES ($1, $2)`
+EOF
+                expect "public.job_items split over lines in a Go raw string (the keywords, the schema and the table on lines of their own): reported at the INSERT line" 1 "$(outside internal/app/q.go 4 public.job_items 'INSERT INTO')@@!internal/app/q.go:5:@@!internal/app/q.go:6:@@!internal/app/q.go:7:" "$d"
+d=$(mk jcrlf);  put "$d" internal/app/q.go <<'EOF'
+package app
+
+const q = `INSERT INTO
+		public.job_items (user_id)`
+EOF
+                sed -i 's/$/\r/' "$d/internal/app/q.go"
+                expect "the same split statement on public.job_items in a file with CRLF line endings" 1 "$(outside internal/app/q.go 3 public.job_items 'INSERT INTO')" "$d"
+d=$(mk jengine); put "$d" internal/jobengine/zz_job_items_writer.go <<'EOF'
+package jobengine
+
+// FAULT: a second writer of the shared job item table, one that writes a row modules 2 and 3 read without the store, the user's scope or the job's lifecycle.
+const zzJobItemsWriter = `INSERT INTO public.job_items (campaign_id, user_id, recipient_email, rendered_subject, rendered_body, status) VALUES ($1::uuid, $2::uuid, $3, $4, $5, 'pending')`
+EOF
+                expect "THE FAULT of the second fault proof: a second writer of public.job_items under internal/jobengine/ is flagged at line 4" 1 "$(outside internal/jobengine/zz_job_items_writer.go 4 public.job_items 'INSERT INTO')@@RED — 1 problem(s)" "$d"
+d=$(mk jcmd);   put "$d" cmd/platform/q.go <<'EOF'
+package main
+
+import "fmt"
+
+func list() { fmt.Println("DELETE FROM public.job_items WHERE user_id = 'x'") }
+EOF
+                expect "a file under cmd/ writing public.job_items is scanned too" 1 "$(outside cmd/platform/q.go 5 public.job_items 'DELETE FROM')" "$d"
+d=$(mk jmoney); put "$d" internal/money/jobs.go <<'EOF'
+package money
+
+const done = `UPDATE public.job_items SET status = 'cancelled' WHERE id = $1::uuid`
+EOF
+                expect "internal/money may not write public.job_items either (the clean tree's money files only read the jobs)" 1 "$(outside internal/money/jobs.go 3 public.job_items 'UPDATE')" "$d"
+d=$(mk jsqlfile); put "$d" db/queries/items.sql <<'EOF'
+-- release the items
+UPDATE public.job_items SET status = 'cancelled' WHERE user_id = $1;
+EOF
+                expect "a .sql file under db/ outside db/migrations that writes public.job_items is scanned and flagged" 1 "scanned 5 Go file(s) and 1 SQL file(s) outside db/migrations/@@$(outside db/queries/items.sql 2 public.job_items 'UPDATE')" "$d"
+d=$(mk jwhole); put "$d" internal/app/x.go <<'EOF'
+package app
+
+const a = "INSERT INTO public.job_items_archive (id) VALUES ($1)"
+const b = "INSERT INTO public.job_items2 (id) VALUES ($1)"
+const c = `INSERT INTO "public"."job_items_old" (id) VALUES ($1)`
+const d = "INSERT INTO mypublic.job_items (id) VALUES ($1)"
+const e = "xinsert into public.job_items"
+const f = "UPDATE public.job_items_guard SET x = 1"
+const g = "TRUNCATE public.job_items_archive"
+const h = "DELETE FROM public.job_items_v2 WHERE id = $1"
+const i = "INSERT INTO public.jobs_items (id) VALUES ($1)"
+const j = "INSERT INTO public.job_item (id) VALUES ($1)"
+EOF
+                expect "whole word only: job_items_archive, job_items2, *_old, *_guard, *_v2, jobs_items, job_item, a longer schema name and a longer word before the keyword pass" 0 "check-job-writers: OK" "$d"
+d=$(mk jschema); put "$d" internal/app/x.go <<'EOF'
+package app
+
+const a = "INSERT INTO send_managed.job_items (id) VALUES ($1)"
+const b = "UPDATE send_byo.job_items SET status = $1"
+const c = "INSERT INTO platform.job_items (id) VALUES ($1)"
+const d = `DELETE FROM "send_managed"."job_items"`
+const e = "TRUNCATE verify.job_items"
+const f = "COPY send_byo.job_items (id) FROM STDIN"
+const g = "MERGE INTO platform.job_items j USING x ON true WHEN MATCHED THEN DELETE"
+EOF
+                expect "another schema's job_items (send_managed, send_byo, verify) and platform.job_items are not public.job_items: not flagged" 0 "check-job-writers: OK" "$d"
+d=$(mk jreads); put "$d" internal/app/r.go <<'EOF'
+package app
+
+const a = "SELECT campaign_id FROM public.job_items WHERE id = $1 AND user_id = $2"
+const b = `SELECT 1 FROM public.job_items FOR UPDATE OF public.job_items`
+const c = "SELECT id FROM public.job_items WHERE id = $1 FOR UPDATE"
+const e = "COPY (SELECT id FROM public.job_items) TO STDOUT"
+const f = "COPY public.job_items TO STDOUT"
+const g = "GRANT SELECT ON public.job_items TO platform_admin"
+const h = "SELECT ji.id FROM public.job_items ji JOIN platform.job_rows r ON r.id = ji.id WHERE ji.user_id = $1"
+EOF
+                expect "reads of public.job_items, FOR UPDATE [OF], COPY ... TO, a GRANT and a JOIN anywhere are not writes" 0 "check-job-writers: OK" "$d"
+d=$(mk jddl);   put "$d" db/queries/job_items_schema.sql <<'EOF'
+GRANT SELECT, INSERT, UPDATE ON public.job_items TO platform_app;
+GRANT UPDATE (status) ON public.job_items TO platform_app;
+GRANT TRUNCATE ON public.job_items TO platform_admin;
+CREATE INDEX job_items_user_idx ON public.job_items (user_id);
+ALTER TABLE public.job_items ADD COLUMN note text;
+COMMENT ON TABLE public.job_items IS 'The shared item table.';
+CREATE TRIGGER t BEFORE UPDATE OR DELETE ON public.job_items FOR EACH ROW EXECUTE FUNCTION f();
+ALTER TABLE platform.job_rows ADD CONSTRAINT fk FOREIGN KEY (item_id) REFERENCES public.job_items (id) ON DELETE RESTRICT;
+CREATE POLICY p ON public.job_items FOR UPDATE USING (true);
+EOF
+                expect "DDL on public.job_items (GRANT, CREATE INDEX ... ON, ALTER, COMMENT, a trigger, REFERENCES ... ON DELETE, a policy) in a .sql file under db/ is not a write" 0 "check-job-writers: OK@@and 1 SQL file(s) outside db/migrations/" "$d"
+d=$(mk jmixedneg); put "$d" internal/app/m.go <<'EOF'
+package app
+
+const a = "SELECT id FROM public.job_items WHERE id = $1 FOR UPDATE"
+const b = "INSERT INTO public.job_items_archive (id) VALUES ($1)"
+const c = "INSERT INTO send_managed.job_items (id) VALUES ($1)"
+const d = "UPDATE public.job_items SET status = $1"
+const e = "INSERT INTO public.job_items2 (id) VALUES ($1)"
+const f = "INSERT INTO platform.job_items (id) VALUES ($1)"
+EOF
+                expect "the control of the negatives: among reads, longer names and other schemas, exactly the one real write (line 6) is reported" 1 "$(outside internal/app/m.go 6 public.job_items 'UPDATE')@@!internal/app/m.go:3:@@!internal/app/m.go:4:@@!internal/app/m.go:5:@@!internal/app/m.go:7:@@!internal/app/m.go:8:@@RED — 1 problem(s): 1 write(s) outside $SAN/" "$d"
+d=$(mk jtwice); w "$d" internal/app/q.go '"INSERT INTO public.job_items (user_id) VALUES ($1); DELETE FROM platform.job_rows WHERE id = $2; UPDATE public.job_items SET status = $3"'
+                expect "three writes in a row on one line, on two tables of two schemas, are reported with their own table" 1 "$(outside internal/app/q.go 3 public.job_items 'INSERT INTO')@@$(outside internal/app/q.go 3 platform.job_rows 'DELETE FROM')@@$(outside internal/app/q.go 3 public.job_items 'UPDATE')@@RED — 3 problem(s): 3 write(s) outside $SAN/" "$d"
+d=$(mk jcomment); put "$d" internal/app/q.go <<'EOF'
+package app
+
+// the old code ran UPDATE public.job_items SET status here, before the store existed
+const q = 1
+EOF
+                expect "a comment containing a write on public.job_items IS flagged (comments are not stripped)" 1 "$(outside internal/app/q.go 3 public.job_items 'UPDATE')" "$d"
+d=$(mk jprose); put "$d" internal/adapters/sendapi/client.go <<'EOF'
+package sendapi
+
+// Run hands the module one job item (POST /v1/run). The module reads the recipient and the rendered message from the platform's own public.job_items row, which must have been COMMITTED before this call.
+// Module 3 builds multipart/alternative when the platform has written `public.job_items.rendered_text`; the row is read for the tenant, never written from here.
+func Run() {}
+EOF
+                expect "prose that merely names public.job_items (the adapters' comments) is not a write" 0 "check-job-writers: OK@@scanned 6 Go file(s)" "$d"
+d=$(mk jtestfile); put "$d" internal/app/q_test.go <<'EOF'
+package app
+
+const seed = "INSERT INTO public.job_items (campaign_id, user_id) VALUES ($1, $2)"
+EOF
+                expect "a _test.go file that seeds public.job_items is ignored, and the report says tests were not checked" 0 "check-job-writers: OK@@scanned 5 Go file(s)@@$NC_HEAD" "$d"
+d=$(mk jmigs);  put "$d" db/migrations/platform_0098_items.up.sql <<'EOF'
+ALTER TABLE public.job_items ADD COLUMN note text;
+UPDATE public.job_items SET note = '';
+INSERT INTO public.job_items (campaign_id, user_id, recipient_email, rendered_subject, rendered_body, status) SELECT 1;
+TRUNCATE public.job_items;
+EOF
+                expect "a migration that writes public.job_items is DDL by the migrator: it is not scanned, and the report counts it" 0 "check-job-writers: OK@@2 migration file(s) are not scanned" "$d"
+d=$(mk jstore); put "$d" internal/jobs/items.go <<'EOF'
+package jobs
+
+const insertItem = `INSERT INTO public.job_items (campaign_id, user_id, recipient_email, rendered_subject, rendered_body, status) VALUES ($1::uuid, $2::uuid, $3, $4, $5, 'pending') RETURNING id`
+const updateItem = `UPDATE public.job_items SET rendered_text = $3 WHERE id = $1::uuid AND user_id = $2::uuid`
+const readItem = `SELECT campaign_id FROM public.job_items WHERE id = $1::uuid AND user_id = $2::uuid FOR UPDATE`
+
+var copyTarget = pgx.Identifier{"public", "job_items"}
+EOF
+                expect "the store may write public.job_items: green, and the count of its write statements includes them (the 5 of the clean store, an INSERT, an UPDATE and a CopyFrom identifier; the SELECT FOR UPDATE is a read)" 0 "check-job-writers: OK@@scanned 6 Go file(s) and 0 SQL file(s) outside db/migrations/; the sanctioned writer $SAN/ holds 3 of the Go files; 1 migration file(s) are not scanned@@sanctioned writer $SAN/: 8 write statement(s) in 3 Go file(s)@@0 write(s) outside the sanctioned writer, 0 write(s) excused by exception, 0 sanctioned-writer problem(s), 0 exception problem(s)@@!outside the sanctioned writer internal" "$d"
+d=$(mk jonly);  rm -rf "$d/internal/jobs"; put "$d" internal/jobs/items.go <<'EOF'
+package jobs
+
+const insertItem = `INSERT INTO public.job_items (campaign_id, user_id) VALUES ($1::uuid, $2::uuid)`
+EOF
+                expect "a store whose only write is on public.job_items is a writer: the floor counts it" 0 "check-job-writers: OK@@sanctioned writer $SAN/: 1 write statement(s) in 1 Go file(s)" "$d"
+d=$(mk jnowrite); rm -rf "$d/internal/jobs"; put "$d" internal/jobs/items.go <<'EOF'
+package jobs
+
+const get = `SELECT campaign_id FROM public.job_items WHERE id = $1::uuid FOR UPDATE`
+const arch = `INSERT INTO public.job_items_archive (id) VALUES ($1::uuid)`
+EOF
+                expect "the control of the previous case: a store that only reads public.job_items (or writes a longer-named table) holds no write, and the instrument matched nothing" 1 "$SAN/:1: the sanctioned writer holds no write statement on a job table: the instrument matched nothing@@sanctioned writer $SAN/: 0 write statement(s) in 1 Go file(s)@@RED — 1 problem(s): 0 write(s) outside $SAN/, 1 sanctioned-writer problem(s)" "$d"
+d=$(mk jexc);   w "$d" internal/app/q.go '"INSERT INTO public.job_items (user_id) VALUES ($1)"'; printf '# register\ninternal/app/q.go|the one-off item backfill: it cannot call the store because it runs before the store exists\n' > "$d/tests/job-writer-exceptions.txt"
+                expect "an exception makes a file that writes public.job_items pass, and the report shows it and its reason" 0 "check-job-writers: OK@@excused: internal/app/q.go (1 write(s), exception on line 2): the one-off item backfill: it cannot call the store because it runs before the store exists@@1 write(s) excused by exception@@!outside the sanctioned writer internal" "$d"
+d=$(mk jexcpart); w "$d" internal/app/q.go '"INSERT INTO platform.job_rows (id) VALUES ($1)"'; put "$d" internal/app/other.go <<'EOF'
+package app
+
+const x = "DELETE FROM public.job_items WHERE id = $1"
+EOF
+                printf 'internal/app/q.go|excused\n' > "$d/tests/job-writer-exceptions.txt"
+                expect "an exception covers its own file only: another file writing public.job_items is still red" 1 "$(outside internal/app/other.go 3 public.job_items 'DELETE FROM')@@!internal/app/q.go:3:@@excused: internal/app/q.go (1 write(s)" "$d"
+d=$(mk jexcstale); put "$d" internal/app/q.go <<'EOF'
+package app
+
+const read = "SELECT campaign_id FROM public.job_items WHERE id = $1"
+const arch = "INSERT INTO public.job_items_archive (id) VALUES ($1)"
+EOF
+                printf 'internal/app/q.go|used to fill the job items\n' > "$d/tests/job-writer-exceptions.txt"
+                expect "a STALE exception: the file only reads public.job_items and writes a longer-named table, so it has no write to excuse" 1 "tests/job-writer-exceptions.txt:1: stale exception for internal/app/q.go: the file contains no write to a job table@@RED — 1 problem(s): 0 write(s) outside $SAN/, 0 sanctioned-writer problem(s), 1 exception problem(s)" "$d"
 
 # ---- the control for THIS file: prove the harness can say "no" ---------------------------------------------------------------------------------------------------------------------
 # Four deliberately WRONG arrangements, each run through the same `expect`. EVERY one must be reported as a mismatch; if any is accepted, this selftest cannot fail and says so.

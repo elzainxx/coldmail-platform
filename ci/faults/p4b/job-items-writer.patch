@@ -1,0 +1,9 @@
+diff --git a/internal/jobengine/zz_job_items_writer.go b/internal/jobengine/zz_job_items_writer.go
+new file mode 100644
+--- /dev/null
++++ b/internal/jobengine/zz_job_items_writer.go
+@@ -0,0 +1,4 @@
++package jobengine
++
++// FAULT: a second writer of the shared job item table, one that writes a row modules 2 and 3 read without the store, the user's scope or the job's lifecycle.
++const zzJobItemsWriter = `INSERT INTO public.job_items (campaign_id, user_id, recipient_email, rendered_subject, rendered_body, status) VALUES ($1::uuid, $2::uuid, $3, $4, $5, 'pending')`

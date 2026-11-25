@@ -30,12 +30,16 @@ func utc(t *time.Time) *time.Time {
 }
 
 // scanJob reads one row of jobColumns.
-func scanJob(row pgx.Row) (Job, error) {
+func scanJob(row pgx.Row) (Job, error) { return scanJobWith(row) }
+
+// scanJobWith reads one row of jobColumns followed by the columns the caller selected after them (extra: the engine's counts), scanned into the destinations given.
+func scanJobWith(row pgx.Row, extra ...any) (Job, error) {
 	var j Job
 	var preview, frozen []byte
-	if err := row.Scan(&j.ID, &j.UserID, &j.Module, &j.Status, &j.SourceJobID, &j.ScheduledStart, &j.StartDeadline,
+	dest := []any{&j.ID, &j.UserID, &j.Module, &j.Status, &j.SourceJobID, &j.ScheduledStart, &j.StartDeadline,
 		&preview, &j.PreviewFingerprint, &j.ConfirmKey, &j.PausedFrom, &frozen,
-		&j.PreviewedAt, &j.ConfirmedAt, &j.StartedAt, &j.FinishedAt, &j.CancelRequestedAt, &j.CreatedAt, &j.UpdatedAt); err != nil {
+		&j.PreviewedAt, &j.ConfirmedAt, &j.StartedAt, &j.FinishedAt, &j.CancelRequestedAt, &j.CreatedAt, &j.UpdatedAt}
+	if err := row.Scan(append(dest, extra...)...); err != nil {
 		return Job{}, err
 	}
 	j.ScheduledStart, j.StartDeadline, j.PreviewedAt, j.ConfirmedAt = utc(j.ScheduledStart), utc(j.StartDeadline), utc(j.PreviewedAt), utc(j.ConfirmedAt)

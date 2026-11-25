@@ -43,6 +43,10 @@ var (
 	ErrSuspended = errors.New("module 3 is observed holding the user suspended")
 	// ErrModuleUnavailable: module 3 could not be asked whether the campaign is feasible, and an immediate confirm will not hold anything for a job that cannot start. A scheduled confirm is not refused for it.
 	ErrModuleUnavailable = errors.New("the module is unavailable")
+	// ErrIncomplete is wrapped by every *IncompleteError: the engine asked to complete or finish a job while some pending rows still have no result. Nothing was changed.
+	ErrIncomplete = errors.New("the job still has rows without a result")
+	// ErrModuleRefTaken: another job of the same module already holds the module's own job reference the engine tried to record (the unique index jobs_module_job_ref_key).
+	ErrModuleRefTaken = errors.New("another job of this module holds that module reference")
 )
 
 // ErrInsufficientCredits is money.ErrInsufficientCredits, re-exported: errors.As(err, &jobs.ErrInsufficientCredits{}) reaches the shortfall (Available, Needed, Shortfall).
@@ -83,6 +87,18 @@ func (e *TooManyRowsError) Error() string {
 // Is makes errors.Is(err, ErrTooManyRows) true.
 func (e *TooManyRowsError) Is(target error) bool { return target == ErrTooManyRows }
 
+// IncompleteError is an ErrIncomplete with the number of pending rows that have no result yet.
+type IncompleteError struct {
+	Missing int
+}
+
+func (e *IncompleteError) Error() string {
+	return fmt.Sprintf("the job still has %d pending row(s) without a result", e.Missing)
+}
+
+// Is makes errors.Is(err, ErrIncomplete) true.
+func (e *IncompleteError) Is(target error) bool { return target == ErrIncomplete }
+
 // NotAllowedError is an ErrNotAllowed with its Reason: the database's constraint name when the lifecycle itself refused, a word of the store's otherwise.
 type NotAllowedError struct {
 	Reason string
@@ -114,6 +130,7 @@ const (
 	sqlstateNoData      = "P0002" // platform.job_transition: the job does not exist
 	conSlot             = "jobs_one_active_per_user_module"
 	conConfirmKey       = "jobs_confirm_key_key"
+	conModuleRef        = "jobs_module_job_ref_key"
 	conJobUserFK        = "jobs_user_id_fkey"
 	reasonRestricted    = "restricted" // a 23001 refusal that names no constraint
 )
@@ -136,6 +153,8 @@ func (s *Store) mapDBError(err error) error {
 		return ErrSlotTaken
 	case pe.Code == sqlstateUnique && pe.ConstraintName == conConfirmKey:
 		return ErrConfirmKeyReused
+	case pe.Code == sqlstateUnique && pe.ConstraintName == conModuleRef:
+		return ErrModuleRefTaken
 	case pe.Code == sqlstateFK && pe.ConstraintName == conJobUserFK:
 		return ErrNotFound
 	case pe.Code == sqlstateNoData:
@@ -167,6 +186,7 @@ func refusalWord(err error) string {
 		{ErrNotFound, "not_found"}, {ErrBadRequest, "bad_request"}, {ErrTooManyRows, "too_many_rows"}, {ErrNothingToDo, "nothing_to_do"}, {ErrNotAllowed, "not_allowed"},
 		{ErrStalePreview, "stale_preview"}, {ErrSlotTaken, "slot_taken"}, {ErrConfirmKeyReused, "confirm_key_reused"}, {ErrNotPreviewed, "not_previewed"},
 		{ErrNoEntitlement, "no_entitlement"}, {ErrSuspended, "suspended"}, {ErrModuleUnavailable, "module_unavailable"}, {money.ErrLockTimeout, "lock_timeout"},
+		{ErrIncomplete, "incomplete"}, {ErrModuleRefTaken, "module_ref_taken"},
 	} {
 		if errors.Is(err, c.is) {
 			return c.word

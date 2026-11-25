@@ -18,7 +18,9 @@ go|github.com/coldmail-platform/platform/internal/csvsafe|4
 go|github.com/coldmail-platform/platform/internal/entitlements|60
 go|github.com/coldmail-platform/platform/internal/faultpoint|1
 go|github.com/coldmail-platform/platform/internal/httpapi|16
-go|github.com/coldmail-platform/platform/internal/jobs|36
+go|github.com/coldmail-platform/platform/internal/jobengine|29
+go|github.com/coldmail-platform/platform/internal/jobengine/jobenginetest|11
+go|github.com/coldmail-platform/platform/internal/jobs|47
 go|github.com/coldmail-platform/platform/internal/logging|6
 go|github.com/coldmail-platform/platform/internal/m3admin|38
 go|github.com/coldmail-platform/platform/internal/migrate|47
