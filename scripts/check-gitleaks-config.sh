@@ -6,7 +6,7 @@
 #   - every `[[allowlists]]` block is exactly ONE of two shapes:
 #       (path)   `targetRules` with ONE rule and `paths` with ONE pattern, and the pattern names Docs/history/audit-scratch (the cited run logs of Phase 0)
 #       (commit) `targetRules` with ONE rule and `commits` with ONE 40-hex sha that EXISTS in this repository's history (a stale exception is red) and has a `description`
-#   - at most 5 allowlist blocks in all (a sixth is a decision, not a drift: change this number in the same commit and say why; the fourth and fifth were added in Phase 3 for commits 8accb189 and 56eb8ab2, see .gitleaks.toml)
+#   - at most 6 allowlist blocks in all (a seventh is a decision, not a drift: change this number in the same commit and say why; the fourth and fifth were added in Phase 3 for commits 8accb189 and 56eb8ab2, the sixth in Phase 4 for commit 114b9e7, see .gitleaks.toml)
 #
 # NOT CHECKED (printed on every run): whether an excepted line is really not a secret (a person read it: the comment above each block says who, when and what), and gitleaks' own matching (the `gitleaks`
 # workflow proves the scanner on every run).
@@ -29,7 +29,7 @@ printf '%s\n' "$code" | grep -qE '^[[:space:]]*\[allowlist\][[:space:]]*$' && ba
 printf '%s\n' "$code" | grep -qE '^[[:space:]]*(regexes|stopwords|disabledRules)[[:space:]]*=' && bad "regexes, stopwords or disabledRules are configured: an exception must be a path or a commit, never a pattern over content"
 printf '%s\n' "$code" | grep -qE '^[[:space:]]*\[\[rules\]\]' && bad "the file defines its own [[rules]]"
 n=$(printf '%s\n' "$code" | grep -cE '^[[:space:]]*\[\[allowlists\]\]') || n=0
-[ "$n" -le 5 ] || bad "$n [[allowlists]] blocks (at most 5 are accepted: another exception is a decision)"
+[ "$n" -le 6 ] || bad "$n [[allowlists]] blocks (at most 6 are accepted: another exception is a decision)"
 # split into blocks
 blocks=0; paths_blocks=0; commit_blocks=0
 awk '/^[[:space:]]*\[\[allowlists\]\]/ {n++; inb=n; next} /^[[:space:]]*\[/ {inb=0} inb>0 {print inb "\t" $0}' <<<"$code" > /tmp/gl-blocks.$$
