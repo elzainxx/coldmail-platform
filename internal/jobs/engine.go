@@ -863,6 +863,20 @@ func (s *Store) writePlatformEnd(ctx context.Context, tx pgx.Tx, jobID, state st
 	return int(tag.RowsAffected()), nil
 }
 
+// endedResultState is the platform result a row without one gets when its job ended some other way than through the engine: how the job ended names it (a succeeded job has none to write: Finish
+// refuses to end a job while a pending row has no result).
+func endedResultState(status string) string {
+	switch status {
+	case StatusFailed:
+		return "infrastructure_failure"
+	case StatusCancelled:
+		return "cancelled"
+	case StatusExpired:
+		return "expired"
+	}
+	return ""
+}
+
 // Expire ends a confirmed, scheduled or paused job whose start deadline has passed (the database's clock: before it the guard refuses with job_expired_early) as the engine, in ONE transaction: the
 // move to expired, a result for EVERY row that has none (the platform class: module_state `expired`, free, rule P-02; a row that already has a result keeps it) and, for a metered module, the
 // release of the whole reserve. A job that is already expired is returned as it is. Any other status is refused by the lifecycle.
@@ -923,12 +937,19 @@ func (s *Store) CancelUnsubmitted(ctx context.Context, jobID string) (int, error
 	return n, nil
 }
 
-// Release is the repair step: a terminal job whose reserve still has a remainder gives it back, in its own transaction (the lock first). Idempotent: a job with nothing left, a job of a module
-// that holds no credits and a job that holds no reserve are no-ops. A job that has not ended is ErrNotAllowed.
+// Release is the repair step: a terminal job whose reserve still has a remainder gives it back, in its own transaction (the lock first). A job that somebody ended OUTSIDE the engine (an administrator
+// who moved it to failed, cancelled or expired by hand) may also have rows with no result: the repair writes the platform's own free result for each of them (infrastructure_failure, cancelled or expired,
+// by how the job ended) so that a terminal job has exactly as many results as rows, then gives the remainder back. Idempotent: a job with nothing left, a job of a module that holds no credits and a job
+// that holds no reserve are no-ops. A job that has not ended is ErrNotAllowed.
 func (s *Store) Release(ctx context.Context, jobID string) error {
 	_, err := s.engineTx(ctx, "release", jobID, func(tx pgx.Tx, j Job, metered bool) error {
 		if !IsTerminal(j.Status) {
 			return notAllowed(reasonNotEnded)
+		}
+		if state := endedResultState(j.Status); state != "" {
+			if _, err := s.writePlatformEnd(ctx, tx, j.ID, state, false); err != nil {
+				return err
+			}
 		}
 		return s.releaseIn(ctx, tx, j, metered)
 	})
