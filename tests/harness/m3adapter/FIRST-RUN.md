@@ -127,6 +127,8 @@ put the original back at once (deferred, so a step that dies restores too); each
 
 Allowlisted (`zz_m3_adapter_contract_drift_test.go`, each with its reason): `POST /v1/run` error internal_error, `POST /v1/send-byo/accounts` error unprocessable, `POST /v1/send-byo/accounts/{id}/test` unavailable.
 
+Since Phase 4 A1 (this file is a first-run record and stays as it was written): the row `campaign cursor_forged: HTTP 500 code internal_error` is not what module 3 does any more. A forged cursor is now a 400 `validation_failed` with the detail `cursor/malformed`, the same answer as `cursor_malformed`, reported as `ErrBadCursor`; the contract `cursor_forged` was removed, and the adapter no longer maps a 500 to `ErrBadCursor`.
+
 Matching pitfalls to read the drift report with (the coordinator's matcher, not changed here):
 - `accounts.create.error.duplicate.json` was RECORDED from the generic 409 of a suspended user's create ("This action is not available for your account right now.", no details), not from a duplicate; this test now produces a
   real duplicate (409 with `details: [{smtp_username, conflict}]`), so expect `KeyAdded error.details` against that fixture until it is re-recorded. The generic 409s (the cap, a suspended user) fit `duplicate` and `conflict`

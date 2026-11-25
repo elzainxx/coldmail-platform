@@ -623,16 +623,17 @@ func statusOf(fixture string) int {
 	return 200
 }
 
-// recordedFixtures are the 46 fixtures that are recordings of the real module 3 and normalised by contractcheck.Normalise: the 33 of the earlier full record run 44225747596 (2026-11-18) and the 13
+// recordedFixtures are the 45 fixtures that are recordings of the real module 3 and normalised by contractcheck.Normalise: the 32 of the earlier full record run 44225747596 (2026-11-18) and the 13
 // that record run 44395876225 (2026-11-18, the Phase 3 close-out D1 run, against the module at its close-out pin) added (the ones that were hand-written before it: the 422 of an unacknowledged
 // From warning, the populated events page, the indeterminate test click, the two cancel files, describe, the three quotes, the three campaign reports and the 409 that names its causes). Seven of
-// the 33 were re-recorded by the new run because the real answer changed shape, four kept their earlier recording because the new answer had the same shape, and the other 22 are byte for byte
-// what the new run produced too. The other three files of testdata/contract (handWrittenFixtures) are still hand-written. testdata/README.md names both lists and
+// the 32 were re-recorded by the new run because the real answer changed shape, four kept their earlier recording because the new answer had the same shape, and the other 21 are byte for byte
+// what the new run produced too. (Those figures were 33 / 22 / 46 with `report.campaign.error.cursor_forged.json`, the 500 for a cursor that decodes but is not a timestamp and an id: Phase 4 A1
+// removed that file and its contract because no module answers a forged cursor with a 500 any more.) The other three files of testdata/contract (handWrittenFixtures) are still hand-written. testdata/README.md names both lists and
 // TestReadmeNamesWhichFixturesAreRecorded holds it to these two.
 var recordedFixtures = []string{
 	"run.created.json", "run.replay.json", "run.error.validation_failed.json", "run.error.unauthenticated.json", "run.error.not_found.json", "run.error.paused.json", "run.error.conflict.json",
 	"report.job.sent.json", "report.job.queued.json", "report.job.error.not_found.json",
-	"report.campaign.page.json", "report.campaign.last_page.json", "report.campaign.empty.json", "report.campaign.error.cursor_malformed.json", "report.campaign.error.cursor_forged.json",
+	"report.campaign.page.json", "report.campaign.last_page.json", "report.campaign.empty.json", "report.campaign.error.cursor_malformed.json",
 	"accounts.list.page.json", "accounts.list.last_page.json", "accounts.list.empty.json", "accounts.list.error.validation_failed.json", "accounts.list.error.cursor_malformed.json",
 	"accounts.get.ok.json", "accounts.get.error.not_found.json",
 	"accounts.create.created.json", "accounts.create.created_failed.json", "accounts.create.error.validation_failed.json", "accounts.create.error.duplicate.json", "accounts.create.error.conflict.json",
@@ -670,7 +671,7 @@ func readmeSections(text string) (recorded, hand []string) {
 	return recorded, hand
 }
 
-// The README says which fixtures are recorded and which are still hand-written, and the two lists are the 46 recorded files and the 3 others (every file of the directory once, none in both),
+// The README says which fixtures are recorded and which are still hand-written, and the two lists are the 45 recorded files and the 3 others (every file of the directory once, none in both),
 // and it cites both record runs (the close-out run that produced the recordings, and the earlier one whose recordings four files keep). The controls: a README that lists a recorded file as
 // hand-written, or forgets one, or does not cite one of the runs, is caught by the same comparison.
 func TestReadmeNamesWhichFixturesAreRecorded(t *testing.T) {
@@ -711,7 +712,7 @@ func TestReadmeNamesWhichFixturesAreRecorded(t *testing.T) {
 		}
 		return p
 	}
-	if len(wantRec) != 46 || len(wantHand) != 3 {
+	if len(wantRec) != 45 || len(wantHand) != 3 {
 		t.Fatalf("%d recorded and %d hand-written: the subject changed", len(wantRec), len(wantHand))
 	}
 	for _, f := range recordedFixtures {

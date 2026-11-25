@@ -3,4 +3,4 @@
 # The parent repository (elzainxx/coldmail) pins the same three commits as submodules; tools/check-modules-lock.sh <parent-dir> compares the two when you re-pin.
 coldmail-verify fad942e7e488e7b7da04abdb63992f903d9692b4
 coldmail-send-managed dc2b53299d3a202191e18e20cf0682087f762fc2
-coldmail-send-byo 8855a52aad9537480521aba36f2f24dcc87d9d6f
+coldmail-send-byo 853e2583e6bea80d3e2ee0c5c8a20ff92e69ff69

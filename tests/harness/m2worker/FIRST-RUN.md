@@ -262,6 +262,8 @@ contract declares are elicited: another route or status would be an "undeclared 
 | `GET /v1/report` campaign error cursor_forged (500) | the cursor base64url(`not-a-time|<an id>`): well formed, so the module's SQL casts it and fails; the 500 is reported as `ErrBadCursor` (the module's documentation promises a 400). Control: the genuine next cursor of page one gives page two | `cursor_forged:`, `control cursor:` |
 | `GET /v1/describe` ok | the adapter's `Describe` | `describe:` |
 
+Since Phase 4 A1 (this file is a first-run record and stays as it was written): the row `cursor_forged (500)` is not what module 2 does any more. Since its close-out B2 (module 2 `dc2b532`) a forged cursor is a 400 `validation_failed` with the detail `cursor/malformed`, reported as `ErrBadCursor` like the malformed one; the contract `cursor_forged` was removed, and the adapter no longer maps a 500 to `ErrBadCursor`.
+
 At the end the test reads `dispatch_mode` back (it must be `serving`, and a cleanup restores it even when the test fails) and asserts the sink holds exactly one message for each of the five items (A, C, D, E, B): the refused and failed runs and the replays sent nothing. The test touches no money (module 2
 does not need it). It adds about 30 s to the stage (the lock wait is 10 s of it).
 

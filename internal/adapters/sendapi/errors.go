@@ -17,8 +17,8 @@ var (
 	// ErrConflictUnexplained: a 409 on run whose cause the module does not say: a module 3 older than Phase 3 close-out C2 (its 409 carries no details) answers so. It is NEVER what a module that
 	// names its causes answers (that is a *ConflictError), and module 2 (back-pressure, ErrBackpressure) never answers it. The adapter never picks a cause for it.
 	ErrConflictUnexplained = errors.New("sendapi: the module refused the run with a conflict whose cause it does not say")
-	// ErrBadCursor: the module did not accept a cursor. The adapter only ever passes back the next_cursor the module issued, so this means a forged or corrupted cursor, or a module fault on a
-	// request that carried one.
+	// ErrBadCursor: the module did not accept a cursor (a 400 validation_failed naming the cursor). The adapter only ever passes back the next_cursor the module issued, so this means a forged or
+	// corrupted cursor. A module fault (a 500) on a request that carried a cursor is NOT this error: it stays an Internal error.
 	ErrBadCursor = errors.New("sendapi: the module did not accept the page cursor")
 	// The four causes of module 3's run 409 (its closed vocabulary run_conflict_cause), one sentinel each: errors.Is(err, ErrRunSuspended) is true of a *ConflictError that names it.
 	// ErrRunSuspended: the user is suspended (stop: nothing is accepted until the suspension is lifted).
@@ -170,7 +170,8 @@ func (c *Client) badConflict(e *modclient.Error, key, msg string) error {
 //
 // The refinements exist because the modules' bodies do not say enough or say it in details:
 //   - run's 409: see Conflict (module 2: back-pressure, no details; module 3: the causes it names).
-//   - a cursor the module did not accept (a 400 naming the cursor, or a 500: a syntactically valid cursor that is not a timestamp and an id reaches a cast in module 3's SQL).
+//   - a cursor the module did not accept: a 400 naming the cursor (both modules answer so for a cursor that is not base64 and for one that decodes but is not a timestamp and an id). A 500
+//     on a request that carried a cursor stays a plain Internal error: since Phase 4 A1 no module answers a forged cursor with a 500, so a 500 cannot be claimed as a bad cursor.
 func (c *Client) mapErr(op string, err error, usedCursor bool) error {
 	var e *modclient.Error
 	if !errors.As(err, &e) {
@@ -184,9 +185,6 @@ func (c *Client) mapErr(op string, err error, usedCursor bool) error {
 		}
 		return c.conflict(e, err)
 	case op == opReportCamp && usedCursor && e.Kind == modclient.Refused && hasDetail(e, "cursor"):
-		return refine(ErrBadCursor, err)
-	case op == opReportCamp && usedCursor && e.Kind == modclient.Internal && e.Status == 500:
-		// MODULE-FORCED(SA-F2): a cursor that decodes but is not a timestamp and an id is a 500 from module 3 (not the 400 its documentation promises) and cannot be told from a module fault, so a 500 on a request that carried a cursor is reported as a possible bad cursor.
 		return refine(ErrBadCursor, err)
 	}
 	return err

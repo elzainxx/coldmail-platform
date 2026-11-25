@@ -221,16 +221,6 @@ func cases() map[string]sendapitest.Case {
 				}
 			},
 		},
-		"GET /v1/report | campaign error cursor_forged": {
-			Do: call(func(ctx context.Context, c *m2.Client) (any, error) {
-				return c.ReportCampaignPage(ctx, campaign, "abc")
-			}), Kind: modclient.Internal, Code: "internal_error",
-			Check: func(t testing.TB, v any, err error) {
-				if !errors.Is(err, sendapi.ErrBadCursor) {
-					t.Fatalf("a forged cursor: %v", err)
-				}
-			},
-		},
 		"GET /v1/describe | ok": {
 			Do: func(t testing.TB, url, token string) (any, error) {
 				mc := sendapitest.ModClient(t, modclient.M2, url, token, modclient.Options{})
@@ -282,8 +272,8 @@ func TestContractFixturesDoNotRot(t *testing.T) {
 	if problems := sendapitest.CheckNoRot(fixtures, cs); len(problems) != 0 {
 		t.Fatalf("the fixtures have rotted: %v", problems)
 	}
-	if len(cs) != len(sendapi.Contracts(m2.Profile())) || len(cs) != 20 {
-		t.Fatalf("%d contracts: the shared ones (which include the cancel's two since module 3 has the route too), 20 of them", len(cs))
+	if len(cs) != len(sendapi.Contracts(m2.Profile())) || len(cs) != 19 {
+		t.Fatalf("%d contracts: the shared ones (which include the cancel's two since module 3 has the route too, and not the forged-cursor 500 that Phase 4 A1 removed), 19 of them", len(cs))
 	}
 	copyDir := func(t *testing.T) string {
 		dir := t.TempDir()

@@ -296,16 +296,6 @@ func cases(t testing.TB) map[string]sendapitest.Case {
 				}
 			},
 		},
-		"GET /v1/report | campaign error cursor_forged": {
-			Do: call(func(ctx context.Context, c *m3.Client, t testing.TB) (any, error) {
-				return c.ReportCampaignPage(ctx, campaign, "abc")
-			}), Kind: modclient.Internal, Code: "internal_error",
-			Check: func(t testing.TB, v any, err error) {
-				if !errors.Is(err, sendapi.ErrBadCursor) {
-					t.Fatalf("a forged cursor: %v", err)
-				}
-			},
-		},
 		"GET /v1/describe | ok": {
 			Do: func(t testing.TB, url, token string) (any, error) {
 				a, err := m3.NewAdapter(sendapitest.ModClient(t, modclient.M3, url, token, modclient.Options{}))

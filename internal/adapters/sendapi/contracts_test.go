@@ -223,18 +223,6 @@ func m3Cases() map[string]sendapitest.Case {
 			},
 			Mutations: []sendapitest.Mutation{brokenEnvelope()},
 		},
-		"GET /v1/report | campaign error cursor_forged": {
-			Do: call(func(ctx context.Context, c *sendapi.Client) (any, error) {
-				return c.ReportCampaignPage(ctx, campaign, "abc")
-			}),
-			Kind: modclient.Internal,
-			Code: "internal_error",
-			Check: func(t testing.TB, v any, err error) {
-				if !errors.Is(err, sendapi.ErrBadCursor) {
-					t.Fatalf("a forged cursor: %v", err)
-				}
-			},
-		},
 		"GET /v1/describe | ok": {
 			Do: func(t testing.TB, url, token string) (any, error) {
 				mc, _ := m3clients(t, url, token)

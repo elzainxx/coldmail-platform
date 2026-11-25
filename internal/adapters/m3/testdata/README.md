@@ -9,15 +9,17 @@ Ids and times are synthetic or normalised, addresses are in the documentation, p
 
 ## Recorded
 
-These 46 files are RECORDINGS of the real module 3 in the harness, normalised by `contractcheck.Normalise`: every uuid of a file becomes `00000000-0000-4000-8000-00000000000N` (N counting by first
+These 45 files are RECORDINGS of the real module 3 in the harness, normalised by `contractcheck.Normalise`: every uuid of a file becomes `00000000-0000-4000-8000-00000000000N` (N counting by first
 appearance in that file), every timestamp `2026-01-01T00:00:00Z`, every request id a run of `a`. They come from two full record runs, both of 2026-11-18:
 
-- Record run 44395876225 (the Phase 3 close-out D1 run: module 3 at its close-out pin, the From gate on in the adapter tests) recorded 46 files of the 49 in the directory (the three that are hand-written
-  below are the ones it did not reach). The file is what that run recorded for 42 of them: 18 are files the run CHANGED (seven earlier recordings whose shape changed: `accounts.create.created.json`,
+- Record run 44395876225 (the Phase 3 close-out D1 run: module 3 at its close-out pin, the From gate on in the adapter tests) recorded 46 files of the 49 then in the directory (the three that are
+  hand-written below are the ones it did not reach); one of the 46, `report.campaign.error.cursor_forged.json` (the 500 for a cursor that decodes but is not a timestamp and an id), was removed in Phase 4 A1
+  together with its contract, because no module answers a forged cursor with a 500 any more (module 3 and module 2 answer the 400 of `report.campaign.error.cursor_malformed.json`), so 45 of the 48 files of
+  the directory now are its recordings. The file is what that run recorded for 41 of the 45: 18 are files the run CHANGED (seven earlier recordings whose shape changed: `accounts.create.created.json`,
   `accounts.create.created_failed.json`, `accounts.get.ok.json`, `accounts.list.page.json`, `accounts.list.empty.json`, `accounts.test.ok.json`, `report.job.queued.json`; and eleven files that were
   hand-written before: `accounts.create.error.unprocessable.json`, `accounts.events.last_page.json`, `accounts.test.indeterminate.json`, `cancel.ok.json`, `describe.ok.json`, `quote.ok.json`,
   `quote.infeasible.json`, `report.campaign.page.json`, `report.campaign.last_page.json`, `report.campaign.empty.json`, `run.error.conflict.json`); two were hand-written and the module answered
-  exactly what they held (`cancel.error.validation_failed.json`, `quote.feasible.json`), so they are recordings now; and 22 were already recordings of the earlier run and came out byte for byte the same.
+  exactly what they held (`cancel.error.validation_failed.json`, `quote.feasible.json`), so they are recordings now; and 21 were already recordings of the earlier run and came out byte for byte the same.
 - Record run 44225747596 (the third record run of `platform` Phase 3 B6) recorded the earlier files. Four of them keep their recording of that run, because the answer of the new run had the same shape
   (only values differed): `accounts.bulk.ok.json`, `accounts.create.error.validation_failed.json`, `report.job.error.not_found.json`, `report.job.sent.json`.
 
@@ -68,7 +70,6 @@ campaign, a stranger's quote, an injected provider text or acknowledgment instan
 - `report.campaign.last_page.json`
 - `report.campaign.empty.json`
 - `report.campaign.error.cursor_malformed.json`
-- `report.campaign.error.cursor_forged.json`
 - `cancel.ok.json`
 - `cancel.error.validation_failed.json`
 - `describe.ok.json`
@@ -104,7 +105,7 @@ campaign, a stranger's quote, an injected provider text or acknowledgment instan
 ## Hand-written
 
 These 3 files are hand-written (`Docs/history/p3-research/m3-api.md`, checked against the module at the pinned commit), to be replaced by a recording when the harness reaches them. Neither
-record run reached these responses (record run 44395876225 produced the other 46):
+record run reached these responses (record run 44395876225 produced the other 45):
 
 - `run.error.internal_error.json`: a 500 on run needs a fault inside module 3, which the harness does not provoke.
 - `accounts.test.unavailable.json`: the test button answers `unavailable` only when its credential check cannot run (`verify_error`, `verification_unavailable`), which needs the module's own verifier

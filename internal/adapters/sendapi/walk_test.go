@@ -271,22 +271,23 @@ func TestWalkCallbackErrorsAndNilCallback(t *testing.T) {
 	}
 }
 
-// A cursor the module does not accept is a typed error of its own that still unwraps to the module's Kind. The control is the same status on a request that carried NO cursor, and a 400
-// that is not about the cursor: neither is ErrBadCursor.
+// A cursor the module does not accept is a typed error of its own that still unwraps to the module's Kind: a 400 validation_failed naming the cursor, for a cursor that is not base64 and for
+// one that decodes but is not an index and an id alike (both modules answer so since Phase 4 A1; the forged one used to be a 500). The control is the same status on a request that carried
+// NO cursor, and a 400 that is not about the cursor: neither is ErrBadCursor (and TestAServerFaultOnACursorRequestIsNotABadCursor holds the 500 with a cursor).
 func TestForgedCursorIsATypedError(t *testing.T) {
 	p := m2like()
 	c := fakeCampaign(p, userA, 5, false)
 	e := newEnv(t, p, userA, c.Handler(), modclient.Options{}, sendapi.Options{PageSize: 2})
 	forged := base64.RawURLEncoding.EncodeToString([]byte("x|y")) // decodes, has a '|', is not an index and an id
 	_, err := e.c.ReportCampaignPage(ctxT(t), campaign, forged)
-	wantKind(t, err, modclient.Internal)
-	if !errors.Is(err, sendapi.ErrBadCursor) || !errors.Is(err, modclient.ErrInternal) {
-		t.Fatalf("a forged cursor: %v", err)
+	me := wantKind(t, err, modclient.Refused)
+	if !errors.Is(err, sendapi.ErrBadCursor) || !errors.Is(err, modclient.ErrRefused) || me.Code != "validation_failed" || !hasCursorDetail(me) {
+		t.Fatalf("a forged cursor: %v (code %q, details %v)", err, me.Code, me.Details)
 	}
 	_, err = e.c.ReportCampaignPage(ctxT(t), campaign, "not base64 !!")
-	wantKind(t, err, modclient.Refused)
-	if !errors.Is(err, sendapi.ErrBadCursor) || !errors.Is(err, modclient.ErrRefused) {
-		t.Fatalf("a malformed cursor: %v", err)
+	me = wantKind(t, err, modclient.Refused)
+	if !errors.Is(err, sendapi.ErrBadCursor) || !errors.Is(err, modclient.ErrRefused) || me.Code != "validation_failed" || !hasCursorDetail(me) {
+		t.Fatalf("a malformed cursor: %v (code %q, details %v)", err, me.Code, me.Details)
 	}
 	// controls
 	h500 := newEnv(t, p, userA, reply(500, sendapitest.Envelope("internal_error")), modclient.Options{}, sendapi.Options{})
@@ -308,6 +309,50 @@ func TestForgedCursorIsATypedError(t *testing.T) {
 	}
 	if _, err := e.c.ReportCampaignPage(ctxT(t), campaign, page.NextCursor); err != nil {
 		t.Fatalf("the module's own cursor is refused: %v", err)
+	}
+}
+
+// hasCursorDetail: the module named exactly one thing wrong, the cursor, as malformed (the one answer both modules give to a cursor they do not accept).
+func hasCursorDetail(e *modclient.Error) bool {
+	return len(e.Details) == 1 && e.Details[0] == modclient.Detail{Field: "cursor", Issue: "malformed"}
+}
+
+// A 500 on a request that carried a cursor is a module fault and nothing else: the adapter returns the Internal error as it is and does NOT claim it as a bad cursor (it used to, because
+// module 3 answered a forged cursor with a 500; since Phase 4 A1 no module does, so a 500 cannot be told from a fault and is not guessed to be one). The paired control is the same request
+// answered with the 400 validation_failed whose detail is the cursor, which IS ErrBadCursor (and a Refused error, not an Internal one): if the 500 were mapped to the sentinel again, or the
+// 400 stopped being mapped, one of the two halves goes red. Both profiles, and the request is proved to have carried the cursor (the mapping is only reached with one).
+func TestAServerFaultOnACursorRequestIsNotABadCursor(t *testing.T) {
+	cursor := base64.RawURLEncoding.EncodeToString([]byte("0|" + idOf(1)))
+	carried := func(t *testing.T, e *env) {
+		t.Helper()
+		reqs := e.stub.Requests()
+		if len(reqs) == 0 {
+			t.Fatal("the stub saw no request, so the answer proves nothing")
+		}
+		for _, r := range reqs {
+			if r.Query.Get("cursor") != cursor {
+				t.Fatalf("a request did not carry the cursor (query %v): the mapping under test was not reached", r.Query)
+			}
+		}
+	}
+	for name, p := range profiles() {
+		t.Run(name, func(t *testing.T) {
+			fault := newEnv(t, p, userA, reply(500, sendapitest.Envelope("internal_error")), modclient.Options{}, sendapi.Options{})
+			_, err := fault.c.ReportCampaignPage(ctxT(t), campaign, cursor)
+			me := wantKind(t, err, modclient.Internal)
+			if me.Status != 500 || errors.Is(err, sendapi.ErrBadCursor) || !errors.Is(err, modclient.ErrInternal) {
+				t.Fatalf("a 500 on a cursor request: status %d, %v: it must stay a plain Internal error and not be ErrBadCursor", me.Status, err)
+			}
+			carried(t, fault)
+			// control: the 400 validation_failed naming the cursor is a bad cursor, through the same call
+			bad := newEnv(t, p, userA, reply(400, sendapitest.Envelope("validation_failed", [2]string{"cursor", "malformed"})), modclient.Options{}, sendapi.Options{})
+			_, err = bad.c.ReportCampaignPage(ctxT(t), campaign, cursor)
+			me = wantKind(t, err, modclient.Refused)
+			if me.Status != 400 || me.Code != "validation_failed" || !hasCursorDetail(me) || !errors.Is(err, sendapi.ErrBadCursor) || errors.Is(err, modclient.ErrInternal) {
+				t.Fatalf("a 400 naming the cursor: status %d, code %q, details %v, %v: it must be ErrBadCursor", me.Status, me.Code, me.Details, err)
+			}
+			carried(t, bad)
+		})
 	}
 }
 

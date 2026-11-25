@@ -56,6 +56,18 @@ func TestForcedSpecialCasesAreRegistered(t *testing.T) {
 			t.Fatalf("the tag %s is not in the package (found %v)", id, ids)
 		}
 	}
+	// the registry is exactly the twelve cases that remain after Phase 4 A1 took SA-F2 away (no module answers a forged cursor with a 500 any more, so a 500 is never claimed as a bad cursor): the
+	// removed id is in neither the source nor the registry, and a case added or removed without a line here is red
+	wantIDs := []string{"SA-F1", "SA-F3", "SA-F4", "SA-F5", "SA-F6", "SA-F7", "SA-F8", "SA-F9", "SA-F10", "SA-F11", "SA-F12", "SA-F13"}
+	if slices.Contains(ids, "SA-F2") {
+		t.Fatalf("the tag SA-F2 is back in the package: no module answers a forged cursor with a 500 any more (found %v)", ids)
+	}
+	gotIDs := slices.Clone(ids)
+	slices.Sort(gotIDs)
+	slices.Sort(wantIDs)
+	if !slices.Equal(gotIDs, wantIDs) {
+		t.Fatalf("the shared body's forced cases are %v, want exactly %v: a case was added or removed without a line in this test", gotIDs, wantIDs)
+	}
 	src := func(extra string) map[string]string {
 		return map[string]string{"a.go": "package x\n\n" + tag("ZZ-F1", "a quirk the module forces.") + "\nfunc f() {}\n" + extra}
 	}

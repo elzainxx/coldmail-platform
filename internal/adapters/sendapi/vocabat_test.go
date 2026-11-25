@@ -167,7 +167,6 @@ func TestVocabAtPlacesEachVocabularyWhereItsBodyHoldsIt(t *testing.T) {
 			"GET /v1/report | campaign last page":              {"job_state": itemState},
 			"GET /v1/report | campaign empty":                  {},
 			"GET /v1/report | campaign error cursor_malformed": errs,
-			"GET /v1/report | campaign error cursor_forged":    errs,
 			"GET /v1/describe | ok":                            {"error_codes": describeCode},
 		}
 	}

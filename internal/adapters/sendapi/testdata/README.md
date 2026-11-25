@@ -16,3 +16,7 @@ The module-3-shaped profile now has the `cancelled` state and a cancel route (C1
 reports carry `totals.cancelled`, `run.error.conflict.json` carries two `details` entries (`campaign_active`, and `queue_cap` with `current` and `limit`), the quote's caps carry `campaign_size_cap`
 and `describe.ok.json` lists `cancelled` last in `job_state`, the vocabulary `run_conflict_cause` and `capabilities.plain_text_alternative`. Module 2's set (`internal/adapters/m2/testdata/contract/`) is
 read by this package's tests too: its cancel files are the same two shapes. None of these is a recording; the lead re-records every fixture of the three packages from the real modules.
+
+## Phase 4 A1
+
+`contract/report.campaign.error.cursor_forged.json` (a 500 for a cursor that decodes but is not a timestamp and an id) and its contract were removed: no module answers a forged cursor with a 500 any more, so a forged cursor is the 400 of `report.campaign.error.cursor_malformed.json` and a 500 is never read as a bad cursor. The package now holds 19 files.

@@ -5,9 +5,9 @@ names each file once (`Route`, `Case`, `Fixture`, `Status`, the `Shape` the adap
 it through the adapter's real code, refuse a file no contract names and a contract whose file is missing, and refuse mutated copies (a required key removed, a key's type changed, a state
 outside the vocabulary).
 
-All twenty files are recordings. The test `TestReadmeNamesTheRecordedAndHandWrittenFixtures` holds this list to the directory: a file named in the wrong section, in both or in neither is a failure.
+All nineteen files are recordings. The test `TestReadmeNamesTheRecordedAndHandWrittenFixtures` holds this list to the directory: a file named in the wrong section, in both or in neither is a failure.
 
-## RECORDED (20 files, from the real module)
+## RECORDED (19 files, from the real module)
 
 Recorded from module 2 running as a real service with a real worker and a controllable SMTP sink, by the contract drift sessions in record mode on the runner, 2026-11-18: the full record run
 44225747596 and the scoped record run 44225754836 (an earlier scoped run, 44211663760, recorded the first ten), then the Phase 3 close-out's full record run 44395876225 at module 2 `dc2b532`
@@ -20,8 +20,7 @@ Recorded from module 2 running as a real service with a real worker and a contro
   routes and cases again (the recorder keeps the answer with the fewest gaps, then the most positions, then the shortest body), with other counts, ids or states (a cancel that cancelled none where the earlier
   one cancelled four, a quote for five where the earlier was for ten, a middle page of one item where the earlier held 41): the same shape, a different instance. The earlier recording was kept because it holds the
   richer case the tests were written against (they read every number from the file, so either would pass, and neither is edited);
-- `report.campaign.error.cursor_forged` (from run 44225747596, module 2 `bffd424`): module 2 answers a forged cursor with a 400 since `dc2b532` (the close-out's B2), so no run can record the old 500 again. The file
-  stays because the shared contract it belongs to is still answered by module 3 and its shape is still checked; the harness's allowlist names this contract for module 2 with that reason.
+- `report.campaign.error.cursor_forged` was removed in Phase 4 A1: no module answers a forged cursor with a 500 any more (module 2 has answered the 400 of `report.campaign.error.cursor_malformed` since `dc2b532`, module 3 does now), so the shared contract that pinned the old 500 was removed with its file.
 
 They are normalised by `contractcheck.Normalise`: uuids become
 `00000000-0000-4000-8000-0000000000NN` by first appearance, instants `2026-01-01T00:00:00Z`, provider ids a run of `A`, request ids a run of `a` (`TestRecordedFixturesAreNormalised` pins that).
@@ -44,7 +43,6 @@ The tests read what each file says (an id, a count, a state, a cursor) from the 
 - `report.campaign.last_page.json`: a page that DOES name a next cursor (41 of the 42 items of a campaign, all sent, page size 41): a middle page, not a last one. The page after it was not recorded.
 - `report.campaign.empty.json`: a campaign of five items on one page (page size 200, no next cursor): one sent and four `cancelled` (reason `cancelled`), all final, `progress.is_complete` true: not an empty campaign.
 - `report.campaign.error.cursor_malformed.json`: 400, details `cursor` `malformed`.
-- `report.campaign.error.cursor_forged.json`: 500 `internal_error` for a cursor that decodes but is not a timestamp and an id (the module answers a 500 where its documentation says 400).
 - `describe.ok.json`: the module's self-description (`send_managed`, `v1`, seven job states, twelve item reasons, seven error codes, `capabilities.plain_text_alternative` true).
 - `cancel.ok.json`: the module's answer to a cancel: four cancelled, none in flight, one already terminal.
 - `cancel.error.validation_failed.json`: 400, details `campaign_id` `required`.
@@ -60,7 +58,7 @@ Three things the recordings do not hold, and what the tests do about each (none 
 
 ## HAND-WRITTEN (none)
 
-No fixture of module 2 is hand-written: the record runs reached all twenty contracts (the describe fixture was edited by hand for a while during the close-out, with `capabilities.plain_text_alternative: true` added, and is the module's own recorded answer since run 44395876225).
+No fixture of module 2 is hand-written: the record runs reached all nineteen contracts (the describe fixture was edited by hand for a while during the close-out, with `capabilities.plain_text_alternative: true` added, and is the module's own recorded answer since run 44395876225).
 A contract added to `m2.Contracts()` before a run reaches it is hand-written until then, and this section names it.
 
 ## One file's provenance

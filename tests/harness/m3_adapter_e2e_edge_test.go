@@ -46,7 +46,7 @@ import (
 //	report, held queue   GET /v1/report job queued                        five items, ONE lane held for 60 s after every push, the sink answering 451: the item module 3 tried is queued with attempt_count >= 1, transport_4xx, a 451 text
 //	                                                                      and (the first record run showed) the account of the failed attempt still attached, asserted only as consistent; the four it did not try are queued with attempt_count 0 and nothing else
 //	                     ... campaign page, last page                     the five at page size 2: pages of 2, 2 and 1 (the last has no next cursor and, being a never-tried item, no account: the shape of the last-page contract)
-//	                     ... campaign cursor_malformed, cursor_forged     a cursor that is not base64: 400; a base64 cursor that is not a timestamp and an id: the module's 500 (research m3-api 6, read: it is a 500)
+//	                     ... campaign cursor_malformed                    a cursor that is not base64: 400; and, since Phase 4 A1, a base64 cursor that is not a timestamp and an id: the same 400 (it was a 500, and had a contract of its own, cursor_forged, removed)
 //	events, system row   GET /v1/send-byo/accounts/{id}/events page       a tenant of its own (ev) with one account whose send the sink refuses AUTH for: an auth_failure, at autoquarantine_mode=shadow module 3 writes an
 //	                                                                      "updated" event with flags before and after and a reason: the events listed through the adapter and, at limit=1, page by page through the raw client
 //
@@ -452,20 +452,20 @@ func TestM3Adapter_ContractEdgeCases(t *testing.T) {
 		t.Logf("NOTE m3a edge campaign pages: 5 queued items at page size 2: pages of [%s], the last with no next cursor; %d of the 5 items carry an account", strings.Join(shape, ","), withAccount)
 	})
 	step("campaign cursors", func() {
-		_, err := pg.ReportCampaignPage(ctx, x.CampaignID, "!!!not base64!!!")
-		if me := m3aWantAnswer(t, "ReportCampaignPage with a cursor that is not base64", err, modclient.Refused, 400, "validation_failed"); me != nil {
-			if !errors.Is(err, sendapi.ErrBadCursor) || len(me.Details) != 1 || me.Details[0].Field != "cursor" || me.Details[0].Issue != "malformed" {
-				t.Errorf("the malformed campaign cursor answered %v (details %v), want ErrBadCursor with {cursor, malformed}", err, me.Details)
-			}
-			t.Logf("NOTE m3a edge campaign cursor_malformed: HTTP %d code %s details %v", me.Status, me.Code, me.Details)
-		}
+		// Phase 4 A1: both cursors the module did not issue are ONE answer, the 400 validation_failed with the detail cursor/malformed (the forged one, a base64 cursor that is not a timestamp and an id,
+		// was a 500 until module 3 validated it; the adapter no longer maps a 500 to ErrBadCursor, so only this 400 can be reported as one)
 		forged := base64.RawURLEncoding.EncodeToString([]byte("forged|forged"))
-		_, err = pg.ReportCampaignPage(ctx, x.CampaignID, forged)
-		if me := m3aWantAnswer(t, "ReportCampaignPage with a base64 cursor that is not a timestamp and an id", err, modclient.Internal, 500, "internal_error"); me != nil {
-			if !errors.Is(err, sendapi.ErrBadCursor) {
-				t.Errorf("the forged campaign cursor answered %v, want it reported as ErrBadCursor (a 500 on a request that carried a cursor)", err)
+		for _, c := range []struct{ name, what, cursor string }{
+			{"cursor_malformed", "a cursor that is not base64", "!!!not base64!!!"},
+			{"cursor_forged", "a base64 cursor that is not a timestamp and an id", forged},
+		} {
+			_, err := pg.ReportCampaignPage(ctx, x.CampaignID, c.cursor)
+			if me := m3aWantAnswer(t, "ReportCampaignPage with "+c.what, err, modclient.Refused, 400, "validation_failed"); me != nil {
+				if !errors.Is(err, sendapi.ErrBadCursor) || len(me.Details) != 1 || me.Details[0].Field != "cursor" || me.Details[0].Issue != "malformed" {
+					t.Errorf("the %s campaign cursor answered %v (details %v), want ErrBadCursor with {cursor, malformed}", c.name, err, me.Details)
+				}
+				t.Logf("NOTE m3a edge campaign %s: HTTP %d code %s details %v", c.name, me.Status, me.Code, me.Details)
 			}
-			t.Logf("NOTE m3a edge campaign cursor_forged: HTTP %d code %s: the module answers a fault of its own for a cursor it issued to nobody (research m3-api 6: a junk but base64 cursor reaches a SQL cast)", me.Status, me.Code)
 		}
 		if page, err := pg.ReportCampaignPage(ctx, x.CampaignID, ""); err != nil || len(page.Items) != 2 || page.NextCursor == "" { // the control: the first page without a cursor
 			t.Errorf("control: the first page without a cursor answered %d item(s) and cursor %q (error %v), want 2 and a next cursor", len(page.Items), page.NextCursor, err)

@@ -98,7 +98,6 @@ func Contracts(p Profile) []modclient.RouteContract {
 		rc(RouteReport, "campaign last page", "report.campaign.last_page.json", 200, sh.page, place{vocabJobState, PathItemState}),
 		rc(RouteReport, "campaign empty", "report.campaign.empty.json", 200, sh.page),
 		rc(RouteReport, "campaign error cursor_malformed", "report.campaign.error.cursor_malformed.json", 400, sh.errBody, errCode),
-		rc(RouteReport, "campaign error cursor_forged", "report.campaign.error.cursor_forged.json", 500, sh.errBody, errCode),
 
 		rc(RouteDescribe, "ok", "describe.ok.json", 200, sh.describe, place{vocabErrorCodes, PathDescribeErrorCode}),
 	}

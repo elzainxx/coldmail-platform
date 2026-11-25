@@ -463,8 +463,8 @@ func cursorOf(i int, id string) string {
 }
 
 // Handler serves GET /v1/report?campaign_id=&user_id=[&cursor=][&page_size=] the way the modules do: page_size defaults to 100 and is clamped to 200 silently, a cursor that is not base64 or has
-// no '|' is a 400 naming the cursor, a cursor that decodes but is not an index and an id is a 500, a campaign or tenant that is not this one answers an empty 200, and the last page has a null
-// next_cursor.
+// no '|' is a 400 naming the cursor, a cursor that decodes but is not an index and an id is the same 400 (both modules answer so since Phase 4 A1; it used to be a 500), a campaign or tenant
+// that is not this one answers an empty 200, and the last page has a null next_cursor.
 func (c Campaign) Handler() func(http.ResponseWriter, *http.Request, int) {
 	return func(w http.ResponseWriter, r *http.Request, _ int) {
 		q := r.URL.Query()
@@ -488,7 +488,7 @@ func (c Campaign) Handler() func(http.ResponseWriter, *http.Request, int) {
 			}
 			idx, err := strconv.Atoi(strings.SplitN(string(raw), "|", 2)[0])
 			if err != nil || idx < 0 {
-				JSON(w, 500, Envelope("internal_error"))
+				JSON(w, 400, Envelope("validation_failed", [2]string{"cursor", "malformed"}))
 				return
 			}
 			start = idx + 1

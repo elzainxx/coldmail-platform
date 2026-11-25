@@ -18,11 +18,9 @@ var m2Drift = contractcheck.NewSession(m2ad.Contracts(), m2ad.ContractFixtures()
 // module answers in TestM2Worker_ContractEdgeCases (m2_worker_contract_edge_test.go): run validation_failed, unauthenticated, conflict, paused and internal_error, report job queued, report campaign cursor_malformed,
 // describe ok and cancel validation_failed. An entry here for a contract that WAS exercised is itself red (stale), so none is kept "just in case".
 //
-// ONE entry since the Phase 3 close-out: module 2 answers a forged cursor with a 400 (B2, module 2 dc2b532), so the shared contract that pinned the old 500 (a cursor whose time is not a time) can no
-// longer be elicited from module 2; the same shared contract is still elicited from module 3 (its own allowlist and edge test), which has not changed.
-var m2DriftNotElicited = map[string]string{
-	"m2|GET /v1/report|campaign error cursor_forged": "since module 2 dc2b532 (Phase 3 close-out B2) a cursor that decodes but is not a timestamp and an id is a 400 validation_failed (the cursor_malformed contract), no longer the 500 internal_error this contract records; the 500 is only a database failure now, which the harness cannot cause on this route",
-}
+// EMPTY ON PURPOSE again since Phase 4 A1: the one entry the Phase 3 close-out had to add (the shared contract campaign error cursor_forged, a 500 module 2 stopped giving with its B2) is gone with the contract,
+// because no module answers a forged cursor with a 500 any more (module 3 answers the 400 too), so every contract of module 2 is elicited and none needs a reason.
+var m2DriftNotElicited = map[string]string{}
 
 // TestM2Worker_ZContractDrift is the gate itself.
 func TestM2Worker_ZContractDrift(t *testing.T) { m2Drift.Finish(t) }

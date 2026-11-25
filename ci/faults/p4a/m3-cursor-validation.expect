@@ -1,0 +1,8 @@
+# Phase 4, A1: module 3 answers a campaign-report cursor that decodes but is not an RFC 3339 instant and a uuid with a 400 validation_failed instead of letting it reach the keyset query as text (a 500). The fault removes the two field checks from parseReportCursor; the parser test must go red saying that a forged cursor was accepted. The control is the pinned module. Go only, no database (the parser test builds requests with httptest).
+GATE=m3-cursor-validation
+TARGET=module:coldmail-send-byo
+SETUP=
+STEP=go test TestParseReportCursor_EveryCursorTheModuleIssuesIsAccepted (a forged cursor is refused by the parser)
+CMD=cd services/control && GOTOOLCHAIN=local go test -count=1 -v -run '^TestParseReportCursor_EveryCursorTheModuleIssuesIsAccepted$' ./internal/platformapi/
+MESSAGE=--- FAIL: TestParseReportCursor_EveryCursorTheModuleIssuesIsAccepted
+MESSAGE=a forged cursor was accepted

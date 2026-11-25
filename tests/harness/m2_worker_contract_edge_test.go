@@ -30,8 +30,8 @@ import (
 //	POST /v1/run  error internal_error      the module's own per-user campaign-start advisory lock held by a superuser transaction for longer than the module's 10 s database deadline: the run waits for the lock,
 //	                                        the deadline passes, and the module answers 500 (advisory_lock_failed in its log); the lock is released and the SAME run then succeeds
 //	GET /v1/report job queued               dispatch_mode accept_and_defer (dispatch stopped, intake open): the run is accepted and stays queued, reason dispatch_paused
-//	GET /v1/report campaign error cursor_malformed   a cursor that is not base64url
-//	GET /v1/report campaign error cursor_forged      a well-formed cursor (base64url of "text|id") whose time is not a time: the module's SQL cast fails, a 500
+//	GET /v1/report campaign error cursor_malformed   a cursor that is not base64url, and (since Phase 3 close-out B2) a well-formed cursor (base64url of "text|id") whose time is not a time: the same
+//	                                        400 validation_failed with the detail cursor/malformed (it used to be a 500 and had a contract of its own, cursor_forged, removed in Phase 4 A1)
 //	GET /v1/describe ok                     the adapter's Describe
 //	POST /v1/cancel error validation_failed an empty campaign_id, through the observed module client
 //
@@ -351,7 +351,7 @@ func TestM2Worker_ContractEdgeCases(t *testing.T) {
 		t.Logf("NOTE edge control cancel: Cancel of an unknown campaign answers 200 with all zeros (cancelled %d, in flight %d, already terminal %d): the same body with a campaign id is accepted", pos.Cancelled, pos.InFlight, pos.AlreadyTerminal)
 	}
 
-	// ---- GET /v1/report?campaign_id=&cursor=: 400 cursor_malformed and 400 cursor_forged (a 500 before the close-out) (campaign X is finished: four items, pages of one) ----
+	// ---- GET /v1/report?campaign_id=&cursor=: 400 cursor_malformed for a cursor that is not base64 and the same 400 for a forged one (a 500 before the close-out; both are the one contract cursor_malformed) (campaign X is finished: four items, pages of one) ----
 	rep, err := ad.ReportCampaign(ctx, tn.CampaignID)
 	if err != nil || !m2eAllTerminal(rep, 4) {
 		t.Fatalf("the report of campaign X is not four terminal items (%s), error %v", m2eTotalsLine(rep.Totals), err)
@@ -369,7 +369,8 @@ func TestM2Worker_ContractEdgeCases(t *testing.T) {
 	t.Logf("NOTE edge cursor_malformed: a cursor that is not base64url answered kind %s, HTTP %d, code %s, details %s (request %s), reported as ErrBadCursor", me.Kind, me.Status, me.Code, m2cDetails(me), me.RequestID)
 	forged := base64.RawURLEncoding.EncodeToString([]byte("not-a-time|" + itA.ID))
 	_, err = pg.ReportCampaignPage(ctx, tn.CampaignID, forged)
-	// Phase 3 close-out B2 (module 2 dc2b532): a forged cursor is a 400 with the envelope, as the contract always said; before it module 2 answered 500 internal_error for a cursor whose time is not a time
+	// Phase 3 close-out B2 (module 2 dc2b532): a forged cursor is a 400 with the envelope, as the contract always said; before it module 2 answered 500 internal_error for a cursor whose time is not a time.
+	// Phase 4 A1: the adapter no longer maps a 500 to ErrBadCursor, so this 400 (not a 500) is the only way the forged cursor can be reported as ErrBadCursor
 	me = m2cRefusal(t, r, "the report with a well-formed cursor that is not a time", err, modclient.Refused, http.StatusBadRequest, "validation_failed")
 	if !errors.Is(err, sendapi.ErrBadCursor) || !m2cDetail(me, "cursor", "malformed") {
 		t.Errorf("the forged cursor's 400 is not reported as sendapi.ErrBadCursor with the detail cursor/malformed (%s): %s", m2cDetails(me), r.scrub(err.Error()))
