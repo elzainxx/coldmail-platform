@@ -30,7 +30,7 @@ var (
 	ErrJobNotFound = errors.New("the job does not exist")
 	// ErrJobState: the job's status does not allow the operation (a reserve needs a draft job, a settle needs a job that has left draft).
 	ErrJobState = errors.New("the job's status does not allow this")
-	// ErrJobNotEnded: a release needs a job that ended (succeeded, failed or cancelled).
+	// ErrJobNotEnded: a release needs a job that ended (succeeded, failed, cancelled or expired).
 	ErrJobNotEnded = errors.New("the job has not ended")
 	// ErrNoReserve: the job holds no reserve (nothing was ever reserved for it).
 	ErrNoReserve = errors.New("the job holds no reserve")

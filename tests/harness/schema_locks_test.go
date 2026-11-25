@@ -42,6 +42,8 @@ var shapePKExceptions = map[string]shapePKException{
 	"platform.job_unit_prices":   {[]string{"job_id:uuid", "unit:text"}, "one frozen price per unit per job: the composite key (job_id, unit) is what the ledger's frozen-price foreign key points at"},
 	"platform.suppressions":      {[]string{"user_id:uuid", "email:text"}, "one row per suppressed address per user: the composite key (user_id, email) is what makes suppressing the same address twice impossible"},
 	"platform.reserves":          {[]string{"reserve_id:bigint"}, "one row per reserve: the key IS the ledger id of the reserve row it describes (a foreign key to platform.ledger written by the ledger trigger), so a second row for one reserve is impossible and no surrogate id can drift from it"},
+	"platform.job_results":       {[]string{"job_id:uuid", "item_ref:uuid"}, "one result per job row: the key (job_id, item_ref) IS the row it explains (a composite foreign key to platform.job_rows), so a row has one outcome and a result cannot name a row of another job"},
+	"platform.job_transitions":   {[]string{"from_status:text", "to_status:text"}, "one row per legal move of a job: the composite key (from_status, to_status) is what the lifecycle guard looks a move up by, so a move cannot be legal twice or carry two sets of actors"},
 }
 
 const shapeLocksScope = `(n.nspname = 'platform' OR (n.nspname = 'public' AND c.relname IN ('users', 'job_items')))`
@@ -563,7 +565,7 @@ func phase2CatalogCheck(ctx context.Context, q querier) ([]string, error) {
 		return nil, err
 	}
 	if len(rows) == 0 {
-		add("platform.jobs_one_active_per_user_module: missing (the slot index of platform_0004: a scheduled, running, paused or cancelling job holds the slot)")
+		add("platform.jobs_one_active_per_user_module: missing (the slot index of platform_0004, widened by platform_0011: a confirmed, scheduled, running, paused, cancelling or completing job holds the slot)")
 	} else {
 		r := rows[0]
 		if r[0] != "true" {
@@ -575,8 +577,8 @@ func phase2CatalogCheck(ctx context.Context, q querier) ([]string, error) {
 		if !strings.Contains(r[2], "(user_id, module_id)") {
 			add("platform.jobs_one_active_per_user_module: not over (user_id, module_id): %s", r[2])
 		}
-		if got, want := phase2Literals(r[1]), []string{"cancelling", "paused", "running", "scheduled"}; strings.Join(got, ",") != strings.Join(want, ",") {
-			add("platform.jobs_one_active_per_user_module: its predicate covers the statuses %v, want exactly %v (a scheduled job holds the slot since platform_0004)", got, want)
+		if got, want := phase2Literals(r[1]), []string{"cancelling", "completing", "confirmed", "paused", "running", "scheduled"}; strings.Join(got, ",") != strings.Join(want, ",") {
+			add("platform.jobs_one_active_per_user_module: its predicate covers the statuses %v, want exactly %v (a scheduled job holds the slot since platform_0004; a confirmed and a completing one since platform_0011)", got, want)
 		}
 	}
 
@@ -603,6 +605,38 @@ func phase2CatalogCheck(ctx context.Context, q querier) ([]string, error) {
 		{"platform.m3_sync", "m3_sync_converged_only_when_observed_at_version", []string{"converged_version < want_version", "observed_version IS NOT NULL", "observed_version = want_version", "NOT want_suspended", "'suspended'", "'active'"}},
 		{"platform.m3_sync", "m3_sync_converged_not_ahead", []string{"converged_version <= want_version"}},
 		{"platform.m3_sync", "m3_sync_observed_vocabulary", []string{"'unknown'", "'suspended'", "'active'"}},
+		// platform_0011: the twelve statuses; what a job that has left previewed must have (and that the fields it names are tested with IS NOT NULL, so the CHECK cannot evaluate to NULL and pass); a start deadline for
+		// confirmed and scheduled, none for a confirmed job's start time; where a paused job paused from; the shapes of the confirm key, the fingerprint and the preview
+		{"platform.jobs", "jobs_status_vocabulary", []string{"'draft'", "'previewed'", "'confirmed'", "'scheduled'", "'running'", "'paused'", "'cancelling'", "'completing'", "'succeeded'", "'failed'", "'cancelled'", "'expired'"}},
+		{"platform.jobs", "jobs_confirmed_shape", []string{"'confirmed'", "'scheduled'", "'running'", "'paused'", "'cancelling'", "'completing'", "preview IS NOT NULL", "preview_fingerprint IS NOT NULL", "confirm_key IS NOT NULL", "confirmed_at IS NOT NULL"}},
+		{"platform.jobs", "jobs_start_needs_a_deadline", []string{"'confirmed'", "'scheduled'", "start_deadline IS NOT NULL"}},
+		{"platform.jobs", "jobs_confirmed_starts_now", []string{"'confirmed'", "scheduled_start IS NULL"}},
+		{"platform.jobs", "jobs_paused_from_shape", []string{"'paused'", "paused_from IS NOT NULL"}},
+		{"platform.jobs", "jobs_paused_from_vocabulary", []string{"paused_from IS NULL", "'scheduled'", "'running'"}},
+		{"platform.jobs", "jobs_confirm_key_shape", []string{"confirm_key IS NULL", "128", "A-Za-z0-9"}},
+		{"platform.jobs", "jobs_fingerprint_shape", []string{"preview_fingerprint IS NULL", "[0-9a-f]{64}"}},
+		{"platform.jobs", "jobs_preview_is_an_object", []string{"preview IS NULL", "jsonb_typeof", "'object'"}},
+		{"platform.job_events", "job_events_actor_shape", []string{"'user'", "'admin'", "'engine'", "acting_user_id IS NOT NULL", "acting_admin_id IS NULL", "acting_admin_id IS NOT NULL", "acting_user_id IS NULL"}},
+		{"platform.job_events", "job_events_transition_shape", []string{"'transition'", "from_status IS NOT NULL", "to_status IS NOT NULL"}},
+		{"platform.job_events", "job_events_reason_not_blank", []string{"btrim(reason)"}},
+		// platform_0012: the list of a job (five states, the normalised address is NULL exactly for a malformed row, a duplicate names the row it repeats, a malformed or excluded row says why, only a pending row is
+		// submitted, the fields are an object, the raw address is bounded) and its results (a charged result names its unit, the vocabularies, nothing blank)
+		{"platform.job_rows", "job_rows_state_vocabulary", []string{"'pending'", "'malformed'", "'duplicate'", "'suppressed'", "'excluded'"}},
+		{"platform.job_rows", "job_rows_email_norm_shape", []string{"'malformed'", "email_norm IS NULL"}},
+		{"platform.job_rows", "job_rows_duplicate_shape", []string{"'duplicate'", "duplicate_of IS NOT NULL"}},
+		{"platform.job_rows", "job_rows_reason_shape", []string{"'malformed'", "'excluded'", "reason IS NOT NULL", "btrim(reason)"}},
+		{"platform.job_rows", "job_rows_only_pending_is_submitted", []string{"submitted_at IS NULL", "'pending'"}},
+		{"platform.job_rows", "job_rows_fields_is_an_object", []string{"jsonb_typeof(fields)", "'object'"}},
+		{"platform.job_rows", "job_rows_email_raw_bounded", []string{"octet_length(email_raw)", "4096"}},
+		{"platform.job_rows", "job_rows_ordinal_positive", []string{"ordinal >= 1"}},
+		{"platform.job_results", "job_results_charged_names_its_unit", []string{"'charge'", "unit IS NOT NULL"}},
+		{"platform.job_results", "job_results_decision_vocabulary", []string{"'charge'", "'free'", "'unmapped'"}},
+		{"platform.job_results", "job_results_origin_vocabulary", []string{"'module'", "'platform'"}},
+		{"platform.job_results", "job_results_state_not_blank", []string{"btrim(module_state)", "btrim(rule)"}},
+		{"platform.job_results", "job_results_detail_is_an_object", []string{"jsonb_typeof(detail)", "'object'"}},
+		// platform_0013: the reachability flag's source is named when it is stated, and the history says who said so
+		{"platform.unit_costs", "unit_costs_reachable_source_not_blank", []string{"reachable_source IS NULL", "btrim(reachable_source)"}},
+		{"platform.unit_reachability_history", "unit_reachability_history_source_not_blank", []string{"btrim(source)"}},
 	} {
 		rows, err := phase2Rows(ctx, q, `SELECT c.contype::text, c.convalidated::text, pg_get_constraintdef(c.oid) FROM pg_constraint c WHERE c.conrelid = to_regclass($1::text) AND c.conname::text = $2`, c.rel, c.name)
 		if err != nil {
@@ -685,6 +719,19 @@ func phase2CatalogCheck(ctx context.Context, q querier) ([]string, error) {
 		// comparison is in the body, so a column list or a WHEN could not leave a status change through)
 		{"platform.job_unit_prices", "job_unit_prices_snapshot_equals_unit_costs", 1 + 2 + 4, false},
 		{"platform.jobs", "jobs_terminal_is_final", 1 + 2 + 16, false},
+		// platform_0011: BEFORE a job row is written or updated the lifecycle guard decides (every INSERT and UPDATE, no WHEN: the body compares the status itself, so a WHEN could not leave a status change through);
+		// AFTER an UPDATE OF status that changed it, the event is written (a WHEN: only a changed status is a move); BEFORE an event row is written its actor is checked. (The append-only triggers of the two new
+		// tables call platform.reject_mutation, which this list, that matches a trigger to its function by name, cannot hold: they are proven by behaviour in TestJobLifecycle_*.)
+		{"platform.jobs", "jobs_transition_guard", 1 + 2 + 4 + 16, false},
+		{"platform.jobs", "jobs_record_transition", 1 + 16, true},
+		{"platform.job_events", "job_events_check_actor", 1 + 2 + 4, false},
+		// platform_0012: BEFORE a row of a job's list is written, changed or removed the job must still be draft or previewed (every row event, no WHEN: the body looks at what changed), and BEFORE a result is
+		// written the job must have left previewed
+		{"platform.job_rows", "job_rows_frozen", 1 + 2 + 4 + 8 + 16, false},
+		{"platform.job_results", "job_results_after_confirm", 1 + 2 + 4, false},
+		// platform_0013: BEFORE a snapshot row is written its unit must be reachable; AFTER a change of the flag the history is written (a WHEN: only a changed flag)
+		{"platform.job_unit_prices", "job_unit_prices_only_reachable", 1 + 2 + 4, false},
+		{"platform.unit_costs", "unit_costs_record_reachability", 1 + 16, true},
 	} {
 		rows, err := phase2Rows(ctx, q, `SELECT t.tgtype::int::text, t.tgenabled::text, (t.tgqual IS NOT NULL)::text, p.proname::text FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid
 			WHERE NOT t.tgisinternal AND t.tgrelid = to_regclass($1::text) AND t.tgname::text = $2`, tr.rel, tr.name)
@@ -731,6 +778,20 @@ func phase2CatalogCheck(ctx context.Context, q querier) ([]string, error) {
 		// platform_0007: SECURITY INVOKER both (the price check reads platform.unit_costs, which platform_app may read; the terminal-state rule reads only the row it is given), with a pinned search_path
 		{"job_unit_prices_snapshot_equals_unit_costs", "", "trigger", false},
 		{"jobs_terminal_is_final", "", "trigger", false},
+		// platform_0011: the guard and the event writer read what the caller may read (platform.job_transitions, platform.modules) and write what the caller may write (platform.job_events), so both are SECURITY
+		// INVOKER; the actor check reads platform.admins FOR SHARE through require_active_admin and platform.jobs, which the roles cannot lock, so it is a definer; platform.job_transition is the store's
+		// move, SECURITY INVOKER (it must not lend the owner's privileges to whoever may call it) and it returns the updated job row
+		{"jobs_transition_guard", "", "trigger", false},
+		{"jobs_record_transition", "", "trigger", false},
+		{"job_events_check_actor", "", "trigger", true},
+		{"job_transition", "uuid, text, text, uuid, text", "platform.jobs", false},
+		// platform_0012 and platform_0013: the two guards read platform.jobs and the snapshot check platform.unit_costs, which platform_app may read, so all SECURITY INVOKER; the history writer runs inside
+		// set_unit_reachable and writes the table the roles cannot; set_unit_reachable is the one writer of the flag and a SECURITY DEFINER (platform_app holds no UPDATE on those columns)
+		{"job_rows_frozen", "", "trigger", false},
+		{"job_results_after_confirm", "", "trigger", false},
+		{"job_unit_prices_only_reachable", "", "trigger", false},
+		{"unit_costs_record_reachability", "", "trigger", false},
+		{"set_unit_reachable", "text, boolean, text", "boolean", true},
 	} {
 		rows, err := phase2Rows(ctx, q, `SELECT p.prosecdef::text, (EXISTS (SELECT 1 FROM unnest(COALESCE(p.proconfig, ARRAY[]::text[])) cfg WHERE cfg = 'search_path=pg_catalog, pg_temp'))::text,
 				pg_get_userbyid(p.proowner), p.prorettype::regtype::text
@@ -746,7 +807,7 @@ func phase2CatalogCheck(ctx context.Context, q querier) ([]string, error) {
 		if r[2] != "platform_owner" {
 			add("platform.%s(%s): owned by %s, want platform_owner", f.name, f.args, r[2])
 		}
-		if r[3] != f.ret {
+		if strings.TrimPrefix(r[3], "platform.") != strings.TrimPrefix(f.ret, "platform.") { // a composite type of schema platform prints qualified or not by the session's search_path
 			add("platform.%s(%s): returns %s, want %s", f.name, f.args, r[3], f.ret)
 		}
 		if r[1] != "true" {
@@ -765,6 +826,16 @@ func phase2CatalogCheck(ctx context.Context, q querier) ([]string, error) {
 	} else if rows[0][0] != "true" {
 		add("platform.unit_costs_guard(): does not call require_active_admin (a disabled admin could change a price)")
 	}
+	// platform_0011: the three functions that run for the CALLER must stay SECURITY INVOKER: a definer job_transition would lend the owner's UPDATE on platform.jobs to whoever may call it, and a definer guard
+	// or event writer would write as the owner and hide who did it
+	rows, err = phase2Rows(ctx, q, `SELECT p.proname::text FROM pg_proc p WHERE p.pronamespace = 'platform'::regnamespace AND p.prosecdef
+		AND p.proname::text IN ('job_transition', 'jobs_transition_guard', 'jobs_record_transition', 'job_rows_frozen', 'job_results_after_confirm', 'job_unit_prices_only_reachable', 'unit_costs_record_reachability') ORDER BY 1`)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range rows {
+		add("platform.%s(): is SECURITY DEFINER, want SECURITY INVOKER (it must run with the caller's privileges)", r[0])
+	}
 
 	// 5b. what the new trigger functions DO (the quoted names are the constraint names a refusal carries): a body replaced by a no-op keeps the trigger, the owner and the search_path, and
 	// would pass every check above
@@ -772,14 +843,27 @@ func phase2CatalogCheck(ctx context.Context, q querier) ([]string, error) {
 		fn     string
 		tokens []string
 	}{
-		{"ledger_check_reserve", []string{"reserve_at_the_dearest_price", "reserve_needs_the_complete_snapshot", "job_unit_prices", "unit_costs"}},
+		{"ledger_check_reserve", []string{"reserve_at_the_dearest_price", "reserve_needs_the_complete_snapshot", "job_unit_prices", "unit_costs", "reachable"}},
 		{"ledger_check_release", []string{"release_is_the_remainder", "platform.reserves"}},
 		{"ledger_apply_to_reserves", []string{"platform.reserves", "charged", "released", "reserve_row_exists"}},
 		{"ledger_apply_to_entitlements", []string{"m3_expire_is_due", "platform.m3_entitlements", "m3_enable", "m3_disable", "m3_expire"}},
 		{"m3_entitlements_raise_sync", []string{"platform.m3_sync", "want_version", "ON CONFLICT"}},
 		{"ledger_stamp_created_at", []string{"NEW.created_at", "now()"}},
 		{"job_unit_prices_snapshot_equals_unit_costs", []string{"snapshot_equals_unit_costs", "platform.unit_costs", "IS DISTINCT FROM"}},
-		{"jobs_terminal_is_final", []string{"jobs_terminal_is_final", "'succeeded'", "'failed'", "'cancelled'", "IS DISTINCT FROM"}},
+		{"jobs_terminal_is_final", []string{"jobs_terminal_is_final", "'succeeded'", "'failed'", "'cancelled'", "'expired'", "IS DISTINCT FROM"}},
+		// platform_0011: the guard names every refusal it raises (the constraint names a writer and a test see), reads the lifecycle table and the module's capabilities, and a no-op body would keep the triggers
+		{"jobs_transition_guard", []string{"job_born_draft", "job_transition_illegal", "job_transition_needs_an_actor", "job_transition_actor_not_allowed", "job_transition_by_another_user", "job_module_cannot_pause",
+			"job_module_cannot_cancel", "job_resume_to_where_it_paused_from", "job_started_early", "job_expired_early", "job_cancelled_cannot_succeed", "job_cancelled_needs_a_cancel",
+			"platform.job_transitions", "platform.modules", "platform.actor_kind", "platform.actor_id", "platform.reason", "IS DISTINCT FROM"}},
+		{"jobs_record_transition", []string{"platform.job_events", "platform.actor_kind", "platform.actor_id", "platform.reason", "'transition'"}},
+		{"job_events_check_actor", []string{"require_active_admin", "job_event_actor_is_the_owner", "platform.jobs"}},
+		{"job_transition", []string{"platform.actor_kind", "platform.actor_id", "platform.reason", "UPDATE platform.jobs", "RETURNING"}},
+		{"job_rows_frozen", []string{"job_rows_frozen", "platform.jobs", "'draft'", "'previewed'", "submitted_at", "IS NOT DISTINCT FROM"}},
+		{"job_results_after_confirm", []string{"jobs_results_after_confirm", "platform.jobs", "'draft'", "'previewed'"}},
+		{"job_unit_prices_only_reachable", []string{"snapshot_only_reachable_units", "platform.unit_costs", "reachable"}},
+		{"unit_costs_record_reachability", []string{"platform.unit_reachability_history", "reachable_source"}},
+		{"set_unit_reachable", []string{"22023", "P0002", "FOR UPDATE", "platform.unit_costs", "reachable_source", "reachable_changed_at"}},
+		{"jobs_guard", []string{"never change", "frozen", "IS DISTINCT FROM", "'draft'", "'previewed'", "preview_fingerprint", "confirm_key", "frozen_settings"}},
 	} {
 		rows, err := phase2Rows(ctx, q, `SELECT p.prosrc FROM pg_proc p WHERE p.pronamespace = 'platform'::regnamespace AND p.proname::text = $1`, b.fn)
 		if err != nil {
@@ -898,14 +982,26 @@ func TestSchemaLocks_Phase2Rulings(t *testing.T) {
 		{"the old slot index back beside the new one",
 			[]string{"CREATE UNIQUE INDEX jobs_one_executing_per_user_module ON " + slot + " WHERE status IN ('running', 'paused', 'cancelling')"},
 			[][]string{{"jobs_one_executing_per_user_module", "OLD slot index"}}},
-		{"the slot index without 'scheduled' (Phase 1's rule)",
-			[]string{"DROP INDEX platform.jobs_one_active_per_user_module", "CREATE UNIQUE INDEX jobs_one_active_per_user_module ON " + slot + " WHERE status IN ('running', 'paused', 'cancelling')"},
-			[][]string{{"jobs_one_active_per_user_module", "covers", "scheduled"}}},
+		{"the slot index without 'scheduled' (Phase 1's rule, with the states of platform_0011 around it)",
+			[]string{"DROP INDEX platform.jobs_one_active_per_user_module", "CREATE UNIQUE INDEX jobs_one_active_per_user_module ON " + slot + " WHERE status IN ('confirmed', 'running', 'paused', 'cancelling', 'completing')"},
+			[][]string{{"jobs_one_active_per_user_module", "covers the statuses [cancelling completing confirmed paused running]"}}},
+		{"the slot index of platform_0004 (before platform_0011 widened it: no confirmed, no completing)",
+			[]string{"DROP INDEX platform.jobs_one_active_per_user_module", "CREATE UNIQUE INDEX jobs_one_active_per_user_module ON " + slot + " WHERE status IN ('scheduled', 'running', 'paused', 'cancelling')"},
+			[][]string{{"jobs_one_active_per_user_module", "covers the statuses [cancelling paused running scheduled]"}}},
+		{"the slot index without 'confirmed' (a confirmed job holds credits and the slot)",
+			[]string{"DROP INDEX platform.jobs_one_active_per_user_module", "CREATE UNIQUE INDEX jobs_one_active_per_user_module ON " + slot + " WHERE status IN ('scheduled', 'running', 'paused', 'cancelling', 'completing')"},
+			[][]string{{"jobs_one_active_per_user_module", "covers the statuses [cancelling completing paused running scheduled]"}}},
+		{"the slot index without 'completing' (the module has finished, the platform is still recording)",
+			[]string{"DROP INDEX platform.jobs_one_active_per_user_module", "CREATE UNIQUE INDEX jobs_one_active_per_user_module ON " + slot + " WHERE status IN ('confirmed', 'scheduled', 'running', 'paused', 'cancelling')"},
+			[][]string{{"jobs_one_active_per_user_module", "covers the statuses [cancelling confirmed paused running scheduled]"}}},
+		{"the slot index that also holds a previewed job (a preview holds nothing)",
+			[]string{"DROP INDEX platform.jobs_one_active_per_user_module", "CREATE UNIQUE INDEX jobs_one_active_per_user_module ON " + slot + " WHERE status IN ('previewed', 'confirmed', 'scheduled', 'running', 'paused', 'cancelling', 'completing')"},
+			[][]string{{"jobs_one_active_per_user_module", "covers the statuses [cancelling completing confirmed paused previewed running scheduled]"}}},
 		{"the slot index not unique",
-			[]string{"DROP INDEX platform.jobs_one_active_per_user_module", "CREATE INDEX jobs_one_active_per_user_module ON " + slot + " WHERE status IN ('scheduled', 'running', 'paused', 'cancelling')"},
+			[]string{"DROP INDEX platform.jobs_one_active_per_user_module", "CREATE INDEX jobs_one_active_per_user_module ON " + slot + " WHERE status IN ('confirmed', 'scheduled', 'running', 'paused', 'cancelling', 'completing')"},
 			[][]string{{"jobs_one_active_per_user_module", "not unique"}}},
 		{"the slot index over one column",
-			[]string{"DROP INDEX platform.jobs_one_active_per_user_module", "CREATE UNIQUE INDEX jobs_one_active_per_user_module ON platform.jobs (user_id) WHERE status IN ('scheduled', 'running', 'paused', 'cancelling')"},
+			[]string{"DROP INDEX platform.jobs_one_active_per_user_module", "CREATE UNIQUE INDEX jobs_one_active_per_user_module ON platform.jobs (user_id) WHERE status IN ('confirmed', 'scheduled', 'running', 'paused', 'cancelling', 'completing')"},
 			[][]string{{"jobs_one_active_per_user_module", "not over (user_id, module_id)"}}},
 		{"the four system-user CHECKs dropped",
 			[]string{"ALTER TABLE platform.balances DROP CONSTRAINT balances_not_the_system_user", "ALTER TABLE platform.ledger DROP CONSTRAINT ledger_not_the_system_user",
@@ -1141,6 +1237,109 @@ func TestSchemaLocks_Phase2Rulings(t *testing.T) {
 			[]string{"CREATE OR REPLACE FUNCTION platform.jobs_terminal_is_final() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$ BEGIN " +
 				"IF OLD.status = 'succeeded' AND NEW.status IS DISTINCT FROM OLD.status THEN RAISE EXCEPTION 'x' USING ERRCODE = '23001', CONSTRAINT = 'jobs_terminal_is_final'; END IF; RETURN NEW; END $$"},
 			[][]string{{"jobs_terminal_is_final()", "its body does not mention", "'failed'"}, {"jobs_terminal_is_final()", "its body does not mention", "'cancelled'"}}},
+
+		// ---- platform_0011: the lifecycle of a job ----
+		{"the terminal-state rule that does not know expired (an expired job could move)",
+			[]string{"CREATE OR REPLACE FUNCTION platform.jobs_terminal_is_final() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$ BEGIN " +
+				"IF OLD.status IN ('succeeded', 'failed', 'cancelled') AND NEW.status IS DISTINCT FROM OLD.status THEN RAISE EXCEPTION 'x' USING ERRCODE = '23001', CONSTRAINT = 'jobs_terminal_is_final'; END IF; RETURN NEW; END $$"},
+			[][]string{{"jobs_terminal_is_final()", "its body does not mention", "'expired'"}}},
+		{"the lifecycle guard dropped (a job could be born running and move anywhere)",
+			[]string{"DROP TRIGGER jobs_transition_guard ON platform.jobs"},
+			[][]string{{"platform.jobs trigger jobs_transition_guard", "missing"}}},
+		{"the lifecycle guard disabled",
+			[]string{"ALTER TABLE platform.jobs DISABLE TRIGGER jobs_transition_guard"},
+			[][]string{{"jobs_transition_guard", "not enabled"}}},
+		{"the lifecycle guard that fires only for an UPDATE (a job could be born running)",
+			[]string{"DROP TRIGGER jobs_transition_guard ON platform.jobs",
+				"CREATE TRIGGER jobs_transition_guard BEFORE UPDATE ON platform.jobs FOR EACH ROW EXECUTE FUNCTION platform.jobs_transition_guard()"},
+			[][]string{{"jobs_transition_guard", "fires as BEFORE UPDATE FOR EACH ROW", "want BEFORE INSERT OR UPDATE"}}},
+		{"the lifecycle guard that fires AFTER the row is written (the CHECKs and the slot would answer first)",
+			[]string{"DROP TRIGGER jobs_transition_guard ON platform.jobs",
+				"CREATE TRIGGER jobs_transition_guard AFTER INSERT OR UPDATE ON platform.jobs FOR EACH ROW EXECUTE FUNCTION platform.jobs_transition_guard()"},
+			[][]string{{"jobs_transition_guard", "fires as AFTER INSERT OR UPDATE", "want BEFORE INSERT OR UPDATE"}}},
+		{"the lifecycle guard turned into a no-op (the trigger, the owner and the search_path are all still there)",
+			[]string{"CREATE OR REPLACE FUNCTION platform.jobs_transition_guard() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$ BEGIN RETURN NEW; END $$"},
+			[][]string{{"jobs_transition_guard()", "its body does not mention", "job_transition_illegal"}, {"jobs_transition_guard()", "its body does not mention", "job_born_draft"}}},
+		{"the lifecycle guard without a pinned search_path",
+			[]string{"ALTER FUNCTION platform.jobs_transition_guard() RESET search_path"},
+			[][]string{{"jobs_transition_guard()", "does not pin search_path"}}},
+		{"the event writer dropped (a move would leave no trace)",
+			[]string{"DROP TRIGGER jobs_record_transition ON platform.jobs"},
+			[][]string{{"platform.jobs trigger jobs_record_transition", "missing"}}},
+		{"the event writer that fires for every UPDATE (no WHEN: a status written back would be an event)",
+			[]string{"DROP TRIGGER jobs_record_transition ON platform.jobs",
+				"CREATE TRIGGER jobs_record_transition AFTER UPDATE OF status ON platform.jobs FOR EACH ROW EXECUTE FUNCTION platform.jobs_record_transition()"},
+			[][]string{{"jobs_record_transition", "WHEN clause present = false"}}},
+		{"the event actor check dropped (a disabled admin could be named in the history)",
+			[]string{"DROP TRIGGER job_events_check_actor ON platform.job_events"},
+			[][]string{{"platform.job_events trigger job_events_check_actor", "missing"}}},
+		{"the sanctioned move made SECURITY DEFINER (it would lend the owner's UPDATE to whoever may call it)",
+			[]string{"ALTER FUNCTION platform.job_transition(uuid, text, text, uuid, text) SECURITY DEFINER"},
+			[][]string{{"platform.job_transition()", "SECURITY DEFINER", "want SECURITY INVOKER"}}},
+		{"the sanctioned move without a pinned search_path",
+			[]string{"ALTER FUNCTION platform.job_transition(uuid, text, text, uuid, text) RESET search_path"},
+			[][]string{{"job_transition(uuid, text, text, uuid, text)", "does not pin search_path"}}},
+		{"the status vocabulary without expired",
+			[]string{"ALTER TABLE platform.jobs DROP CONSTRAINT jobs_status_vocabulary",
+				"ALTER TABLE platform.jobs ADD CONSTRAINT jobs_status_vocabulary CHECK (status IN ('draft', 'previewed', 'confirmed', 'scheduled', 'running', 'paused', 'cancelling', 'completing', 'succeeded', 'failed', 'cancelled'))"},
+			[][]string{{"platform.jobs.jobs_status_vocabulary", "lacks", "'expired'"}}},
+		{"the confirmed-shape CHECK dropped (a running job without a preview)",
+			[]string{"ALTER TABLE platform.jobs DROP CONSTRAINT jobs_confirmed_shape"},
+			[][]string{{"platform.jobs.jobs_confirmed_shape", "missing"}}},
+		{"the confirmed-shape CHECK that forgets the fingerprint",
+			[]string{"ALTER TABLE platform.jobs DROP CONSTRAINT jobs_confirmed_shape",
+				"ALTER TABLE platform.jobs ADD CONSTRAINT jobs_confirmed_shape CHECK (status NOT IN ('confirmed', 'scheduled', 'running', 'paused', 'cancelling', 'completing') OR (preview IS NOT NULL AND confirm_key IS NOT NULL AND confirmed_at IS NOT NULL))"},
+			[][]string{{"platform.jobs.jobs_confirmed_shape", "lacks", "preview_fingerprint IS NOT NULL"}}},
+		{"the confirmed-shape CHECK that does not cover completing",
+			[]string{"ALTER TABLE platform.jobs DROP CONSTRAINT jobs_confirmed_shape",
+				"ALTER TABLE platform.jobs ADD CONSTRAINT jobs_confirmed_shape CHECK (status NOT IN ('confirmed', 'scheduled', 'running', 'paused', 'cancelling') OR (preview IS NOT NULL AND preview_fingerprint IS NOT NULL AND confirm_key IS NOT NULL AND confirmed_at IS NOT NULL))"},
+			[][]string{{"platform.jobs.jobs_confirmed_shape", "lacks", "'completing'"}}},
+		{"the deadline CHECK dropped (a scheduled job nothing could ever expire)",
+			[]string{"ALTER TABLE platform.jobs DROP CONSTRAINT jobs_start_needs_a_deadline"},
+			[][]string{{"platform.jobs.jobs_start_needs_a_deadline", "missing"}}},
+		// ---- platform_0012 and platform_0013 ----
+		{"the rows guard dropped (a confirmed job's list could change)",
+			[]string{"DROP TRIGGER job_rows_frozen ON platform.job_rows"},
+			[][]string{{"platform.job_rows trigger job_rows_frozen", "missing"}}},
+		{"the rows guard that does not fire for a DELETE",
+			[]string{"DROP TRIGGER job_rows_frozen ON platform.job_rows",
+				"CREATE TRIGGER job_rows_frozen BEFORE INSERT OR UPDATE ON platform.job_rows FOR EACH ROW EXECUTE FUNCTION platform.job_rows_frozen()"},
+			[][]string{{"job_rows_frozen", "fires as BEFORE INSERT OR UPDATE FOR EACH ROW", "want BEFORE INSERT OR DELETE OR UPDATE"}}},
+		{"the rows guard turned into a no-op",
+			[]string{"CREATE OR REPLACE FUNCTION platform.job_rows_frozen() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$ BEGIN RETURN NEW; END $$"},
+			[][]string{{"job_rows_frozen()", "its body does not mention", "job_rows_frozen"}}},
+		{"the results guard dropped (a result for a draft job)",
+			[]string{"DROP TRIGGER job_results_after_confirm ON platform.job_results"},
+			[][]string{{"platform.job_results trigger job_results_after_confirm", "missing"}}},
+		{"the snapshot reachability check dropped (a charge for an unreachable unit could be priced)",
+			[]string{"DROP TRIGGER job_unit_prices_only_reachable ON platform.job_unit_prices"},
+			[][]string{{"platform.job_unit_prices trigger job_unit_prices_only_reachable", "missing"}}},
+		{"the reachability history trigger that fires for every UPDATE of the flag (no WHEN)",
+			[]string{"DROP TRIGGER unit_costs_record_reachability ON platform.unit_costs",
+				"CREATE TRIGGER unit_costs_record_reachability AFTER UPDATE OF reachable ON platform.unit_costs FOR EACH ROW EXECUTE FUNCTION platform.unit_costs_record_reachability()"},
+			[][]string{{"unit_costs_record_reachability", "WHEN clause present = false"}}},
+		{"the reachability writer no longer a definer (platform_app could not write the flag at all)",
+			[]string{"ALTER FUNCTION platform.set_unit_reachable(text, boolean, text) SECURITY INVOKER"},
+			[][]string{{"set_unit_reachable(text, boolean, text)", "is not SECURITY DEFINER"}}},
+		{"the reachability writer without a pinned search_path",
+			[]string{"ALTER FUNCTION platform.set_unit_reachable(text, boolean, text) RESET search_path"},
+			[][]string{{"set_unit_reachable(text, boolean, text)", "does not pin search_path"}}},
+		{"the reserve check that counts every unit again (the platform_0005 body)",
+			[]string{"CREATE OR REPLACE FUNCTION platform.ledger_check_reserve() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$ BEGIN " +
+				"PERFORM 1 FROM platform.job_unit_prices JOIN platform.unit_costs ON true; IF false THEN RAISE EXCEPTION 'x' USING CONSTRAINT = 'reserve_at_the_dearest_price'; END IF; " +
+				"IF false THEN RAISE EXCEPTION 'x' USING CONSTRAINT = 'reserve_needs_the_complete_snapshot'; END IF; RETURN NEW; END $$"},
+			[][]string{{"ledger_check_reserve()", "its body does not mention", "reachable"}}},
+		{"the job_rows state vocabulary without 'excluded'",
+			[]string{"ALTER TABLE platform.job_rows DROP CONSTRAINT job_rows_state_vocabulary",
+				"ALTER TABLE platform.job_rows ADD CONSTRAINT job_rows_state_vocabulary CHECK (state IN ('pending', 'malformed', 'duplicate', 'suppressed'))"},
+			[][]string{{"platform.job_rows.job_rows_state_vocabulary", "lacks", "'excluded'"}}},
+		{"the charged-result CHECK that does not name the unit",
+			[]string{"ALTER TABLE platform.job_results DROP CONSTRAINT job_results_charged_names_its_unit"},
+			[][]string{{"platform.job_results.job_results_charged_names_its_unit", "missing"}}},
+		{"the event shape CHECK that lets a transition carry no status",
+			[]string{"ALTER TABLE platform.job_events DROP CONSTRAINT job_events_transition_shape",
+				"ALTER TABLE platform.job_events ADD CONSTRAINT job_events_transition_shape CHECK (kind <> 'transition' OR to_status IS NOT NULL)"},
+			[][]string{{"platform.job_events.job_events_transition_shape", "lacks", "from_status IS NOT NULL"}}},
 	}
 	for _, c := range cases {
 		c := c

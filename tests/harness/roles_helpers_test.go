@@ -19,13 +19,17 @@ import (
 
 // The identities the proofs use. All of them are made up: nothing here is a real user.
 const (
-	rolesU1   = "11111111-1111-4111-8111-111111111111" // a tenant that owns a row in every table that has a user
-	rolesU2   = "22222222-2222-4222-8222-222222222222" // a tenant that owns nothing: safe to insert for, update and delete
-	rolesU3   = "33333333-3333-4333-8333-333333333333" // has an auth.users row but no public.users row yet: the user an INSERT creates
-	rolesAdm  = "44444444-4444-4444-8444-444444444444" // the named admin that ledger, audit and price-change rows refer to
-	rolesAdm2 = "55555555-5555-4555-8555-555555555555" // an admin nothing refers to: safe to delete
-	rolesJob  = "66666666-6666-4666-8666-666666666666" // a job the price snapshot and the ledger may refer to
-	rolesJob2 = "77777777-7777-4777-8777-777777777777" // a job nothing refers to: safe to delete, and to insert a price row for
+	rolesU1    = "11111111-1111-4111-8111-111111111111" // a tenant that owns a row in every table that has a user
+	rolesU2    = "22222222-2222-4222-8222-222222222222" // a tenant that owns nothing: safe to insert for, update and delete
+	rolesU3    = "33333333-3333-4333-8333-333333333333" // has an auth.users row but no public.users row yet: the user an INSERT creates
+	rolesAdm   = "44444444-4444-4444-8444-444444444444" // the named admin that ledger, audit and price-change rows refer to
+	rolesAdm2  = "55555555-5555-4555-8555-555555555555" // an admin nothing refers to: safe to delete
+	rolesJob   = "66666666-6666-4666-8666-666666666666" // a job the price snapshot and the ledger may refer to
+	rolesJob2  = "77777777-7777-4777-8777-777777777777" // a job nothing refers to: safe to delete, and to insert a price row for
+	rolesJob3  = "88888888-8888-4888-8888-888888888888" // a CONFIRMED module 2 job: its two rows are frozen, one has its result (platform.job_rows, platform.job_results)
+	rolesRow1  = "99999999-9999-4999-8999-999999999991" // the one row of rolesJob (a draft: the row may be changed and deleted)
+	rolesRow3A = "99999999-9999-4999-8999-99999999999a" // a row of rolesJob3 that has its result
+	rolesRow3B = "99999999-9999-4999-8999-99999999999b" // a row of rolesJob3 that has none yet (the proof inserts its result)
 )
 
 // rolesExpand puts the identities into a statement: {U1} becomes '<uuid>'::uuid, and so on.
@@ -33,7 +37,8 @@ func rolesExpand(sql string) string {
 	return strings.NewReplacer(
 		"{U1}", "'"+rolesU1+"'::uuid", "{U2}", "'"+rolesU2+"'::uuid", "{U3}", "'"+rolesU3+"'::uuid",
 		"{ADM2}", "'"+rolesAdm2+"'::uuid", "{ADM}", "'"+rolesAdm+"'::uuid",
-		"{JOB2}", "'"+rolesJob2+"'::uuid", "{JOB}", "'"+rolesJob+"'::uuid",
+		"{JOB2}", "'"+rolesJob2+"'::uuid", "{JOB3}", "'"+rolesJob3+"'::uuid", "{JOB}", "'"+rolesJob+"'::uuid",
+		"{ROW1}", "'"+rolesRow1+"'::uuid", "{ROW3A}", "'"+rolesRow3A+"'::uuid", "{ROW3B}", "'"+rolesRow3B+"'::uuid",
 	).Replace(sql)
 }
 
@@ -44,8 +49,19 @@ const rolesSeedSQL = `
 INSERT INTO auth.users (id, email) VALUES ({U1}, 'roles-u1@example.test'), ({U2}, 'roles-u2@example.test'), ({U3}, 'roles-u3@example.test'), ({ADM}, 'roles-adm@example.test'), ({ADM2}, 'roles-adm2@example.test');
 INSERT INTO public.users (id, auth_user_id, email) VALUES ({U1}, {U1}, 'roles-u1@example.test'), ({U2}, {U2}, 'roles-u2@example.test'), ({ADM}, {ADM}, 'roles-adm@example.test'), ({ADM2}, {ADM2}, 'roles-adm2@example.test');
 INSERT INTO platform.admins (id, display_name) VALUES ({ADM}, 'Roles Admin'), ({ADM2}, 'Roles Admin Two');
+DO $do$ BEGIN IF to_regprocedure('platform.set_unit_reachable(text, boolean, text)') IS NOT NULL THEN PERFORM platform.set_unit_reachable('m1_vendor', true, 'roles seed: the vendor fallback is on'); END IF; END $do$;
 INSERT INTO platform.jobs (id, user_id, module_id) VALUES ({JOB}, {U1}, 'm1'), ({JOB2}, {U1}, 'm1');
+INSERT INTO platform.job_events (job_id, kind, actor_kind, reason) VALUES ({JOB}, 'created', 'engine', 'roles seed');
 INSERT INTO platform.job_unit_prices (job_id, module_id, unit, cost) SELECT {JOB}, module_id, unit, cost FROM platform.unit_costs WHERE module_id = 'm1';
+INSERT INTO platform.jobs (id, user_id, module_id, preview, preview_fingerprint, confirm_key) VALUES ({JOB3}, {U1}, 'm2', '{}', repeat('a', 64), 'roles-seed');
+INSERT INTO platform.job_rows (id, job_id, user_id, ordinal, email_raw, email_norm) VALUES ({ROW1}, {JOB}, {U1}, 1, 'seed@example.com', 'seed@example.com'), ({ROW3A}, {JOB3}, {U1}, 1, 'a@example.com', 'a@example.com'), ({ROW3B}, {JOB3}, {U1}, 2, 'b@example.com', 'b@example.com');
+SELECT platform.job_transition({JOB3}, 'previewed', 'user', {U1}, 'roles seed');
+DO $do$ BEGIN
+  PERFORM set_config('platform.actor_kind', 'user', true); PERFORM set_config('platform.actor_id', {U1}::text, true); PERFORM set_config('platform.reason', 'roles seed', true);
+  UPDATE platform.jobs SET status = 'confirmed', start_deadline = now() + interval '1 day' WHERE id = {JOB3};
+  PERFORM set_config('platform.actor_kind', '', true); PERFORM set_config('platform.actor_id', '', true); PERFORM set_config('platform.reason', '', true);
+END $do$;
+INSERT INTO platform.job_results (job_id, user_id, item_ref, ordinal, email, origin, module_state, decision, rule) VALUES ({JOB3}, {U1}, {ROW3A}, 1, 'a@example.com', 'module', 'sent', 'free', 'seed');
 INSERT INTO platform.ledger (user_id, module_id, kind, available_delta, acting_admin_id, reason, idempotency_key) VALUES ({U1}, 'm1', 'grant', 100, {ADM}, 'roles seed', 'roles-seed-grant');
 INSERT INTO platform.ledger (user_id, module_id, kind, available_delta, reserved_delta, job_id, unit, units, unit_cost, idempotency_key) VALUES ({U1}, 'm1', 'reserve', -20, 20, {JOB}, 'm1_vendor', 10, 2, 'roles-seed-reserve');
 INSERT INTO platform.m3_entitlements (user_id, enabled, changed_by) VALUES ({U1}, true, {ADM});

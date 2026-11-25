@@ -76,6 +76,9 @@ func newMnyEnv(t *testing.T) *mnyEnv {
 		e.exec("INSERT INTO public.users (id, auth_user_id, email) VALUES ($1, $1, $2)", u.id, u.email)
 	}
 	e.exec("INSERT INTO platform.admins (id, display_name) VALUES ($1, 'Money Admin A'), ($2, 'Money Admin B')", mnyAdminA, mnyAdminB)
+	// Since platform_0013 module 1's vendor unit ships UNREACHABLE and the store freezes the reachable units only. The tests of this package were written for the vendor fallback ON (three units, the dearest at 2),
+	// so the environment switches it on, once, through the one writer. The tests of the reachability rule itself (TestReachableUnits_*, and whatever tests the store against it) start from a database of their own.
+	e.exec("SELECT platform.set_unit_reachable('m1_vendor', true, 'money store tests: the vendor fallback is on')")
 	return e
 }
 
@@ -198,11 +201,13 @@ func (e *mnyEnv) newJob(user, module string) string {
 	return id
 }
 
-// setStatus moves a job to a status, as the job engine will (Phase 4). A scheduled job needs a start. One active job per user and module is a database rule, so a test that
-// needs several jobs of one user leaves all but one of them in a terminal status.
+// setStatus walks a job to a status along the lifecycle of platform_0011, as the job engine will (jobWalkTo: previewed, confirmed and so on, each hop a platform.job_transition with its actor and
+// reason). One active job per user and module is a database rule (confirmed, scheduled, running, paused, cancelling and completing hold the slot), so a test that needs several jobs of one user
+// leaves all but one of them in draft, previewed or a terminal status. A status the lifecycle cannot reach from the job's current one (draft after previewed is the only way back; paused for a
+// running job; cancelling for a module 1 job) fails the test: those are the rules, not something the helper works around.
 func (e *mnyEnv) setStatus(job, status string) {
 	e.t.Helper()
-	e.exec(`UPDATE platform.jobs SET status = $2, scheduled_start = CASE WHEN $2 = 'scheduled' THEN now() + interval '1 hour' ELSE scheduled_start END WHERE id = $1`, job, status)
+	jobWalkTo(e.t, e.admin, job, status)
 }
 
 // fund gives the user credits by a RAW ledger insert (no store code): the setup of every test that is not about grants.

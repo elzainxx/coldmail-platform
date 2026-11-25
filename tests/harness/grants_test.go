@@ -66,7 +66,22 @@ var declaredClasses = map[string]privClass{
 	},
 	"jobs":            classOf(privSelectInsUpd, privSelect),
 	"job_unit_prices": classOf(privSelectInsert, privSelect),
-	"ledger":          classOf(privSelectInsert, privSelectInsert),
+	// platform_0011 (Phase 4, chunk B1): the legal moves of a job as data (both roles read it; nobody updates, deletes or truncates it, and not even platform_app inserts: a new pair is a migration), and the
+	// history of every job (platform_app writes it, by the trigger of a move and by the store; platform_admin reads it; append-only for everybody)
+	"job_transitions": classOf(privSelect, privSelect),
+	"job_events":      classOf(privSelectInsert, privSelect),
+	// platform_0012: a job's list (platform_app inserts and deletes rows and may update exactly the eight columns the preview and the engine write: never id, job_id, user_id, ordinal or created_at), its
+	// results (insert-only for everybody: no UPDATE or DELETE for any role, a trigger refuses the owner too) and the database half of the three-way proof (a view: both roles read it)
+	"job_rows": {
+		Owner:        "platform_owner",
+		Grants:       map[string][]string{"platform_app": {"SELECT", "INSERT", "DELETE"}, "platform_admin": privSelect},
+		ColumnGrants: map[string]map[string][]string{"platform_app": {"UPDATE": {"email_raw", "email_norm", "state", "reason", "duplicate_of", "fields", "source_item", "submitted_at"}}},
+	},
+	"job_results":          classOf(privSelectInsert, privSelect),
+	"job_settlement_drift": classOf(privSelect, privSelect),
+	// platform_0013: every change of a unit's reachable flag (written by trigger; the flag is written only by platform.set_unit_reachable)
+	"unit_reachability_history": classOf(privSelect, privSelect),
+	"ledger":                    classOf(privSelectInsert, privSelectInsert),
 	// platform_0006: platform.m3_entitlements is written only by the ledger trigger (m3_enable, m3_disable, m3_expire); platform_app lost INSERT and UPDATE, and both roles read it
 	"m3_entitlements": classOf(privSelect, privSelect),
 	"suppressions":    classOf(privSelectInsert, privSelect),
@@ -503,20 +518,28 @@ func checkNoDestructivePrivileges(ctx context.Context, q querier, tables []strin
 	return v, nil
 }
 
-// functionExecuteAllowed names, per function of schema platform (name and argument types, as functionKey writes them), the roles other than the owner that MAY hold EXECUTE on it directly. It is EMPTY: no role holds EXECUTE on any function (platform_0004 made the callers of require_active_admin SECURITY DEFINER instead of granting it).
+// functionExecuteAllowed names, per function of schema platform (name and argument types, as functionKey writes them), the roles other than the owner that MAY hold EXECUTE on it directly. It holds TWO entries
+// since platform_0013: platform.job_transition(uuid, text, text, uuid, text) (platform_0011), the one sanctioned way to move a job, and platform.set_unit_reachable(text, boolean, text), the one writer of a unit's
+// reachable flag, which platform_app (the service) executes; before them the declaration was EMPTY (platform_0004
+// made the callers of require_active_admin SECURITY DEFINER instead of granting it). The grant is ALLOWED here and never required by this checker; that platform_app CAN call it and platform_admin cannot is
+// proven by behaviour (TestJobLifecycle_ThePrivilegesOfTheLifecycle).
 // Every other (function, role) pair - PUBLIC above all - must hold nothing: PostgreSQL grants EXECUTE on a new function to PUBLIC by default, so every function of the schema is revoked from
 // PUBLIC by the migration that creates it, and a migration that forgets is what this declaration exists to catch. The trigger functions are in no list: a trigger function's EXECUTE is
 // not checked when the trigger fires, so granting it would only let a role call it by hand. platform.require_active_admin(uuid, text) (platform_0004) is the one function other
 // functions call; the trigger functions that call it run for the CALLER, so either the roles hold EXECUTE on it or those functions are SECURITY DEFINER. Which of the two is the
 // migration's choice and is proven by behaviour (TestConstraints_DisabledAdminThroughTheRoles); the grant is therefore ALLOWED here and never required.
-var functionExecuteAllowed = map[string][]string{ // empty since platform_0004 made the four callers of require_active_admin SECURITY DEFINER: no role holds EXECUTE on any function of the schema
+var functionExecuteAllowed = map[string][]string{
+	"job_transition(uuid, text, text, uuid, text)": {"platform_app"},
+	// platform_0013: the only writer of unit_costs.reachable (SECURITY DEFINER: platform_app holds no UPDATE on that column), which the service runs at start-up and on every engine pass
+	"set_unit_reachable(text, boolean, text)": {"platform_app"},
 }
 
-// functionGrantsFloor is the fewest functions schema platform holds since platform_0007: reject_mutation, jobs_guard, unit_costs_guard, unit_costs_record_history, ledger_apply_to_balance (the
+// functionGrantsFloor is the fewest functions schema platform holds since platform_0011: reject_mutation, jobs_guard, unit_costs_guard, unit_costs_record_history, ledger_apply_to_balance (the
 // five of platform_0002), require_active_admin, ledger_audit_adjustment and the three trigger functions that call require_active_admin (platform_0004), ledger_check_reserve,
 // ledger_apply_to_reserves, ledger_check_release and ledger_stamp_created_at (platform_0005), ledger_apply_to_entitlements and m3_entitlements_raise_sync (platform_0006),
-// job_unit_prices_snapshot_equals_unit_costs and jobs_terminal_is_final (platform_0007). A checker that sees fewer matched too little.
-const functionGrantsFloor = 18
+// job_unit_prices_snapshot_equals_unit_costs and jobs_terminal_is_final (platform_0007), job_events_check_actor, jobs_transition_guard, jobs_record_transition and job_transition (platform_0011),
+// job_rows_frozen and job_results_after_confirm (platform_0012), unit_costs_record_reachability, set_unit_reachable and job_unit_prices_only_reachable (platform_0013). A checker that sees fewer matched too little.
+const functionGrantsFloor = 27
 
 // checkFunctionGrants judges the EXECUTE privilege of every function of schema platform (the part of the privilege picture checkGrants does not cover): the owner is platform_owner, nobody
 // but the owner (and the roles functionExecuteAllowed names for that function) holds EXECUTE, nobody holds it WITH GRANT OPTION, every allowance names a function that exists, and the
@@ -998,6 +1021,73 @@ func TestGrantsInvariant_AntiVacuity(t *testing.T) {
 			[]string{"DROP TABLE platform.m3_sync"},
 			[][]string{{"platform.m3_sync", "declared privilege class", "does not exist"}}},
 
+		// ---- platform_0011: the lifecycle table and the job events ----
+		{"INSERT on job_transitions granted to platform_app (a new legal move is a migration, never the service's)",
+			[]string{"GRANT INSERT ON platform.job_transitions TO platform_app"},
+			[][]string{{"platform.job_transitions", "platform_app", "INSERT", "over-grant"}}},
+		{"UPDATE on job_transitions granted to platform_admin",
+			[]string{"GRANT UPDATE ON platform.job_transitions TO platform_admin"},
+			[][]string{{"platform.job_transitions", "platform_admin", "UPDATE", "over-grant"}}},
+		{"SELECT on job_transitions taken from platform_app (the guard reads it as the caller)",
+			[]string{"REVOKE SELECT ON platform.job_transitions FROM platform_app"},
+			[][]string{{"platform.job_transitions", "missing grant", "platform_app", "SELECT"}}},
+		{"a grant on job_events to PUBLIC",
+			[]string{"GRANT SELECT ON platform.job_events TO PUBLIC"},
+			[][]string{{"platform.job_events", "PUBLIC", "SELECT", "over-grant"}}},
+		{"INSERT on job_events granted to platform_admin (it reads the history and never writes it)",
+			[]string{"GRANT INSERT ON platform.job_events TO platform_admin"},
+			[][]string{{"platform.job_events", "platform_admin", "INSERT", "over-grant"}}},
+		{"UPDATE on job_events granted to platform_app (the history is append-only)",
+			[]string{"GRANT UPDATE ON platform.job_events TO platform_app"},
+			[][]string{{"platform.job_events", "platform_app", "UPDATE", "over-grant"}}},
+		{"INSERT on job_events taken from platform_app (the trigger of a move writes the event as the caller)",
+			[]string{"REVOKE INSERT ON platform.job_events FROM platform_app"},
+			[][]string{{"platform.job_events", "missing grant", "platform_app", "INSERT"}}},
+		{"the event table dropped (a stale declaration)",
+			[]string{"DROP TABLE platform.job_events"},
+			[][]string{{"platform.job_events", "declared privilege class", "does not exist"}}},
+
+		// ---- platform_0012: a job's list and its results; platform_0013: the reachability history ----
+		{"table-level UPDATE on job_rows given to platform_app on top of its columns (it could then rewrite id, job_id and ordinal)",
+			[]string{"GRANT UPDATE ON platform.job_rows TO platform_app"},
+			[][]string{{"platform.job_rows", "platform_app", "UPDATE", "over-grant"}}},
+		{"a column grant on job_rows that lets platform_app move a row to another job",
+			[]string{"GRANT UPDATE (job_id) ON platform.job_rows TO platform_app"},
+			[][]string{{"platform.job_rows", "column privilege", "platform_app", "UPDATE", "job_id"}}},
+		{"the job_rows column grant of submitted_at taken away (the engine could not stamp a submit)",
+			[]string{"REVOKE UPDATE (submitted_at) ON platform.job_rows FROM platform_app"},
+			[][]string{{"platform.job_rows", "missing column grant", "platform_app", "UPDATE", "submitted_at"}}},
+		{"DELETE on job_rows taken from platform_app (a draft's list could no longer be replaced)",
+			[]string{"REVOKE DELETE ON platform.job_rows FROM platform_app"},
+			[][]string{{"platform.job_rows", "missing grant", "platform_app", "DELETE"}}},
+		{"INSERT on job_rows granted to platform_admin",
+			[]string{"GRANT INSERT ON platform.job_rows TO platform_admin"},
+			[][]string{{"platform.job_rows", "platform_admin", "INSERT", "over-grant"}}},
+		{"UPDATE on job_results granted to platform_app (a result is written once)",
+			[]string{"GRANT UPDATE ON platform.job_results TO platform_app"},
+			[][]string{{"platform.job_results", "platform_app", "UPDATE", "over-grant"}}},
+		{"DELETE on job_results granted to platform_app",
+			[]string{"GRANT DELETE ON platform.job_results TO platform_app"},
+			[][]string{{"platform.job_results", "platform_app", "DELETE", "over-grant"}}},
+		{"INSERT on job_results taken from platform_app",
+			[]string{"REVOKE INSERT ON platform.job_results FROM platform_app"},
+			[][]string{{"platform.job_results", "missing grant", "platform_app", "INSERT"}}},
+		{"a grant on job_results to PUBLIC",
+			[]string{"GRANT SELECT ON platform.job_results TO PUBLIC"},
+			[][]string{{"platform.job_results", "PUBLIC", "SELECT", "over-grant"}}},
+		{"INSERT on the settlement proof view granted to platform_app",
+			[]string{"GRANT INSERT ON platform.job_settlement_drift TO platform_app"},
+			[][]string{{"platform.job_settlement_drift", "platform_app", "INSERT", "over-grant"}}},
+		{"SELECT on the settlement proof view taken from platform_admin",
+			[]string{"REVOKE SELECT ON platform.job_settlement_drift FROM platform_admin"},
+			[][]string{{"platform.job_settlement_drift", "missing grant", "platform_admin", "SELECT"}}},
+		{"INSERT on the reachability history granted to platform_app (the flag's history is written by trigger)",
+			[]string{"GRANT INSERT ON platform.unit_reachability_history TO platform_app"},
+			[][]string{{"platform.unit_reachability_history", "platform_app", "INSERT", "over-grant"}}},
+		{"a column grant on unit_costs that lets platform_app write the reachable flag itself",
+			[]string{"GRANT UPDATE (reachable) ON platform.unit_costs TO platform_app"},
+			[][]string{{"platform.unit_costs", "column privilege", "platform_app", "UPDATE", "reachable"}}},
+
 		// ---- Phase 1: the platform's two tables in schema public ----
 		{"DELETE on public.users granted to platform_app",
 			[]string{"GRANT DELETE ON public.users TO platform_app"},
@@ -1157,6 +1247,44 @@ func TestGrantsInvariant_FunctionsAntiVacuity(t *testing.T) {
 		{"EXECUTE on the terminal-state rule granted to platform_app",
 			[]string{"GRANT EXECUTE ON FUNCTION platform.jobs_terminal_is_final() TO platform_app"},
 			[][]string{{"platform.jobs_terminal_is_final()", "platform_app", "over-grant", "EXECUTE"}}},
+		// platform_0011: the lifecycle's four functions. The one the service calls is declared for platform_app and for nobody else; the three trigger functions are in no list.
+		{"EXECUTE on the sanctioned move granted to PUBLIC (the default of a new function, which platform_0011 revokes)",
+			[]string{"GRANT EXECUTE ON FUNCTION platform.job_transition(uuid, text, text, uuid, text) TO PUBLIC"},
+			[][]string{{"platform.job_transition(uuid, text, text, uuid, text)", "over-grant", "PUBLIC", "EXECUTE"}}},
+		{"EXECUTE on the sanctioned move granted to platform_admin (only platform_app is declared)",
+			[]string{"GRANT EXECUTE ON FUNCTION platform.job_transition(uuid, text, text, uuid, text) TO platform_admin"},
+			[][]string{{"platform.job_transition(uuid, text, text, uuid, text)", "platform_admin", "over-grant", "EXECUTE"}}},
+		{"EXECUTE on the sanctioned move granted to platform_app WITH GRANT OPTION (the allowance is for EXECUTE, not for passing it on)",
+			[]string{"GRANT EXECUTE ON FUNCTION platform.job_transition(uuid, text, text, uuid, text) TO platform_app WITH GRANT OPTION"},
+			[][]string{{"platform.job_transition(uuid, text, text, uuid, text)", "platform_app", "WITH GRANT OPTION"}}},
+		{"EXECUTE on the lifecycle guard granted to platform_app",
+			[]string{"GRANT EXECUTE ON FUNCTION platform.jobs_transition_guard() TO platform_app"},
+			[][]string{{"platform.jobs_transition_guard()", "platform_app", "over-grant", "EXECUTE"}}},
+		{"EXECUTE on the event writer granted to PUBLIC",
+			[]string{"GRANT EXECUTE ON FUNCTION platform.jobs_record_transition() TO PUBLIC"},
+			[][]string{{"platform.jobs_record_transition()", "over-grant", "PUBLIC", "EXECUTE"}}},
+		{"EXECUTE on the event actor check granted to platform_admin",
+			[]string{"GRANT EXECUTE ON FUNCTION platform.job_events_check_actor() TO platform_admin"},
+			[][]string{{"platform.job_events_check_actor()", "platform_admin", "over-grant", "EXECUTE"}}},
+		// platform_0012 and platform_0013: the two trigger functions of the list and the results, the reachability writer (platform_app only) and its trigger functions
+		{"EXECUTE on the reachability writer granted to PUBLIC (the default of a new function, which platform_0013 revokes)",
+			[]string{"GRANT EXECUTE ON FUNCTION platform.set_unit_reachable(text, boolean, text) TO PUBLIC"},
+			[][]string{{"platform.set_unit_reachable(text, boolean, text)", "over-grant", "PUBLIC", "EXECUTE"}}},
+		{"EXECUTE on the reachability writer granted to platform_admin (only platform_app is declared)",
+			[]string{"GRANT EXECUTE ON FUNCTION platform.set_unit_reachable(text, boolean, text) TO platform_admin"},
+			[][]string{{"platform.set_unit_reachable(text, boolean, text)", "platform_admin", "over-grant", "EXECUTE"}}},
+		{"EXECUTE on the rows guard granted to platform_app",
+			[]string{"GRANT EXECUTE ON FUNCTION platform.job_rows_frozen() TO platform_app"},
+			[][]string{{"platform.job_rows_frozen()", "platform_app", "over-grant", "EXECUTE"}}},
+		{"EXECUTE on the results guard granted to PUBLIC",
+			[]string{"GRANT EXECUTE ON FUNCTION platform.job_results_after_confirm() TO PUBLIC"},
+			[][]string{{"platform.job_results_after_confirm()", "over-grant", "PUBLIC", "EXECUTE"}}},
+		{"EXECUTE on the snapshot reachability check granted to platform_app",
+			[]string{"GRANT EXECUTE ON FUNCTION platform.job_unit_prices_only_reachable() TO platform_app"},
+			[][]string{{"platform.job_unit_prices_only_reachable()", "platform_app", "over-grant", "EXECUTE"}}},
+		{"EXECUTE on the reachability history writer granted to platform_admin",
+			[]string{"GRANT EXECUTE ON FUNCTION platform.unit_costs_record_reachability() TO platform_admin"},
+			[][]string{{"platform.unit_costs_record_reachability()", "platform_admin", "over-grant", "EXECUTE"}}},
 		{"a function owned by the wrong role",
 			[]string{"ALTER FUNCTION platform.jobs_guard() OWNER TO platform_admin"},
 			[][]string{{"platform.jobs_guard()", "owned by platform_admin", "platform_owner"}}},

@@ -101,6 +101,12 @@ var chainRelations = map[string][]string{
 	"0009": {},
 	// platform_0010 adds no relation: one nullable column of public.job_items (rendered_text, the optional plain-text part)
 	"0010": {},
+	// platform_0011 adds two relations: platform.job_transitions (the legal moves of a job, as data) and platform.job_events (the history of every job)
+	"0011": {"job_events", "job_transitions"},
+	// platform_0012 adds a job's list and its results (tables) and the proof view job_settlement_drift
+	"0012": {"job_results", "job_rows", "job_settlement_drift"},
+	// platform_0013 adds the history of the reachability flag (the flag itself is three columns of platform.unit_costs)
+	"0013": {"unit_reachability_history"},
 }
 
 // relationsThrough is the sorted union of what the listed versions add.
@@ -141,6 +147,19 @@ func downStepBefore(t *testing.T, c *pgx.Conn, v string) {
 	t.Helper()
 	when := "before down " + v
 	switch v {
+	case "0013":
+		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013"), when)
+		reachableUnitsObjects(t, c, true, when)
+		jobRowsObjects(t, c, true, when) // the migration below is whole
+	case "0012":
+		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012"), when)
+		jobRowsObjects(t, c, true, when)
+		jobLifecycleObjects(t, c, true, when) // the migration below is whole
+	case "0011":
+		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011"), when)
+		jobLifecycleObjects(t, c, true, when)
+		jobItemsTextObjects(t, c, true, when) // the migration below is whole
+		suppressionSyntaxObjects(t, c, true, when)
 	case "0010":
 		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010"), when)
 		jobItemsTextObjects(t, c, true, when)
@@ -194,6 +213,26 @@ func downStepAfter(t *testing.T, c *pgx.Conn, v string) {
 	t.Helper()
 	when := "after down " + v
 	switch v {
+	case "0013":
+		// the flag, its history, its writer and the two checks are gone and the older reserve check (every unit of the module is the complete snapshot) is back; the list and the results of 0012 are untouched
+		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012"), when)
+		reachableUnitsObjects(t, c, false, when)
+		jobRowsObjects(t, c, true, when)
+		jobLifecycleObjects(t, c, true, when)
+	case "0012":
+		// the proof view, the two tables, their triggers and the two guards are gone; the lifecycle of 0011 is untouched
+		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011"), when)
+		jobRowsObjects(t, c, false, when)
+		jobLifecycleObjects(t, c, true, when)
+	case "0011":
+		// the lifecycle is gone (the two tables, the twelve columns and two capability columns, the function, the guard, the slot index of platform_0004 is back and a previewed status is refused again by the
+		// CHECK of platform_0002); jobs_guard and the terminal rule are the ones of 0002 and 0007 (snapshotTerminalObjects reads them), and everything of 0010 and below is still there
+		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010"), when)
+		jobLifecycleObjects(t, c, false, when)
+		snapshotTerminalObjects(t, c, true, when)
+		jobItemsTextObjects(t, c, true, when)
+		suppressionSyntaxObjects(t, c, true, when)
+		observedVersionObjects(t, c, true, when)
 	case "0010":
 		// the column is gone; platform_0009's CHECK and everything below it are still there
 		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009"), when)
@@ -514,6 +553,379 @@ func jobItemsTextObjects(t *testing.T, c *pgx.Conn, present bool, when string) {
 	}
 }
 
+// jobLifecycleObjects is the CONTROL (present) and the ASSERTION (absent) of platform_0011's down: before it, the two tables (the legal moves and the events), the twelve new columns of platform.jobs and the
+// two capability columns of platform.modules, the four functions, the two triggers on platform.jobs, the eight CHECKs, the unique index of the confirm key and the slot index covering confirmed and completing
+// are there, and the rules bite (lifecycleJobLifecycle); after it none of them is, the slot index of platform_0004 is back (scheduled, running, paused, cancelling; no confirmed), and the older rules are back (a
+// previewed status is refused by the CHECK of platform_0002, a draft job moves straight to running). The counts are of a fixed list each, so a missing object cannot hide behind another's presence.
+func jobLifecycleObjects(t *testing.T, c *pgx.Conn, present bool, when string) {
+	t.Helper()
+	expect := lifecycleCounter(t, c, present, when)
+	cols := []string{"paused_from", "confirm_key", "preview", "preview_fingerprint", "previewed_at", "confirmed_at", "started_at", "finished_at", "start_deadline", "last_progress_at", "stale_alerted_at", "cancel_requested_at"}
+	funcs := []string{"jobs_transition_guard", "jobs_record_transition", "job_events_check_actor", "job_transition"}
+	checks := []string{"jobs_paused_from_vocabulary", "jobs_paused_from_shape", "jobs_confirm_key_shape", "jobs_preview_is_an_object", "jobs_fingerprint_shape", "jobs_confirmed_shape", "jobs_start_needs_a_deadline", "jobs_confirmed_starts_now"}
+	expect("the tables platform.job_transitions and platform.job_events", 2,
+		"SELECT count(*) FROM pg_class WHERE relnamespace = 'platform'::regnamespace AND relkind = 'r' AND relname::text IN ('job_transitions', 'job_events')")
+	expect("the twelve columns of platform.jobs (confirm_key among them)", int64(len(cols)),
+		"SELECT count(*) FROM pg_attribute WHERE attrelid = 'platform.jobs'::regclass AND NOT attisdropped AND attname::text = ANY($1::text[])", cols)
+	expect("the columns platform.modules.can_pause and can_cancel", 2,
+		"SELECT count(*) FROM pg_attribute WHERE attrelid = 'platform.modules'::regclass AND NOT attisdropped AND attname::text IN ('can_pause', 'can_cancel')")
+	expect("the function platform.job_transition (uuid, text, text, uuid, text)", 1,
+		"SELECT count(*) FROM pg_proc WHERE pronamespace = 'platform'::regnamespace AND proname::text = 'job_transition' AND oidvectortypes(proargtypes) = 'uuid, text, text, uuid, text'")
+	expect("the four functions of 0011 (the guard, the event writer, the actor check, the move)", int64(len(funcs)),
+		"SELECT count(*) FROM pg_proc WHERE pronamespace = 'platform'::regnamespace AND proname::text = ANY($1::text[])", funcs)
+	expect("the trigger jobs_transition_guard on platform.jobs", 1,
+		"SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal AND tgrelid = 'platform.jobs'::regclass AND tgname::text = 'jobs_transition_guard'")
+	expect("the trigger jobs_record_transition on platform.jobs", 1,
+		"SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal AND tgrelid = 'platform.jobs'::regclass AND tgname::text = 'jobs_record_transition'")
+	expect("the CHECKs of 0011 on platform.jobs", int64(len(checks)),
+		"SELECT count(*) FROM pg_constraint WHERE conrelid = 'platform.jobs'::regclass AND contype = 'c' AND conname::text = ANY($1::text[])", checks)
+	expect("the unique index jobs_confirm_key_key", 1,
+		"SELECT count(*) FROM pg_indexes WHERE schemaname = 'platform' AND tablename = 'jobs' AND indexname = 'jobs_confirm_key_key'")
+	expect("the slot index jobs_one_active_per_user_module covering confirmed and completing", 1,
+		"SELECT count(*) FROM pg_indexes WHERE schemaname = 'platform' AND indexname = 'jobs_one_active_per_user_module' AND indexdef LIKE '%confirmed%' AND indexdef LIKE '%completing%'")
+	if got := ledgerInt64(t, c, "SELECT count(*) FROM pg_indexes WHERE schemaname = 'platform' AND indexname = 'jobs_one_active_per_user_module'"); got != 1 {
+		t.Fatalf("%s: the slot index jobs_one_active_per_user_module: found %d, want it there either way (platform_0004's or platform_0011's)", when, got)
+	}
+	if !present {
+		if got := ledgerInt64(t, c, `SELECT count(*) FROM pg_indexes WHERE schemaname = 'platform' AND indexname = 'jobs_one_active_per_user_module'
+			AND indexdef LIKE '%scheduled%' AND indexdef LIKE '%running%' AND indexdef LIKE '%paused%' AND indexdef LIKE '%cancelling%' AND indexdef NOT LIKE '%confirmed%' AND indexdef NOT LIKE '%completing%'`); got != 1 {
+			t.Fatalf("%s: the slot index of platform_0004 is not back with its predicate (scheduled, running, paused, cancelling; no confirmed, no completing): %d match", when, got)
+		}
+		if got := ledgerInt64(t, c, "SELECT count(*) FROM pg_proc WHERE pronamespace = 'platform'::regnamespace AND proname::text = 'jobs_guard' AND prosrc LIKE '%left draft%' AND prosrc NOT LIKE '%previewed%'"); got != 1 {
+			t.Fatalf("%s: platform.jobs_guard() is not the function of platform_0002 (found %d that is): the down must put it back", when, got)
+		}
+	} else {
+		if got := ledgerInt64(t, c, "SELECT count(*) FROM pg_proc WHERE pronamespace = 'platform'::regnamespace AND proname::text = 'jobs_guard' AND prosrc LIKE '%previewed%'"); got != 1 {
+			t.Fatalf("%s: platform.jobs_guard() is not the amended function of platform_0011 (found %d that is)", when, got)
+		}
+		for _, g := range []struct{ rel, role, priv string }{
+			{"platform.job_transitions", "platform_app", "SELECT"}, {"platform.job_transitions", "platform_admin", "SELECT"},
+			{"platform.job_events", "platform_app", "SELECT"}, {"platform.job_events", "platform_app", "INSERT"}, {"platform.job_events", "platform_admin", "SELECT"},
+		} {
+			if !ledgerBool(t, c, "SELECT has_table_privilege($1::text, $2::text, $3::text)", g.role, g.rel, g.priv) {
+				t.Fatalf("%s: %s cannot %s %s", when, g.role, g.priv, g.rel)
+			}
+		}
+		if !ledgerBool(t, c, "SELECT has_function_privilege('platform_app', 'platform.job_transition(uuid, text, text, uuid, text)', 'EXECUTE')") {
+			t.Fatalf("%s: platform_app cannot EXECUTE platform.job_transition", when)
+		}
+	}
+	lifecycleJobLifecycle(t, c, present, when)
+}
+
+// lifecycleJobLifecycle is the behavioural half of jobLifecycleObjects, in a transaction that is ALWAYS rolled back (a transaction left open on this connection would hold the locks the next down needs). With
+// platform_0011 a job inserted previewed is refused by the lifecycle (job_born_draft, 23001), a draft job written running by a bare UPDATE too (job_transition_illegal) and the same job walked there the legal way
+// (previewed, confirmed, running: platform.job_transition) is accepted; without it a previewed status is refused by the CHECK of platform_0002 (jobs_status_vocabulary, 23514), a job can be inserted running and a
+// draft job written running.
+func lifecycleJobLifecycle(t *testing.T, c *pgx.Conn, enforced bool, when string) {
+	t.Helper()
+	tx, err := c.Begin(testCtx(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	ledgerSeed(t, tx)
+	const insert = "INSERT INTO platform.jobs (id, user_id, module_id, status) VALUES ($1, $2, 'm1', $3)"
+	if enforced {
+		ledgerExpectRefused(t, tx, when+": a job inserted previewed", "23001", ledgerWhy{Constraint: "job_born_draft"}, insert, ledgerUUID("fe", 1), ledgerUserC, "previewed")
+		ledgerExpectRefused(t, tx, when+": a draft job written running by a bare UPDATE", "23001", ledgerWhy{Constraint: "job_transition_illegal"}, clsSetStatus, ledgerJobA1, "running")
+		jobWalkTo(t, tx, ledgerJobA1, "running")
+		if got := jobStatus(t, tx, ledgerJobA1); got != "running" {
+			t.Fatalf("%s: the job walked to running is %s", when, got)
+		}
+		return
+	}
+	ledgerExpectRefused(t, tx, when+": a job inserted previewed (the vocabulary of the older chain has no such status)", "23514", ledgerWhy{Constraint: "jobs_status_vocabulary"}, insert, ledgerUUID("fe", 1), ledgerUserC, "previewed")
+	ledgerExpectOK(t, tx, when+": a job inserted running (the older chain has no lifecycle)", insert, ledgerUUID("fe", 2), ledgerUserC, "running")
+	ledgerExpectOK(t, tx, when+": a draft job written running by a bare UPDATE", clsSetStatus, ledgerJobA1, "running")
+}
+
+// TestRunnerLifecycle_Down0011RefusesAJobThatTheOlderVocabularyDoesNotKnow: platform_0011's down says no (SQLSTATE 55000, naming how many) while a job is previewed, confirmed, completing or expired, the four
+// statuses platform_0002's CHECK does not have, and leaves the database exactly as it was (it is still at 0011). The control of each refusal is the same down once no such job is left: with jobs that are
+// cancelled and failed (statuses the older vocabulary knows, ended by the legal path) it succeeds, and the older vocabulary is back. The expired job is made after that, on the chain brought up again (an expired job
+// is final: it cannot be ended to let the down pass, so it is the one case that has no moving-it-away control of its own: the control is the down that passed).
+// It fails if the guard of the down is missing, if it counts wrongly, or if a refused down changes anything.
+func TestRunnerLifecycle_Down0011RefusesAJobThatTheOlderVocabularyDoesNotKnow(t *testing.T) {
+	s, admin := migratedScratch(t)
+	ctx := testCtx(t)
+	dir := repoMigrationsDir(t)
+	env := migEnv(s.DSN, dir, nil)
+	envDown := migEnv(s.DSN, dir, map[string]string{"PLATFORM_MIGRATE_ALLOW_DOWN": "true"})
+	chain := chainOnDisk(t, dir)
+	at := -1 // the index of 0011: a migration above it (a later chunk of Phase 4) is rolled back first, highest first, and put back by the up below
+	for i, v := range chain {
+		if v == "0011" {
+			at = i
+		}
+	}
+	if at < 1 {
+		t.Fatalf("the chain on disk is %v: it holds no 0011 after other migrations", chain)
+	}
+	toHeight := func() { // roll back, highest first, whatever is applied above 0011
+		t.Helper()
+		for i := len(chain) - 1; i > at; i-- {
+			if containsString(appliedVersions(t, admin), chain[i]) {
+				mustExit(t, runMigrator(t, envDown, "down", chain[i]), 0, "down "+chain[i]+" on the way down to 0011")
+			}
+		}
+	}
+	seed, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledgerSeed(t, seed)
+	if err := seed.Commit(ctx); err != nil { // the migrator runs on its own connection: the jobs must be committed
+		t.Fatal(err)
+	}
+	toHeight()
+
+	refused := func(what string) {
+		t.Helper()
+		res := runMigrator(t, envDown, "down", "0011")
+		mustExit(t, res, 1, "down 0011 with "+what)
+		mustContain(t, res.Stderr, "platform_0011 down: 1 job(s) are previewed, confirmed, completing or expired", "down 0011 with "+what)
+		mustContain(t, res.Stderr, "55000", "down 0011 with "+what)
+		if got := appliedVersions(t, admin); !sameStrings(got, chain[:at+1]) {
+			t.Fatalf("a refused down 0011 (%s) changed the database: applied = %v, want %v", what, got, chain[:at+1])
+		}
+		if n := ledgerInt64(t, admin, "SELECT count(*) FROM platform.job_transitions"); n != 29 {
+			t.Fatalf("a refused down 0011 (%s) left %d rows in platform.job_transitions, want its 29", what, n)
+		}
+	}
+	for _, c := range []struct{ what, job, state string }{
+		{"a previewed job", ledgerJobA1, "previewed"},
+		{"a confirmed job", ledgerJobB1, "confirmed"},
+		{"a completing job", ledgerJobA2, "completing"},
+	} {
+		jobWalkTo(t, admin, c.job, c.state)
+		if got := ledgerInt64(t, admin, "SELECT count(*) FROM platform.jobs WHERE status IN ('previewed', 'confirmed', 'completing', 'expired')"); got != 1 {
+			t.Fatalf("the instrument: %d jobs are in the four statuses before the down with %s, want exactly 1", got, c.what)
+		}
+		refused(c.what)
+		jobEnd(t, admin, c.job) // the paired control's setup: cancelled (a previewed job) and failed (the others), statuses the older vocabulary has
+	}
+
+	// the control: no job is left in a status the older vocabulary lacks, so the same down passes, and the older vocabulary is back
+	res := runMigrator(t, envDown, "down", "0011")
+	mustExit(t, res, 0, "down 0011 with only cancelled and failed jobs")
+	if got := appliedVersions(t, admin); !sameStrings(got, chain[:at]) {
+		t.Fatalf("after the down 0011 that passed: applied = %v, want %v", got, chain[:at])
+	}
+	tx, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledgerExpectRefused(t, tx, "after down 0011, a job inserted previewed", "23514", ledgerWhy{Constraint: "jobs_status_vocabulary"},
+		"INSERT INTO platform.jobs (id, user_id, module_id, status) VALUES ($1, $2, 'm1', 'previewed')", ledgerUUID("fd", 1), ledgerUserC)
+	_ = tx.Rollback(ctx)
+
+	// up again over the jobs that were left behind, then an expired job: the down refuses it too
+	mustExit(t, runMigrator(t, env, "up"), 0, "up after the down, over a database with ended jobs")
+	if got := appliedVersions(t, admin); !sameStrings(got, chain) {
+		t.Fatalf("after up again: applied = %v, want %v", got, chain)
+	}
+	toHeight()
+	jobWalkTo(t, admin, ledgerJobA0, "expired")
+	refused("an expired job")
+}
+
+// jobRowsObjects is the CONTROL (present) and the ASSERTION (absent) of platform_0012's down: before it, the two tables, the proof view, the two guard functions and their triggers (the append-only pair of the
+// results among them), the thirteen CHECKs and the grants (platform_app: SELECT, INSERT, DELETE of the rows and UPDATE of submitted_at but not of job_id; the results SELECT and INSERT only) are there and the
+// rules bite (lifecycleJobRows); after it none of them is, and a statement that names the list fails with 42P01. The counts are of a fixed list each.
+func jobRowsObjects(t *testing.T, c *pgx.Conn, present bool, when string) {
+	t.Helper()
+	expect := lifecycleCounter(t, c, present, when)
+	funcs := []string{"job_rows_frozen", "job_results_after_confirm"}
+	triggers := []string{"job_rows_frozen", "job_results_after_confirm", "job_results_append_only", "job_results_no_truncate"}
+	checks := []string{"job_rows_ordinal_positive", "job_rows_state_vocabulary", "job_rows_email_raw_bounded", "job_rows_email_norm_shape", "job_rows_duplicate_shape", "job_rows_reason_shape", "job_rows_fields_is_an_object",
+		"job_rows_only_pending_is_submitted", "job_results_origin_vocabulary", "job_results_decision_vocabulary", "job_results_charged_names_its_unit", "job_results_state_not_blank", "job_results_detail_is_an_object"}
+	expect("the tables platform.job_rows and platform.job_results", 2,
+		"SELECT count(*) FROM pg_class WHERE relnamespace = 'platform'::regnamespace AND relkind = 'r' AND relname::text IN ('job_rows', 'job_results')")
+	expect("the view platform.job_settlement_drift", 1,
+		"SELECT count(*) FROM pg_class WHERE relnamespace = 'platform'::regnamespace AND relkind = 'v' AND relname::text = 'job_settlement_drift'")
+	expect("the two guard functions of 0012", int64(len(funcs)),
+		"SELECT count(*) FROM pg_proc WHERE pronamespace = 'platform'::regnamespace AND proname::text = ANY($1::text[])", funcs)
+	expect("the four triggers of 0012 (the rows guard, the results guard and the results' append-only pair)", int64(len(triggers)),
+		"SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal AND tgrelid IN (to_regclass('platform.job_rows'), to_regclass('platform.job_results')) AND tgname::text = ANY($1::text[])", triggers)
+	expect("the CHECKs of 0012", int64(len(checks)),
+		"SELECT count(*) FROM pg_constraint WHERE contype = 'c' AND conname::text = ANY($1::text[])", checks)
+	if present {
+		for _, g := range []struct{ rel, role, priv string }{
+			{"platform.job_rows", "platform_app", "SELECT"}, {"platform.job_rows", "platform_app", "INSERT"}, {"platform.job_rows", "platform_app", "DELETE"}, {"platform.job_rows", "platform_admin", "SELECT"},
+			{"platform.job_results", "platform_app", "SELECT"}, {"platform.job_results", "platform_app", "INSERT"}, {"platform.job_results", "platform_admin", "SELECT"},
+			{"platform.job_settlement_drift", "platform_app", "SELECT"}, {"platform.job_settlement_drift", "platform_admin", "SELECT"},
+		} {
+			if !ledgerBool(t, c, "SELECT has_table_privilege($1::text, $2::text, $3::text)", g.role, g.rel, g.priv) {
+				t.Fatalf("%s: %s cannot %s %s", when, g.role, g.priv, g.rel)
+			}
+		}
+		if !ledgerBool(t, c, "SELECT has_column_privilege('platform_app', 'platform.job_rows', 'submitted_at', 'UPDATE') AND NOT has_column_privilege('platform_app', 'platform.job_rows', 'job_id', 'UPDATE') AND NOT has_table_privilege('platform_app', 'platform.job_results', 'UPDATE')") {
+			t.Fatalf("%s: platform_app must update submitted_at of a row and neither job_id of a row nor a result", when)
+		}
+	}
+	lifecycleJobRows(t, c, present, when)
+}
+
+// lifecycleJobRows is the behavioural half of jobRowsObjects, in a transaction that is ALWAYS rolled back. With platform_0012 a draft job takes a row, the job confirmed takes a result and no more rows (23001,
+// job_rows_frozen), and a result for a draft job is refused (23514, jobs_results_after_confirm); without it a statement that names the list is 42P01.
+func lifecycleJobRows(t *testing.T, c *pgx.Conn, enforced bool, when string) {
+	t.Helper()
+	tx, err := c.Begin(testCtx(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	ledgerSeed(t, tx)
+	if !enforced {
+		ledgerExpectRefused(t, tx, when+": a statement that names the list of a job", "42P01", ledgerWhy{Message: "job_rows"}, "SELECT count(*) FROM platform.job_rows")
+		return
+	}
+	const row = "INSERT INTO platform.job_rows (id, job_id, user_id, ordinal, email_raw, email_norm) VALUES ($1, $2, $3, $4, 'a@example.com', 'a@example.com')"
+	const result = "INSERT INTO platform.job_results (job_id, user_id, item_ref, ordinal, email, origin, module_state, decision, rule) VALUES ($1, $2, $3, 1, 'a@example.com', 'module', 'sent', 'free', 'M2-04')"
+	first, second := ledgerUUID("fc", 1), ledgerUUID("fc", 2)
+	ledgerExpectOK(t, tx, when+": a row of a draft job", row, first, ledgerJobA2, ledgerUserA, 1)
+	ledgerExpectRefused(t, tx, when+": a result for a draft job", "23514", ledgerWhy{Constraint: "jobs_results_after_confirm"}, result, ledgerJobA2, ledgerUserA, first)
+	jobWalkTo(t, tx, ledgerJobA2, "confirmed")
+	ledgerExpectOK(t, tx, when+": a result for a confirmed job", result, ledgerJobA2, ledgerUserA, first)
+	ledgerExpectRefused(t, tx, when+": a row added to a confirmed job", "23001", ledgerWhy{Constraint: "job_rows_frozen"}, row, second, ledgerJobA2, ledgerUserA, 2)
+}
+
+// reachableUnitsObjects is the CONTROL (present) and the ASSERTION (absent) of platform_0013's down: before it, the three columns of platform.unit_costs, the history table, the three functions (the writer, the
+// snapshot check, the history trigger function), the four triggers, the CHECK and the grants are there, platform.ledger_check_reserve counts the REACHABLE units, and the vendor unit is refused as a snapshot row
+// once it is unreachable; after it none of them is and the OLDER reserve check is back: every unit of the module is the complete snapshot (a snapshot without the vendor unit is refused, and the full one is
+// reserved at the vendor price 2). The counts are of a fixed list each, so a missing object cannot hide behind another's presence.
+func reachableUnitsObjects(t *testing.T, c *pgx.Conn, present bool, when string) {
+	t.Helper()
+	expect := lifecycleCounter(t, c, present, when)
+	funcs := []string{"set_unit_reachable", "job_unit_prices_only_reachable", "unit_costs_record_reachability"}
+	expect("the columns reachable, reachable_source and reachable_changed_at of platform.unit_costs", 3,
+		"SELECT count(*) FROM pg_attribute WHERE attrelid = 'platform.unit_costs'::regclass AND NOT attisdropped AND attname::text IN ('reachable', 'reachable_source', 'reachable_changed_at')")
+	expect("the table platform.unit_reachability_history", 1,
+		"SELECT count(*) FROM pg_class WHERE relnamespace = 'platform'::regnamespace AND relkind = 'r' AND relname::text = 'unit_reachability_history'")
+	expect("the three functions of 0013", int64(len(funcs)),
+		"SELECT count(*) FROM pg_proc WHERE pronamespace = 'platform'::regnamespace AND proname::text = ANY($1::text[])", funcs)
+	expect("the triggers of 0013 (the snapshot check, the history trigger and the history's append-only pair)", 4,
+		"SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal AND tgname::text IN ('job_unit_prices_only_reachable', 'unit_costs_record_reachability', 'unit_reachability_history_append_only', 'unit_reachability_history_no_truncate')")
+	expect("the CHECK unit_costs_reachable_source_not_blank", 1,
+		"SELECT count(*) FROM pg_constraint WHERE conrelid = 'platform.unit_costs'::regclass AND contype = 'c' AND conname::text = 'unit_costs_reachable_source_not_blank'")
+	expect("platform.ledger_check_reserve counting the reachable units", 1,
+		"SELECT count(*) FROM pg_proc WHERE pronamespace = 'platform'::regnamespace AND proname::text = 'ledger_check_reserve' AND prosrc LIKE '%reachable%'")
+	if got := ledgerInt64(t, c, "SELECT count(*) FROM pg_proc WHERE pronamespace = 'platform'::regnamespace AND proname::text = 'ledger_check_reserve' AND prosrc LIKE '%reserve_needs_the_complete_snapshot%' AND prosrc LIKE '%reserve_at_the_dearest_price%'"); got != 1 {
+		t.Fatalf("%s: platform.ledger_check_reserve is not there with both of its refusals (found %d): the down must put the older one back, not drop it", when, got)
+	}
+	if present {
+		if !ledgerBool(t, c, "SELECT has_function_privilege('platform_app', 'platform.set_unit_reachable(text, boolean, text)', 'EXECUTE') AND NOT has_function_privilege('platform_admin', 'platform.set_unit_reachable(text, boolean, text)', 'EXECUTE') AND NOT has_column_privilege('platform_app', 'platform.unit_costs', 'reachable', 'UPDATE')") {
+			t.Fatalf("%s: platform_app must execute set_unit_reachable and not write the flag itself, and platform_admin must not execute it", when)
+		}
+	}
+	lifecycleReachableUnits(t, c, present, when)
+}
+
+// lifecycleReachableUnits is the behavioural half of reachableUnitsObjects, in a transaction that is ALWAYS rolled back. With platform_0013 and the vendor switched off a snapshot row for it is refused (23514,
+// snapshot_only_reachable_units) and a snapshot of the two reachable units is reserved at 1 and not at 2; without it the flag does not exist (42703), a snapshot of two units is not complete
+// (reserve_needs_the_complete_snapshot) and the three are reserved at 2.
+func lifecycleReachableUnits(t *testing.T, c *pgx.Conn, enforced bool, when string) {
+	t.Helper()
+	tx, err := c.Begin(testCtx(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	ledgerSeed(t, tx) // with platform_0013 the seed switches the vendor on; the job A0 has no snapshot
+	a, job := ledgerUserA, ledgerJobA0
+	ledgerFund(t, tx, a, "m1", 100)
+	const snap = "INSERT INTO platform.job_unit_prices (job_id, module_id, unit, cost) SELECT $1::uuid, u.module_id, u.unit, u.cost FROM platform.unit_costs u WHERE u.unit = ANY($2::text[])"
+	if enforced {
+		ledgerMust(t, tx, "SELECT platform.set_unit_reachable('m1_vendor', false, 'lifecycle test: switched off')")
+		ledgerExpectRefused(t, tx, when+": a snapshot row for the vendor unit once it is unreachable", "23514", ledgerWhy{Constraint: "snapshot_only_reachable_units"}, snap, job, []string{"m1_vendor"})
+		ledgerExpectOK(t, tx, when+": a snapshot of the two reachable units", snap, job, []string{"m1_own", "m1_cache"})
+		ledgerRefusedCheck(t, tx, when+": a reserve at the vendor price (not the dearest of what is reachable)", "reserve_at_the_dearest_price", ledgerReserveCols(a, "m1", job, "m1_own", 10, 2))
+		ledgerOKRow(t, tx, when+": a reserve at the dearest REACHABLE price", ledgerReserveCols(a, "m1", job, "m1_own", 10, 1))
+		return
+	}
+	ledgerExpectRefused(t, tx, when+": the flag does not exist", "42703", ledgerWhy{Message: "reachable"}, "SELECT reachable FROM platform.unit_costs")
+	ledgerExpectOK(t, tx, when+": a snapshot of two units", snap, job, []string{"m1_own", "m1_cache"})
+	ledgerRefusedCheck(t, tx, when+": a reserve against a snapshot that lacks a unit of the module", "reserve_needs_the_complete_snapshot", ledgerReserveCols(a, "m1", job, "m1_own", 10, 1))
+	ledgerExpectOK(t, tx, when+": the vendor unit joins the snapshot", snap, job, []string{"m1_vendor"})
+	ledgerOKRow(t, tx, when+": a reserve at the vendor price over the complete snapshot", ledgerReserveCols(a, "m1", job, "m1_vendor", 10, 2))
+}
+
+// migRollBackAbove rolls the chain back, highest first, until nothing above chain[keep] is applied (what a down test needs when a later chunk of Phase 4 has added migrations above the one it is about).
+func migRollBackAbove(t *testing.T, admin *pgx.Conn, envDown map[string]string, chain []string, keep int) {
+	t.Helper()
+	for i := len(chain) - 1; i > keep; i-- {
+		if containsString(appliedVersions(t, admin), chain[i]) {
+			mustExit(t, runMigrator(t, envDown, "down", chain[i]), 0, "down "+chain[i]+" on the way down to "+chain[keep])
+		}
+	}
+}
+
+// TestRunnerLifecycle_Down0012RefusesWhileARowOrAResultExists: platform_0012's down says no (SQLSTATE 55000, naming how many) while any job row or result exists, and leaves the database exactly as it was (the rows are
+// still there, the chain still at 0012): a result is a record of money and of a customer's outcome, kept forever, and a down never destroys it. The control of the first refusal is the same down once the row is
+// deleted (a draft's list may be): it passes and the tables are gone. After an up again a job is confirmed and has a row and a result; the down is refused again (2), and a result cannot be deleted to make it
+// pass (append-only): that case has no moving-it-away control of its own, the down that passed is its control.
+// It fails if the guard of the down is missing, if it counts wrongly, if it drops what it refused to, or if it refuses an empty list.
+func TestRunnerLifecycle_Down0012RefusesWhileARowOrAResultExists(t *testing.T) {
+	s, admin := migratedScratch(t)
+	ctx := testCtx(t)
+	dir := repoMigrationsDir(t)
+	env := migEnv(s.DSN, dir, nil)
+	envDown := migEnv(s.DSN, dir, map[string]string{"PLATFORM_MIGRATE_ALLOW_DOWN": "true"})
+	chain := chainOnDisk(t, dir)
+	at := -1
+	for i, v := range chain {
+		if v == "0012" {
+			at = i
+		}
+	}
+	if at < 1 {
+		t.Fatalf("the chain on disk is %v: it holds no 0012 after other migrations", chain)
+	}
+	seed, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledgerSeed(t, seed)
+	if err := seed.Commit(ctx); err != nil { // the migrator runs on its own connection: the rows must be committed
+		t.Fatal(err)
+	}
+	migRollBackAbove(t, admin, envDown, chain, at)
+
+	refused := func(what string, n int) {
+		t.Helper()
+		res := runMigrator(t, envDown, "down", "0012")
+		mustExit(t, res, 1, "down 0012 with "+what)
+		mustContain(t, res.Stderr, fmt.Sprintf("platform_0012 down: %d job row(s) and result(s) exist", n), "down 0012 with "+what)
+		mustContain(t, res.Stderr, "55000", "down 0012 with "+what)
+		if got := appliedVersions(t, admin); !sameStrings(got, chain[:at+1]) {
+			t.Fatalf("a refused down 0012 (%s) changed the database: applied = %v, want %v", what, got, chain[:at+1])
+		}
+		if got := ledgerInt64(t, admin, "SELECT (SELECT count(*) FROM platform.job_rows) + (SELECT count(*) FROM platform.job_results)"); got != int64(n) {
+			t.Fatalf("a refused down 0012 (%s) left %d row(s) and result(s), want %d", what, got, n)
+		}
+	}
+	const row = "INSERT INTO platform.job_rows (id, job_id, user_id, ordinal, email_raw, email_norm) VALUES ($1, $2, $3, 1, 'a@example.com', 'a@example.com')"
+	rowID := ledgerUUID("fb", 1)
+	ledgerMust(t, admin, row, rowID, ledgerJobA2, ledgerUserA)
+	refused("a row", 1)
+
+	ledgerMust(t, admin, "DELETE FROM platform.job_rows WHERE id = $1", rowID) // the control's setup: a draft's list may be emptied
+	mustExit(t, runMigrator(t, envDown, "down", "0012"), 0, "down 0012 over an empty list")
+	if got := appliedVersions(t, admin); !sameStrings(got, chain[:at]) {
+		t.Fatalf("after the down 0012 that passed: applied = %v, want %v", got, chain[:at])
+	}
+	if relationExists(t, admin, "platform.job_rows") || relationExists(t, admin, "platform.job_results") || relationExists(t, admin, "platform.job_settlement_drift") {
+		t.Fatal("after the down 0012 that passed a table or the view of 0012 is still there")
+	}
+
+	mustExit(t, runMigrator(t, env, "up"), 0, "up after the down 0012")
+	migRollBackAbove(t, admin, envDown, chain, at)
+	ledgerMust(t, admin, row, rowID, ledgerJobA2, ledgerUserA)
+	jobWalkTo(t, admin, ledgerJobA2, "confirmed")
+	ledgerMust(t, admin, "INSERT INTO platform.job_results (job_id, user_id, item_ref, ordinal, email, origin, module_state, decision, rule) VALUES ($1, $2, $3, 1, 'a@example.com', 'module', 'sent', 'free', 'M2-04')", ledgerJobA2, ledgerUserA, rowID)
+	refused("a row and its result", 2)
+}
+
 // suppressionSyntaxObjects is the CONTROL (present) and the ASSERTION (absent) of platform_0009's down, in a transaction that is ALWAYS rolled back: with the migration the CHECK
 // suppressions_email_norm_v1 refuses an address module 1's syntax layer fails (a local part of 65 bytes, a domain with no dot) and a label with "--" in its third and fourth bytes, and accepts the
 // boundary (a local part of exactly 64 bytes, the smallest dotted domain, an "xn--" label); without it (platform_0003's CHECK) all of them are accepted. The ordinary address is accepted either way.
@@ -642,7 +1054,7 @@ func TestRunnerLifecycle(t *testing.T) {
 
 	// The executable expectation of the migration chain. scripts/check-migrations.sh reads this literal and fails when the
 	// newest migration is not named in it, so a migration cannot be added without extending this test.
-	wantChain := []string{"0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011"}
+	wantChain := []string{"0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013"}
 
 	dir := repoMigrationsDir(t)
 	if onDisk := chainOnDisk(t, dir); !sameStrings(onDisk, wantChain) {

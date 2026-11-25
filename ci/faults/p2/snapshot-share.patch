@@ -1,11 +1,11 @@
 --- a/internal/money/reserve.go
 +++ b/internal/money/reserve.go
-@@ -102,7 +102,7 @@
- 
- 	// FOR SHARE: the module's price rows cannot change until this transaction ends. (platform_app holds a column-level UPDATE on unit_costs, which is what
- 	// a row lock needs; FOR KEY SHARE would not do, an UPDATE of the cost column does not conflict with it.)
--	rows, err := tx.Query(ctx, `SELECT unit, cost FROM platform.unit_costs WHERE module_id = $1 ORDER BY unit FOR SHARE`, job.module)
-+	rows, err := tx.Query(ctx, `SELECT unit, cost FROM platform.unit_costs WHERE module_id = $1 ORDER BY unit`, job.module)
+@@ -111,7 +111,7 @@
+ 	// Phase 4 (platform_0013): lock EVERY price row of the module, reachable or not, so that a flip of the reachable flag (platform.set_unit_reachable takes FOR UPDATE on the row) waits for this transaction exactly as a
+ 	// price change does; then read the REACHABLE ones: the snapshot and the dearest rate cover only the units a job of this module can be charged under its current configuration (module 1 with the vendor fallback
+ 	// off reserves at 1 per row, not at the vendor's 2).
+-	lockRows, err := tx.Query(ctx, `SELECT unit FROM platform.unit_costs WHERE module_id = $1 ORDER BY unit FOR SHARE`, job.module)
++	lockRows, err := tx.Query(ctx, `SELECT unit FROM platform.unit_costs WHERE module_id = $1 ORDER BY unit`, job.module)
  	if err != nil {
  		return ReserveResult{}, s.fail(err, pgCtx{})
  	}

@@ -163,12 +163,11 @@ func (e *m2eEnv) fundAndReserve(t *testing.T, tn *m2wTenant, units int) (string,
 	return job, rsv
 }
 
-// setStatus moves the platform job as the job engine will (Phase 4 owns it).
+// setStatus walks the platform job to a status along the lifecycle of platform_0011, as the job engine will (jobWalkTo: each hop is a platform.job_transition with its actor and reason; module 2
+// can cancel a running job, so running -> cancelling -> completing -> cancelled is a legal way to the end of a cancelled job).
 func (e *m2eEnv) setStatus(t *testing.T, job, status string) {
 	t.Helper()
-	if _, err := e.r.db.Exec(e.r.ctx, "UPDATE platform.jobs SET status = $2 WHERE id = $1::uuid", job, status); err != nil {
-		t.Fatalf("set the platform job to %s: %v", status, err)
-	}
+	jobWalkTo(t, e.r.db, job, status)
 }
 
 // m2eCharge is one charge row of the ledger.

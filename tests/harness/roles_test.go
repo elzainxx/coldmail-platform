@@ -65,14 +65,49 @@ var roleStatements = []roleStmt{
 	{"platform.unit_cost_history", "TRUNCATE", `TRUNCATE platform.unit_cost_history`, "23001", "append-only", ""},
 
 	{"platform.jobs", "INSERT", `INSERT INTO platform.jobs (user_id, module_id) VALUES ({U2}, 'm1')`, "", "", ""},
-	{"platform.jobs", "UPDATE", `UPDATE platform.jobs SET status = 'scheduled', scheduled_start = now() WHERE id = {JOB}`, "", "", ""},
+	// DELIBERATE CHANGE (platform_0011): the statement used to move the job to scheduled; a change of status now needs an actor and a reason and a row of platform.job_transitions, so a bare status write is
+	// refused for every role (the privilege proof of the move is TestJobLifecycle_ThePrivilegesOfTheLifecycle). What this statement proves is the table-level UPDATE privilege, on an annotation.
+	{"platform.jobs", "UPDATE", `UPDATE platform.jobs SET scheduled_start = now() WHERE id = {JOB}`, "", "", ""},
 	{"platform.jobs", "DELETE", `DELETE FROM platform.jobs WHERE id = {JOB2}`, "", "", ""},
 	{"platform.jobs", "TRUNCATE", `TRUNCATE platform.jobs CASCADE`, "23001", "append-only", ""},
+
+	// platform_0011: the lifecycle table (insert-only for the owner and nobody else: the superuser's INSERT succeeds, the roles hold SELECT only) and the history of every job (platform_app inserts, nobody
+	// updates or deletes: the superuser's UPDATE, DELETE and TRUNCATE meet the append-only triggers)
+	{"platform.job_transitions", "INSERT", `INSERT INTO platform.job_transitions (from_status, to_status, actors, note) VALUES ('previewed', 'running', ARRAY['engine'], 'roles proof')`, "", "", ""},
+	{"platform.job_transitions", "UPDATE", `UPDATE platform.job_transitions SET note = 'edited'`, "23001", "append-only", ""},
+	{"platform.job_transitions", "DELETE", `DELETE FROM platform.job_transitions`, "23001", "append-only", ""},
+	{"platform.job_transitions", "TRUNCATE", `TRUNCATE platform.job_transitions`, "23001", "append-only", ""},
+	{"platform.job_events", "INSERT", `INSERT INTO platform.job_events (job_id, kind, actor_kind, reason) VALUES ({JOB}, 'note', 'engine', 'roles proof')`, "", "", ""},
+	{"platform.job_events", "UPDATE", `UPDATE platform.job_events SET reason = 'edited'`, "23001", "append-only", ""},
+	{"platform.job_events", "DELETE", `DELETE FROM platform.job_events`, "23001", "append-only", ""},
+	{"platform.job_events", "TRUNCATE", `TRUNCATE platform.job_events`, "23001", "append-only", ""},
 
 	{"platform.job_unit_prices", "INSERT", `INSERT INTO platform.job_unit_prices (job_id, module_id, unit, cost) VALUES ({JOB2}, 'm1', 'm1_own', 1)`, "", "", ""},
 	{"platform.job_unit_prices", "UPDATE", `UPDATE platform.job_unit_prices SET cost = cost`, "23001", "append-only", ""},
 	{"platform.job_unit_prices", "DELETE", `DELETE FROM platform.job_unit_prices`, "23001", "append-only", ""},
 	{"platform.job_unit_prices", "TRUNCATE", `TRUNCATE platform.job_unit_prices CASCADE`, "23001", "append-only", ""},
+
+	// platform_0012: a job's list (platform_app inserts and deletes rows and updates the eight columns the engine and the preview write, never id, job_id, user_id, ordinal or created_at: the table-level UPDATE
+	// statement names ordinal, so it is the column-level statement that proves what platform_app may do) and its results (insert-only for everybody: the superuser's UPDATE, DELETE and TRUNCATE meet the append-only
+	// triggers; TRUNCATE of the rows cascades into the results, whose trigger answers); the proof view cannot be written by anybody
+	{"platform.job_rows", "INSERT", `INSERT INTO platform.job_rows (job_id, user_id, ordinal, email_raw, email_norm) VALUES ({JOB}, {U1}, 2, 'proof@example.com', 'proof@example.com')`, "", "", ""},
+	{"platform.job_rows", "UPDATE", `UPDATE platform.job_rows SET ordinal = ordinal WHERE id = {ROW1}`, "", "", ""},
+	{"platform.job_rows", "DELETE", `DELETE FROM platform.job_rows WHERE id = {ROW1}`, "", "", ""},
+	{"platform.job_rows", "TRUNCATE", `TRUNCATE platform.job_rows CASCADE`, "23001", "append-only", ""},
+	{"platform.job_rows", "UPDATE(email_raw,email_norm,state,reason,duplicate_of,fields,source_item,submitted_at)", `UPDATE platform.job_rows SET email_raw = email_raw, email_norm = email_norm, state = state, reason = reason, duplicate_of = duplicate_of, fields = fields, source_item = source_item, submitted_at = submitted_at WHERE id = {ROW1}`, "", "", "platform_app"},
+	{"platform.job_results", "INSERT", `INSERT INTO platform.job_results (job_id, user_id, item_ref, ordinal, email, origin, module_state, decision, rule) VALUES ({JOB3}, {U1}, {ROW3B}, 2, 'b@example.com', 'module', 'sent', 'free', 'roles proof')`, "", "", ""},
+	{"platform.job_results", "UPDATE", `UPDATE platform.job_results SET rule = 'edited'`, "23001", "append-only", ""},
+	{"platform.job_results", "DELETE", `DELETE FROM platform.job_results`, "23001", "append-only", ""},
+	{"platform.job_results", "TRUNCATE", `TRUNCATE platform.job_results`, "23001", "append-only", ""},
+	{"platform.job_settlement_drift", "INSERT", `INSERT INTO platform.job_settlement_drift DEFAULT VALUES`, "55000", "cannot insert into view", ""},
+	{"platform.job_settlement_drift", "UPDATE", `UPDATE platform.job_settlement_drift SET job_id = job_id`, "55000", "cannot update view", ""},
+	{"platform.job_settlement_drift", "DELETE", `DELETE FROM platform.job_settlement_drift`, "55000", "cannot delete from view", ""},
+
+	// platform_0013: every change of a unit's reachable flag, written by trigger (the flag itself is written only by platform.set_unit_reachable)
+	{"platform.unit_reachability_history", "INSERT", `INSERT INTO platform.unit_reachability_history (unit, reachable, source) VALUES ('m1_own', true, 'roles proof')`, "", "", ""},
+	{"platform.unit_reachability_history", "UPDATE", `UPDATE platform.unit_reachability_history SET source = 'edited'`, "23001", "append-only", ""},
+	{"platform.unit_reachability_history", "DELETE", `DELETE FROM platform.unit_reachability_history`, "23001", "append-only", ""},
+	{"platform.unit_reachability_history", "TRUNCATE", `TRUNCATE platform.unit_reachability_history`, "23001", "append-only", ""},
 
 	{"platform.balances", "INSERT", `INSERT INTO platform.balances (user_id, module_id) VALUES ({U2}, 'm1')`, "", "", ""},
 	{"platform.balances", "UPDATE", `UPDATE platform.balances SET available = available + 1`, "", "", ""},
@@ -150,6 +185,8 @@ var roleExpectations = map[string]map[string]string{
 		"platform.jobs": "SIU", "platform.job_unit_prices": "SI", "platform.balances": "S", "platform.ledger": "SI", "platform.m3_entitlements": "S",
 		"platform.suppressions": "SI", "platform.admin_audit": "SI", "platform.balance_drift": "S", "platform.reserve_overdrawn": "S", "platform.listable_users": "S",
 		"platform.reserves": "S", "platform.m3_sync": "S", // m3_sync: plus UPDATE of nine columns (the column-level statement), which a table-level letter cannot say
+		"platform.job_transitions": "S", "platform.job_events": "SI",
+		"platform.job_rows": "SID", "platform.job_results": "SI", "platform.job_settlement_drift": "S", "platform.unit_reachability_history": "S", // job_rows: plus UPDATE of eight columns (the column-level statement)
 		"public.users": "SIU", "public.job_items": "SIU",
 	},
 	"platform_admin": {
@@ -157,12 +194,14 @@ var roleExpectations = map[string]map[string]string{
 		"platform.jobs": "S", "platform.job_unit_prices": "S", "platform.balances": "S", "platform.ledger": "SI", "platform.m3_entitlements": "S",
 		"platform.suppressions": "S", "platform.admin_audit": "SI", "platform.balance_drift": "S", "platform.reserve_overdrawn": "S", "platform.listable_users": "S",
 		"platform.reserves": "S", "platform.m3_sync": "S",
+		"platform.job_transitions": "S", "platform.job_events": "S",
+		"platform.job_rows": "S", "platform.job_results": "S", "platform.job_settlement_drift": "S", "platform.unit_reachability_history": "S",
 		"public.users": "S", "public.job_items": "S",
 	},
 }
 
 // roleViews are the relations that are views (the proof checks the catalogue agrees).
-var roleViews = map[string]bool{"platform.balance_drift": true, "platform.reserve_overdrawn": true, "platform.listable_users": true}
+var roleViews = map[string]bool{"platform.balance_drift": true, "platform.reserve_overdrawn": true, "platform.listable_users": true, "platform.job_settlement_drift": true}
 
 // roleWritableViews are the views a SUPERUSER can write through (an auto-updatable view: one table, no join, no aggregate). A role is refused them by privilege exactly like a table
 // ("permission denied for view <name>"); the other views are refused by the rewriter whoever runs the statement (55000, the Ctrl of their statements).
@@ -384,8 +423,8 @@ func TestRoles_UngrantedRoleIsRefusedEverywhere(t *testing.T) {
 	rolesSeed(t, ctx, tx)
 
 	rels := sortedMapKeys(roleExpectations["platform_app"])
-	if len(rels) < 19 {
-		t.Fatalf("found %d relations in the expectations, want at least 19 (17 in schema platform, 2 in public)", len(rels))
+	if len(rels) < 25 {
+		t.Fatalf("found %d relations in the expectations, want at least 25 (23 in schema platform, 2 in public)", len(rels))
 	}
 	// A role created inside the transaction is gone when it rolls back: nothing to clean up in the cluster.
 	for _, stmt := range []string{"CREATE ROLE zz_roles_ungranted NOLOGIN", "GRANT USAGE ON SCHEMA platform, public TO zz_roles_ungranted"} {

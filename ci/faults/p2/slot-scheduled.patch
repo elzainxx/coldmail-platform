@@ -1,11 +1,11 @@
---- a/db/migrations/platform_0004_phase1_rulings.up.sql
-+++ b/db/migrations/platform_0004_phase1_rulings.up.sql
-@@ -18,7 +18,7 @@
+--- a/db/migrations/platform_0011_job_lifecycle.up.sql
++++ b/db/migrations/platform_0011_job_lifecycle.up.sql
+@@ -75,7 +75,7 @@
+ -- ── 4. the slot: every state that holds credits or lets a module work ──────────────────────────────────────────────
+ DROP INDEX platform.jobs_one_active_per_user_module;
+ CREATE UNIQUE INDEX jobs_one_active_per_user_module ON platform.jobs (user_id, module_id)
+-    WHERE status IN ('confirmed', 'scheduled', 'running', 'paused', 'cancelling', 'completing');
++    WHERE status IN ('confirmed', 'running', 'paused', 'cancelling', 'completing');
+ COMMENT ON INDEX platform.jobs_one_active_per_user_module IS 'One active job per module per user (Locked 14, amended by 22): a job that is confirmed, scheduled, running, paused, cancelling or completing holds the slot. Another module is a different slot; a draft, a previewed or a terminal job holds nothing.';
  
- -- ── 1. a scheduled job holds the slot ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- DROP INDEX platform.jobs_one_executing_per_user_module;
--CREATE UNIQUE INDEX jobs_one_active_per_user_module ON platform.jobs (user_id, module_id) WHERE status IN ('scheduled', 'running', 'paused', 'cancelling');
-+CREATE UNIQUE INDEX jobs_one_active_per_user_module ON platform.jobs (user_id, module_id) WHERE status IN ('running', 'paused', 'cancelling');
- COMMENT ON INDEX platform.jobs_one_active_per_user_module IS 'One active job per module per user: a job that is scheduled (credits reserved, not started), running, paused or cancelling holds the slot. Another module is a different slot; a draft or a finished job holds none.';
- 
- -- ── 2. the system user holds nothing ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ -- ── 5. the legal moves, as data ──────────────────────────────────────────────────────────────────────────────────────

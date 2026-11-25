@@ -291,3 +291,32 @@ func TestEveryOperationBeginsWithTheBoundThenTakesTheLock(t *testing.T) {
 		t.Errorf("a grant that gets its lock ran %q, want the bound first, the lock second and the write third", got)
 	}
 }
+
+// A release needs a job that ENDED: succeeded, failed, cancelled or (platform_0011) expired. Every other status of the lifecycle - the eight that are not final, completing above all: the module has
+// reported every item, the platform has not recorded them yet - is ErrJobNotEnded before the (user, module) lock is even asked for; each of the four that ended gets as far as the lock (the fake refuses
+// it with lock_not_available, so the lock is what the release stopped at). The two halves are each other's control: the same read and the same fake, a different status.
+func TestRelease_OnlyAnEndedJobGetsAsFarAsTheLock(t *testing.T) {
+	const jobID = "0b000000-0000-4000-8000-000000000001"
+	ended := map[string]bool{"succeeded": true, "failed": true, "cancelled": true, "expired": true}
+	statuses := []string{"draft", "previewed", "confirmed", "scheduled", "running", "paused", "cancelling", "completing", "succeeded", "failed", "cancelled", "expired"}
+	s := New(nil, WithLockTimeout(300*time.Millisecond))
+	atTheLock := 0
+	for _, status := range statuses {
+		tx := &fakeTx{lockErr: pgErr("55P03", ""), job: []any{lockUserA, "m2", status, true}}
+		_, err := s.release(context.Background(), tx, jobID)
+		got := tx.sqls()
+		if ended[status] {
+			atTheLock++
+			if !errors.Is(err, ErrLockTimeout) || len(got) != 3 || !strings.Contains(got[len(got)-1], "pg_advisory_xact_lock") {
+				t.Errorf("a %s job: err = %v after %q, want it to get as far as the lock (ErrLockTimeout after the bound, the read and the lock)", status, err, got)
+			}
+			continue
+		}
+		if !errors.Is(err, ErrJobNotEnded) || len(got) != 2 || !strings.Contains(err.Error(), status) {
+			t.Errorf("a %s job: err = %v after %q, want ErrJobNotEnded naming the status, before any lock", status, err, got)
+		}
+	}
+	if atTheLock != 4 {
+		t.Fatalf("%d statuses got as far as the lock, want the 4 that ended (succeeded, failed, cancelled, expired)", atTheLock)
+	}
+}

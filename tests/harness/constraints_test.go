@@ -707,12 +707,11 @@ func TestConstraints_UnitCosts(t *testing.T) {
 // jobs, price snapshots, balances, entitlements
 // ---------------------------------------------------------------------------------------------------------------------
 
-// TestConstraints_Jobs covers platform.jobs: the status vocabulary, the scheduled-needs-a-start rule, the shape of
-// frozen_settings, chaining (never its own source, same user), the unique module_job_ref, the one-ACTIVE-job slot (a scheduled,
-// running, paused or cancelling job holds it since platform_0004, the owner's ruling OD-2; a draft or a finished job holds none; every
-// held status is proven against every other status, and the slot is followed through a job's life), and jobs_guard (immutable columns,
-// frozen_settings frozen once the job leaves draft, updated_at owned by the trigger). It fails if any of these rules is missing, or
-// the slot is held by the wrong statuses.
+// TestConstraints_Jobs covers platform.jobs: a job is born draft and the status vocabulary behind that rule, the scheduled-needs-a-start rule, the shape of frozen_settings, chaining (never its own
+// source, same user), the unique module_job_ref, the one-ACTIVE-job slot (a confirmed, scheduled, running, paused, cancelling or completing job holds it since platform_0011, the owner's ruling OD-2 widened
+// by Phase 4; a draft, a previewed or a finished job holds none; every one of the twelve statuses is proven to hold the slot or to leave it, and the slot is followed through a job's life), and
+// jobs_guard (immutable columns, frozen_settings, the preview and the confirm key frozen once the job has left previewed, updated_at owned by the trigger). The lifecycle itself (the legal moves, the actors,
+// the events) is TestJobLifecycle_*. It fails if any of these rules is missing, or the slot is held by the wrong statuses.
 func TestConstraints_Jobs(t *testing.T) {
 	_, admin := migratedScratch(t)
 	tx := ledgerBegin(t, admin)
@@ -724,23 +723,53 @@ func TestConstraints_Jobs(t *testing.T) {
 		n++
 		return ledgerCols{"id": ledgerUUID("ee", n), "user_id": user, "module_id": module}.with(kv...)
 	}
-	start := "2030-01-01T00:00:00Z"
 	ok := func(t *testing.T, what string, cols ledgerCols) { t.Helper(); ledgerOKInsert(t, tx, what, tbl, cols) }
 	refused := func(t *testing.T, what, state string, why ledgerWhy, cols ledgerCols) {
 		t.Helper()
 		ledgerRefusedInsert(t, tx, what, state, why, tbl, cols)
 	}
 
-	t.Run("the status vocabulary", func(t *testing.T) {
-		for _, s := range []struct{ status, user string }{{"draft", a}, {"running", a}, {"paused", b}, {"cancelling", c}, {"succeeded", a}, {"failed", a}, {"cancelled", a}} {
-			ok(t, "control: status "+s.status, job(s.user, "m2", "status", s.status))
+	// DELIBERATE CHANGE (platform_0011): Phase 1 inserted a job in every status (and a scheduled one with a start) to prove the vocabulary CHECK; since the lifecycle a job is BORN draft (job_born_draft, 23001,
+	// raised by the BEFORE INSERT trigger, which runs before any CHECK), so the vocabulary CHECK is the wall BEHIND the trigger: it is proven with the trigger switched off (a savepoint that is rolled
+	// back), each of the twelve statuses accepted with what its other CHECKs need (jobShapeCols) and each bad one refused by jobs_status_vocabulary.
+	t.Run("a job is born draft, and the vocabulary CHECK stands behind that rule", func(t *testing.T) {
+		ok(t, "control: a draft job", job(a, "m2"))
+		for _, s := range clsStatuses {
+			if s == "draft" {
+				continue
+			}
+			refused(t, "a job born "+s, "23001", ledgerWhy{Constraint: "job_born_draft"}, job(a, "m2", "status", s))
 		}
-		// since platform_0004 a SCHEDULED job holds the slot of its user and module, so this control takes a (user, module) pair no other job here is active on (user A has a running m2 job above)
-		ok(t, "control: status scheduled with a start", job(ledgerAdminA, "m3", "status", "scheduled", "scheduled_start", start))
 		for _, bad := range []string{"bogus", "Draft", "", "done"} {
-			refused(t, fmt.Sprintf("status %q", bad), "23514", ledgerWhy{Constraint: "jobs_status_vocabulary"}, job(a, "m2", "status", bad))
+			refused(t, fmt.Sprintf("a job born with the status %q (the trigger answers before the CHECK)", bad), "23001", ledgerWhy{Constraint: "job_born_draft"}, job(a, "m2", "status", bad))
 		}
-		refused(t, "scheduled without a start", "23514", ledgerWhy{Constraint: "jobs_scheduled_has_a_start"}, job(a, "m2", "status", "scheduled"))
+		refused(t, "a job born with a NULL status (the trigger's comparison is NULL and lets it through; the NOT NULL column refuses it)", "23502", ledgerWhy{Column: "status"}, job(a, "m2", "status", nil))
+		for _, s := range clsStatuses {
+			s := s
+			ledgerTrial(t, tx, func(sp pgx.Tx) {
+				ledgerMust(t, sp, "ALTER TABLE platform.jobs DISABLE TRIGGER jobs_transition_guard")
+				ledgerOKInsert(t, sp, "with the trigger off, status "+s+" (with what its CHECKs need) is in the vocabulary", tbl, job(a, "m2", jobShapeKV(s)...))
+			})
+		}
+		for _, bad := range []string{"bogus", "Draft", "", "done"} {
+			ledgerTrial(t, tx, func(sp pgx.Tx) {
+				ledgerMust(t, sp, "ALTER TABLE platform.jobs DISABLE TRIGGER jobs_transition_guard")
+				ledgerRefusedInsert(t, sp, fmt.Sprintf("with the trigger off, status %q", bad), "23514", ledgerWhy{Constraint: "jobs_status_vocabulary"}, tbl, job(a, "m2", "status", bad))
+			})
+		}
+	})
+
+	t.Run("a scheduled job needs a start (a draft cannot be inserted scheduled, so the CHECK is reached by the move)", func(t *testing.T) {
+		ledgerTrial(t, tx, func(sp pgx.Tx) {
+			x := job(a, "m2")
+			ledgerOKInsert(t, sp, "control: a draft job", tbl, x)
+			id := x["id"].(string)
+			jobWalkTo(t, sp, id, "previewed")
+			sql, args := jobMoveStmt("previewed", "scheduled", id, "user", a, "constraints", jobOpts{}) // the move carries the start deadline: no write that leaves the status alone may set it
+			ledgerExpectRefused(t, sp, "scheduled without a start", "23514", ledgerWhy{Constraint: "jobs_scheduled_has_a_start"}, sql, args...)
+			ledgerMust(t, sp, "UPDATE platform.jobs SET scheduled_start = now() + interval '1 hour' WHERE id = $1", id)
+			ledgerExpectOK(t, sp, "control: scheduled with a start", sql, args...)
+		})
 	})
 
 	t.Run("frozen_settings is a JSON object", func(t *testing.T) {
@@ -769,76 +798,104 @@ func TestConstraints_Jobs(t *testing.T) {
 		ok(t, "control: two jobs with no ref (NULLs are not equal)", job(a, "m1"))
 	})
 
-	// The owner's ruling OD-2 (Docs/phase-2-spec.md, Part A row 2): a SCHEDULED job holds the one-active-job slot, in the database. Phase 1 pinned the opposite here ("a scheduled job does NOT
-	// hold the slot") against jobs_one_executing_per_user_module; platform_0004 replaced that index with jobs_one_active_per_user_module. Each holding status is tried against EVERY status
-	// (so each of the eight is proven to take the slot or to leave it), each time in a savepoint that is rolled back, with the legal first insert as the control.
-	t.Run("one ACTIVE job per user per module: scheduled, running, paused and cancelling hold the slot; draft and finished jobs hold none", func(t *testing.T) {
-		u, other := ledgerAdminB, ledgerAdminA // two users that have no m1 or m2 job yet
+	// The owner's ruling OD-2 (Docs/phase-2-spec.md, Part A row 2): a SCHEDULED job holds the one-active-job slot, in the database; Phase 4 (platform_0011, Locked 22) widened it to every state in which credits are
+	// held or a module may be working. Each of the TWELVE statuses is tried as the holder (a job of module 2, which can reach every status): while it sits there, a second job of the same user and module
+	// that is previewed (and holds nothing) is moved into the slot by each of the two doors, confirmed and scheduled - refused 23505 when the first holds the slot, accepted when it does not (the control of
+	// each refusal is the same two moves beside a holder that holds nothing) - and the OTHER module and another USER have their own slot beside every holder. Each trial is a savepoint that is rolled back.
+	t.Run("one ACTIVE job per user per module: confirmed, scheduled, running, paused, cancelling and completing hold the slot; draft, previewed and every terminal job hold none", func(t *testing.T) {
+		u, other := ledgerAdminB, ledgerAdminA // two users that have no job yet
 		const slot = "jobs_one_active_per_user_module"
-		statuses := []string{"draft", "scheduled", "running", "paused", "cancelling", "succeeded", "failed", "cancelled"}
-		active := map[string]bool{"scheduled": true, "running": true, "paused": true, "cancelling": true}
-		mk := func(user, module, status string) ledgerCols {
-			c := job(user, module, "status", status)
-			if status == "scheduled" {
-				c = c.with("scheduled_start", start)
-			}
-			return c
-		}
-		held := 0
-		for _, holder := range statuses {
-			if !active[holder] {
-				continue
-			}
+		holds := map[string]bool{"confirmed": true, "scheduled": true, "running": true, "paused": true, "cancelling": true, "completing": true}
+		held, tried := 0, 0
+		for _, holder := range clsStatuses {
 			holder := holder
-			held++
-			t.Run("held by a "+holder+" job", func(t *testing.T) {
+			tried++
+			if holds[holder] {
+				held++
+			}
+			t.Run("beside a "+holder+" job", func(t *testing.T) {
 				ledgerTrial(t, tx, func(sp pgx.Tx) {
-					ledgerOKInsert(t, sp, "control: the first "+holder+" m1 job is legal", tbl, mk(u, "m1", holder))
-					for _, second := range statuses {
-						if active[second] {
-							ledgerRefusedInsert(t, sp, "a second "+second+" m1 job for the same user while a "+holder+" one holds the slot", "23505", ledgerWhy{Constraint: slot}, tbl, mk(u, "m1", second))
-						} else {
-							ledgerOKInsert(t, sp, "control: a "+second+" m1 job takes no slot, so it fits beside the "+holder+" one", tbl, mk(u, "m1", second))
-						}
+					firstCols, secondCols := job(u, "m2"), job(u, "m2")
+					ledgerOKInsert(t, sp, "control: the first job", tbl, firstCols)
+					ledgerOKInsert(t, sp, "control: a second draft job of the same user and module (a draft holds no slot)", tbl, secondCols)
+					first, second := firstCols["id"].(string), secondCols["id"].(string)
+					jobWalkTo(t, sp, first, holder)
+					jobWalkTo(t, sp, second, "previewed") // a previewed job holds no slot either: it sits beside every holder
+					for _, door := range []string{"confirmed", "scheduled"} {
+						door := door
+						ledgerTrial(t, sp, func(sp2 pgx.Tx) {
+							if door == "scheduled" {
+								ledgerMust(t, sp2, "UPDATE platform.jobs SET scheduled_start = now() + interval '1 hour' WHERE id = $1", second)
+							}
+							what := fmt.Sprintf("the second job moved previewed -> %s while the first is %s", door, holder)
+							sql, args := jobMoveStmt("previewed", door, second, "user", u, "constraints", jobOpts{})
+							if holds[holder] {
+								ledgerExpectRefused(t, sp2, what, "23505", ledgerWhy{Constraint: slot}, sql, args...)
+							} else {
+								ledgerExpectOK(t, sp2, "control: "+what+" (a "+holder+" job holds no slot)", sql, args...)
+							}
+						})
 					}
-					ledgerOKInsert(t, sp, "control: the OTHER module is another slot (a "+holder+" m2 job)", tbl, mk(u, "m2", holder))
-					ledgerOKInsert(t, sp, "control: another USER has their own slot (a "+holder+" m1 job)", tbl, mk(other, "m1", holder))
+					other1, other2 := job(u, "m3"), job(other, "m2")
+					ledgerOKInsert(t, sp, "control: a job of the OTHER module", tbl, other1)
+					jobWalkTo(t, sp, other1["id"].(string), "confirmed")
+					ledgerOKInsert(t, sp, "control: a job of another USER", tbl, other2)
+					jobWalkTo(t, sp, other2["id"].(string), "confirmed")
 				})
 			})
 		}
-		if held != 4 {
-			t.Fatalf("%d statuses were tried as slot holders, want the 4 of the ruling (scheduled, running, paused, cancelling)", held)
+		if held != 6 || tried != 12 {
+			t.Fatalf("%d statuses were tried as the holder and %d of them hold the slot, want the 12 of the vocabulary and the 6 of Locked 22 (confirmed, scheduled, running, paused, cancelling, completing)", tried, held)
 		}
 	})
 
 	t.Run("the slot follows the job: a second job cannot be confirmed while the first is active, and can once it has ended", func(t *testing.T) {
 		const slot = "jobs_one_active_per_user_module"
-		first, second := job(ledgerAdminB, "m1"), job(ledgerAdminB, "m1")
-		confirm := "UPDATE platform.jobs SET status = 'scheduled', scheduled_start = now() WHERE id = $1"
+		u := ledgerAdminB
+		firstCols, secondCols := job(u, "m2"), job(u, "m2")
+		first, second := firstCols["id"].(string), secondCols["id"].(string)
+		confirm := func(id string) (string, []any) { // the move out of previewed carries the start deadline in its own statement
+			return jobMoveStmt("previewed", "confirmed", id, "user", u, "constraints", jobOpts{})
+		}
 		ledgerTrial(t, tx, func(sp pgx.Tx) {
-			ledgerOKInsert(t, sp, "control: a draft job", tbl, first)
-			ledgerOKInsert(t, sp, "control: a second draft job of the same user and module (a draft holds no slot)", tbl, second)
-			ledgerExpectOK(t, sp, "control: the first job is confirmed (draft -> scheduled) and takes the slot", confirm, first["id"])
-			ledgerExpectRefused(t, sp, "confirming the second job while the first is scheduled", "23505", ledgerWhy{Constraint: slot}, confirm, second["id"])
-			for _, st := range []string{"running", "paused", "cancelling"} {
-				ledgerExpectOK(t, sp, "control: the first job moves on to "+st+" (it already holds the slot, so its own move cannot collide)", "UPDATE platform.jobs SET status = $2 WHERE id = $1", first["id"], st)
-				ledgerExpectRefused(t, sp, "confirming the second job while the first is "+st, "23505", ledgerWhy{Constraint: slot}, confirm, second["id"])
+			ledgerOKInsert(t, sp, "control: a draft job", tbl, firstCols)
+			ledgerOKInsert(t, sp, "control: a second draft job of the same user and module (a draft holds no slot)", tbl, secondCols)
+			jobWalkTo(t, sp, second, "previewed")
+			sql, args := confirm(second)
+			jobWalkTo(t, sp, first, "confirmed") // the first job is confirmed and takes the slot
+			ledgerExpectRefused(t, sp, "confirming the second job while the first is confirmed", "23505", ledgerWhy{Constraint: slot}, sql, args...)
+			for _, st := range []string{"running", "cancelling", "completing"} {
+				jobWalkTo(t, sp, first, st) // control: the first job moves on (it already holds the slot, so its own move cannot collide)
+				ledgerExpectRefused(t, sp, "confirming the second job while the first is "+st, "23505", ledgerWhy{Constraint: slot}, sql, args...)
 			}
-			ledgerExpectOK(t, sp, "control: the first job ends (cancelled) and frees the slot", "UPDATE platform.jobs SET status = 'cancelled' WHERE id = $1", first["id"])
-			ledgerExpectOK(t, sp, "control: now the second job can be confirmed", confirm, second["id"])
-			// since platform_0007 an ended (cancelled) job never moves again, so the move back to running is refused by jobs_terminal_is_final before the slot index is reached; the slot index is then proven
-			// on the same move with the trigger switched off (a savepoint that is rolled back), and on a job that CAN legally move there (a draft one), so each rule is asserted alone
+			jobWalkTo(t, sp, first, "cancelled") // control: the first job ends (a cancel the module accepted ends cancelled) and frees the slot
+			ledgerExpectOK(t, sp, "control: now the second job can be confirmed", sql, args...)
+
+			// An ended job never moves again, so the move back to running is refused by jobs_terminal_is_final before the slot index is reached; the index is then proven on the same move with the
+			// two triggers that guard the status switched off (a savepoint that is rolled back; the move states its three settings, for the event it writes), each wall asserted alone.
 			ledgerExpectRefused(t, sp, "the first job (cancelled) moved back to running while the second holds the slot: the terminal rule answers first", "23001", ledgerWhy{Constraint: "jobs_terminal_is_final"},
-				"UPDATE platform.jobs SET status = 'running' WHERE id = $1", first["id"])
+				jobMoveBy("engine", "", "constraints", first, "running"))
 			ledgerTrial(t, sp, func(sp2 pgx.Tx) {
 				ledgerMust(t, sp2, "ALTER TABLE platform.jobs DISABLE TRIGGER jobs_terminal_is_final")
-				ledgerExpectRefused(t, sp2, "the first job moved back to running while the second holds the slot, the terminal trigger off (the index backs the rule)", "23505", ledgerWhy{Constraint: slot},
-					"UPDATE platform.jobs SET status = 'running' WHERE id = $1", first["id"])
+				ledgerMust(t, sp2, "ALTER TABLE platform.jobs DISABLE TRIGGER jobs_transition_guard")
+				ledgerExpectRefused(t, sp2, "the first job moved back to running while the second holds the slot, both status triggers off (the index backs the rule)", "23505", ledgerWhy{Constraint: slot},
+					jobMoveBy("engine", "", "constraints", first, "running"))
 			})
-			third := job(ledgerAdminB, "m1")
+			ledgerTrial(t, sp, func(sp2 pgx.Tx) {
+				jobWalkTo(t, sp2, second, "failed") // the control: the second job ended, so the slot is free
+				ledgerMust(t, sp2, "ALTER TABLE platform.jobs DISABLE TRIGGER jobs_terminal_is_final")
+				ledgerMust(t, sp2, "ALTER TABLE platform.jobs DISABLE TRIGGER jobs_transition_guard")
+				ledgerExpectOK(t, sp2, "control: the same move with the slot free", jobMoveBy("engine", "", "constraints", first, "running"))
+			})
+			// a previewed job moved straight to running with the lifecycle guard off (a draft one would meet jobs_confirmed_shape first: confirmed_at is the guard's) is the slot's to refuse
+			third := job(u, "m2")
 			ledgerOKInsert(t, sp, "control: a third draft job of the same user and module (a draft holds no slot)", tbl, third)
-			ledgerExpectRefused(t, sp, "a draft job moved straight to running while the second job holds the slot", "23505", ledgerWhy{Constraint: slot},
-				"UPDATE platform.jobs SET status = 'running' WHERE id = $1", third["id"])
+			jobWalkTo(t, sp, third["id"].(string), "previewed")
+			ledgerTrial(t, sp, func(sp2 pgx.Tx) {
+				ledgerMust(t, sp2, "ALTER TABLE platform.jobs DISABLE TRIGGER jobs_transition_guard")
+				ledgerExpectRefused(t, sp2, "a previewed job moved straight to running while the second job holds the slot", "23505", ledgerWhy{Constraint: slot},
+					jobAs("engine", "", "constraints", fmt.Sprintf("UPDATE platform.jobs SET status = 'running', confirmed_at = now() WHERE id = '%s'", third["id"])))
+			})
 		})
 	})
 
@@ -853,13 +910,16 @@ func TestConstraints_Jobs(t *testing.T) {
 		ledgerExpectRefused(t, tx, "changing source_job_id", "23001", why, "UPDATE platform.jobs SET source_job_id = $2 WHERE id = $1", id, g0["id"])
 		ledgerExpectRefused(t, tx, "changing created_at", "23001", why, "UPDATE platform.jobs SET created_at = created_at + interval '1 day' WHERE id = $1", id)
 
-		t.Run("frozen_settings is editable in draft and frozen after", func(t *testing.T) {
+		t.Run("frozen_settings is editable while the job is a draft or previewed and frozen after", func(t *testing.T) {
+			sid := id.(string)
 			ledgerExpectOK(t, tx, "control: editing frozen_settings in draft", "UPDATE platform.jobs SET frozen_settings = '{\"a\":1}' WHERE id = $1", id)
-			ledgerExpectOK(t, tx, "control: leaving draft", "UPDATE platform.jobs SET status = 'scheduled', scheduled_start = now() WHERE id = $1", id)
+			jobWalkTo(t, tx, sid, "previewed")
+			ledgerExpectOK(t, tx, "control: editing frozen_settings while previewed (platform_0011: a previewed job may still change what it will do)", "UPDATE platform.jobs SET frozen_settings = '{\"a\":2}' WHERE id = $1", id)
+			jobWalkTo(t, tx, sid, "confirmed")
 			frozen := ledgerWhy{Message: "frozen"}
-			ledgerExpectRefused(t, tx, "changing frozen_settings of a scheduled job", "23001", frozen, "UPDATE platform.jobs SET frozen_settings = '{\"a\":2}' WHERE id = $1", id)
-			ledgerExpectOK(t, tx, "control: writing the SAME settings back is not a change", "UPDATE platform.jobs SET frozen_settings = '{\"a\":1}' WHERE id = $1", id)
-			ledgerExpectOK(t, tx, "control: the status itself moves on", "UPDATE platform.jobs SET status = 'running' WHERE id = $1", id)
+			ledgerExpectRefused(t, tx, "changing frozen_settings of a confirmed job", "23001", frozen, "UPDATE platform.jobs SET frozen_settings = '{\"a\":3}' WHERE id = $1", id)
+			ledgerExpectOK(t, tx, "control: writing the SAME settings back is not a change", "UPDATE platform.jobs SET frozen_settings = '{\"a\":2}' WHERE id = $1", id)
+			jobWalkTo(t, tx, sid, "running") // control: the status itself moves on
 			ledgerExpectRefused(t, tx, "changing frozen_settings of a running job", "23001", frozen, "UPDATE platform.jobs SET frozen_settings = '{}' WHERE id = $1", id)
 		})
 		t.Run("updated_at is owned by the trigger", func(t *testing.T) {

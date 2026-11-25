@@ -52,12 +52,12 @@ func (s *Store) Reserve(ctx context.Context, req ReserveReq) (ReserveResult, err
 //  3. SELECT ... FROM platform.jobs WHERE id = $1 FOR UPDATE: the job row is ours until the transaction ends;
 //  4. IDEMPOTENCE: when the job already holds a reserve, return it (Replayed) if the units agree, else ErrIdempotencyMismatch. This comes before the status
 //     check, so a replay still answers after the engine moved the job out of draft;
-//  5. the job must be a draft (ErrJobState);
-//  6. SELECT ... FROM platform.unit_costs WHERE module_id = $1 FOR SHARE: a price change (an UPDATE of those rows) waits until this transaction ends,
-//     so the snapshot below EQUALS the table at that instant instead of racing it;
+//  5. the job must be a draft or (since Phase 4) previewed (ErrJobState);
+//  6. SELECT ... FROM platform.unit_costs WHERE module_id = $1 FOR SHARE (EVERY unit of the module, reachable or not): a price change or a flip of the reachable flag waits until this transaction ends,
+//     so the snapshot below EQUALS the table at that instant instead of racing it; the prices used are the REACHABLE units (platform_0013);
 //  7. the reserve rate is the DEAREST price (ties: the lexicographically first unit); needed = units * rate; the available balance is read under the
 //     lock and available < needed is ErrInsufficientCredits{Available, Needed, Shortfall}, decided BEFORE anything is written;
-//  8. ONE INSERT ... SELECT copies every unit of the module into platform.job_unit_prices, and the ledger reserve row is inserted at the rate
+//  8. ONE INSERT ... SELECT copies every REACHABLE unit of the module into platform.job_unit_prices, and the ledger reserve row is inserted at the rate
 //     ('reserve:<job>' is its key). The database refuses a reserve that is not at the dearest price or whose snapshot is incomplete.
 //
 // On any error the caller rolls its transaction back (a refusal at steps 1-7 has written nothing, so the transaction is still usable).
@@ -101,13 +101,25 @@ func (s *Store) reserve(ctx context.Context, tx pgx.Tx, req ReserveReq) (Reserve
 		}
 		return ReserveResult{ReserveID: prev.id, Unit: prev.unit, UnitCost: prev.unitCost, Units: prev.units, Reserved: prev.reserved, Prices: prices, Replayed: true}, nil
 	}
-	if status != "draft" {
-		return ReserveResult{}, fmt.Errorf("%w: job %s is %s, a reserve needs a draft job", ErrJobState, req.JobID, status)
+	// a job that holds nothing yet: draft (Phase 2) or previewed (Phase 4: the confirm transaction reserves from previewed, then moves the job to confirmed or scheduled itself)
+	if status != "draft" && status != "previewed" {
+		return ReserveResult{}, fmt.Errorf("%w: job %s is %s, a reserve needs a draft or previewed job", ErrJobState, req.JobID, status)
 	}
 
 	// FOR SHARE: the module's price rows cannot change until this transaction ends. (platform_app holds a column-level UPDATE on unit_costs, which is what
 	// a row lock needs; FOR KEY SHARE would not do, an UPDATE of the cost column does not conflict with it.)
-	rows, err := tx.Query(ctx, `SELECT unit, cost FROM platform.unit_costs WHERE module_id = $1 ORDER BY unit FOR SHARE`, job.module)
+	// Phase 4 (platform_0013): lock EVERY price row of the module, reachable or not, so that a flip of the reachable flag (platform.set_unit_reachable takes FOR UPDATE on the row) waits for this transaction exactly as a
+	// price change does; then read the REACHABLE ones: the snapshot and the dearest rate cover only the units a job of this module can be charged under its current configuration (module 1 with the vendor fallback
+	// off reserves at 1 per row, not at the vendor's 2).
+	lockRows, err := tx.Query(ctx, `SELECT unit FROM platform.unit_costs WHERE module_id = $1 ORDER BY unit FOR SHARE`, job.module)
+	if err != nil {
+		return ReserveResult{}, s.fail(err, pgCtx{})
+	}
+	lockRows.Close()
+	if err := lockRows.Err(); err != nil {
+		return ReserveResult{}, s.fail(err, pgCtx{})
+	}
+	rows, err := tx.Query(ctx, `SELECT unit, cost FROM platform.unit_costs WHERE module_id = $1 AND reachable ORDER BY unit`, job.module)
 	if err != nil {
 		return ReserveResult{}, s.fail(err, pgCtx{})
 	}
@@ -116,7 +128,7 @@ func (s *Store) reserve(ctx context.Context, tx pgx.Tx, req ReserveReq) (Reserve
 		return ReserveResult{}, err
 	}
 	if len(locked) == 0 {
-		return ReserveResult{}, fmt.Errorf("%w: module %s has no unit prices to freeze", ErrSnapshot, job.module)
+		return ReserveResult{}, fmt.Errorf("%w: module %s has no reachable unit price to freeze", ErrSnapshot, job.module)
 	}
 	rate := dearest(locked)
 	needed := int64(req.Units) * int64(rate.cost)
@@ -132,7 +144,7 @@ func (s *Store) reserve(ctx context.Context, tx pgx.Tx, req ReserveReq) (Reserve
 
 	// the snapshot: ONE statement copies every unit of the module, in the transaction that holds the share locks
 	rows, err = tx.Query(ctx, `INSERT INTO platform.job_unit_prices (job_id, module_id, unit, cost)
-		SELECT $1::uuid, u.module_id, u.unit, u.cost FROM platform.unit_costs u WHERE u.module_id = $2
+		SELECT $1::uuid, u.module_id, u.unit, u.cost FROM platform.unit_costs u WHERE u.module_id = $2 AND u.reachable
 		RETURNING unit, cost`, req.JobID, job.module)
 	if err != nil {
 		return ReserveResult{}, s.fail(err, c)

@@ -118,8 +118,17 @@ func ledgerBool(t *testing.T, db ledgerDB, sql string, args ...any) bool {
 
 // ledgerSeed writes the fixtures every ledger test starts from, in db (a transaction): three users, two admins (which are
 // users too), five jobs, and the price snapshot of four of them (job A0 has none, on purpose).
+//
+// Since platform_0013 module 1's vendor unit ships UNREACHABLE (a snapshot holds the reachable units only), while every test written before it reserves at the vendor price 2 and freezes all three units of
+// module 1. ledgerSeed therefore switches the vendor fallback ON, through the one writer (platform.set_unit_reachable), once, before it freezes anything - and only where the function exists, because the
+// migration lifecycle test seeds at every height of the chain. The tests of platform_0013 itself (reachable_units_test.go) start from the SEEDED state: they call ledgerSeed and then switch the vendor off again.
 func ledgerSeed(t *testing.T, db ledgerDB) {
 	t.Helper()
+	ledgerMust(t, db, `DO $do$ BEGIN
+		IF to_regprocedure('platform.set_unit_reachable(text, boolean, text)') IS NOT NULL THEN
+			PERFORM platform.set_unit_reachable('m1_vendor', true, 'test fixture: the vendor fallback is on, as when the older tests were written');
+		END IF;
+	END $do$`)
 	for _, u := range []struct{ id, email string }{
 		{ledgerUserA, "a@example.test"}, {ledgerUserB, "b@example.test"}, {ledgerUserC, "c@example.test"},
 		{ledgerAdminA, "admin-a@example.test"}, {ledgerAdminB, "admin-b@example.test"},
@@ -139,15 +148,24 @@ func ledgerSeed(t *testing.T, db ledgerDB) {
 	}
 }
 
-// ledgerFreeze copies the CURRENT unit costs of the job's module into the job's price snapshot (what P2's confirm will do).
+// ledgerFreeze copies the CURRENT unit costs of the job's module into the job's price snapshot (what P2's confirm will do): since platform_0013 the REACHABLE ones, as the store does.
 func ledgerFreeze(t *testing.T, db ledgerDB, job string) {
 	t.Helper()
 	tag := ledgerMust(t, db, `INSERT INTO platform.job_unit_prices (job_id, module_id, unit, cost)
 		SELECT $1::uuid, u.module_id, u.unit, u.cost FROM platform.unit_costs u
-		WHERE u.module_id = (SELECT module_id FROM platform.jobs WHERE id = $1::uuid)`, job)
+		WHERE u.module_id = (SELECT module_id FROM platform.jobs WHERE id = $1::uuid)`+ledgerReachableFilter(t, db), job)
 	if tag.RowsAffected() < 1 {
 		t.Fatalf("the price snapshot of job %s copied %d rows: the instrument matched nothing", job, tag.RowsAffected())
 	}
+}
+
+// ledgerReachableFilter is the clause that keeps a snapshot copy to the reachable units where the chain has the column (platform_0013): empty at every lower height of the lifecycle test.
+func ledgerReachableFilter(t *testing.T, db ledgerDB) string {
+	t.Helper()
+	if ledgerBool(t, db, "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'platform' AND table_name = 'unit_costs' AND column_name = 'reachable')") {
+		return " AND u.reachable"
+	}
+	return ""
 }
 
 // ledgerNewJob inserts a draft job (and, when snapshot is true, freezes the current prices of its module) and returns its id.

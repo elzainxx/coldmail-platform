@@ -12,7 +12,7 @@
 --      refused as everywhere else, Locked 12) in the same transaction, so a move without its event cannot commit.
 --   4. WHAT A MODULE CAN DO IS DATA. platform.modules.can_pause and can_cancel are seeded from the module code (Docs/phase-4-spec.md, "Findings"): no module can pause one job, modules 2 and 3 can cancel one, module 1 can do
 --      neither. The guard refuses running -> paused unless the module can pause (job_module_cannot_pause) and running -> cancelling unless it can cancel (job_module_cannot_cancel). Pause is never faked by cancel and resubmit.
---   5. THE TIMES ARE THE DATABASE'S. confirmed_at, started_at, finished_at and cancel_requested_at are set by the guard from now(); a scheduled job cannot start before its time (job_started_early) and nothing expires before its
+--   5. THE TIMES ARE THE DATABASE'S. confirmed_at, started_at, finished_at and cancel_requested_at are set by the guard from now() at the move and change ONLY with a move (23001, job_lifecycle_columns_move_with_a_transition, also for paused_from and start_deadline); a scheduled job cannot start before its time (job_started_early) and nothing expires before its
 --      start_deadline (job_expired_early). A paused job resumes only to the state it paused from (paused_from; job_resume_to_where_it_paused_from). A job that was cancelled cannot end succeeded and the reverse.
 --   6. THE SLOT covers every state in which credits are held or a module may be working: confirmed, scheduled, running, paused, cancelling, completing (it replaces jobs_one_active_per_user_module of platform_0004). A job in
 --      draft or previewed holds nothing and does not hold the slot.
@@ -23,6 +23,7 @@
 -- settings itself can claim any actor: the audit rows are as honest as the role that writes them. The compensating controls are that only platform_app holds UPDATE on platform.jobs (the admin role is read-only), that the
 -- store functions of internal/jobs are the only code that writes the table (scripts/check-job-writers.sh, Phase 4 chunk B6) and that a user's move must carry the owner's own id.
 --
+-- AN UPGRADE needs no job in confirmed, scheduled, running, paused, cancelling or completing (jobs_confirmed_shape would have nothing to validate against); the platform had no job engine before this migration, so none exists outside tests.
 -- NULL TRAP (CLAUDE.md rule 13): every comparison on a nullable value is IS DISTINCT FROM / IS NOT NULL, and each CHECK is built from boolean expressions that cannot be NULL. A custom setting that was SET LOCAL in an earlier
 -- transaction of the session reads back as the empty string, not NULL: both are "absent" (NULLIF).
 -- Created AS platform_owner (see platform_0002).
@@ -197,7 +198,14 @@ BEGIN
     END IF;
 
     IF NEW.status IS NOT DISTINCT FROM OLD.status THEN
-        RETURN NEW;                       -- an annotation (module_job_ref, last_progress_at, a preview while previewed ...): not a transition
+        -- an annotation (module_job_ref, last_progress_at, stale_alerted_at, a preview while previewed ...): not a transition. The columns that carry the lifecycle's own facts move ONLY with a transition: a writer that
+        -- cleared cancel_requested_at on a cancelling job would let completing -> succeeded through, one that moved start_deadline would keep a job from expiring, one that wrote finished_at would back-date the end.
+        IF NEW.paused_from IS DISTINCT FROM OLD.paused_from OR NEW.cancel_requested_at IS DISTINCT FROM OLD.cancel_requested_at OR NEW.confirmed_at IS DISTINCT FROM OLD.confirmed_at
+           OR NEW.started_at IS DISTINCT FROM OLD.started_at OR NEW.finished_at IS DISTINCT FROM OLD.finished_at OR NEW.start_deadline IS DISTINCT FROM OLD.start_deadline THEN
+            RAISE EXCEPTION 'platform.jobs: job % %: paused_from, cancel_requested_at, confirmed_at, started_at, finished_at and start_deadline change only together with a change of status', OLD.id, OLD.status
+                USING ERRCODE = '23001', CONSTRAINT = 'job_lifecycle_columns_move_with_a_transition';
+        END IF;
+        RETURN NEW;
     END IF;
 
     SELECT t.actors INTO v_actors FROM platform.job_transitions t WHERE t.from_status = OLD.status AND t.to_status = NEW.status;
@@ -214,16 +222,16 @@ BEGIN
         RAISE EXCEPTION 'platform.jobs: job % %->%: an actor of kind % may not take that move (allowed: %)', OLD.id, OLD.status, NEW.status, v_kind, v_actors
             USING ERRCODE = '23001', CONSTRAINT = 'job_transition_actor_not_allowed';
     END IF;
+    IF v_kind IN ('user', 'admin') AND v_id IS NULL THEN
+        RAISE EXCEPTION 'platform.jobs: job % %->%: a % move names who acts (platform.actor_id)', OLD.id, OLD.status, NEW.status, v_kind
+            USING ERRCODE = '23001', CONSTRAINT = 'job_transition_needs_an_actor';
+    END IF;
     IF v_kind = 'user' AND v_id IS DISTINCT FROM OLD.user_id::text THEN
         RAISE EXCEPTION 'platform.jobs: job % %->%: the acting user is not the job''s owner', OLD.id, OLD.status, NEW.status
             USING ERRCODE = '23001', CONSTRAINT = 'job_transition_by_another_user';
     END IF;
     IF v_kind = 'engine' AND v_id IS NOT NULL THEN
         RAISE EXCEPTION 'platform.jobs: job % %->%: the engine is not a person and carries no actor id', OLD.id, OLD.status, NEW.status
-            USING ERRCODE = '23001', CONSTRAINT = 'job_transition_needs_an_actor';
-    END IF;
-    IF v_kind IN ('user', 'admin') AND v_id IS NULL THEN
-        RAISE EXCEPTION 'platform.jobs: job % %->%: a % move names who acts (platform.actor_id)', OLD.id, OLD.status, NEW.status, v_kind
             USING ERRCODE = '23001', CONSTRAINT = 'job_transition_needs_an_actor';
     END IF;
 
@@ -244,9 +252,7 @@ BEGIN
     END IF;
 
     -- a pause resumes only where it paused from
-    IF NEW.status = 'paused' THEN
-        NEW.paused_from := OLD.status;
-    ELSIF OLD.status = 'paused' THEN
+    IF OLD.status = 'paused' THEN
         IF NEW.status IN ('scheduled', 'running') AND NEW.status IS DISTINCT FROM OLD.paused_from THEN
             RAISE EXCEPTION 'platform.jobs: job % paused from % and resumes only there, not to %', OLD.id, OLD.paused_from, NEW.status
                 USING ERRCODE = '23001', CONSTRAINT = 'job_resume_to_where_it_paused_from';
@@ -255,7 +261,6 @@ BEGIN
             RAISE EXCEPTION 'platform.jobs: job % paused from % and a job that was running never expires', OLD.id, OLD.paused_from
                 USING ERRCODE = '23001', CONSTRAINT = 'job_transition_illegal';
         END IF;
-        NEW.paused_from := NULL;
     END IF;
 
     -- the clock is the database's
@@ -269,9 +274,6 @@ BEGIN
     END IF;
 
     -- a cancel that the module accepted decides how the job ends
-    IF NEW.status = 'cancelling' THEN
-        NEW.cancel_requested_at := now();
-    END IF;
     IF OLD.status = 'completing' AND NEW.status = 'succeeded' AND OLD.cancel_requested_at IS NOT NULL THEN
         RAISE EXCEPTION 'platform.jobs: job % had a cancel accepted and ends cancelled, never succeeded', OLD.id
             USING ERRCODE = '23001', CONSTRAINT = 'job_cancelled_cannot_succeed';
@@ -281,16 +283,16 @@ BEGIN
             USING ERRCODE = '23001', CONSTRAINT = 'job_cancelled_needs_a_cancel';
     END IF;
 
-    -- timestamps the engine and the API do not get to choose
-    IF NEW.status IN ('confirmed', 'scheduled') AND NEW.confirmed_at IS NULL THEN
-        NEW.confirmed_at := now();
-    END IF;
+    -- THE LIFECYCLE'S OWN COLUMNS ARE THE GUARD'S TO SET, NEVER THE WRITER'S, not even inside a move (a move that carried cancel_requested_at = NULL would have let completing -> succeeded through):
+    -- each is computed here from the old row and the clock, and whatever the statement said is overwritten.
+    NEW.paused_from         := CASE WHEN NEW.status = 'paused' THEN OLD.status ELSE NULL END;
+    NEW.cancel_requested_at := CASE WHEN NEW.status = 'cancelling' THEN now() ELSE OLD.cancel_requested_at END;
+    NEW.confirmed_at        := CASE WHEN OLD.status = 'previewed' AND NEW.status IN ('confirmed', 'scheduled') THEN now() ELSE OLD.confirmed_at END;
+    NEW.started_at          := CASE WHEN NEW.status = 'running' THEN COALESCE(OLD.started_at, now()) ELSE OLD.started_at END;
+    NEW.finished_at         := CASE WHEN NEW.status IN ('succeeded', 'failed', 'cancelled', 'expired') THEN now() ELSE OLD.finished_at END;
+    NEW.start_deadline      := CASE WHEN OLD.status = 'previewed' AND NEW.status IN ('confirmed', 'scheduled') THEN NEW.start_deadline ELSE OLD.start_deadline END;   -- the confirm move states it, no other move can
     IF NEW.status = 'running' THEN
-        NEW.started_at := COALESCE(OLD.started_at, now());
         NEW.last_progress_at := now();
-    END IF;
-    IF NEW.status IN ('succeeded', 'failed', 'cancelled', 'expired') THEN
-        NEW.finished_at := now();
     END IF;
     RETURN NEW;
 END

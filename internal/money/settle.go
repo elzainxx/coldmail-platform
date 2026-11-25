@@ -3,6 +3,7 @@ package money
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 
@@ -63,7 +64,7 @@ func (s *Store) Settle(ctx context.Context, req SettleReq) (SettleResult, error)
 //  1. the job must exist, belong to a metered module and have left draft; the (user, module) lock is taken; the job must hold a reserve (ErrNoReserve);
 //  2. the prices come from the job's FROZEN snapshot (platform.job_unit_prices), never from platform.unit_costs;
 //  3. an item whose item_ref the ledger already charged is AlreadySettled and nothing more is done with it;
-//  4. every other item goes through charge.Decide: Charge is priced from the snapshot (a unit with no frozen price is ErrUnpriced), Free and NotFinal are
+//  4. every other item goes through charge.Decide: Charge is priced from the snapshot (a unit with no frozen price, for example the vendor unit of a job confirmed while the vendor fallback was off, is NEVER charged: the item is returned in Unmapped with the rule and a note, Phase 4), Free and NotFinal are
 //     counted and write nothing, Unmapped is collected and writes nothing;
 //  5. the charges of THIS call must fit what the reserve still holds (reserved - charged - released), else ErrReserveExceeded, and nothing is written;
 //  6. each charge is one ledger row (units = 1, the frozen price, item_ref, key 'charge:<job>:<item_ref>') inserted ON CONFLICT DO NOTHING: a row the
@@ -152,8 +153,15 @@ func (s *Store) settle(ctx context.Context, tx pgx.Tx, req SettleReq) (SettleRes
 		switch d.Kind {
 		case charge.Charge:
 			p, ok := prices[d.Unit]
+			if !ok && !strings.HasPrefix(d.Unit, job.module+"_") {
+				// a unit of ANOTHER module (m2_accepted in a module 1 job) is a bug of the caller or of the charge table, never a configuration: refused, nothing written
+				return SettleResult{}, fmt.Errorf("%w: item %d (rule %s) is charged as unit %q, which is not a unit of module %s (job %s)", ErrUnpriced, i, d.Rule, d.Unit, job.module, req.JobID)
+			}
 			if !ok {
-				return SettleResult{}, fmt.Errorf("%w: item %d (rule %s) is charged as unit %q, which job %s has no frozen price for", ErrUnpriced, i, d.Rule, d.Unit, req.JobID)
+				// Phase 4 (platform_0013): the snapshot holds only the units that were REACHABLE when the job was confirmed. An answer the module gave under another configuration (module 1's vendor answer while the
+				// platform believed the fallback off) cannot be priced and is never charged: it is flagged to the caller (the engine records a job event) and the credits stay in the reserve until release.
+				res.Unmapped = append(res.Unmapped, UnmappedItem{ItemRef: it.ItemRef, Rule: d.Rule, Note: fmt.Sprintf("unit %s has no price in this job's frozen snapshot (it was not reachable when the job was confirmed): not charged", d.Unit)})
+				continue
 			}
 			pending = append(pending, pendingCharge{ref: it.ItemRef, unit: d.Unit, price: p})
 			sum += int64(p)

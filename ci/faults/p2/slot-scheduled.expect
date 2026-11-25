@@ -1,8 +1,8 @@
-# Ruling OD-2: a SCHEDULED job holds the one-active-job slot, enforced by the database. The fault drops 'scheduled' from the partial unique index predicate (the Phase 1 rule); a second scheduled job is then ALLOWED and the test must say so.
+# Ruling OD-2, widened by Locked 22: a SCHEDULED job holds the one-active-job slot, enforced by the database. The fault drops 'scheduled' from the partial unique index predicate of platform_0011 (the index that platform_0004's was replaced by; a patch of platform_0004 would be dropped and re-created by 0011 and prove nothing); a second job moved previewed -> confirmed beside a scheduled one is then ALLOWED and the test must say so.
 GATE=slot-scheduled
 TARGET=platform
 SETUP=
 STEP=go test TestConstraints_Jobs (database integration test, real Postgres)
 CMD=H_PG_ADMIN_DSN="$FAULT_ADMIN_DSN" bash tests/harness/run-db-tests.sh '^TestConstraints_Jobs$'
 MESSAGE=--- FAIL: TestConstraints_Jobs
-MESSAGE=a second scheduled m1 job for the same user while a scheduled one holds the slot: was ALLOWED
+MESSAGE=the second job moved previewed -> confirmed while the first is scheduled: was ALLOWED

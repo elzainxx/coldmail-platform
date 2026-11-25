@@ -633,7 +633,7 @@ func TestBalance_TriggerFunctionsAreSafeDefiners(t *testing.T) {
 	// What must be a definer, owned by platform_owner: the two writers of Phase 1 and, from platform_0004, the audit-row writer and the admin check (it reads platform.admins FOR SHARE,
 	// which the application roles cannot do); from platform_0005 the two reserve checks (they read the price snapshot and platform.reserves), the writer of platform.reserves and the
 	// release check; from platform_0006 the writer of platform.m3_entitlements (the ledger trigger) and the writer of platform.m3_sync (the entitlement trigger).
-	want := []string{"admin_audit_require_active_admin|platform_owner", "ledger_apply_to_balance|platform_owner", "ledger_apply_to_entitlements|platform_owner", "ledger_apply_to_reserves|platform_owner", "ledger_audit_adjustment|platform_owner", "ledger_check_release|platform_owner", "ledger_check_reserve|platform_owner", "ledger_require_active_admin|platform_owner", "m3_entitlements_raise_sync|platform_owner", "m3_entitlements_require_active_admin|platform_owner", "require_active_admin|platform_owner", "unit_costs_guard|platform_owner", "unit_costs_record_history|platform_owner"}
+	want := []string{"admin_audit_require_active_admin|platform_owner", "job_events_check_actor|platform_owner", "ledger_apply_to_balance|platform_owner", "ledger_apply_to_entitlements|platform_owner", "ledger_apply_to_reserves|platform_owner", "ledger_audit_adjustment|platform_owner", "ledger_check_release|platform_owner", "ledger_check_reserve|platform_owner", "ledger_require_active_admin|platform_owner", "m3_entitlements_raise_sync|platform_owner", "m3_entitlements_require_active_admin|platform_owner", "require_active_admin|platform_owner", "set_unit_reachable|platform_owner", "unit_costs_guard|platform_owner", "unit_costs_record_history|platform_owner"}
 	// The four functions that call platform.require_active_admin are definers too (platform_0004): they are trigger functions that run for the CALLER, and no role holds EXECUTE on
 	// require_active_admin, so without SECURITY DEFINER every application write would fail 42501 (TestConstraints_DisabledAdminThroughTheRoles proves the behaviour). Anything else is a
 	// definer nobody reviewed.
@@ -671,7 +671,13 @@ func TestBalance_TriggerFunctionsAreSafeDefiners(t *testing.T) {
 			"platform.ledger_require_active_admin()", "platform.admin_audit_require_active_admin()", "platform.m3_entitlements_require_active_admin()",
 			"platform.ledger_check_reserve()", "platform.ledger_apply_to_reserves()", "platform.ledger_check_release()", "platform.ledger_apply_to_entitlements()", "platform.m3_entitlements_raise_sync()",
 			// the stamp (platform_0005) and the two functions of platform_0007 are SECURITY INVOKER (not in the definer list above) but no role may call them by hand either
-			"platform.ledger_stamp_created_at()", "platform.job_unit_prices_snapshot_equals_unit_costs()", "platform.jobs_terminal_is_final()"} {
+			"platform.ledger_stamp_created_at()", "platform.job_unit_prices_snapshot_equals_unit_costs()", "platform.jobs_terminal_is_final()",
+			// platform_0011: the lifecycle guard, the event writer and the event's actor check are trigger functions no role calls by hand (platform.job_transition(uuid, text, text, uuid, text) is the one
+			// function of the lifecycle a role CAN call: platform_app, proven in TestJobLifecycle_ThePrivilegesOfTheLifecycle)
+			"platform.jobs_transition_guard()", "platform.jobs_record_transition()", "platform.job_events_check_actor()",
+			// platform_0012 and platform_0013: the guards of the list, the results and the snapshot, and the reachability history writer, are trigger functions; platform.set_unit_reachable(text, boolean, text) is the one
+			// function of the two a role CAN call (platform_app, a SECURITY DEFINER: it is in the definer list above)
+			"platform.job_rows_frozen()", "platform.job_results_after_confirm()", "platform.job_unit_prices_only_reachable()", "platform.unit_costs_record_reachability()"} {
 			for _, role := range []string{"platform_app", "platform_admin"} {
 				if ledgerBool(t, tx, "SELECT has_function_privilege($1::text, $2::text, 'EXECUTE')", role, fn) {
 					t.Fatalf("%s can EXECUTE %s", role, fn)

@@ -588,8 +588,8 @@ func TestEntObserved_TheBackfillGivesAConvergedRowItsVersionAndChangesNothingEls
 
 	dir := repoMigrationsDir(t)
 	envDown := migEnv(e.s.DSN, dir, map[string]string{"PLATFORM_MIGRATE_ALLOW_DOWN": "true"})
-	// the chain has grown above 0008 (platform_0009 and platform_0010 do not touch the delivery table): the runner rolls back highest-first, so they go first
-	for _, v := range []string{"0010", "0009"} {
+	// the chain has grown above 0008 (platform_0009 to platform_0013 do not touch the delivery table): the runner rolls back highest-first, so they go first
+	for _, v := range []string{"0013", "0012", "0011", "0010", "0009"} {
 		mustExit(t, runMigrator(t, envDown, "down", v), 0, "down "+v+" on a database with delivery rows")
 	}
 	res := runMigrator(t, envDown, "down", "0008")

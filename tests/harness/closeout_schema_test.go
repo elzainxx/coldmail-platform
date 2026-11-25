@@ -16,9 +16,12 @@ import (
 //
 //	D3 (open decision 10) TestCloseout_SnapshotPriceEqualsUnitCosts, TestCloseout_SnapshotPriceThroughTheRoles, TestCloseout_SnapshotTriggerIsTheOnlyBarrier
 //	    a row of platform.job_unit_prices must carry the cost platform.unit_costs holds for the unit at the instant of the INSERT (constraint snapshot_equals_unit_costs, 23514).
-//	D4 (open decision 11) TestCloseout_TerminalSucceededIsFinal, TestCloseout_TerminalFailedIsFinal, TestCloseout_TerminalCancelledIsFinal, TestCloseout_NonTerminalJobsMoveFreely
-//	    once a job is succeeded, failed or cancelled no UPDATE may change its status (constraint jobs_terminal_is_final, 23001); an UPDATE that leaves the status alone stays legal. The test of the
-//	    non-terminal moves RECORDS what the schema allows today (no lifecycle is invented: which non-terminal moves are legal is Phase 4's rule).
+//	D4 (open decision 11) TestCloseout_TerminalSucceededIsFinal, TestCloseout_TerminalFailedIsFinal, TestCloseout_TerminalCancelledIsFinal, TestCloseout_TerminalExpiredIsFinal,
+//	    TestCloseout_NonTerminalJobsMoveOnlyAlongTheLifecycle
+//	    once a job is succeeded, failed, cancelled or (since platform_0011) expired no UPDATE may change its status (constraint jobs_terminal_is_final, 23001); an UPDATE that leaves the status alone stays
+//	    legal. The test of the non-terminal moves is the RECORD of what the schema allows, so that tightening it is a deliberate change: Phase 2 pinned "every non-terminal status moves to every
+//	    status"; platform_0011 (Phase 4, chunk B1) made the lifecycle a table, so the same 40 statements are now refused (a bare UPDATE of status states no actor) and the test says so, each beside the
+//	    legal move of the same job through platform.job_transition.
 //
 // Why BEFORE triggers show up in so many refusals below: a BEFORE INSERT trigger runs before the CHECK constraints, the unique indexes and the foreign keys, so a snapshot row whose price differs from the table
 // is refused by THE TRIGGER first, whatever else is wrong with it (a price of 0 reaches job_unit_prices_cost_at_least_one only with the trigger switched off: TestConstraints_JobUnitPrices does exactly that).
@@ -33,9 +36,16 @@ const (
 	clsSetStatus          = "UPDATE platform.jobs SET status = $2 WHERE id = $1"
 )
 
-// clsStatuses is the status vocabulary of platform.jobs, and clsTerminal the three that platform_0007 makes final.
-var clsStatuses = []string{"draft", "scheduled", "running", "paused", "cancelling", "succeeded", "failed", "cancelled"}
-var clsTerminal = map[string]bool{"succeeded": true, "failed": true, "cancelled": true}
+// clsStatuses is the status vocabulary of platform.jobs since platform_0011, and clsTerminal the four that are final (platform_0007 made three of them so, platform_0011 added expired).
+var clsStatuses = []string{"draft", "previewed", "confirmed", "scheduled", "running", "paused", "cancelling", "completing", "succeeded", "failed", "cancelled", "expired"}
+var clsTerminal = map[string]bool{"succeeded": true, "failed": true, "cancelled": true, "expired": true}
+
+// clsOldStatuses is the vocabulary Phase 2 recorded (platform_0002's eight), and clsOldNonTerminal the five of them that were not final: TestCloseout_NonTerminalJobsMoveOnlyAlongTheLifecycle
+// re-tries the 40 moves Phase 2 recorded as accepted.
+var (
+	clsOldStatuses    = []string{"draft", "scheduled", "running", "paused", "cancelling", "succeeded", "failed", "cancelled"}
+	clsOldNonTerminal = []string{"draft", "scheduled", "running", "paused", "cancelling"}
+)
 
 // clsUnit is one row of platform.unit_costs as the tests read it (never hard-coded: the forged prices are derived from what the table holds).
 type clsUnit struct {
@@ -95,10 +105,11 @@ func clsTriggerEnabled(t *testing.T, db ledgerDB, table, trigger string) string 
 	return ledgerString(t, db, "SELECT tgenabled::text FROM pg_trigger WHERE NOT tgisinternal AND tgrelid = to_regclass($1::text) AND tgname::text = $2", table, trigger)
 }
 
-// clsInsertJob inserts a job of the user in the given status. Every status gets a scheduled_start, so 'scheduled' satisfies jobs_scheduled_has_a_start; the column is free in every other status.
+// clsInsertJob makes a job of the user in the given status. DELIBERATE CHANGE (platform_0011): a job is born draft (an INSERT with any other status is refused, job_born_draft), so this inserts a draft job and
+// walks it to the status along the lifecycle (jobWalkTo), the way the engine will. The module is one that can reach the status: module 2 can cancel a running job, module 1 cannot (cancelling).
 func clsInsertJob(t *testing.T, db ledgerDB, id, user, module, status string) {
 	t.Helper()
-	ledgerMust(t, db, "INSERT INTO platform.jobs (id, user_id, module_id, status, scheduled_start) VALUES ($1, $2, $3, $4, $5)", id, user, module, status, clsStart)
+	jobInsertAt(t, db, id, user, module, status)
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -301,13 +312,16 @@ func TestCloseout_SnapshotTriggerIsTheOnlyBarrier(t *testing.T) {
 func TestCloseout_TerminalSucceededIsFinal(t *testing.T) { clsTerminalIsFinal(t, "succeeded") }
 func TestCloseout_TerminalFailedIsFinal(t *testing.T)    { clsTerminalIsFinal(t, "failed") }
 func TestCloseout_TerminalCancelledIsFinal(t *testing.T) { clsTerminalIsFinal(t, "cancelled") }
+func TestCloseout_TerminalExpiredIsFinal(t *testing.T)   { clsTerminalIsFinal(t, "expired") }
 
-// clsTerminalIsFinal is the test of one terminal state (the three tests above call it, so each state has its own scratch database and its own verdict). A job in the state: (1) is refused every one of the
-// seven other statuses with 23001 and the constraint jobs_terminal_is_final, the message naming the old and the new status, each beside a paired control (a draft job makes the same move); the job still has its
-// status afterwards; (2) may still be updated while its status stays: the same status written back, module_job_ref, scheduled_start, updated_at owned by the trigger; a status change smuggled in beside such an
-// update is refused, and jobs_guard still answers for what it owns (frozen_settings, user_id); (3) is refused the same way for the role the service runs as (platform_app), and may be touched by it; (4) moves
-// freely once the trigger is disabled by the superuser (a savepoint that is rolled back): the trigger is the only barrier, and it is enabled again afterwards. It fails if the trigger is missing, if it covers
-// only some statuses, if it refuses an UPDATE that does not change the status, or if it replaces jobs_guard instead of standing beside it.
+// clsTerminalIsFinal is the test of one terminal state (the four tests above call it, so each state has its own scratch database and its own verdict). A job in the state: (1) is refused every one of the
+// eleven other statuses with 23001 and the constraint jobs_terminal_is_final, the message naming the old and the new status, by the bare UPDATE and by the sanctioned platform.job_transition alike, each
+// beside a paired control (a fresh job makes the same move along the lifecycle); the job still has its status afterwards; (2) may still be updated while its status stays: the same status written back,
+// module_job_ref, scheduled_start, updated_at owned by the trigger; a status change smuggled in beside such an update is refused, and jobs_guard still answers for what it owns (frozen_settings, user_id); (3)
+// is refused the same way for the role the service runs as (platform_app), and may be touched by it; (4) is no longer held by ONE wall (DELIBERATE CHANGE, platform_0011): with the terminal trigger disabled
+// by the superuser (a savepoint that is rolled back) the lifecycle guard still refuses the move (a terminal status has no row in platform.job_transitions: job_transition_illegal), and with both
+// triggers disabled the move happens; each is enabled again afterwards. It fails if the trigger is missing, if it covers only some statuses, if it refuses an UPDATE that does not change the status, or if
+// it replaces jobs_guard instead of standing beside it.
 func clsTerminalIsFinal(t *testing.T, term string) {
 	if !clsTerminal[term] {
 		t.Fatalf("%q is not a terminal status", term)
@@ -327,18 +341,24 @@ func clsTerminalIsFinal(t *testing.T, term string) {
 			if to == term {
 				continue
 			}
+			// the paired control: a job that is not terminal makes the move to `to` the sanctioned way (a fresh job walked there, each hop with its actor and reason), so the refusal below is the
+			// terminal rule's and not a status the lifecycle could never reach (module 2: it can cancel, so every status is reachable)
 			ledgerTrial(t, tx, func(sp pgx.Tx) {
 				id := next()
-				clsInsertJob(t, sp, id, ledgerUserC, "m1", "draft")
-				ledgerExpectOK(t, sp, "control: a draft job moves to "+to, clsSetStatus, id, to)
-				if got := ledgerString(t, sp, "SELECT status FROM platform.jobs WHERE id = $1", id); got != to {
-					t.Fatalf("the draft job is %s after its move to %s", got, to)
+				ledgerMust(t, sp, "INSERT INTO platform.jobs (id, user_id, module_id) VALUES ($1, $2, 'm2')", id, ledgerUserC)
+				if to == "draft" {
+					jobWalkTo(t, sp, id, "previewed") // the only way back to draft is from previewed
+				}
+				jobWalkTo(t, sp, id, to)
+				if got := jobStatus(t, sp, id); got != to {
+					t.Fatalf("the fresh job is %s after its walk to %s", got, to)
 				}
 			})
 			id := next()
-			clsInsertJob(t, tx, id, ledgerUserC, "m1", term)
-			ledgerExpectRefused(t, tx, fmt.Sprintf("a %s job moved to %s", term, to), "23001", why(to), clsSetStatus, id, to)
-			if got := ledgerString(t, tx, "SELECT status FROM platform.jobs WHERE id = $1", id); got != term {
+			clsInsertJob(t, tx, id, ledgerUserC, "m2", term)
+			ledgerExpectRefused(t, tx, fmt.Sprintf("a %s job moved to %s by a bare UPDATE", term, to), "23001", why(to), clsSetStatus, id, to)
+			ledgerExpectRefused(t, tx, fmt.Sprintf("a %s job moved to %s through platform.job_transition", term, to), "23001", why(to), jobMoveSQL, id, to, "engine", nil, "closeout: a terminal job moves")
+			if got := jobStatus(t, tx, id); got != term {
 				t.Fatalf("the %s job is %s after the refused move to %s", term, got, to)
 			}
 			tried++
@@ -350,9 +370,10 @@ func clsTerminalIsFinal(t *testing.T, term string) {
 
 	t.Run("an UPDATE that leaves the status alone stays legal, and a status change cannot ride along", func(t *testing.T) {
 		id := next()
-		clsInsertJob(t, tx, id, ledgerUserC, "m1", term)
+		clsInsertJob(t, tx, id, ledgerUserC, "m2", term)
 		ledgerExpectOK(t, tx, "control: the same status written back", clsSetStatus, id, term)
 		ledgerExpectOK(t, tx, "control: module_job_ref set on a "+term+" job", "UPDATE platform.jobs SET module_job_ref = $2 WHERE id = $1", id, "ref-"+id)
+		ledgerExpectOK(t, tx, "control: scheduled_start set on a "+term+" job", "UPDATE platform.jobs SET scheduled_start = $2 WHERE id = $1", id, clsStart)
 		ledgerExpectOK(t, tx, "control: scheduled_start changed on a "+term+" job", "UPDATE platform.jobs SET scheduled_start = scheduled_start + interval '1 day' WHERE id = $1", id)
 		ledgerExpectOK(t, tx, "control: an UPDATE that tries to set updated_at", "UPDATE platform.jobs SET updated_at = '2000-01-01T00:00:00Z' WHERE id = $1", id)
 		if !ledgerBool(t, tx, "SELECT updated_at = now() FROM platform.jobs WHERE id = $1", id) {
@@ -363,7 +384,7 @@ func clsTerminalIsFinal(t *testing.T, term string) {
 			`UPDATE platform.jobs SET frozen_settings = '{"a":1}' WHERE id = $1`, id)
 		ledgerExpectRefused(t, tx, "a terminal job's user_id (jobs_guard still answers for it)", "23001", ledgerWhy{Message: "never change"},
 			"UPDATE platform.jobs SET user_id = $2 WHERE id = $1", id, ledgerUserB)
-		if got := ledgerString(t, tx, "SELECT status FROM platform.jobs WHERE id = $1", id); got != term {
+		if got := jobStatus(t, tx, id); got != term {
 			t.Fatalf("the %s job is %s after the legal and the refused updates", term, got)
 		}
 		if got := ledgerString(t, tx, "SELECT module_job_ref FROM platform.jobs WHERE id = $1", id); got != "ref-"+id {
@@ -374,62 +395,80 @@ func clsTerminalIsFinal(t *testing.T, term string) {
 	t.Run("the same through platform_app, the role the service runs as", func(t *testing.T) {
 		ledgerTrial(t, tx, func(sp pgx.Tx) {
 			id := next()
-			clsInsertJob(t, sp, id, ledgerUserC, "m1", term)
+			clsInsertJob(t, sp, id, ledgerUserC, "m2", term)
 			ledgerSwitchRole(t, sp, "platform_app")
 			ledgerExpectOK(t, sp, "control: platform_app writes the same status back", clsSetStatus, id, term)
 			ledgerExpectOK(t, sp, "control: platform_app sets module_job_ref", "UPDATE platform.jobs SET module_job_ref = $2 WHERE id = $1", id, "app-"+id)
 			for _, to := range []string{"draft", "running"} {
 				ledgerExpectRefused(t, sp, fmt.Sprintf("platform_app moves a %s job to %s", term, to), "23001", why(to), clsSetStatus, id, to)
+				ledgerExpectRefused(t, sp, fmt.Sprintf("platform_app moves a %s job to %s through platform.job_transition", term, to), "23001", why(to), jobMoveSQL, id, to, "engine", nil, "closeout: a terminal job moves")
 			}
 			ledgerResetRole(t, sp)
 		})
 	})
 
-	t.Run("control: with the trigger disabled the move happens, so the trigger is the only barrier", func(t *testing.T) {
-		if got := clsTriggerEnabled(t, tx, "platform.jobs", clsTerminalTrigger); got != "O" {
-			t.Fatalf("the trigger %s is %q before the control, want enabled (O)", clsTerminalTrigger, got)
+	t.Run("two walls: with the terminal trigger disabled the lifecycle guard still refuses the move, and with both disabled the move happens", func(t *testing.T) {
+		for _, trigger := range []string{clsTerminalTrigger, "jobs_transition_guard"} {
+			if got := clsTriggerEnabled(t, tx, "platform.jobs", trigger); got != "O" {
+				t.Fatalf("the trigger %s is %q before the control, want enabled (O)", trigger, got)
+			}
 		}
 		ledgerTrial(t, tx, func(sp pgx.Tx) {
+			id := next()
+			clsInsertJob(t, sp, id, ledgerUserC, "m2", term) // made BEFORE the triggers go: the walk to a terminal status needs the guard (it sets confirmed_at)
 			ledgerMust(t, sp, "ALTER TABLE platform.jobs DISABLE TRIGGER "+clsTerminalTrigger)
 			if got := clsTriggerEnabled(t, sp, "platform.jobs", "jobs_guard"); got != "O" {
 				t.Fatalf("jobs_guard is %q while the terminal trigger is disabled, want enabled (O): the control must switch off one trigger only", got)
 			}
+			ledgerExpectRefused(t, sp, "with the terminal trigger off a "+term+" job moved back to draft is still refused: a terminal status has no row in platform.job_transitions", "23001",
+				ledgerWhy{Constraint: "job_transition_illegal"}, clsSetStatus, id, "draft")
+		})
+		ledgerTrial(t, tx, func(sp pgx.Tx) {
 			id := next()
-			clsInsertJob(t, sp, id, ledgerUserC, "m1", term)
-			ledgerExpectOK(t, sp, "with the trigger disabled a "+term+" job moves back to draft: nothing else stops it", clsSetStatus, id, "draft")
-			if got := ledgerString(t, sp, "SELECT status FROM platform.jobs WHERE id = $1", id); got != "draft" {
-				t.Fatalf("the %s job is %s after the move with the trigger disabled, want draft", term, got)
+			clsInsertJob(t, sp, id, ledgerUserC, "m2", term)
+			ledgerMust(t, sp, "ALTER TABLE platform.jobs DISABLE TRIGGER "+clsTerminalTrigger)
+			ledgerMust(t, sp, "ALTER TABLE platform.jobs DISABLE TRIGGER jobs_transition_guard")
+			// the event of a move is a third wall of its own (jobs_record_transition writes it and refuses a move that names no actor), so the move states its three settings
+			ledgerExpectOK(t, sp, "with both triggers disabled a "+term+" job moves back to draft: nothing else stops it", jobMoveBy("engine", "", "closeout: both walls are down", id, "draft"))
+			if got := jobStatus(t, sp, id); got != "draft" {
+				t.Fatalf("the %s job is %s after the move with both triggers disabled, want draft", term, got)
 			}
 		})
-		if got := clsTriggerEnabled(t, tx, "platform.jobs", clsTerminalTrigger); got != "O" {
-			t.Fatalf("the trigger %s is %q after the rolled-back savepoint, want enabled (O)", clsTerminalTrigger, got)
+		for _, trigger := range []string{clsTerminalTrigger, "jobs_transition_guard"} {
+			if got := clsTriggerEnabled(t, tx, "platform.jobs", trigger); got != "O" {
+				t.Fatalf("the trigger %s is %q after the rolled-back savepoints, want enabled (O)", trigger, got)
+			}
 		}
 		id := next()
-		clsInsertJob(t, tx, id, ledgerUserC, "m1", term)
-		ledgerExpectRefused(t, tx, "the same move once the trigger is back", "23001", why("draft"), clsSetStatus, id, "draft")
+		clsInsertJob(t, tx, id, ledgerUserC, "m2", term)
+		ledgerExpectRefused(t, tx, "the same move once the triggers are back", "23001", why("draft"), clsSetStatus, id, "draft")
 	})
 }
 
-// TestCloseout_NonTerminalJobsMoveFreely is the paired control of the three terminal tests, and the record of what the schema allows TODAY (platform_0007 invents no lifecycle: which non-terminal moves are legal
-// is the job engine's rule, Phase 4's). One job walks draft -> scheduled -> running -> paused -> running -> cancelling -> cancelled with every step accepted, and then stays cancelled (moving it back to
-// running is refused by jobs_terminal_is_final although the one-active-job slot is free). Then every one of the five non-terminal statuses moves to every one of the eight statuses (40 moves, each in a
-// savepoint that is rolled back), so a later migration that tightens or loosens the non-terminal moves changes this test on purpose. It fails if the terminal rule reaches a job that is not terminal.
-func TestCloseout_NonTerminalJobsMoveFreely(t *testing.T) {
+// TestCloseout_NonTerminalJobsMoveOnlyAlongTheLifecycle is the paired control of the four terminal tests and the RECORD of what the schema allows (it was TestCloseout_NonTerminalJobsMoveFreely: Phase 2
+// pinned, on purpose, that every non-terminal status moved to every status, because no lifecycle existed; platform_0011 made the lifecycle a table, so this pin changes deliberately and says what
+// replaced it). (1) One job walks a whole life along the lifecycle, every step accepted (draft, previewed, scheduled, paused, scheduled again, running, cancelling, completing, cancelled: module 2 can
+// cancel a running job) and then stays cancelled (moving it on is refused by jobs_terminal_is_final). (2) The 40 statements Phase 2 recorded as accepted (each of the five non-terminal statuses of the old
+// vocabulary written to each of the eight, as a bare UPDATE) are tried again, each in a savepoint that is rolled back: a write of the status the job already has is still accepted (it is no move: 5 of
+// them), every other (35) is refused with 23001 - job_transition_illegal when the pair is not a row of the lifecycle, job_transition_needs_an_actor when it is a row (a bare UPDATE states no actor, no
+// reason) - and the pair that IS a row is taken legally beside it, through platform.job_transition (the two rows no job can take today, running -> paused for want of a module that can pause and paused ->
+// running for a job that paused from scheduled, are proven in TestJobLifecycle_*). It fails if the terminal rule reaches a job that is not terminal, or if a bare status write is accepted.
+func TestCloseout_NonTerminalJobsMoveOnlyAlongTheLifecycle(t *testing.T) {
 	_, admin := migratedScratch(t)
 	tx := ledgerBegin(t, admin)
 	ledgerSeed(t, tx)
 	n := 0
 	next := func() string { n++; return ledgerUUID("d5", n) }
 
-	t.Run("one job walks its whole life and then stays where it ended", func(t *testing.T) {
+	t.Run("one job walks its whole life along the lifecycle and then stays where it ended", func(t *testing.T) {
 		id := next()
-		ledgerMust(t, tx, "INSERT INTO platform.jobs (id, user_id, module_id) VALUES ($1, $2, 'm1')", id, ledgerUserC)
-		walk := "UPDATE platform.jobs SET status = $2, scheduled_start = COALESCE(scheduled_start, now()) WHERE id = $1"
-		steps := []string{"scheduled", "running", "paused", "running", "cancelling", "cancelled"}
+		ledgerMust(t, tx, "INSERT INTO platform.jobs (id, user_id, module_id) VALUES ($1, $2, 'm2')", id, ledgerUserC)
+		steps := []string{"previewed", "scheduled", "paused", "scheduled", "running", "cancelling", "completing", "cancelled"}
 		for i, to := range steps {
-			ledgerExpectOK(t, tx, fmt.Sprintf("control: step %d of the walk, to %s", i+1, to), walk, id, to)
-			if got := ledgerString(t, tx, "SELECT status FROM platform.jobs WHERE id = $1", id); got != to {
-				t.Fatalf("the job is %s after its move to %s", got, to)
+			from := jobStatus(t, tx, id)
+			jobHop(t, tx, id, to) // fails the test, naming the hop, when the database refuses it
+			if got := jobStatus(t, tx, id); got != to {
+				t.Fatalf("the job is %s after its step %d (%s to %s)", got, i+1, from, to)
 			}
 		}
 		for _, to := range []string{"running", "draft", "succeeded"} {
@@ -438,26 +477,43 @@ func TestCloseout_NonTerminalJobsMoveFreely(t *testing.T) {
 		}
 	})
 
-	t.Run("every non-terminal status moves to every status today", func(t *testing.T) {
-		moves := 0
-		for _, from := range clsStatuses {
-			if clsTerminal[from] {
-				continue
-			}
-			for _, to := range clsStatuses {
+	t.Run("the 40 bare status writes of Phase 2 are refused (except the five that are no move), each beside the legal move of the pair that is a row", func(t *testing.T) {
+		moves, noMoves, legal := 0, 0, 0
+		for _, from := range clsOldNonTerminal {
+			for _, to := range clsOldStatuses {
+				from, to := from, to
 				ledgerTrial(t, tx, func(sp pgx.Tx) {
 					id := next()
-					clsInsertJob(t, sp, id, ledgerUserC, "m1", from)
-					ledgerExpectOK(t, sp, fmt.Sprintf("a %s job moves to %s", from, to), clsSetStatus, id, to)
-					if got := ledgerString(t, sp, "SELECT status FROM platform.jobs WHERE id = $1", id); got != to {
-						t.Fatalf("the %s job is %s after its move to %s", from, got, to)
+					clsInsertJob(t, sp, id, ledgerUserC, "m2", from)
+					switch {
+					case from == to:
+						ledgerExpectOK(t, sp, fmt.Sprintf("a %s job written %s again is no move", from, to), clsSetStatus, id, to)
+						noMoves++
+					case jobIsLegal(from, to):
+						ledgerExpectRefused(t, sp, fmt.Sprintf("a bare UPDATE of a %s job to %s (a row of the lifecycle, but no actor and no reason)", from, to), "23001", ledgerWhy{Constraint: "job_transition_needs_an_actor"}, clsSetStatus, id, to)
+						if from == "running" && to == "paused" || from == "paused" && to == "running" {
+							break // not takeable today: see the doc comment
+						}
+						jobHop(t, sp, id, to)
+						if got := jobStatus(t, sp, id); got != to {
+							t.Fatalf("the %s job is %s after its legal move to %s", from, got, to)
+						}
+						legal++
+					default:
+						ledgerExpectRefused(t, sp, fmt.Sprintf("a bare UPDATE of a %s job to %s (not a row of the lifecycle)", from, to), "23001", ledgerWhy{Constraint: "job_transition_illegal"}, clsSetStatus, id, to)
 					}
 				})
 				moves++
 			}
 		}
-		if want := 5 * len(clsStatuses); moves != want {
+		if want := len(clsOldNonTerminal) * len(clsOldStatuses); moves != want {
 			t.Fatalf("%d moves were tried, want %d (five non-terminal statuses to each of the eight)", moves, want)
+		}
+		if noMoves != len(clsOldNonTerminal) {
+			t.Fatalf("%d of the writes were no move, want 5 (a status written back to itself)", noMoves)
+		}
+		if legal < 10 {
+			t.Fatalf("only %d pairs were taken legally beside their refusal: the controls matched too little", legal)
 		}
 	})
 }

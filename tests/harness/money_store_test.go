@@ -474,13 +474,18 @@ func TestMoneyStore_ReserveRefusals(t *testing.T) {
 
 	_, err := e.store.Reserve(ctx, money.ReserveReq{JobID: mnyNobody, Units: 1})
 	mnyIs(t, "a job that does not exist", err, money.ErrJobNotFound)
-	// A terminal job is final in the database since platform_0007: the four statuses a job passes through are tried on `job` itself (it moves on, and the control below moves it back to draft), and each
-	// of the three terminal statuses on a job of its own that is made terminal once and never moved again.
-	for _, status := range []string{"scheduled", "running", "paused", "cancelling", "succeeded", "failed", "cancelled"} {
-		subject := job
-		if status == "succeeded" || status == "failed" || status == "cancelled" {
-			subject = e.newJob(mnyUserA, "m1")
+	// DELIBERATE CHANGE (platform_0011): a job moves only along the lifecycle table, so it can no longer be taken through the statuses on `job` itself and moved back to draft for the control (a terminal
+	// job never moves, and nothing but previewed goes back to draft). Each status past draft has a JOB OF ITS OWN, walked there along the legal path and ended afterwards (a job holds the
+	// one-active-job slot from confirmed on, so the next one could not be confirmed otherwise); the control is the draft `job` below, which stays a draft throughout and reserves. The list is the
+	// whole of the lifecycle past draft, not the seven statuses of Phase 2: `cancelling` is a module 2 job (module 1 has no cancel route and the database refuses running -> cancelling for it), and `paused` is a
+	// job whose start was deferred (no module can pause a RUNNING job). `previewed` is left out on purpose: Phase 4's confirm reserves a PREVIEWED job (Docs/phase-4-spec.md, Locked 24), so what a reserve says of that
+	// status is for the chunk that builds confirm to state, not for this test to pin.
+	for _, status := range []string{"confirmed", "scheduled", "running", "paused", "cancelling", "completing", "succeeded", "failed", "cancelled", "expired"} {
+		module := "m1"
+		if status == "cancelling" {
+			module = "m2"
 		}
+		subject := e.newJob(mnyUserA, module)
 		e.setStatus(subject, status)
 		before = e.state()
 		_, err := e.store.Reserve(ctx, money.ReserveReq{JobID: subject, Units: 1})
@@ -489,6 +494,7 @@ func TestMoneyStore_ReserveRefusals(t *testing.T) {
 			t.Fatalf("the error for a %s job does not name the status: %v", status, err)
 		}
 		e.requireSame("a reserve for a "+status+" job", before)
+		jobEnd(t, e.admin, subject)
 	}
 
 	m3 := e.newJob(mnyUserA, "m3")
@@ -505,9 +511,11 @@ func TestMoneyStore_ReserveRefusals(t *testing.T) {
 	mnyInvalid(t, "an upper-case job id", err, "job_id")
 	e.requireSame("the refused reserves", before)
 
-	e.setStatus(job, "draft")
+	if got := e.jobStatus(job); got != "draft" {
+		t.Fatalf("the draft job under test is %s: the loop above must leave it alone", got)
+	}
 	if res, err := e.store.Reserve(ctx, money.ReserveReq{JobID: job, Units: 1}); err != nil || res.Reserved != 2 {
-		t.Fatalf("control: the same job as a draft returned %+v, %v, want a reserve of 2", res, err)
+		t.Fatalf("control: a draft job (the one the refusals above left alone) returned %+v, %v, want a reserve of 2", res, err)
 	}
 	e.requireViewsEmpty("at the end")
 }
@@ -1063,11 +1071,13 @@ func TestMoneyStore_SettleRefusals(t *testing.T) {
 // release
 // ---------------------------------------------------------------------------------------------------------------------
 
-// TestMoneyStore_Release: a job that has not ended (draft, scheduled, running, paused, cancelling) is ErrJobNotEnded and nothing is written; once it ended, the release returns EXACTLY the remainder
-// (10 reserved, 4 charged: 6), once: the second call returns 0 and says Replayed. A fully consumed reserve releases 0 and writes no row. Failed and cancelled jobs release too. A charge after the
-// release is refused (ErrReserveExceeded through the store, 23514 reserves_not_overspent as a raw insert, while another job's reserve keeps the pooled balance positive); a raw release of any other
-// amount is refused 23514 release_is_the_remainder, and the exact one passes. No reserve is ErrNoReserve.
-// It fails if a release returns more or less than the remainder, twice, or for a job that has not ended.
+// TestMoneyStore_Release: a job that has not ended (every non-terminal status of the lifecycle of platform_0011: draft, previewed, confirmed, scheduled, paused, running, cancelling and completing) is
+// ErrJobNotEnded and nothing is written, and the SAME job, once it ended, releases its whole reserve (the control: it was the status that refused); once it ended, the release returns EXACTLY the
+// remainder (10 reserved, 4 charged: 6), once: the second call returns 0 and says Replayed. A fully consumed reserve releases 0 and writes no row. Failed, cancelled and expired jobs release too. A
+// charge after the release is refused (ErrReserveExceeded through the store, 23514 reserves_not_overspent as a raw insert, while another job's reserve keeps the pooled balance positive); a raw
+// release of any other amount is refused 23514 release_is_the_remainder, and the exact one passes. No reserve is ErrNoReserve.
+// It fails if a release returns more or less than the remainder, twice, or for a job that has not ended (a completing job above all: the module has reported every item, the platform has not recorded
+// them yet).
 func TestMoneyStore_Release(t *testing.T) {
 	e := newMnyEnv(t)
 	ctx := testCtx(t)
@@ -1077,12 +1087,27 @@ func TestMoneyStore_Release(t *testing.T) {
 	other := e.newJob(mnyUserA, "m2") // another job's reserve: it keeps the pooled reserved balance positive for the raw proofs below
 	e.reserve(other, 5)
 
-	for _, status := range []string{"draft", "scheduled", "running", "paused", "cancelling"} {
-		e.setStatus(job, status)
+	// DELIBERATE CHANGE (platform_0011): a job moves only along the lifecycle table, so `job` can no longer be taken through draft, scheduled, running, paused and cancelling and back to draft. The
+	// draft state is `job` itself (it stays a draft until the loop is over); every other non-terminal status has a job of its own with a reserve of 2, walked there along the legal path (a paused job is
+	// one whose start was deferred: no module can pause a running job). Each is then ENDED and released: the paired control, the same job and the same reserve, refused before and accepted after. A job holds
+	// the one-active-job slot from confirmed on, so each is ended before the next is made.
+	for _, status := range []string{"draft", "previewed", "confirmed", "scheduled", "paused", "running", "cancelling", "completing"} {
+		j := job
+		if status != "draft" {
+			j = e.newJob(mnyUserA, "m2")
+			e.reserve(j, 2)
+			e.setStatus(j, status)
+		}
 		before := e.state()
-		_, err := e.store.Release(ctx, job)
+		_, err := e.store.Release(ctx, j)
 		mnyIs(t, "a release for a "+status+" job", err, money.ErrJobNotEnded)
 		e.requireSame("a release for a "+status+" job", before)
+		if status != "draft" {
+			jobEnd(t, e.admin, j)
+			if got, err := e.store.Release(ctx, j); err != nil || got.Released != 2 {
+				t.Fatalf("control: the release of the %s job once it ended returned %+v, %v, want its 2 credits back: the refusal above was the status's", status, got, err)
+			}
+		}
 	}
 	e.setStatus(job, "running")
 	mnyRequireSettle(t, "four sent items", e.settle(job, mnyItem("a", mnyM2Sent), mnyItem("b", mnyM2Sent), mnyItem("c", mnyM2Sent), mnyItem("d", mnyM2Bounced)), 4, 4, 0, 0, 0, 0)
@@ -1114,8 +1139,9 @@ func TestMoneyStore_Release(t *testing.T) {
 	mnyPgRefusal(t, "a raw charge after the release", err, "23514", "reserves_not_overspent")
 	e.requireSame("a raw charge after the release", before)
 
-	// failed and cancelled jobs release as well; a fully consumed reserve releases nothing and writes no row
-	for _, status := range []string{"failed", "cancelled"} {
+	// failed, cancelled and expired jobs release as well (platform_0011 added expired: the module never took the job before its start deadline, so the whole reserve is the remainder); a fully consumed
+	// reserve releases nothing and writes no row
+	for _, status := range []string{"failed", "cancelled", "expired"} {
 		j := e.newJob(mnyUserA, "m2")
 		r := e.reserve(j, 2)
 		e.setStatus(j, status)

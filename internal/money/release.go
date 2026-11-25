@@ -34,7 +34,7 @@ func (s *Store) Release(ctx context.Context, jobID string) (ReleaseResult, error
 	return res, nil
 }
 
-// ReleaseIn is Release inside a transaction the caller owns. The job must have ended (succeeded, failed or cancelled: ErrJobNotEnded otherwise) and hold a
+// ReleaseIn is Release inside a transaction the caller owns. The job must have ended (succeeded, failed, cancelled or expired: ErrJobNotEnded otherwise, completing included) and hold a
 // reserve (ErrNoReserve). The remainder is reserved - charged - released, read under the (user, module) lock; a remainder of 0 writes nothing (and says
 // Replayed when a release row already exists); otherwise ONE release row of exactly the remainder is inserted ('release:<reserve id>', ON CONFLICT DO NOTHING),
 // which the database checks against platform.reserves.
@@ -55,7 +55,7 @@ func (s *Store) release(ctx context.Context, tx pgx.Tx, jobID string) (ReleaseRe
 		return ReleaseResult{}, err
 	}
 	switch job.status {
-	case "succeeded", "failed", "cancelled": // terminal: a job never leaves these
+	case "succeeded", "failed", "cancelled", "expired": // terminal: a job never leaves these (platform_0011 added expired: a job the module never took before its start deadline)
 	default:
 		return ReleaseResult{}, fmt.Errorf("%w: job %s is %s", ErrJobNotEnded, jobID, job.status)
 	}
