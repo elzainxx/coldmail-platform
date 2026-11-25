@@ -65,15 +65,20 @@ BEGIN
     IF p_reachable IS NULL OR p_source IS NULL OR btrim(p_source) = '' THEN
         RAISE EXCEPTION 'platform.set_unit_reachable: a unit is reachable or not, and the change says who said so (source)' USING ERRCODE = '22023';
     END IF;
-    SELECT reachable INTO v_old FROM platform.unit_costs WHERE unit = p_unit FOR UPDATE;
+    -- every instance asks once a minute: a call that changes nothing must take NO row lock (a pending FOR UPDATE would queue every new reserve, which holds FOR SHARE on these rows, behind it)
+    SELECT reachable INTO v_old FROM platform.unit_costs WHERE unit = p_unit;
     IF NOT FOUND THEN
         RAISE EXCEPTION 'platform.set_unit_reachable: no unit %', p_unit USING ERRCODE = 'P0002';
     END IF;
+    IF v_old IS NOT DISTINCT FROM p_reachable THEN
+        RETURN false;                   -- already so: nothing written, no lock, no history row
+    END IF;
+    SELECT reachable INTO v_old FROM platform.unit_costs WHERE unit = p_unit FOR UPDATE;   -- a change: wait for the reserves that hold the row, then decide again
     IF v_old IS DISTINCT FROM p_reachable THEN
         UPDATE platform.unit_costs SET reachable = p_reachable, reachable_source = p_source, reachable_changed_at = now() WHERE unit = p_unit;
         RETURN true;                    -- changed
     END IF;
-    RETURN false;                       -- already so: nothing written, no history row
+    RETURN false;                       -- another session made the same change while we waited
 END
 $fn$;
 COMMENT ON FUNCTION platform.set_unit_reachable(text, boolean, text) IS 'SECURITY DEFINER (owner platform_owner): the only writer of unit_costs.reachable. Returns true when the flag changed (a history row is written by trigger), false when it already held. Granted to platform_app.';

@@ -1,8 +1,8 @@
-# Phase 3 changed this gate: the secret scanner's configuration now accepts at most FIVE allowlist blocks (the fourth and fifth are the two decided exceptions of Phase 3: a selftest fixture and a test assertion, both in published history). The fault appends a sixth, narrow-looking block (one rule, one commit, no regex), which is exactly the quiet drift the limit exists to stop; the gate must name the count and the limit. The control is the real configuration, which must be green.
+# Phase 3 changed this gate: the secret scanner's configuration now accepts at most SIX allowlist blocks (five in Phase 3, the sixth added in Phase 4 for the JWT dial test) (the fourth and fifth are the two decided exceptions of Phase 3: a selftest fixture and a test assertion, both in published history). The fault appends a sixth, narrow-looking block (one rule, one commit, no regex), which is exactly the quiet drift the limit exists to stop; the gate must name the count and the limit. The control is the real configuration, which must be green.
 GATE=gitleaks-config
 TARGET=platform
 SETUP=
 STEP=check-gitleaks-config on the real repository
 CMD=bash scripts/check-gitleaks-config.sh
-MESSAGE=6 [[allowlists]] blocks (at most 5 are accepted
+MESSAGE=7 [[allowlists]] blocks (at most 6 are accepted
 MESSAGE=check-gitleaks-config: RED

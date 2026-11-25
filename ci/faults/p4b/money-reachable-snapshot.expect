@@ -1,0 +1,8 @@
+# A reserve freezes the REACHABLE units of the module (platform_0013), so with module 1's vendor fallback off a job of N rows is held at 1 credit per row over a two-row snapshot. The fault removes `AND u.reachable` from the snapshot copy: the store then copies the vendor unit too, which the database refuses for a unit the module cannot reach (constraint snapshot_only_reachable_units), and the test must say so.
+GATE=money-reachable-snapshot
+TARGET=platform
+SETUP=
+STEP=go test TestMoneyReachable_ReserveFollowsTheVendorFlag (database integration test, real Postgres)
+CMD=H_PG_ADMIN_DSN="$FAULT_ADMIN_DSN" bash tests/harness/run-db-tests.sh '^TestMoneyReachable_ReserveFollowsTheVendorFlag$'
+MESSAGE=--- FAIL: TestMoneyReachable_ReserveFollowsTheVendorFlag
+MESSAGE=snapshot_only_reachable_units

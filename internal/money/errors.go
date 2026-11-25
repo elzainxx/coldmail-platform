@@ -39,6 +39,9 @@ var (
 	ErrReserveExceeded = errors.New("the charges would exceed what the job's reserve still holds")
 	// ErrUnpriced: a charge names a unit that has no price in the job's frozen price snapshot. Nothing is written.
 	ErrUnpriced = errors.New("the unit has no price in the job's frozen price snapshot")
+	// ErrUnknownUnit: SetUnitReachable named a unit that is not a row of platform.unit_costs (the database's P0002 from platform.set_unit_reachable, by SQLSTATE: that function raises no constraint).
+	// Nothing was written. The unit's name is in the error's text; test it with errors.Is.
+	ErrUnknownUnit = errors.New("the unit is not one of the platform's priced units")
 	// ErrBadItem: a settle item is malformed (a blank or over-long item_ref, a repeated item_ref).
 	ErrBadItem = errors.New("a settle item is malformed")
 	// ErrSnapshot: the database refused the job's price snapshot (not the dearest price, not complete) or the module has no prices to freeze.
@@ -147,7 +150,7 @@ func mapPgError(err error, c pgCtx) error {
 		return invalid("user_id", "the system user holds no credits (constraint ledger_not_the_system_user)")
 	case "ledger_one_charge_per_item", "ledger_one_reserve_per_job", "ledger_one_release_per_reserve", "ledger_idempotency_key", "release_is_the_remainder", "job_unit_prices_pk":
 		return fmt.Errorf("%w (constraint %s)", ErrConflict, pe.ConstraintName)
-	case "reserve_at_the_dearest_price", "reserve_needs_the_complete_snapshot", "snapshot_equals_unit_costs":
+	case "reserve_at_the_dearest_price", "reserve_needs_the_complete_snapshot", "snapshot_equals_unit_costs", "snapshot_only_reachable_units": // the last: platform_0013, a snapshot row for a unit the module's configuration cannot reach
 		return fmt.Errorf("%w (constraint %s)", ErrSnapshot, pe.ConstraintName)
 	}
 	return nil

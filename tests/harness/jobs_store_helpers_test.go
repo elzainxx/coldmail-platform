@@ -41,7 +41,31 @@ func newJbsEnv(t *testing.T, opts ...jobs.Option) *jbsEnv {
 		t.Fatalf("jobs.New: %v", err)
 	}
 	e.jobs = st
+	e.vendorOff()
 	return e
+}
+
+// vendorOff makes every jobs-store test start in the world the platform ships in: module 1's vendor unit m1_vendor NOT reachable, so a verify job reserves at 1 per row. The shared fixtures (newMnyEnv,
+// written for the Phase 2 tests) switch the vendor on, which would price every m1 job here at 2. The flag found is read first and restored when the test ends; a test that wants the vendor on sets it
+// explicitly (and turns it off again).
+func (e *jbsEnv) vendorOff() {
+	t := e.t
+	t.Helper()
+	was := e.boolQ("SELECT reachable FROM platform.unit_costs WHERE unit = 'm1_vendor'")
+	e.exec("SELECT platform.set_unit_reachable('m1_vendor', false, 'test: the jobs store tests start with the vendor off')")
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if _, err := e.admin.Exec(ctx, "SELECT platform.set_unit_reachable('m1_vendor', $1, 'test: the flag the jobs store test found')", was); err != nil {
+			t.Errorf("cannot restore the vendor flag: %v", err)
+		}
+	})
+}
+
+// jbsView is what two answers of one confirm must share, as one comparable string: the job, its status and key, the fingerprint it was confirmed on, and the numbers. It leaves Replayed out (the
+// one thing that differs) and the times (a replay is read later).
+func jbsView(r jobs.ConfirmResult) string {
+	return fmt.Sprintf("job=%s status=%s key=%s fp=%s reserved=%d pending=%d suppressed=%d", r.Job.ID, r.Job.Status, r.Job.ConfirmKey, r.Job.PreviewFingerprint, r.Reserved, r.Pending, r.Suppressed)
 }
 
 // at returns the same environment reporting to t (a subtest must fail ITS OWN T, never its parent's).

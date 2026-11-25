@@ -1,0 +1,11 @@
+--- a/internal/money/reserve.go
++++ b/internal/money/reserve.go
+@@ -144,7 +144,7 @@
+ 
+ 	// the snapshot: ONE statement copies every unit of the module, in the transaction that holds the share locks
+ 	rows, err = tx.Query(ctx, `INSERT INTO platform.job_unit_prices (job_id, module_id, unit, cost)
+-		SELECT $1::uuid, u.module_id, u.unit, u.cost FROM platform.unit_costs u WHERE u.module_id = $2 AND u.reachable
++		SELECT $1::uuid, u.module_id, u.unit, u.cost FROM platform.unit_costs u WHERE u.module_id = $2
+ 		RETURNING unit, cost`, req.JobID, job.module)
+ 	if err != nil {
+ 		return ReserveResult{}, s.fail(err, c)

@@ -566,8 +566,19 @@ func TestJobsStore_ConfirmTwiceWithOneKeyIsOneConfirm(t *testing.T) {
 	mnyNoErr(t, "the first confirm", err)
 	r2, err := e.tryConfirm(A, j.ID, p.Fingerprint, key, nil)
 	mnyNoErr(t, "the second confirm with the same key", err)
-	if r1.Replayed || !r2.Replayed || r2.Job.ID != j.ID || r2.Job.Status != jobs.StatusConfirmed || r2.Reserved != r1.Reserved || r2.Pending != r1.Pending || r1.Reserved != 4 {
-		t.Fatalf("first %+v, second %+v; want the second to be the first again (Replayed, same numbers, status confirmed)", r1, r2)
+	if r1.Replayed || !r2.Replayed || r1.Reserved != 4 || r1.Job.Status != jobs.StatusConfirmed || r1.Job.ConfirmKey != key {
+		t.Fatalf("first %s (replayed %v), second %s (replayed %v); want the first a fresh confirm of 4 credits and the second a replay", jbsView(r1), r1.Replayed, jbsView(r2), r2.Replayed)
+	}
+	if jbsView(r1) != jbsView(r2) {
+		t.Fatalf("the replay is not the first answer again: first %s, second %s", jbsView(r1), jbsView(r2))
+	}
+	// THE CONTROL: the comparison can fail. The confirm of a DIFFERENT job (another user's, with its own key) has another view.
+	B := mnyUserB
+	e.fund(B, "m1", 100)
+	jb, pb := e.previewed(B, "m1", 4)
+	rb := e.confirm(B, jb.ID, pb.Fingerprint)
+	if jbsView(rb) == jbsView(r1) {
+		t.Fatalf("two different jobs have one view %s: the comparison above cannot tell a replay from another confirm", jbsView(rb))
 	}
 	if e.reserveRows(j.ID) != 1 || e.int("SELECT count(*) FROM platform.ledger WHERE job_id = $1", j.ID) != 1 {
 		t.Errorf("the ledger holds %d reserve rows (%d rows for the job), want exactly one", e.reserveRows(j.ID), e.int("SELECT count(*) FROM platform.ledger WHERE job_id = $1", j.ID))

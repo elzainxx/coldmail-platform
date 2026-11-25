@@ -1,9 +1,9 @@
 --- a/.gitleaks.toml
 +++ b/.gitleaks.toml
-@@ -60,3 +60,9 @@
- description = "failure-kind identifiers of the drift checker's assertion test (commit 56eb8ab): not secrets"
+@@ -69,3 +69,9 @@
+ description = "a deliberately too-short secret in the JWT dial validation test (commit 114b9e7): the value the service refuses, not a secret"
  targetRules = ["generic-api-key"]
- commits = ["56eb8ab26d7ac8edfbeb5dcb1afe09919ce10053"]
+ commits = ["114b9e7a51cf1d6ab7381f4b7c4cf4a9678a0b66"]
 +
 +[[allowlists]]
 +description = "a regex exception that would hide anything matching it"

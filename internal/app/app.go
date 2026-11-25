@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -63,6 +64,9 @@ func ExitCode(err error) int {
 // open by a connection nobody returns. A failed pass never ends a loop, and neither loop changes what
 // /healthz and /readyz say.
 //
+// Beside them runs the reachability sync (reachability.go): from the moment the pool exists, in every instance, it writes PLATFORM_M1_VENDOR_REACHABLE into platform.unit_costs (at start, then every
+// minute; every 5 seconds until the first success). It is stopped and waited for by the same stop function, before the pool closes.
+//
 // No returned error contains the database URL: parse and pool errors pass through dsnscrub, and a
 // configuration error names variables and reasons only.
 func Run(ctx context.Context, getenv func(string) string, logw io.Writer) error {
@@ -91,7 +95,7 @@ func Run(ctx context.Context, getenv func(string) string, logw io.Writer) error 
 	if err != nil {
 		return err
 	}
-	defer pool.Close() // runs after the loops have stopped, and after the leader has returned its connection: see stopLoops below
+	defer pool.Close() // runs after the loops (the entitlement loops and the reachability sync) have stopped, and after the leader has returned its connection: see stopLoops below
 
 	instance, err := entitlements.ResolveInstanceID(cfg.InstanceID)
 	if err != nil {
@@ -128,7 +132,11 @@ func Run(ctx context.Context, getenv func(string) string, logw io.Writer) error 
 	ready := make(chan net.Addr, 1)
 	sc := serverConfig(cfg)
 	sc.Ready = ready
-	stopLoops := runLoops(ctx, ent, ready)
+	// The reachability sync (Phase 4, chunk B3) is not a leader's loop: it runs in EVERY instance, from the start and whether or not the server is listening yet, and it stops with the others.
+	reach := newReachabilitySetter(pool, cfg)
+	stopLoops := runLoops(ctx, ent, ready, func(loopCtx context.Context) {
+		syncReachability(loopCtx, reach, cfg.M1VendorReachable, log, sleepContext)
+	})
 
 	err = server.Run(ctx, sc, handler, draining.Store, log)
 	stopLoops()
@@ -144,20 +152,31 @@ func Run(ctx context.Context, getenv func(string) string, logw io.Writer) error 
 // function that stops them: it cancels the loops and returns only after they have ended. The loops also end
 // when ctx is cancelled, which is the shutdown signal. If the server never becomes ready (it failed to listen)
 // the loops never start and the stop function returns at once.
-func runLoops(ctx context.Context, ent *entitlements.Service, ready <-chan net.Addr) (stop func()) {
+//
+// Each function of background starts at once, in a goroutine of its own, and runs until the loop context is done (the reachability sync). It is stopped and WAITED FOR by the same stop function, so that
+// there is one shutdown path and nothing runs against the pool once the stop function has returned.
+func runLoops(ctx context.Context, ent *entitlements.Service, ready <-chan net.Addr, background ...func(context.Context)) (stop func()) {
 	loopCtx, cancel := context.WithCancel(ctx)
-	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
 	go func() {
-		defer close(done)
+		defer wg.Done()
 		select {
 		case <-ready:
 			_ = ent.Run(loopCtx) // returns nil once both loops have stopped
 		case <-loopCtx.Done():
 		}
 	}()
+	for _, f := range background {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			f(loopCtx)
+		}()
+	}
 	return func() {
 		cancel()
-		<-done
+		wg.Wait()
 	}
 }
 

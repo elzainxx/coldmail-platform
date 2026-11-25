@@ -45,7 +45,7 @@ In Supabase → Settings → API → *Exposed schemas*, **remove `public` (and n
 
 ## Module 1's vendor fallback (ZeroBounce) — ships disabled
 
-The platform charges a vendor answer as `m1_vendor` (the unit price above), but the vendor itself is **module 1's** and is switched on in module 1's environment, never in the platform's. Everything below is module 1's own configuration (`coldmail-verify/Docs/vendor-zerobounce.md` is the reference; the owner steps, in order, are section 3 of the parent repository's `OWNER-ACTIONS.md`). Nothing is sent to the vendor until **all** of the switches are on:
+The platform charges a vendor answer as `m1_vendor` (the unit price above), but the vendor itself is **module 1's** and is switched on in module 1's environment; the platform is only TOLD whether it is on (`PLATFORM_M1_VENDOR_REACHABLE`, below). Everything in the table is module 1's own configuration (`coldmail-verify/Docs/vendor-zerobounce.md` is the reference; the owner steps, in order, are section 3 of the parent repository's `OWNER-ACTIONS.md`). Nothing is sent to the vendor until **all** of the switches are on:
 
 | Dial (module 1) | Default | What it does |
 |---|---|---|
@@ -55,6 +55,14 @@ The platform charges a vendor answer as `m1_vendor` (the unit price above), but 
 | `TM_EXTERNAL_DAILY_SPEND_CAP` | 0 | credits per UTC day module 1 may spend at the vendor; 0 sends nothing |
 | `TM_EXTERNAL_ZEROBOUNCE_TIMEOUT_MS` | 8000 | per-call timeout, 3000–60000 |
 | `TM_EXTERNAL_ZEROBOUNCE_BASE_URL` | `https://api.zerobounce.net` | the vendor endpoint (a regional host if the owner chooses one) |
+
+**The platform's side of the switch: `PLATFORM_M1_VENDOR_REACHABLE`** (`true` or `false`, default `false`; [`config-reference.md`](config-reference.md)). The platform cannot read module 1's switches, so the owner switches both together: module 1's `TM_EXTERNAL_*` dials (above) and this variable, in the same change (the pair is in `OWNER-ACTIONS.md` of the parent repository). It decides what a **module 1 job reserves**, because a reserve holds credits at the dearest unit a job of the module can be charged:
+
+- **off (default):** `m1_vendor` is not reachable, a module 1 job reserves **1 credit per row**, and a vendor answer that arrives all the same is never charged: the settlement returns it as unmapped, with the charge rule that decided it, and its credits stay in the reserve until the release.
+- **on:** a **new** module 1 job reserves **2 credits per row**, and a vendor answer is charged `m1_vendor`.
+- **A job already confirmed never changes.** Its prices were frozen when it reserved, in the other world or not: switching the variable moves no existing job, in either direction (a job reserved with the vendor on can still be charged for a vendor answer after it is switched off).
+- **Every instance writes it.** Each platform instance, leader or standby, writes the value into `platform.unit_costs.reachable` when it starts and again every 60 seconds (every 5 seconds until the first write succeeds; it needs no database to start, so a database that comes up late is found within seconds). The write is idempotent: it changes nothing, and writes no history row, when the flag already holds. **All instances must be given the same value**: instances with different values would undo each other's change every minute (each such change is logged at warn as `unit reachability was changed by someone else`, and `platform.unit_reachability_history` records every change with its source). A change of the variable takes effect when the instances are restarted with it: each writes it at start-up.
+- The platform side is covered by tests against a real Postgres (`TestMoneyReachable_*`) and by the unit tests of the loop; **not checked** here is whether module 1's own switches agree with this variable: the two are switched by the owner by hand.
 
 A vendor *answer* reaches the platform as `risky` or `invalid` with reason `external_verified` and is charged `m1_vendor`; a vendor *non-answer* (an error, a timeout, an `unknown`) leaves module 1's own result standing and is charged by the ordinary rows, never as a vendor call. Not checked: any real vendor call, and the vendor's real status vocabulary (the mapping was built from its official SDKs; the owner verifies it against the live documentation first).
 
@@ -74,6 +82,7 @@ The platform may run as several instances against one database (a rolling restar
 
 - **How the leader is chosen.** The leader is the instance that holds one PostgreSQL *session-level advisory lock*, key `7200000002` (in the platform's `7_xxx_xxx_xxx` band; the migrator holds `7100000001` while it runs). It is taken with `pg_try_advisory_lock`, which never waits, on **one dedicated connection** that the leader keeps for as long as it leads, so **one connection of the pool is checked out for that** (the pool's default is at least four). PostgreSQL frees a session lock the moment its session ends: a leader that crashes, is killed, loses its connection or is stopped hands the lock on without any lease, heartbeat or clock. A planned stop (SIGTERM) unlocks explicitly and returns the connection before the pool closes, so a standby takes over at its next tick instead of when the server notices a closed socket.
 - **How long a takeover takes.** One tick of the standby's loops: the shorter of `PLATFORM_ENTITLEMENT_EXPIRE_INTERVAL_SEC` (default 30) and `PLATFORM_M3_RECONCILE_INTERVAL_SEC` (default 5), so about 5 s by default. The new leader's first pass of each loop is at that loop's own next tick.
+- **One loop runs in every instance, not only in the leader's:** the reachability sync writes `PLATFORM_M1_VENDOR_REACHABLE` into the database (see "Module 1's vendor fallback" above). It is idempotent, so any number of instances do no harm, **provided they all have the same value**.
 - **Name each instance.** Set `PLATFORM_INSTANCE_ID` to a different value on every instance (1 to 63 printable ASCII characters; the default is the host name, which is already distinct per container). The leader's lock session carries it as its `application_name`, and the election's log lines carry it as `instance`.
 - **How to see the leader.** In SQL, as a role that can read `pg_stat_activity` (an admin of the database; exactly one row means one leader):
 
