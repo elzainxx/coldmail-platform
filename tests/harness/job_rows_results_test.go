@@ -39,7 +39,7 @@ func jrResultOf(row ledgerCols, kv ...any) ledgerCols {
 // TestJobRows_Checks: each CHECK of platform.job_rows refuses its row for ITS name beside the legal row, and the row that would make it evaluate to NULL is refused too (a CHECK that evaluates to NULL passes): the
 // ordinal starts at 1 and is unique in the job; the state is one of five; the raw address is bounded in BYTES (4096 accepted, 4097 not, and a letter of two bytes counts twice); the normalised address is NULL
 // exactly when the row is malformed (a pending row with none, a malformed one with one); a row is a duplicate exactly when it names the row it repeats, and that row is a row of the same job; a malformed or
-// excluded row says why (NULL, blank); only a pending row is submitted; the fields are an object; NOT NULL columns refuse NULL; a row is never its own duplicate; and an address holds ONE seat in a
+// excluded row says why (NULL, blank); only a pending row is submitted; the fields are an object; NOT NULL columns refuse NULL; a NULL job and a job that does not exist meet the guard of the list first (23001 job_rows_frozen) and the NOT NULL and the foreign key are proved with the guard disabled in a rolled-back savepoint; a row is never its own duplicate; and an address holds ONE seat in a
 // job (a unique index over the pending and the suppressed rows: a second one is 23505 and the index is named, the same address in another job, as a duplicate, as an excluded row, or once the first is
 // malformed is accepted, and two malformed rows are accepted: both have no address, the NULL case).
 // It fails if a constraint is missing, weaker than its design, or lets a NULL through.
@@ -146,8 +146,19 @@ func TestJobRows_Checks(t *testing.T) {
 	})
 
 	t.Run("the row belongs to a job and a user", func(t *testing.T) {
-		ledgerRefusedInsert(t, tx, "a NULL job", "23502", ledgerWhy{Column: "job_id"}, jrRows, row("job_id", nil))
+		frozen := check("job_rows_frozen")
 		ledgerRefusedInsert(t, tx, "a NULL user", "23502", ledgerWhy{Column: "user_id"}, jrRows, row("user_id", nil))
+		// the guard of the list (BEFORE INSERT, ahead of the NOT NULL check and of the foreign key) finds no status for a NULL job and for a job that does not exist, and answers first
+		ledgerRefusedInsert(t, tx, "a NULL job", "23001", frozen, jrRows, row("job_id", nil))
+		ledgerRefusedInsert(t, tx, "a job that does not exist", "23001", frozen, jrRows, row("job_id", ledgerNoSuchID))
+		ledgerTrial(t, tx, func(sp pgx.Tx) { // the NOT NULL and the foreign key behind the guard, with the guard down (the owner disables it in a savepoint that is rolled back)
+			ledgerMust(t, sp, "ALTER TABLE platform.job_rows DISABLE TRIGGER job_rows_frozen")
+			ledgerTrial(t, sp, func(sp2 pgx.Tx) {
+				ledgerOKInsert(t, sp2, "control (the guard disabled): a legal row", jrRows, row())
+			})
+			ledgerRefusedInsert(t, sp, "the guard disabled: a NULL job", "23502", ledgerWhy{Column: "job_id"}, jrRows, row("job_id", nil))
+			ledgerRefusedInsert(t, sp, "the guard disabled: a job that does not exist", "23503", check("job_rows_job_fk"), jrRows, row("job_id", ledgerNoSuchID))
+		})
 	})
 }
 

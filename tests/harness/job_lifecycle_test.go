@@ -1413,8 +1413,15 @@ func TestJobLifecycle_LifecycleColumnsMoveWithATransition(t *testing.T) {
 					ledgerExpectRefused(t, sp2, "platform_app: "+what, "23001", moves, write, id)
 					ledgerExpectOK(t, sp2, "control: platform_app writes the same value back", same, id)
 				})
+				stored := func() string {
+					return ledgerString(t, sp, "SELECT COALESCE("+c.col+"::text, '<null>') FROM platform.jobs WHERE id = $1", id)
+				}
+				before := stored()
 				guardOff(sp)
 				ledgerExpectOK(t, sp, "control: "+what+", the lifecycle guard switched off (so it is the guard that refuses)", write, id)
+				if after := stored(); after == before { // a write of the value the column already holds is no change, and no change is never refused: the case would prove nothing
+					t.Fatalf("%s: the write left %s as it was (%s): the case must write a value that DIFFERS from the stored one", what, c.col, before)
+				}
 			})
 		}
 		if len(seen) != 6 {
@@ -1430,7 +1437,7 @@ func TestJobLifecycle_LifecycleColumnsMoveWithATransition(t *testing.T) {
 				ledgerExpectOK(t, sp, "a running job: "+set, "UPDATE platform.jobs SET "+set+" WHERE id = $1", id)
 			}
 			ledgerExpectOK(t, sp, "control: several free columns in one write", "UPDATE platform.jobs SET module_job_ref = 'ref-2', stale_alerted_at = NULL WHERE id = $1", id)
-			ledgerExpectRefused(t, sp, "a free column beside a protected one in one write", "23001", moves, "UPDATE platform.jobs SET module_job_ref = 'ref-3', started_at = now() WHERE id = $1", id)
+			ledgerExpectRefused(t, sp, "a free column beside a protected one in one write", "23001", moves, "UPDATE platform.jobs SET module_job_ref = 'ref-3', started_at = now() + interval '1 hour' WHERE id = $1", id)
 		})
 		for _, status := range []string{"draft", "previewed"} {
 			status := status
