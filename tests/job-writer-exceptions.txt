@@ -1,0 +1,6 @@
+# Files that may write a job table although they are not the job store (scripts/check-job-writers.sh). One entry per line: relative/path|reason
+# The path is relative to the repository root and must be a scanned file: a non-test Go file under internal/ or cmd/ (outside internal/jobs/) or a .sql file under db/ outside db/migrations/.
+# No file is excused today: the one place the platform writes platform.jobs, platform.job_rows, platform.job_results, platform.job_events (and moves a job through platform.job_transition) is the
+# job store, internal/jobs/, which needs no entry here and cannot be given one (the gate reads exceptions for files outside it only). The API and the job engine call the store.
+# An entry is RED when its file does not exist, is not a scanned file, lies inside internal/jobs/, contains no such write, or has a blank reason (a register that rots hides the next miss). A second
+# writer would bypass the user scoping, the lifecycle settings and the single transaction of the store's own functions, so the reason must say why this file cannot call the store.

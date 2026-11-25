@@ -11,6 +11,7 @@
 #   check-balance-invariant  the balance_drift / reserve_overdrawn gate (the selftest here; the live check runs in the harness and in the fault legs)
 #   check-user-lists     platform code never selects public.users directly: platform.listable_users is the only sanctioned user list (the selftest and the real run, both here)
 #   check-suppression-writers  no code writes platform.suppressions except internal/suppress/store.go, and every write there comes after a norm.Validate( call in the same function: the table's CHECK cannot decode punycode, so the Go validator is the only wall for two address shapes (the selftest and the real run, both here)
+#   check-job-writers    no code writes the job tables (platform.jobs, job_rows, job_results, job_events, job_transitions) or moves a job through platform.job_transition() except the job store, internal/jobs/ (the selftest and the real run, both here)
 #   check-install-doc    Docs/install.md names only what exists and CI runs the install step it documents (the selftest and the real run, both here)
 #   check-gitleaks-config the secret scanner configuration (.gitleaks.toml) holds only decided, narrow exceptions: one rule each, a path under audit-scratch or one commit that exists (the selftest and the real run, both here)
 #   check-charge-table   internal/charge/rules.psv equals the fenced charge table in Docs/phase-2-spec.md byte for byte and charges only seeded units (the selftest and the real run, both here)
@@ -64,7 +65,7 @@ jobs:
         run: |
           set -u
           rc=0
-          for t in scripts/check-test-floors-selftest.sh scripts/check-image-pins-selftest.sh scripts/check-migrations-selftest.sh scripts/check-gitleaksignore-selftest.sh scripts/check-fault-patches-selftest.sh ci/faults/run-leg-selftest.sh scripts/check-public-schema-selftest.sh scripts/check-module-reads-selftest.sh scripts/check-balance-invariant-selftest.sh scripts/check-user-lists-selftest.sh scripts/check-suppression-writers-selftest.sh scripts/check-install-doc-selftest.sh scripts/check-gitleaks-config-selftest.sh scripts/check-charge-table-selftest.sh scripts/check-verified-heads-selftest.sh scripts/check-license-selftest.sh scripts/check-personal-details-selftest.sh tests/harness/m2worker/stage-selftest.sh tests/harness/m1node/stage-selftest.sh tests/harness/m3adapter/stage-selftest.sh tests/harness/gotrue/stage-selftest.sh tools/fetch-modules-lock-selftest.sh; do
+          for t in scripts/check-test-floors-selftest.sh scripts/check-image-pins-selftest.sh scripts/check-migrations-selftest.sh scripts/check-gitleaksignore-selftest.sh scripts/check-fault-patches-selftest.sh ci/faults/run-leg-selftest.sh scripts/check-public-schema-selftest.sh scripts/check-module-reads-selftest.sh scripts/check-balance-invariant-selftest.sh scripts/check-user-lists-selftest.sh scripts/check-suppression-writers-selftest.sh scripts/check-job-writers-selftest.sh scripts/check-install-doc-selftest.sh scripts/check-gitleaks-config-selftest.sh scripts/check-charge-table-selftest.sh scripts/check-verified-heads-selftest.sh scripts/check-license-selftest.sh scripts/check-personal-details-selftest.sh tests/harness/m2worker/stage-selftest.sh tests/harness/m1node/stage-selftest.sh tests/harness/m3adapter/stage-selftest.sh tests/harness/gotrue/stage-selftest.sh tools/fetch-modules-lock-selftest.sh; do
             echo "::group::$t"; bash "$t" || { echo "SELFTEST FAILED: $t"; rc=1; }; echo "::endgroup::"
           done
           exit $rc
@@ -83,6 +84,9 @@ jobs:
 
       - name: check-suppression-writers on the real repository (no code writes platform.suppressions except internal/suppress/store.go, which validates the address first)
         run: bash scripts/check-suppression-writers.sh
+
+      - name: check-job-writers on the real repository (no code writes the job tables, or moves a job through platform.job_transition(), except the job store internal/jobs)
+        run: bash scripts/check-job-writers.sh
 
       - name: check-install-doc on the real repository (Docs/install.md names only what exists, and CI runs the install step it documents)
         run: bash scripts/check-install-doc.sh

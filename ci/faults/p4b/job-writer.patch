@@ -1,0 +1,9 @@
+diff --git a/internal/jobengine/zz_job_writer.go b/internal/jobengine/zz_job_writer.go
+new file mode 100644
+--- /dev/null
++++ b/internal/jobengine/zz_job_writer.go
+@@ -0,0 +1,4 @@
++package jobengine
++
++// FAULT: a second writer of the job table, one that moves a job without the store, the lifecycle settings or the user's scope.
++const zzJobWriter = `UPDATE platform.jobs SET status = 'running' WHERE id = $1::uuid`

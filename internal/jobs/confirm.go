@@ -1,0 +1,296 @@
+package jobs
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"sort"
+
+	"github.com/jackc/pgx/v5"
+
+	"github.com/coldmail-platform/platform/internal/money"
+	"github.com/coldmail-platform/platform/internal/suppress"
+)
+
+// Confirm turns a previewed job into a confirmed (or, with a start time, a scheduled) one, in ONE transaction (Locked 24). The steps, in this order:
+//
+//  0. the key is validated (1 to 128 characters of letters, digits and . _ : -) and, before the transaction, the cheap replay is answered: a job of this user that already holds the key is
+//     returned as Replayed when it is this job (its status as it is now, nothing written) and ErrConfirmKeyReused when it is another. A module 3 job is pre-checked (PreChecks.M3Feasibility,
+//     never an HTTP call under the lock): the module could not be asked is ErrModuleUnavailable for an immediate confirm (ignored for a scheduled one), a campaign it cannot run is ErrInfeasible.
+//  1. BEGIN; the (user, module) advisory lock FIRST (money.Store.LockIn), then the job row FOR UPDATE, scoped by the user (ErrNotFound). The job must be previewed: one that was already confirmed
+//     with this key is the replay the cheap read could not see (two requests racing), any other status is ErrNotPreviewed.
+//  2. the module's price rows are held FOR SHARE and the fingerprint is recomputed exactly as Preview computes it; it must equal both the one the client sent and the one stored, else
+//     ErrStalePreview (the list, the price of a reachable unit, the content, the choice or the source job's results changed).
+//  3. the user's suppression list is applied NOW: the pending rows whose address is on it become suppressed (allowed while the job is previewed). No pending row left is ErrNothingToDo.
+//  4. a metered module (m1, m2): money.ReserveIn holds credits for exactly the pending rows, freezing the price snapshot of the reachable units; a list the balance does not cover is
+//     ErrInsufficientCredits with the exact shortfall and the transaction rolls back. Module 3: the entitlement must be enabled and unexpired by the database's clock (ErrNoEntitlement) and the
+//     user not observed suspended (ErrSuspended).
+//  5. ONE UPDATE moves the job (previewed -> confirmed, or -> scheduled when ScheduledStart is given: between 1 minute and 366 days ahead by the database's clock, else ErrBadRequest) and sets
+//     confirm_key, scheduled_start and start_deadline = coalesce(scheduled_start, now()) + the max start delay, after the three transaction-local settings (actor user, the user's id, the
+//     reason): the guard sets confirmed_at itself. The slot is the unique index jobs_one_active_per_user_module: a loser gets ErrSlotTaken (23505) and the whole transaction rolls back, the
+//     reserve with it; a key held by another job is ErrConfirmKeyReused (23505).
+//  6. AFTER the move (the table refuses results before the job is confirmed) the platform's own results are written, free, one per row that is not pending: malformed (P-08), duplicate (P-07),
+//     suppressed (P-SUP) and excluded (P-EXC).
+//
+// The slot is not checked in Go, on purpose: the index is what decides (the concurrency test shows both confirms succeed when it is dropped).
+func (s *Store) Confirm(ctx context.Context, userID string, req ConfirmReq) (ConfirmResult, error) {
+	if err := checkUser(userID); err != nil {
+		return ConfirmResult{}, opErr("confirm", err)
+	}
+	if !isUUID(req.JobID) {
+		return ConfirmResult{}, opErr("confirm", ErrNotFound)
+	}
+	if !validKey(req.Key) {
+		return ConfirmResult{}, opErr("confirm", badRequest("the confirm key must be 1 to 128 characters of letters, digits and . _ : -"))
+	}
+	if !validFingerprint(req.Fingerprint) {
+		return ConfirmResult{}, opErr("confirm", badRequest("the fingerprint must be 64 lower-case hex digits"))
+	}
+
+	// 0. the cheap replay, outside the transaction
+	var holder string
+	err := s.pool.QueryRow(ctx, `SELECT id::text FROM platform.jobs WHERE user_id = $1::uuid AND confirm_key = $2`, userID, req.Key).Scan(&holder)
+	switch {
+	case err == nil && holder != req.JobID:
+		return ConfirmResult{}, opErr("confirm", ErrConfirmKeyReused)
+	case err == nil:
+		j, err := s.getJob(ctx, s.pool, userID, req.JobID, false)
+		if err != nil {
+			return ConfirmResult{}, opErr("confirm", err)
+		}
+		res, err := s.replayResult(ctx, s.pool, j)
+		return res, opErr("confirm", err)
+	case !errors.Is(err, pgx.ErrNoRows):
+		return ConfirmResult{}, opErr("confirm", s.fail(err))
+	}
+	if err := s.preCheck(ctx, userID, req); err != nil {
+		return ConfirmResult{}, opErr("confirm", err)
+	}
+
+	var res ConfirmResult
+	err = s.inTx(ctx, func(tx pgx.Tx) error {
+		// 1. the lock first (it is named by the job's module, which never changes), then the job row
+		var module string
+		if err := tx.QueryRow(ctx, `SELECT module_id FROM platform.jobs WHERE id = $1::uuid AND user_id = $2::uuid`, req.JobID, userID).Scan(&module); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrNotFound
+			}
+			return s.fail(err)
+		}
+		if err := s.mny.LockIn(ctx, tx, userID, module); err != nil {
+			return err
+		}
+		j, err := s.getJob(ctx, tx, userID, req.JobID, true)
+		if err != nil {
+			return err
+		}
+		if j.Status != StatusPreviewed {
+			if j.ConfirmKey == req.Key { // confirmed with this very key while this request waited: the replay
+				r, err := s.replayResult(ctx, tx, j)
+				if err != nil {
+					return err
+				}
+				res = r
+				return nil
+			}
+			return ErrNotPreviewed
+		}
+		if req.ScheduledStart != nil {
+			var ok bool
+			if err := tx.QueryRow(ctx, `SELECT $1::timestamptz >= now() + make_interval(secs => $2::double precision) AND $1::timestamptz <= now() + make_interval(secs => $3::double precision)`,
+				*req.ScheduledStart, MinScheduleAhead.Seconds(), MaxScheduleAhead.Seconds()).Scan(&ok); err != nil {
+				return s.fail(err)
+			}
+			if !ok {
+				return badRequest("a scheduled start must be between 1 minute and 366 days from now")
+			}
+		}
+
+		// 2. the stale-preview check, over the prices this transaction now holds
+		sn, err := s.takeSnapshot(ctx, tx, j, true)
+		if err != nil {
+			return err
+		}
+		if sn.fingerprint != req.Fingerprint || sn.fingerprint != j.PreviewFingerprint {
+			return ErrStalePreview
+		}
+
+		// 3. the suppression list, applied now
+		found, err := suppress.Filter(ctx, tx, userID, sn.pendingEmails)
+		if err != nil {
+			return err
+		}
+		suppressed, err := s.suppressRows(ctx, tx, j.ID, userID, found)
+		if err != nil {
+			return err
+		}
+		pending := sn.pending - suppressed
+		if pending < 1 {
+			return ErrNothingToDo
+		}
+
+		// 4. the credits (m1, m2) or the entitlement (m3)
+		var reserved int64
+		if sn.metered {
+			rr, err := s.mny.ReserveIn(ctx, tx, money.ReserveReq{JobID: j.ID, Units: pending})
+			if err != nil {
+				return err
+			}
+			reserved = rr.Reserved
+		} else if err := s.checkEntitlement(ctx, tx, userID); err != nil {
+			return err
+		}
+
+		// 5. the move: one statement, after the three settings
+		to, reason := StatusConfirmed, "confirmed by the user"
+		if req.ScheduledStart != nil {
+			to, reason = StatusScheduled, "scheduled by the user"
+		}
+		if err := s.setActor(ctx, tx, "user", userID, reason); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE platform.jobs SET status = $3, confirm_key = $4, scheduled_start = $5::timestamptz,
+				start_deadline = COALESCE($5::timestamptz, now()) + make_interval(secs => $6::double precision)
+			WHERE id = $1::uuid AND user_id = $2::uuid`, j.ID, userID, to, req.Key, req.ScheduledStart, s.maxStartDelay.Seconds()); err != nil {
+			return s.fail(err)
+		}
+		if err := s.clearActor(ctx, tx); err != nil {
+			return err
+		}
+
+		// 6. the platform's own results, now that the job is confirmed
+		if err := s.writePlatformResults(ctx, tx, j.ID, userID); err != nil {
+			return err
+		}
+		confirmed, err := s.getJob(ctx, tx, userID, j.ID, false)
+		if err != nil {
+			return err
+		}
+		res = ConfirmResult{Job: confirmed, Reserved: reserved, Pending: pending, Suppressed: suppressed + sn.suppressed}
+		return nil
+	})
+	if err != nil {
+		s.log.Info("confirm refused", "job", req.JobID, "reason", refusalWord(err))
+		return ConfirmResult{}, opErr("confirm", err)
+	}
+	s.log.Info("confirm done", "job", res.Job.ID, "module", res.Job.Module, "status", res.Job.Status, "replayed", res.Replayed, "reserved", res.Reserved, "pending", res.Pending, "suppressed", res.Suppressed)
+	return res, nil
+}
+
+// preCheck is the module 3 pre-check, made BEFORE the transaction. It runs only for a previewed module 3 job when the store has PreChecks; every other case is judged by the transaction.
+func (s *Store) preCheck(ctx context.Context, userID string, req ConfirmReq) error {
+	if s.pre == nil {
+		return nil
+	}
+	j, err := s.getJob(ctx, s.pool, userID, req.JobID, false)
+	if err != nil {
+		return err
+	}
+	if j.Module != ModuleSendBYO || j.Status != StatusPreviewed || j.Preview == nil {
+		return nil
+	}
+	f, err := s.pre.M3Feasibility(ctx, userID, j.ID, j.Preview.Units)
+	if err != nil {
+		s.log.Warn("the module 3 pre-check failed", "job", j.ID)
+		return fmt.Errorf("the module 3 pre-check failed: %w", err)
+	}
+	if f.Unavailable {
+		s.log.Info("module 3 could not be asked", "job", j.ID, "scheduled", req.ScheduledStart != nil)
+	}
+	switch {
+	case f.Unavailable && req.ScheduledStart == nil:
+		return ErrModuleUnavailable
+	case f.Unavailable: // a scheduled job is not pre-checked against availability: the module may be back by its start
+		return nil
+	case !f.Feasible:
+		return ErrInfeasible{Causes: append([]string(nil), f.Causes...)}
+	}
+	return nil
+}
+
+// suppressRows turns the job's pending rows whose address the user suppresses into suppressed rows (the job is previewed, so its rows may still change) and returns how many it changed.
+func (s *Store) suppressRows(ctx context.Context, tx pgx.Tx, jobID, userID string, found map[string]bool) (int, error) {
+	if len(found) == 0 {
+		return 0, nil
+	}
+	list := make([]string, 0, len(found))
+	for e := range found {
+		list = append(list, e)
+	}
+	sort.Strings(list)
+	changed := 0
+	for start := 0; start < len(list); start += rowBatch {
+		tag, err := tx.Exec(ctx, `UPDATE platform.job_rows SET state = 'suppressed'
+			WHERE job_id = $1::uuid AND user_id = $2::uuid AND state = 'pending' AND email_norm = ANY($3::text[])`, jobID, userID, list[start:min(start+rowBatch, len(list))])
+		if err != nil {
+			return 0, s.fail(err)
+		}
+		changed += int(tag.RowsAffected())
+	}
+	return changed, nil
+}
+
+// checkEntitlement is module 3's replacement for credits: an enabled, unexpired entitlement (by the DATABASE's clock) and a user the platform has not observed suspended. An observation of
+// 'suspended' counts whatever version it was made at: the platform never reports module 3 in a state it was not seen in, so a user re-enabled a moment ago is refused until the reconcile
+// loop has read their un-suspension back.
+func (s *Store) checkEntitlement(ctx context.Context, tx pgx.Tx, userID string) error {
+	var enabled, current bool
+	err := tx.QueryRow(ctx, `SELECT enabled, enabled_until IS NULL OR enabled_until > clock_timestamp() FROM platform.m3_entitlements WHERE user_id = $1::uuid`, userID).Scan(&enabled, &current)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNoEntitlement
+	}
+	if err != nil {
+		return s.fail(err)
+	}
+	if !enabled || !current {
+		return ErrNoEntitlement
+	}
+	var observed string
+	err = tx.QueryRow(ctx, `SELECT observed FROM platform.m3_sync WHERE user_id = $1::uuid`, userID).Scan(&observed)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil // nothing was ever observed
+	}
+	if err != nil {
+		return s.fail(err)
+	}
+	if observed == "suspended" {
+		return ErrSuspended
+	}
+	return nil
+}
+
+// writePlatformResults records the platform's own outcome of every row that is not pending, free: malformed (P-08), duplicate (P-07), suppressed (P-SUP), excluded (P-EXC). One statement; the
+// job must already be confirmed (the table refuses a result for a draft or previewed job). The rule labels of malformed and duplicate come from the charge table, not from this file.
+func (s *Store) writePlatformResults(ctx context.Context, tx pgx.Tx, jobID, userID string) error {
+	rules := map[string]string{}
+	for _, st := range []string{StateMalformed, StateDuplicate, StateSuppressed, StateExcluded} {
+		r, err := resultRule(st)
+		if err != nil {
+			return err
+		}
+		rules[st] = r
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO platform.job_results (job_id, user_id, item_ref, ordinal, email, origin, module_state, reason, decision, rule)
+		SELECT r.job_id, r.user_id, r.id, r.ordinal, COALESCE(r.email_norm, r.email_raw), 'platform', r.state, r.reason, 'free',
+			CASE r.state WHEN 'malformed' THEN $3::text WHEN 'duplicate' THEN $4::text WHEN 'suppressed' THEN $5::text WHEN 'excluded' THEN $6::text END
+		FROM platform.job_rows r WHERE r.job_id = $1::uuid AND r.user_id = $2::uuid AND r.state <> 'pending'`,
+		jobID, userID, rules[StateMalformed], rules[StateDuplicate], rules[StateSuppressed], rules[StateExcluded]); err != nil {
+		return s.fail(err)
+	}
+	return nil
+}
+
+// replayResult is the answer of a confirm that had already happened: the job as it is now, with the numbers the first answer carried, read from what was written (the reserve row of the
+// ledger and the rows). Nothing is written.
+func (s *Store) replayResult(ctx context.Context, q querier, j Job) (ConfirmResult, error) {
+	var reserved int64
+	var pending, suppressed int
+	if err := q.QueryRow(ctx, `SELECT COALESCE((SELECT reserved_delta FROM platform.ledger WHERE job_id = $1::uuid AND kind = 'reserve'), 0)`, j.ID).Scan(&reserved); err != nil {
+		return ConfirmResult{}, s.fail(err)
+	}
+	if err := q.QueryRow(ctx, `SELECT count(*) FILTER (WHERE state = 'pending'), count(*) FILTER (WHERE state = 'suppressed')
+		FROM platform.job_rows WHERE job_id = $1::uuid AND user_id = $2::uuid`, j.ID, j.UserID).Scan(&pending, &suppressed); err != nil {
+		return ConfirmResult{}, s.fail(err)
+	}
+	return ConfirmResult{Job: j, Replayed: true, Reserved: reserved, Pending: pending, Suppressed: suppressed}, nil
+}
