@@ -298,15 +298,22 @@ func (s *jlStack) jlM1Controls(t *testing.T, v jlM1View) {
 	w = copyView()
 	w.Report = w.Report[1:]
 	mustReport("a row of module 1's report removed", "module 1's report holds 0 row(s)", w)
-	// a result of the platform's own claimed by the module
+	// a result of the platform's own claimed by the module: it can only be tampered where the job HAS such a result (a malformed or repeated or suppressed row). A job of clean addresses (the chain test's sources)
+	// has none: the control is then not applicable and says so, and it stays in force in every job that has one (the module 1 live test: malformed, repeated and suppressed rows)
 	w = copyView()
+	claimed := false
 	for i, r := range w.Results {
 		if r.Origin == "platform" {
 			w.Results[i].Origin = "module"
+			claimed = true
 			break
 		}
 	}
-	mustReport("a platform result claimed by module 1", "want platform", w)
+	if claimed {
+		mustReport("a platform result claimed by module 1", "want platform", w)
+	} else {
+		t.Logf("NOTE control \"a platform result claimed by module 1\" is not applicable to this job: it holds no result of the platform's own (every row reached module 1)")
+	}
 	// a result's decision changed
 	w = copyView()
 	if w.Results[firstModule].Decision == "free" {

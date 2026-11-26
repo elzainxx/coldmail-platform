@@ -142,8 +142,7 @@ digest = SHA-256( the key as text )                                             
 ```
 
 The user id is the platform user's id in lower case; the digest is of the key's text, which is what module 1's front door computes from the bearer it is shown. Nothing is stored on the platform's
-side: the key is recomputed on every call. The row (`caller_id`, the digest, `not_before`, `user_id`) is written by `ProvisionM1Caller`, once per user, as the **privileged** identity of module 1's
-database (module 1's runtime login, like the platform's `platform_app`, can only read that table). It is idempotent, and it refuses a user id that is empty or malformed because a key with no owner
+side: the key is recomputed on every call. The row (`caller_id`, the digest, `not_before`, `user_id`) is registered AUTOMATICALLY, at the user's first module 1 call, by the install function `platform.provision_m1_caller` (`db/install/postmodule1.sql`, Docs/install.md step 3b: SECURITY DEFINER, owned by module 1's `verify_admin`, executable by `platform_app` only), which the service calls through `tenant.M1CallerEnsurer`; no operator step per user and no module 1 admin credential in the service (module 1's runtime login, like the platform's `platform_app`, can only read that table). The operator tools' privileged writer `ProvisionM1Caller` (`internal/tenant/m1key.go`, used by the rotation below and the tests) stays. The write is idempotent, and it refuses a user id that is empty or malformed because a key with no owner
 can submit jobs that nobody can read. **`PLATFORM_M1_KEY_SECRET`** is optional so that a deployment that makes no module 1 call starts without it; without it no key is derived and no tenant scope
 is built (the resolver answers `ErrNoM1KeySecret`).
 
@@ -153,7 +152,7 @@ The version is in the text the HMAC is taken over, so a user's version-2 key is 
 designed for rotation (two rows for one `caller_id` with overlapping windows, migration 0010). The steps, none of which interrupts a user:
 
 1. Choose the new secret (at least 32 bytes) and the next version, N = the current version + 1.
-2. **Provision** every user's version-N row beside the old one: build a resolver with the NEW secret and `tenant.WithM1KeyVersion(N)` and call `ProvisionM1Caller` (or `ProvisionM1CallerVersion(…, N)`)
+2. **Provision** every ACTIVE user's version-N row beside the old one (the automatic provisioning only registers the version the service presents, at a user's next call: do this before the switch so that no user's next job meets a key module 1 has not seen): build a resolver with the NEW secret and `tenant.WithM1KeyVersion(N)` and call `ProvisionM1Caller` (or `ProvisionM1CallerVersion(…, N)`)
    for each user, as the privileged identity of module 1's database. It is idempotent. Both keys now authenticate as the same user (same `caller_id`, same owner).
 3. **Switch** the platform: set `PLATFORM_M1_KEY_SECRET` to the new secret and `PLATFORM_M1_KEY_VERSION` to N, and restart. From then on the platform presents only version N.
 4. **Retire** the old rows: build a resolver with the OLD secret and call `RetireM1CallerVersion(…, N-1, grace)` for each user (the grace is how long an old key still works; `0` ends it at once). The row
