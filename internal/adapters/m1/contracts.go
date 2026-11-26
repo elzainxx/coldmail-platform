@@ -191,7 +191,7 @@ func UncoveredRoutes() map[string]string {
 // fixture written by hand would be a recording nobody made. So while this is false the contracts are DECLARED but not LISTED: Contracts leaves them out and UncoveredRoutes names the cancel route. The lead
 // flips it, as the ONLY edit of the switch, after installing the files: TestCancelFixturesAreInstalledWhenTheSwitchIsOn is red when it is true and a file is missing, and
 // TestCancelFixturesDoNotExistWhileTheSwitchIsOff is red when it is false and one of them is there, so neither half of the change can be made without the other.
-const recordedPauseFixtures = false
+const recordedPauseFixtures = true
 
 // RecordedPauseFixtures says whether module 1's cancel recordings are installed and their contracts listed (the value of the switch).
 func RecordedPauseFixtures() bool { return recordedPauseFixtures }

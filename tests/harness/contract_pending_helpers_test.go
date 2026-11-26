@@ -38,7 +38,7 @@ import (
 
 // cpSkipAllowed is the allowance: a step whose fixture is not installed is skipped (with a note) instead of failing. It is true until the lead has installed the recordings; phase 2 sets it to false
 // (or deletes the skip path), after which a missing fixture is red here whatever the switch says.
-const cpSkipAllowed = true
+const cpSkipAllowed = false
 
 // cpCapture is the observer of a step's adapter: it keeps the responses of the calls the step made (the answer of a call is the LAST response observed since the previous take: a retried call
 // observes each attempt) and, once the switch is on, also hands every response to the module's main session.

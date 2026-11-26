@@ -1,0 +1,29 @@
+{
+  "caller_ref": "",
+  "cancel_outcome": "cancelled",
+  "cancel_requested": true,
+  "complete": true,
+  "counts": {
+    "cancelled": 30,
+    "pending": 0,
+    "settled": 0,
+    "total": 30
+  },
+  "job_id": "00000000-0000-4000-8000-000000000001",
+  "processing_paused": false,
+  "status": "complete",
+  "totals": {
+    "by_status": {
+      "invalid": 0,
+      "risky": 0,
+      "unknown": 0,
+      "valid": 0
+    },
+    "cancelled": 30,
+    "duplicates": 0,
+    "malformed": 0,
+    "pending": 0,
+    "settled": 0,
+    "submitted": 30
+  }
+}

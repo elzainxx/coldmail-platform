@@ -64,6 +64,9 @@ Module 1 gained three additive features in the Phase 3 close-out (partial Tier 4
 | File | Route | Case |
 |---|---|---|
 | `job-complete.json` | `GET /v1/jobs/{id}` | a finished job of 2 rows, both settled `invalid` (`complete` true, `status` `complete`). The round 1 recording of the job, WITH a `totals` object ADDED BY HAND (`submitted` 2, `settled` 2, `pending` 0, `duplicates` 0, `malformed` 0, `by_status` `invalid` 2, consistent with the file's own `counts`): the only edit of a recorded file in this directory. Re-recording it would not change a byte |
+| `cancel-ok.json` | `POST /v1/jobs/{id}/cancel` | Phase 4 close-out C2 (recorded from module 1 at `verify@c516f28` by the m1node stack's record run): the job-status body plus `cancel_outcome` (one shape for `cancelled`, `already_cancelled` and `already_complete`; the file holds the first answer, the session compares the repeats with it). |
+| `cancel-error-not-found.json` | `POST /v1/jobs/{id}/cancel` | the 404 of a cancel of a job that does not exist (the same envelope as another caller's job). |
+| `results-page-cancelled.json` | `GET /v1/jobs/{id}/results` | a page that holds a row cancelled before its check began: status `cancelled`, reason `cancelled_by_caller`, an empty `flags`. |
 | `submit-error-key-reused.json` | `POST /v1/verify/bulk` | 409 `idempotency_key_reused`, detail `Idempotency-Key` / `conflict` |
 | `describe-error-unauthenticated.json` | `GET /v1/describe` | 401 `unauthenticated` |
 
