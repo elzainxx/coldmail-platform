@@ -83,6 +83,19 @@ const (
 	VarJobMaxStartDelayMin = "PLATFORM_JOB_MAX_START_DELAY_MIN"
 	VarResultsPageMax      = "PLATFORM_RESULTS_PAGE_MAX"
 
+	// The job engine (internal/jobengine, built and run by internal/app, Phase 4 B7 to B9): whether it runs in this instance, how often it looks, how long it leaves a running job alone between two
+	// observations, how long a running job may make no progress before it is called stale (one dial per module), how many rows one submit call offers a module, how many run calls to modules 2 and 3
+	// are in flight at once, and how long one job's step may take.
+	VarJobEngineEnabled     = "PLATFORM_JOB_ENGINE_ENABLED"
+	VarJobTickMS            = "PLATFORM_JOB_TICK_MS"
+	VarJobSettleIntervalSec = "PLATFORM_JOB_SETTLE_INTERVAL_SEC"
+	VarJobStaleAfterMinM1   = "PLATFORM_JOB_STALE_AFTER_MIN_M1"
+	VarJobStaleAfterMinM2   = "PLATFORM_JOB_STALE_AFTER_MIN_M2"
+	VarJobStaleAfterMinM3   = "PLATFORM_JOB_STALE_AFTER_MIN_M3"
+	VarJobSubmitBatch       = "PLATFORM_JOB_SUBMIT_BATCH"
+	VarJobSubmitConcurrency = "PLATFORM_JOB_SUBMIT_CONCURRENCY"
+	VarJobStepTimeoutSec    = "PLATFORM_JOB_STEP_TIMEOUT_SEC"
+
 	// Which instance this is, when more than one platform instance runs (Phase 2 close-out D9): the name of the session that holds the leader lock of the loops.
 	VarInstanceID = "PLATFORM_INSTANCE_ID"
 )
@@ -116,6 +129,20 @@ const (
 	maxJobRows          = 100000
 	maxJobStartDelayMin = 1440
 	maxResultsPage      = 1000
+)
+
+// The bounds of the job engine's dials. A pass faster than a tenth of a second would be a busy loop against the database and the modules; slower than a minute would make a job wait a minute for
+// every step. An observation of a running job at most once an hour, a week of silence before a stale event, 5000 rows to a submit call and 64 run calls in flight are each far past what a module
+// can take (module 1's own request holds 100,000 rows, and the engine's batch for it is the job); a step shorter than five seconds could not finish a healthy call.
+const (
+	minJobTickMS         = 100
+	maxJobTickMS         = 60000
+	maxJobSettleSec      = 3600
+	maxJobStaleMin       = 10080
+	maxJobSubmitBatch    = 5000
+	maxJobSubmitConc     = 64
+	minJobStepTimeoutSec = 5
+	maxJobStepTimeoutSec = 3600
 )
 
 // Upper bounds on the integer dials. They are sanity guards, not tuning: they keep a typo (an extra digit,
@@ -232,6 +259,24 @@ func Vars() []Var {
 			Doc: fmt.Sprintf("Minutes after its start that a confirmed or scheduled job may wait for the engine to start it before it expires and its credits are released. The start deadline is the scheduled start (the moment of the confirm for a job with none) plus this, added by the database's clock when the job is confirmed; a job confirmed before the dial was changed keeps the deadline it was given. Integer, 1 to %d. Consumed by `internal/app` (`jobs.WithMaxStartDelay`, on the one job store).", maxJobStartDelayMin)},
 		{Name: VarResultsPageMax, Default: "1000",
 			Doc: fmt.Sprintf("The most results one page of the job API's `GET /v1/jobs/{id}/results` may hold: the largest `limit` it accepts (a larger one is refused with 400 `validation_failed`); without a `limit` a page is 100, or this when it is smaller. The CSV download is not paged by it: it streams every result, 1000 at a time. Integer, 1 to %d. Consumed by `internal/app` (`api.New`, `Deps.ResultsPageMax`).", maxResultsPage)},
+		{Name: VarJobEngineEnabled, Default: "true",
+			Doc: "Whether this instance runs the job engine: `true` or `false` and nothing else (any other value stops the process at start-up with exit status 2). With `true` (the default) the engine runs in the instance that holds the leader lock, beside the entitlement loops and under the same lock: it starts confirmed and due jobs in their module, reads what the module reports, records and charges every finished item, completes jobs and gives back the credits a job did not use. With `false` the engine does not start in this instance and the start-up log says so once; a job then stays where it is. Give every instance the same value: a job waits for the engine of whichever instance leads, so one instance with the engine off can win the lock and hold every job. The engine needs the module URLs and tokens (`PLATFORM_M1_URL` with `PLATFORM_M1_KEY_SECRET`, `PLATFORM_M2_URL` with `PLATFORM_M2_SERVICE_TOKEN`, `PLATFORM_M3_URL` with `PLATFORM_M3_SERVICE_TOKEN`): a job of a module that is not configured waits and goes stale, it is never failed for it. Consumed by `internal/app` (it builds and runs `internal/jobengine`, or does not)."},
+		{Name: VarJobTickMS, Default: "1500",
+			Doc: fmt.Sprintf("Milliseconds between two passes of the job engine, each of which looks at every job that has something to do. Integer, %d to %d. Consumed by `internal/app` (`jobengine.Config.Tick`).", minJobTickMS, maxJobTickMS)},
+		{Name: VarJobSettleIntervalSec, Default: "10",
+			Doc: fmt.Sprintf("Seconds the engine leaves a running job alone between two observations of its module, unless the last observation showed finished items it has not recorded yet or said the job was complete (the next pass then looks again). Integer, 1 to %d. Consumed by `internal/app` (`jobengine.Config.SettleEvery`).", maxJobSettleSec)},
+		{Name: VarJobStaleAfterMinM1, Default: "30",
+			Doc: fmt.Sprintf("Minutes a running or cancelling module 1 job may make no progress (no row handed over, no result recorded) before the engine writes a `stale` event for it, and again at most once per this long. The job is not touched: a stale job stays as it is and is never failed or expired for being slow; an administrator decides. Integer, 1 to %d (one week). Consumed by `internal/app` (`jobengine.Config.StaleAfter`, for module 1).", maxJobStaleMin)},
+		{Name: VarJobStaleAfterMinM2, Default: "15",
+			Doc: fmt.Sprintf("Minutes a running or cancelling module 2 job may make no progress (no row handed over, no result recorded) before the engine writes a `stale` event for it, and again at most once per this long. The job is not touched: a stale job stays as it is and is never failed or expired for being slow; an administrator decides. Integer, 1 to %d (one week). Consumed by `internal/app` (`jobengine.Config.StaleAfter`, for module 2).", maxJobStaleMin)},
+		{Name: VarJobStaleAfterMinM3, Default: "15",
+			Doc: fmt.Sprintf("Minutes a running or cancelling module 3 job may make no progress (no row handed over, no result recorded) before the engine writes a `stale` event for it, and again at most once per this long. The job is not touched: a stale job stays as it is and is never failed or expired for being slow; an administrator decides. Integer, 1 to %d (one week). Consumed by `internal/app` (`jobengine.Config.StaleAfter`, for module 3).", maxJobStaleMin)},
+		{Name: VarJobSubmitBatch, Default: "500",
+			Doc: fmt.Sprintf("How many rows one submit call of the engine offers module 2 or module 3 (one run call each; a module that takes fewer is asked for the rest at the next pass). Module 1 takes a job's whole list in one request and ignores this dial. Integer, 1 to %d. Consumed by `internal/app` (`jobengine.Config.SubmitBatch`).", maxJobSubmitBatch)},
+		{Name: VarJobSubmitConcurrency, Default: "8",
+			Doc: fmt.Sprintf("How many run calls to module 2 or module 3 one submit batch has in flight at once; the first row of a batch always goes alone, and the batch stops at the first answer that says the module is busy or cannot answer. Integer, 1 to %d. Consumed by `internal/app` (`jobengine.RegistryDeps.SubmitConcurrency`).", maxJobSubmitConc)},
+		{Name: VarJobStepTimeoutSec, Default: "120",
+			Doc: fmt.Sprintf("The most seconds the engine spends on ONE job in one pass: a module that hangs costs a job this much, then the engine goes on to the next job and tries this one again at the next pass. Keep it above `PLATFORM_MODULE_TIMEOUT_MS` (module 1's bulk submit is given at least two minutes). Integer, %d to %d. Consumed by `internal/app` (`jobengine.Config.StepTimeout`).", minJobStepTimeoutSec, maxJobStepTimeoutSec)},
 		{Name: VarInstanceID, Default: instanceIDDefault,
 			Doc: fmt.Sprintf("Name of this platform instance, 1 to %d printable ASCII characters. With more than one instance running, only the one holding the leader lock runs the expiry and reconcile loops; the name is the application_name of the database session that holds it (pg_stat_activity) and appears in the loop log lines. Each instance needs its own. The default (hostname) means this machine's host name.", maxInstanceIDBytes)},
 	}
@@ -280,6 +325,16 @@ type Config struct {
 	JobMaxRows       int           // the longest list one job holds (internal/app: jobs.WithMaxRows)
 	JobMaxStartDelay time.Duration // how long after its start a confirmed or scheduled job waits for the engine before it expires (internal/app: jobs.WithMaxStartDelay)
 	ResultsPageMax   int           // the largest page of results the API serves (internal/app: api.New, Deps.ResultsPageMax)
+
+	JobEngineEnabled     bool          // whether this instance runs the job engine (internal/app: builds and runs internal/jobengine, or logs that it does not)
+	JobTick              time.Duration // the wait between two passes of the engine (internal/app: jobengine.Config.Tick)
+	JobSettleInterval    time.Duration // the least wait between two observations of a running job (internal/app: jobengine.Config.SettleEvery)
+	JobStaleAfterM1      time.Duration // how long a module 1 job may make no progress before its stale event (internal/app: jobengine.Config.StaleAfter)
+	JobStaleAfterM2      time.Duration // the same for module 2
+	JobStaleAfterM3      time.Duration // the same for module 3
+	JobSubmitBatch       int           // the rows one submit call offers module 2 or 3 (internal/app: jobengine.Config.SubmitBatch)
+	JobSubmitConcurrency int           // the run calls to module 2 or 3 in flight at once in one batch (internal/app: jobengine.RegistryDeps.SubmitConcurrency)
+	JobStepTimeout       time.Duration // the bound of one job's step (internal/app: jobengine.Config.StepTimeout)
 
 	InstanceID string // this instance's name; "" means the default, the host name, which the service resolves (internal/entitlements ResolveInstanceID)
 }
@@ -513,6 +568,47 @@ func Load(getenv func(string) string) (Config, error) {
 			if n, ok := intIn(v.Name, raw, 1, maxResultsPage); ok {
 				c.ResultsPageMax = n
 			}
+		case VarJobEngineEnabled:
+			switch raw { // exactly these two spellings: "TRUE", "1", "yes" and "off" are refused, because a switch that silently reads the other way is a platform whose jobs never move, or an engine nobody meant to run
+			case "true":
+				c.JobEngineEnabled = true
+			case "false":
+				c.JobEngineEnabled = false
+			default:
+				fail(v.Name, "must be true or false")
+			}
+		case VarJobTickMS:
+			if n, ok := intIn(v.Name, raw, minJobTickMS, maxJobTickMS); ok {
+				c.JobTick = time.Duration(n) * time.Millisecond
+			}
+		case VarJobSettleIntervalSec:
+			if n, ok := intIn(v.Name, raw, 1, maxJobSettleSec); ok {
+				c.JobSettleInterval = time.Duration(n) * time.Second
+			}
+		case VarJobStaleAfterMinM1:
+			if n, ok := intIn(v.Name, raw, 1, maxJobStaleMin); ok {
+				c.JobStaleAfterM1 = time.Duration(n) * time.Minute
+			}
+		case VarJobStaleAfterMinM2:
+			if n, ok := intIn(v.Name, raw, 1, maxJobStaleMin); ok {
+				c.JobStaleAfterM2 = time.Duration(n) * time.Minute
+			}
+		case VarJobStaleAfterMinM3:
+			if n, ok := intIn(v.Name, raw, 1, maxJobStaleMin); ok {
+				c.JobStaleAfterM3 = time.Duration(n) * time.Minute
+			}
+		case VarJobSubmitBatch:
+			if n, ok := intIn(v.Name, raw, 1, maxJobSubmitBatch); ok {
+				c.JobSubmitBatch = n
+			}
+		case VarJobSubmitConcurrency:
+			if n, ok := intIn(v.Name, raw, 1, maxJobSubmitConc); ok {
+				c.JobSubmitConcurrency = n
+			}
+		case VarJobStepTimeoutSec:
+			if n, ok := intIn(v.Name, raw, minJobStepTimeoutSec, maxJobStepTimeoutSec); ok {
+				c.JobStepTimeout = time.Duration(n) * time.Second
+			}
 		case VarInstanceID:
 			if raw != v.Default { // the default stands for the host name, which Load does not read (see instanceIDDefault)
 				if !validInstanceID(raw) {
@@ -650,6 +746,15 @@ func (c Config) attrs() []slog.Attr {
 		slog.Int("job_max_rows", c.JobMaxRows),
 		slog.Duration("job_max_start_delay", c.JobMaxStartDelay),
 		slog.Int("results_page_max", c.ResultsPageMax),
+		slog.Bool("job_engine_enabled", c.JobEngineEnabled),
+		slog.Duration("job_tick", c.JobTick),
+		slog.Duration("job_settle_interval", c.JobSettleInterval),
+		slog.Duration("job_stale_after_m1", c.JobStaleAfterM1),
+		slog.Duration("job_stale_after_m2", c.JobStaleAfterM2),
+		slog.Duration("job_stale_after_m3", c.JobStaleAfterM3),
+		slog.Int("job_submit_batch", c.JobSubmitBatch),
+		slog.Int("job_submit_concurrency", c.JobSubmitConcurrency),
+		slog.Duration("job_step_timeout", c.JobStepTimeout),
 		slog.String("instance_id", c.InstanceID),
 	}
 }

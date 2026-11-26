@@ -2,7 +2,8 @@
 
 // Package faultpoint lets the harness kill the platform process, for real, at a named point of a job's life (Phase 4 exit criterion: "a platform SIGKILL mid-job at several injected points resumes with no item lost,
 // duplicated or double-charged"). In the default build, which is the production build, Hit is an empty function and the package holds no environment variable, no signal and no name: scripts/check-faultpoints.sh
-// proves that every file that reads PLATFORM_FAULTPOINT carries the build tag `faultpoints`, and the harness builds its platform image with that tag (the Dockerfile's GO_TAGS argument).
+// proves that every non-test file under internal/, cmd/ and tests/ that names the environment variable which arms a point (the one the tagged build reads, spelled in faultpoint_on.go) starts with the build line
+// `//go:build faultpoints`, and the harness builds its platform image with that tag (the Dockerfile's GO_TAGS argument).
 package faultpoint
 
 // Enabled is false in the default build.

@@ -693,6 +693,32 @@ func TestNew_BuildsTheElectionUnlessTestsSwitchItOff(t *testing.T) {
 	}
 }
 
+// The job engine asks the very election the loops ask: Service.Leader is that one, and it is the same *Leader that Health reports on; a Service built without an election has none (the engine
+// is then not started: a gate that leads everywhere would run its loops in every instance).
+func TestService_LeaderIsTheElectionTheLoopsAsk(t *testing.T) {
+	cfg := Config{Pool: lazyPool(t), M3: nopSuspender{}, ExpireEvery: time.Second, ReconcileEvery: time.Second, ReverifyEvery: time.Minute, InstanceID: "platform-7"}
+	s, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Leader() == nil || s.Leader() != s.leader || s.Leader().Instance() != "platform-7" {
+		t.Fatalf("Leader() = %v, want the election the Service was built with", s.Leader())
+	}
+	// it is the election that Health reads: a change of its state is seen through both
+	s.Leader().publish(true)
+	if h := s.Health(); !h.Leader {
+		t.Errorf("the election Leader() returns is not the one Health reports: %+v", h)
+	}
+	// the control: a Service built without an election has none
+	off, err := New(cfg, WithoutLeaderElection())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if off.Leader() != nil {
+		t.Errorf("a Service without an election returned %v", off.Leader())
+	}
+}
+
 // ---- the election cannot be switched off from production code --------------------------------------------------------------
 
 // testOnlyOptions are the options that change how the Service is wired for a test. A non-test file outside this package that names one has put a test seam on a production path.

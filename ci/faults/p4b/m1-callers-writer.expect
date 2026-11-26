@@ -1,0 +1,11 @@
+# Phase 4, Part B chunk B16: module 1's key table verify.api_callers is written only by internal/tenant/m1key.go (the operator tools' privileged connection) and by the install function in db/install/postmodule1.sql.
+# The fault adds a second non-test Go file under internal/api/ that holds a raw string with an INSERT INTO verify.api_callers (a writer that skips the function's read-back of the row, its constant caller_id and its
+# refusal of a key with no owner); the gate must name the file and the line and say it is outside the two sanctioned writers. The control side is the real repository, which must be green. Needs bash only: no database,
+# no module, no Go. The patch adds a new file, so it depends on no committed file; the control needs internal/tenant/m1key.go, internal/tenant/m1provision.go, db/install/postmodule1.sql and scripts/check-m1-callers-writer.sh at HEAD.
+GATE=m1-callers-writer
+TARGET=platform
+SETUP=
+STEP=check-m1-callers-writer on the real repository
+CMD=bash scripts/check-m1-callers-writer.sh
+MESSAGE=internal/api/zz_m1_callers_writer.go:4: write to verify.api_callers (INSERT INTO) outside the two sanctioned writers internal/tenant/m1key.go and db/install/postmodule1.sql
+MESSAGE=check-m1-callers-writer: RED

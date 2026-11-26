@@ -21,6 +21,9 @@ networks:
 x-platform-build: &platform-build
   context: "${H_PLATFORM_DIR:?}"
   dockerfile: Dockerfile
+  # ONLY the harness builds the platform with the tag that arms the fault points (Phase 4, the crash stage): the Dockerfile's GO_TAGS argument is empty everywhere else, and scripts/check-faultpoints.sh keeps the
+  # tag out of the Dockerfile and out of every workflow. Only the service binary takes it; the migrator and the probe in the same image are built plain. A tagged binary does nothing until its arming variable is set.
+  args: { GO_TAGS: faultpoints }
 
 services:
   # THE DATABASE IS THE IMAGE A REAL INSTALL RUNS ON (Phase 2, ruling OD-7): the digest-pinned supabase/postgres, with its own `auth` schema, its roles (anon, authenticated, service_role,
@@ -374,6 +377,7 @@ services:
       PLATFORM_ENTITLEMENT_EXPIRE_INTERVAL_SEC: "2"      # CI only: short loops so the proofs finish in seconds (production defaults are 30 and 5)
       PLATFORM_M3_RECONCILE_INTERVAL_SEC: "2"
       PLATFORM_INSTANCE_ID: platform-1                   # this instance's name: the application_name of the session that holds the leader lock (run.sh stage 9c reads it from pg_stat_activity)
+      PLATFORM_JOB_ENGINE_ENABLED: "false"               # the legacy harness tests insert jobs by hand and must not meet an engine that would start them; the crash stage uses dedicated services with the engine on
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/readyz || exit 1"]
       interval: 3s
@@ -397,6 +401,7 @@ services:
       PLATFORM_ENTITLEMENT_EXPIRE_INTERVAL_SEC: "2"
       PLATFORM_M3_RECONCILE_INTERVAL_SEC: "2"
       PLATFORM_INSTANCE_ID: platform-2
+      PLATFORM_JOB_ENGINE_ENABLED: "false"               # as `platform`: no job engine in the legacy stages
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/readyz || exit 1"]
       interval: 3s

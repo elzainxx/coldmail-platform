@@ -86,6 +86,36 @@ func TestFake_ModuleOneReturnsItsReferenceAndTheSendersDoNot(t *testing.T) {
 	}
 }
 
+func TestFake_ModuleOneObservesOnlyAJobThatCarriesItsReference_TheSendersNeedNone(t *testing.T) {
+	ctx := context.Background()
+	m1 := &FakeModule{Module: jobs.ModuleVerify}
+	res, err := m1.Submit(ctx, job("j1"), rowsOf(3))
+	if err != nil || res.ModuleRef == "" {
+		t.Fatalf("submit: %+v, %v", res, err)
+	}
+	seen := 0
+	count := func([]jobs.ResultItem) error { seen++; return nil }
+	for name, ref := range map[string]string{"no reference": "", "another job's reference": "fake-verify-j2"} {
+		j := job("j1")
+		j.ModuleRef = ref
+		if _, err := m1.Observe(ctx, j, count); !errors.Is(err, jobengine.ErrWait) || seen != 0 {
+			t.Errorf("observe with %s: %v (%d callback(s)); want ErrWait and nothing handed over", name, err, seen)
+		}
+	}
+	// the control: the reference Submit answered is what the store hands back, and then the module reports
+	j := job("j1")
+	j.ModuleRef = res.ModuleRef
+	if obs, err := m1.Observe(ctx, j, count); err != nil || seen != 1 || obs.Terminal != 3 {
+		t.Errorf("observe with its own reference: %+v, %v (%d callback(s)); want the three settled items", obs, err, seen)
+	}
+	// a sender has no handle and is observed without one
+	m2 := &FakeModule{}
+	m2.Submit(ctx, job("j1"), rowsOf(2))
+	if _, err := m2.Observe(ctx, job("j1"), count); err != nil {
+		t.Errorf("a sender observed without a reference: %v", err)
+	}
+}
+
 func TestFake_WaitSubmitsAnswerErrWaitAndChangeNothing(t *testing.T) {
 	f := &FakeModule{WaitSubmits: 2}
 	rows := rowsOf(3)

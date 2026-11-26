@@ -10,6 +10,7 @@ import (
 	"github.com/coldmail-platform/platform/internal/api"
 	"github.com/coldmail-platform/platform/internal/auth"
 	"github.com/coldmail-platform/platform/internal/config"
+	"github.com/coldmail-platform/platform/internal/jobengine"
 	"github.com/coldmail-platform/platform/internal/jobs"
 	"github.com/coldmail-platform/platform/internal/money"
 	"github.com/coldmail-platform/platform/internal/tenant"
@@ -24,9 +25,15 @@ type apiDeps struct {
 	// Money is THE money store of the process: the reachability loop, the job store and (later) the engine all share this one, so that they wait for a lock as long as one dial says
 	// (PLATFORM_MONEY_LOCK_TIMEOUT_MS) and take the (user, module) advisory lock in one way.
 	Money *money.Store
-	// Jobs is the job store, built with the three limits (PLATFORM_JOB_MAX_ROWS, PLATFORM_JOB_MAX_START_DELAY_MIN) and with NO module 3 pre-check: PreChecks stays nil until the engine's wiring
-	// adds the module 3 adapter. The API and, later, the engine use this one store.
+	// Jobs is the job store, built with the two limits (PLATFORM_JOB_MAX_ROWS, PLATFORM_JOB_MAX_START_DELAY_MIN) and, when module 3 is configured, with its pre-check (m3PreChecks over the module 3
+	// adapter). The API and the engine use this one store.
 	Jobs *jobs.Store
+	// PreChecks is the module 3 pre-check the job store was given: nil when module 3 is not configured (the store then makes none).
+	PreChecks jobs.PreChecks
+	// Adapters are the three module adapters, built once from the configuration; a nil one is a module whose dials are unset (its jobs wait).
+	Adapters moduleAdapters
+	// Registry is what the job engine reaches the modules through (jobengine.Registry over Adapters).
+	Registry *jobengine.Registry
 	// Tenants resolves a login to a platform user (the API's authentication) and, later, builds each module's scope for the engine.
 	Tenants *tenant.Resolver
 	// API is the job API's handler set; nil unless Auth is set (a service with no key source does not serve it).
@@ -55,27 +62,36 @@ func newMoneyStore(pool *pgxpool.Pool, cfg config.Config) *money.Store {
 	return money.New(pool, money.WithLockTimeout(cfg.MoneyLockTimeout))
 }
 
-// newJobStore builds the job store over the pool and the money store with the dials that bound a job: the longest list and how long a start may wait. It has no PreChecks (module 3's
-// feasibility check is the engine wiring's) and logs through the service's logger (the store logs no address, no secret and no SQL).
-func newJobStore(pool *pgxpool.Pool, mny *money.Store, cfg config.Config, log *slog.Logger) (*jobs.Store, error) {
-	return jobs.New(pool, mny, jobs.WithMaxRows(cfg.JobMaxRows), jobs.WithMaxStartDelay(cfg.JobMaxStartDelay), jobs.WithLogger(log))
+// newJobStore builds the job store over the pool and the money store with the dials that bound a job (the longest list and how long a start may wait) and any further options (build passes the
+// module 3 pre-check). It logs through the service's logger (the store logs no address, no secret and no SQL).
+func newJobStore(pool *pgxpool.Pool, mny *money.Store, cfg config.Config, log *slog.Logger, more ...jobs.Option) (*jobs.Store, error) {
+	opts := append([]jobs.Option{jobs.WithMaxRows(cfg.JobMaxRows), jobs.WithMaxStartDelay(cfg.JobMaxStartDelay), jobs.WithLogger(log)}, more...)
+	return jobs.New(pool, mny, opts...)
 }
 
 // apiResolver is what the API authenticates logins through: the tenant resolver. It is a variable only so that a test of the whole service, which has no database to resolve a login in,
 // can put a fake in its place; nothing else assigns it.
 var apiResolver = func(t *tenant.Resolver) api.Resolver { return t }
 
-// build makes what needs the pool: the money store, the job store, the tenant resolver and, when the verifier exists, the job API. It runs once, after the pool is open and before the server
-// listens. With no key source the API is not built and its routes are not mounted: a request for one is the 404 of any unknown path.
+// build makes what needs the pool: the money store, the module adapters, the job store (with module 3's pre-check when module 3 is configured), the tenant resolver, the module registry and, when
+// the verifier exists, the job API. It runs once, after the pool is open and before the server listens. With no key source the API is not built and its routes are not mounted: a request for one is the 404 of any unknown path.
 func (d *apiDeps) build(pool *pgxpool.Pool, cfg config.Config, log *slog.Logger) error {
 	d.Money = newMoneyStore(pool, cfg)
 	var err error
-	if d.Jobs, err = newJobStore(pool, d.Money, cfg, log); err != nil {
+	if d.Adapters, err = newModuleAdapters(cfg, log); err != nil {
+		return err
+	}
+	var more []jobs.Option
+	if d.PreChecks = preChecksOf(d.Adapters); d.PreChecks != nil {
+		more = append(more, jobs.WithPreChecks(d.PreChecks))
+	}
+	if d.Jobs, err = newJobStore(pool, d.Money, cfg, log, more...); err != nil {
 		return fmt.Errorf("build the job store: %w", err)
 	}
 	if d.Tenants, err = tenant.NewResolver(pool, cfg.M1KeySecret, tenant.WithM1KeyVersion(cfg.M1KeyVersion)); err != nil {
 		return fmt.Errorf("build the tenant resolver: %w", err)
 	}
+	d.Registry = newModuleRegistry(pool, cfg, d.Adapters, d.Tenants, log)
 	if d.Auth == nil {
 		return nil
 	}

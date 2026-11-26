@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/coldmail-platform/platform/internal/faultpoint"
 	"github.com/coldmail-platform/platform/internal/money"
 	"github.com/coldmail-platform/platform/internal/suppress"
 )
@@ -167,6 +168,7 @@ func (s *Store) Confirm(ctx context.Context, userID string, req ConfirmReq) (Con
 			return err
 		}
 		res = ConfirmResult{Job: confirmed, Reserved: reserved, Pending: pending, Suppressed: suppressed + sn.suppressed}
+		faultpoint.Hit("confirm.before_commit")
 		return nil
 	})
 	if err != nil {

@@ -57,7 +57,8 @@ type fakeJob struct {
 // FakeModule is a module the tests drive. Every field is set before the engine runs (or between ticks, from the test's own goroutine) and read under the lock. The zero value is a module 2 that
 // accepts every row, works every item on the first Observe and reports everything in one page.
 type FakeModule struct {
-	// Module is the module id the fake plays: "m1" (verify: answers valid/accepted, returns a module reference, cannot cancel), "m2" or "m3" (senders: answer sent, can cancel). Empty means "m2".
+	// Module is the module id the fake plays: "m1" (verify: answers valid/accepted, returns a module reference which Observe then requires on the job it is handed, cannot cancel), "m2" or "m3"
+	// (senders: answer sent, can cancel). Empty means "m2".
 	Module string
 	// Plan decides what a row becomes when the module has worked it (nil: sent for a sender, valid/accepted for module 1).
 	Plan func(r jobs.EngineRow) charge.Outcome
@@ -71,6 +72,9 @@ type FakeModule struct {
 	PageSize int
 	// LeakNotFinal makes Observe hand over the items that are not final too (a misbehaving module): the platform must record none of them.
 	LeakNotFinal bool
+	// Manual makes the module's worker settle NOTHING by itself: an item becomes final only when a test calls Settle for it (or Cancel takes it back). It is the lever of ModuleContract, which has
+	// to say exactly which item is final and with what outcome, the way a stand-in of a real module is driven.
+	Manual bool
 
 	mu          sync.Mutex
 	down        bool
@@ -207,6 +211,23 @@ func (f *FakeModule) reportedOf(it Item) charge.Outcome {
 	return it.Final
 }
 
+// Settle makes the module's worker settle one item of the job with outcome o: it becomes final, in the state o names, and Observe reports it with exactly that outcome. It returns false for a job or an
+// item the module does not hold (nothing changes) and for an item that is already final (a final item never changes).
+func (f *FakeModule) Settle(jobID, ref string, o charge.Outcome) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	j := f.jobs[jobID]
+	if j == nil {
+		return false
+	}
+	it := j.items[ref]
+	if it == nil || it.isFinal() {
+		return false
+	}
+	it.Final, it.State = o, o.State
+	return true
+}
+
 // ClaimInFlight puts the first n queued items of the job in flight (state sending): the worker has claimed them, so a cancel cannot take them back.
 func (f *FakeModule) ClaimInFlight(jobID string, n int) int {
 	f.mu.Lock()
@@ -319,6 +340,9 @@ func (f *FakeModule) Submit(ctx context.Context, j jobs.EngineJob, rows []jobs.E
 // work moves the module's worker on by one Observe: items in flight finish first, then queued ones are claimed and finished, FinalizePerObserve in all (0: every one), unless the job is cancelled
 // (nothing new is claimed once the module has cancelled the job).
 func (f *FakeModule) work(fj *fakeJob) {
+	if f.Manual {
+		return
+	}
 	budget := f.FinalizePerObserve
 	if budget == 0 {
 		budget = len(fj.order)
@@ -356,6 +380,12 @@ func (f *FakeModule) Observe(ctx context.Context, j jobs.EngineJob, fn func([]jo
 		defer after()
 	}
 	fj := f.job(j.ID)
+	if f.module() == jobs.ModuleVerify && (j.ModuleRef == "" || j.ModuleRef != fj.ref) {
+		// module 1 knows its job by the handle it returned from Submit, and the engine hands it back on the job as the store read it (Start recorded it in platform.jobs.module_job_ref, EngineWork and
+		// EngineJobByID carry it). A job without it, or with another, is a job this module cannot say anything about: it waits, like the real wrapper, and the engine's tests prove the handle arrives.
+		f.mu.Unlock()
+		return jobengine.Observation{}, jobengine.Wait("module 1 is not given its reference of the job")
+	}
 	f.work(fj)
 	var items []jobs.ResultItem
 	terminal := 0

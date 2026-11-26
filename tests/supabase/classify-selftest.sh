@@ -17,7 +17,7 @@
 set -u -o pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLS="$HERE/classify.sh"
-MIN_CASES=106
+MIN_CASES=114
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 FX="$TMP/fx"; mkdir -p "$FX"
 
@@ -471,13 +471,16 @@ if [ -n "$cmd" ]; then
     "select rolsuper, rolcreaterole from pg_roles where rolname = current_user") if [ -f "$D/shape" ]; then cat "$D/shape"; else echo "f|t"; fi;;
     "select to_regclass('auth.users') is not null") if [ -f "$D/auth" ]; then cat "$D/auth"; else echo t; fi;;
     *"to_regclass('public.users')"*) if [ -f "$D/tables" ]; then cat "$D/tables"; else echo "platform_owner|platform_owner"; fi;;
+    *provision_m1_caller*) if [ -f "$D/pm1state" ]; then cat "$D/pm1state"; else echo "verify_admin|true|true"; fi;;
     *) echo " (a fact the fake does not model)";;
   esac
   exit 0
 fi
 b="$(basename "$file")"
+prev=0; [ -f "$D/calls.log" ] && prev="$(grep -c "^$b|" "$D/calls.log" || true)"
 echo "$b|$vs|$fl|$dsn" >> "$D/calls.log"
 if [ -f "$D/$b.err" ]; then cat "$D/$b.err" >&2; fi
+if [ "$prev" -ge 1 ] && [ -f "$D/$b.rc2" ]; then exit "$(cat "$D/$b.rc2")"; fi
 if [ -f "$D/$b.rc" ]; then exit "$(cat "$D/$b.rc")"; fi
 exit 0
 FAKEPSQL
@@ -560,6 +563,44 @@ begin "run.sh --preprovision / --label given without a value: usage error, exit 
 fake_reset; runsh --label; eq rc-label "$RRC" 2; has usage-label "$ROUT" 'usage: run.sh --dsn DSN --platform-dir DIR --modules-root DIR [--known FILE] [--preprovision FILE] [--label NAME]'
 runsh --preprovision; eq rc-prov "$RRC" 2; has usage-prov "$ROUT" 'usage: run.sh'; finish
 
+POSTM="$TMP/postmodule1.sql"; echo 'select 1;' > "$POSTM"
+begin "run.sh --postmodule1 FILE: applied TWICE, with ON_ERROR_STOP=1, AFTER module 1's chain file and BEFORE module 2's; its effect is read back; GREEN, rc 0"
+fake_reset; runsh --label FIXED --postmodule1 "$POSTM" --known "$EMPTYK"; eq rc "$RRC" 0
+eq calls "$(ncalls '^postmodule1.sql|')" 2; has on-error-stop "$(grep '^postmodule1.sql|' "$FAKE/calls.log")" ' ON_ERROR_STOP=1|'
+o_m1="$(callno '^0001_init.sql|')"; o_pm1="$(callno '^postmodule1.sql|')"; o_pm2="$(grep -n -- '^postmodule1.sql|' "$FAKE/calls.log" | tail -1 | cut -d: -f1)"; o_m2="$(callno '^send_managed_0000_bootstrap.up.sql|')"
+eq order "$([ -n "$o_m1" ] && [ -n "$o_pm1" ] && [ -n "$o_pm2" ] && [ -n "$o_m2" ] && [ "$o_m1" -lt "$o_pm1" ] && [ "$o_pm2" -lt "$o_m2" ] && echo yes || echo no)" yes
+has banner "$ROUT" 'FIXED [q] POSTMODULE1'; has pass1 "$ROUT" 'postmodule1.sql applied, pass 1 of 2 (psql exit 0, ON_ERROR_STOP=1)'; has pass2 "$ROUT" 'postmodule1.sql applied, pass 2 of 2 (psql exit 0, ON_ERROR_STOP=1)'
+has readback "$ROUT" 'ok: platform.provision_m1_caller exists, owned by verify_admin, SECURITY DEFINER, executable by platform_app (read back as postgres)'; has input "$ROUT" "postmodule1:    $POSTM"; has result "$ROUT" 'RESULT [FIXED]: GREEN'; finish
+
+begin "run.sh without --postmodule1 (the BASELINE leg): nothing of it is applied or read back, and the input line says none"
+fake_reset; runsh --label BASELINE --known "$EMPTYK"; eq rc "$RRC" 0; eq calls "$(ncalls '^postmodule1.sql|')" 0; has none "$ROUT" 'postmodule1:    none'
+hasnot no-stage "$ROUT" '[q] POSTMODULE1'; has result "$ROUT" 'RESULT [BASELINE]: GREEN'; finish
+
+begin "run.sh --postmodule1 that FAILS (psql exit 3): RED with psql's own output, no second pass, no read-back, and the chains of modules 2 and 3 still run (a failed install step must not hide the migrations' report)"
+fake_reset; echo 3 > "$FAKE/postmodule1.sql.rc"; printf '%s\n' 'psql:postmodule1.sql:41: ERROR:  42501: permission denied to grant role "verify_admin"' > "$FAKE/postmodule1.sql.err"
+runsh --label FIXED --postmodule1 "$POSTM" --known "$EMPTYK"; eq rc "$RRC" 1
+has reason "$ROUT" 'POSTMODULE1 FAILED: postmodule1.sql did not apply cleanly (psql exit 3)'; has shown "$ROUT" 'permission denied to grant role "verify_admin"'; has result "$ROUT" 'RESULT [FIXED]: RED'
+eq one-attempt "$(ncalls '^postmodule1.sql|')" 1; eq no-readback "$(printf '%s\n' "$ROUT" | grep -c 'platform.provision_m1_caller exists' || true)" 0
+eq m2-still-ran "$(ncalls '^send_managed_0000')" 1; eq m3-still-ran "$(ncalls '^send_byo_0000')" 1; finish
+
+begin "run.sh --postmodule1 whose SECOND application fails (the first was clean): RED 'IS NOT RE-RUNNABLE', two attempts, the chains still run"
+fake_reset; echo 5 > "$FAKE/postmodule1.sql.rc2"; runsh --label FIXED --postmodule1 "$POSTM" --known "$EMPTYK"; eq rc "$RRC" 1
+has reason "$ROUT" 'POSTMODULE1 IS NOT RE-RUNNABLE: the second application of postmodule1.sql failed (psql exit 5)'; hasnot not-the-first-reason "$ROUT" 'POSTMODULE1 FAILED'
+eq two-attempts "$(ncalls '^postmodule1.sql|')" 2; eq m2-still-ran "$(ncalls '^send_managed_0000')" 1; finish
+
+begin "run.sh --postmodule1 applied cleanly but the function is not what the file claims (another owner, or no function at all): RED naming what the server said"
+fake_reset; echo 'postgres|true|true' > "$FAKE/pm1state"; runsh --label FIXED --postmodule1 "$POSTM" --known "$EMPTYK"; eq rc "$RRC" 1
+has reason "$ROUT" 'POSTMODULE1: after postmodule1.sql platform.provision_m1_caller is (owner|SECURITY DEFINER|executable by platform_app) = (postgres|true|true), want (verify_admin|true|true)'
+fake_reset; : > "$FAKE/pm1state"; runsh --label FIXED --postmodule1 "$POSTM" --known "$EMPTYK"; eq rc-none "$RRC" 1
+has reason-none "$ROUT" '= (), want (verify_admin|true|true); an empty answer means the function does not exist'; finish
+
+begin "run.sh --postmodule1 naming a file that does not exist: RED at stage [inputs], saying a named and missing install step is never skipped; nothing is run"
+fake_reset; runsh --label FIXED --postmodule1 "$TMP/no-such-postmodule1.sql" --known "$EMPTYK"; eq rc "$RRC" 1
+has reason "$ROUT" "--postmodule1 $TMP/no-such-postmodule1.sql is not a file: an install step that is named and missing is red, never skipped"; has stage "$ROUT" 'RED [FIXED] at stage [inputs]'; eq no-calls "$(ncalls .)" 0; finish
+
+begin "run.sh --postmodule1 given without a value: usage error, exit 2, and the usage names the option"
+fake_reset; runsh --postmodule1; eq rc "$RRC" 2; has usage "$ROUT" '[--postmodule1 FILE]'; finish
+
 begin "run.sh: a blocker in a chain file is NEW against an empty list: RED, rc 1, NEW BLOCKER naming file and SQLSTATE, the result line carries the label, the paste-ready line is printed"
 fake_reset
 cat > "$FAKE/send_managed_0000_bootstrap.up.sql.err" <<'EOF'
@@ -629,19 +670,20 @@ WF="$HERE/../../.github/workflows/supabase.yml"; PV="$HERE/../../db/install/prep
 NONCOMMENT="$(grep -v '^ *#' "$WF" 2> /dev/null || true)"   # the workflow without its comment lines: the claims below are about what it DOES, not about what its header says
 step_block() { awk -v start="$1" 'index($0, "- name: " start) { on = 1; print; next } on && /^      - / { exit } on { print }' "$WF"; }   # one step, from its `- name:` line to the next step
 PASS_BLOCK="$(step_block 'Pass ')"
-legs() {         # one line per matrix leg:  label|known|preprovision   (quotes dropped: an empty preprovision is  '')
+legs() {         # one line per matrix leg:  label|known|preprovision|postmodule1   (quotes dropped: an empty value is nothing)
   awk -v q="'" '
     { line = $0; match(line, /^ */); ind = RLENGTH }
     /^ +include:/ { on = 1; next }
     on && line !~ /^ *$/ && ind <= 8 { on = 0 }
-    on && /^ +- label:/ { if (l != "") print l "|" k "|" p; l = $3; k = ""; p = ""; next }
+    on && /^ +- label:/ { if (l != "") print l "|" k "|" p "|" m; l = $3; k = ""; p = ""; m = ""; next }
     on && /^ +known:/ { k = $2; next }
     on && /^ +preprovision:/ { p = line; sub(/^ +preprovision: */, "", p); gsub(q, "", p); next }
-    END { if (l != "") print l "|" k "|" p }' "$WF"
+    on && /^ +postmodule1:/ { m = line; sub(/^ +postmodule1: */, "", m); gsub(q, "", m); next }
+    END { if (l != "") print l "|" k "|" p "|" m }' "$WF"
 }
-begin "supabase.yml: ONE job that is a matrix of EXACTLY two legs, fail-fast off; BASELINE = baseline-blockers.txt and NO provisioning, FIXED = known-blockers.txt and db/install/preprovision.sql"
+begin "supabase.yml: ONE job that is a matrix of EXACTLY two legs, fail-fast off; BASELINE = baseline-blockers.txt and NO provisioning, FIXED = known-blockers.txt, db/install/preprovision.sql and (after module 1) db/install/postmodule1.sql"
 eq workflow-exists "$([ -f "$WF" ] && echo yes || echo no)" yes
-eq legs "$(legs | tr '\n' ' ')" 'BASELINE|baseline-blockers.txt| FIXED|known-blockers.txt|db/install/preprovision.sql '
+eq legs "$(legs | tr '\n' ' ')" 'BASELINE|baseline-blockers.txt|| FIXED|known-blockers.txt|db/install/preprovision.sql|db/install/postmodule1.sql '
 eq leg-count "$(grep -c '^ *- label:' "$WF" || true)" 2; has fail-fast "$NONCOMMENT" 'fail-fast: false'; has matrix "$NONCOMMENT" 'matrix:'
 eq one-job "$(awk '/^jobs:/ { on = 1; next } on && /^  [A-Za-z0-9_-]+:/ { n++ } END { print n + 0 }' "$WF")" 1; finish
 
@@ -679,6 +721,8 @@ has work-dir "$PASS_BLOCK" 'S_WORK: ${{ runner.temp }}/supabase-${{ matrix.label
 has label-flag "$PASS_BLOCK" '--label "$PASS_LABEL"'; has known-flag "$PASS_BLOCK" '--known "coldmail-platform/tests/supabase/$PASS_KNOWN"'; has dsn "$PASS_BLOCK" '--dsn postgres://postgres:ci@localhost:5432/postgres'
 eq prov-flag-once "$(printf '%s\n' "$PASS_BLOCK" | grep -c -- '--preprovision' || true)" 1
 has prov-conditional "$PASS_BLOCK" 'if [ -n "$PASS_PREPROVISION" ]; then args+=(--preprovision "coldmail-platform/$PASS_PREPROVISION"); fi'
+has env-postmodule1 "$PASS_BLOCK" 'PASS_POSTMODULE1: ${{ matrix.postmodule1 }}'; eq postmodule1-flag-once "$(printf '%s\n' "$PASS_BLOCK" | grep -c -- '--postmodule1' || true)" 1
+has postmodule1-conditional "$PASS_BLOCK" 'if [ -n "$PASS_POSTMODULE1" ]; then args+=(--postmodule1 "coldmail-platform/$PASS_POSTMODULE1"); fi'
 has runs-run-sh "$PASS_BLOCK" 'bash coldmail-platform/tests/supabase/run.sh "${args[@]}"'; hasnot no-hardcoded-list "$PASS_BLOCK" 'baseline-blockers.txt'; hasnot no-hardcoded-label "$PASS_BLOCK" '--label BASELINE'; finish
 
 begin "supabase.yml: checkout, toolchain print, selftest and module fetch are all still there, in that order, before the pass step; 40-minute cap on ubuntu-latest; the three deploy keys"
@@ -693,6 +737,22 @@ begin "preprovision.sql: both owner roles, the WITH INHERIT TRUE, SET TRUE grant
 has managed "$(cat "$PV")" 'send_managed_owner'; has byo "$(cat "$PV")" 'send_byo_owner'; has grant "$(cat "$PV")" 'GRANT %I TO %I WITH INHERIT TRUE, SET TRUE'; has create "$(cat "$PV")" 'CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB'
 eq plain-grant "$(grep -c "EXECUTE format('GRANT %I TO %I', r, current_user)" "$PV")" 1
 eq set-guarded "$(awk -v q="'" '/^--/ { next } /server_version_num/ { last = $0 } index($0, q "SET" q) { n++; if (last !~ />= 160000/) bad++ } END { print (n > 0 ? bad + 0 : "none") }' "$PV")" 0; finish
+
+PM="$HERE/../../db/install/postmodule1.sql"; PMT="$(grep -v '^ *--' "$PM" 2> /dev/null || true)"   # the file without its comment lines: the claims below are about what it DOES
+lineof() { printf '%s\n' "$PMT" | grep -n -F -- "$1" | head -1 | cut -d: -f1; }
+begin "postmodule1.sql: ONE transaction; the function is SECURITY DEFINER with the path pinned and EXECUTE for platform_app only; verify_admin gets USAGE and CREATE on schema platform, creates the function and loses both again, in that order; the membership grant is WITH INHERIT TRUE, SET TRUE and the 'SET' option name comes only after the >= 160000 test"
+eq file-exists "$([ -f "$PM" ] && echo yes || echo no)" yes
+eq first-statement "$(printf '%s\n' "$PMT" | awk 'NF { print; exit }')" 'BEGIN;'; eq last-statement "$(printf '%s\n' "$PMT" | awk 'NF { l = $0 } END { print l }')" 'COMMIT;'
+eq one-begin "$(printf '%s\n' "$PMT" | grep -c -E '^(BEGIN|COMMIT|ROLLBACK);' || true)" 2
+has definer "$PMT" 'SECURITY DEFINER'; has pinned-path "$PMT" 'SET search_path = pg_catalog, pg_temp'; has function "$PMT" 'CREATE OR REPLACE FUNCTION platform.provision_m1_caller(p_user_id uuid, p_key_sha256 bytea)'
+has revoke-public "$PMT" 'REVOKE ALL ON FUNCTION platform.provision_m1_caller(uuid, bytea) FROM PUBLIC'; has grant-app "$PMT" 'GRANT EXECUTE ON FUNCTION platform.provision_m1_caller(uuid, bytea) TO platform_app'
+hasnot no-grant-to-public "$PMT" 'TO PUBLIC'; hasnot no-grant-to-anon "$PMT" 'TO anon'; hasnot no-grant-to-service-role "$PMT" 'TO service_role'; hasnot no-grant-to-verify-app "$PMT" 'TO verify_app'
+has temp-grant "$PMT" 'GRANT USAGE, CREATE ON SCHEMA platform TO verify_admin'; has temp-revoke "$PMT" 'REVOKE USAGE, CREATE ON SCHEMA platform FROM verify_admin'
+has as-owner "$PMT" 'SET LOCAL ROLE platform_owner'; has as-admin "$PMT" 'SET LOCAL ROLE verify_admin'; has membership "$PMT" 'GRANT verify_admin TO %I WITH INHERIT TRUE, SET TRUE'
+l_g="$(lineof 'GRANT USAGE, CREATE ON SCHEMA platform TO verify_admin')"; l_r="$(lineof 'SET LOCAL ROLE verify_admin')"; l_c="$(lineof 'CREATE OR REPLACE FUNCTION platform.provision_m1_caller')"; l_t="$(lineof 'REVOKE USAGE, CREATE ON SCHEMA platform FROM verify_admin')"
+eq order "$([ -n "$l_g" ] && [ -n "$l_r" ] && [ -n "$l_c" ] && [ -n "$l_t" ] && [ "$l_g" -lt "$l_r" ] && [ "$l_r" -lt "$l_c" ] && [ "$l_c" -lt "$l_t" ] && echo yes || echo no)" yes
+eq set-guarded "$(awk -v q="'" '/^--/ { next } /server_version_num/ { last = $0 } index($0, q "SET" q) { n++; if (last !~ />= 160000/) bad++ } END { print (n > 0 ? bad + 0 : "none") }' "$PM")" 0
+eq one-insert "$(printf '%s\n' "$PMT" | grep -c -i -E '^ *insert into verify\.api_callers' || true)" 1; hasnot no-update "$PMT" 'UPDATE verify.api_callers'; hasnot no-delete "$PMT" 'DELETE FROM verify.api_callers'; finish
 
 # ---- the control for THIS file: prove the assertions can say no -------------------------------------------------------------------------------------------------------------
 # Inside a subshell (its counters cannot leak into ours) feed two WRONG expectations: a BLOCKER claimed to be a CASCADE, and an exact-match compare claimed to be red.

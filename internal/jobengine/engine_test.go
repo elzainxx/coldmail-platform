@@ -58,6 +58,7 @@ type fstore struct {
 	panicOn   string           // method name that panics
 	started   bool
 	cancelled int
+	flags     []map[string]any // the detail of every Flag call, in order
 }
 
 func newFstore() *fstore { return &fstore{log: &callLog{}, errs: map[string]error{}} }
@@ -175,7 +176,13 @@ func (s *fstore) AlertStale(ctx context.Context, id string, after time.Duration,
 	return true, nil
 }
 func (s *fstore) Flag(ctx context.Context, id string, d map[string]any) error {
-	return s.hit("Flag")
+	if err := s.hit("Flag"); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.flags = append(s.flags, d)
+	return nil
 }
 
 var _ store = (*fstore)(nil)
@@ -187,10 +194,13 @@ type stubMod struct {
 	submit  func(ctx context.Context, rows []jobs.EngineRow) (SubmitResult, error)
 	observe func(ctx context.Context, fn func([]jobs.ResultItem) error) (Observation, error)
 	cancel  func() error
+	// what the module was handed, as the engine handed it
+	submitted, observed []jobs.EngineJob
 }
 
 func (m *stubMod) Submit(ctx context.Context, j jobs.EngineJob, rows []jobs.EngineRow) (SubmitResult, error) {
 	m.log.add("Submit")
+	m.submitted = append(m.submitted, j)
 	if m.submit != nil {
 		return m.submit(ctx, rows)
 	}
@@ -207,6 +217,7 @@ func (m *stubMod) Submit(ctx context.Context, j jobs.EngineJob, rows []jobs.Engi
 
 func (m *stubMod) Observe(ctx context.Context, j jobs.EngineJob, fn func([]jobs.ResultItem) error) (Observation, error) {
 	m.log.add("Observe")
+	m.observed = append(m.observed, j)
 	if m.observe != nil {
 		return m.observe(ctx, fn)
 	}
@@ -567,8 +578,8 @@ func TestStarting_AModuleThatCannotAnswerLeavesTheJobAndIsCounted(t *testing.T) 
 	}
 }
 
-func TestStarting_AModuleThatRefusesForGoodFailsTheJob(t *testing.T) {
-	for _, status := range []string{jobs.StatusConfirmed, jobs.StatusRunning} {
+func TestStarting_AModuleThatRefusesForGoodFailsTheJobWhileItHoldsNoRowOfIt(t *testing.T) {
+	for _, status := range []string{jobs.StatusConfirmed, jobs.StatusScheduled} {
 		r := newRig(t, Config{}, ej(jobA, "m2", status))
 		r.st.pending = rows(2)
 		r.mod.submit = func(context.Context, []jobs.EngineRow) (SubmitResult, error) {
@@ -582,6 +593,233 @@ func TestStarting_AModuleThatRefusesForGoodFailsTheJob(t *testing.T) {
 		if r.e.Stats().Refused != 1 || r.e.Stats().Unexpected != 0 {
 			t.Errorf("%s: %+v", status, r.e.Stats())
 		}
+		if r.st.log.count("Flag") != 0 {
+			t.Errorf("%s: a job that was failed is also flagged: %v", status, r.st.log.list())
+		}
+	}
+}
+
+// ---- a refusal for good: the job is failed only while the module holds no row of it ---------------------------------------------------------------------------------------------------
+
+// refusalText is a module's reason for refusing, written the way a module could: with an address in it. It must reach no job event.
+const refusalText = "the row for jane.doe@leak-check.example is not accepted"
+
+func refuseWith(code string) func(context.Context, []jobs.EngineRow) (SubmitResult, error) {
+	return func(context.Context, []jobs.EngineRow) (SubmitResult, error) {
+		return SubmitResult{}, RefusedWithCode(code, refusalText)
+	}
+}
+
+func TestHoldsRows_IsWhatTheEngineKnowsOfWhatTheModuleHolds(t *testing.T) {
+	at := func(status string, submitted int) jobs.EngineJob {
+		j := ej(jobA, "m2", status)
+		j.Submitted = submitted
+		return j
+	}
+	for _, c := range []struct {
+		name    string
+		job     jobs.EngineJob
+		stamped int
+		want    bool
+	}{
+		{"a confirmed job nothing of which was handed over", at(jobs.StatusConfirmed, 0), 0, false},
+		{"a scheduled job nothing of which was handed over", at(jobs.StatusScheduled, 0), 0, false},
+		{"rows stamped before the step", at(jobs.StatusConfirmed, 3), 0, true},
+		{"rows stamped in this very step", at(jobs.StatusConfirmed, 0), 2, true},
+		{"both", at(jobs.StatusConfirmed, 3), 2, true},
+		{"a running job: the move to running follows the module taking a row, whatever the stamps say (a crash between the two)", at(jobs.StatusRunning, 0), 0, true},
+	} {
+		if got := holdsRows(c.job, c.stamped); got != c.want {
+			t.Errorf("%s: holdsRows = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// A refusal arrives after rows of the job were handed to the module: failing the job would write infrastructure_failure for every row without a result while the module keeps sending the queued ones.
+// The engine does not fail it, flags it, waits, and goes on to read what the module reports. Each case has its control: the same refusal with nothing held fails the job.
+func TestRefusal_WhileTheModuleHoldsRowsTheJobIsNotFailedItIsFlaggedAndWaitsAndTheModuleIsStillObserved(t *testing.T) {
+	running := func(submitted int) jobs.EngineJob {
+		j := ej(jobA, "m2", jobs.StatusRunning)
+		j.Submitted, j.Pending = submitted, 6
+		return j
+	}
+	for name, c := range map[string]struct {
+		job    jobs.EngineJob
+		accept int // how many Submit calls the module accepts before it starts to refuse
+	}{
+		"rows stamped before the step":                                       {running(3), 0},
+		"a running job with no stamp at all (a crash after the move)":        {running(0), 0},
+		"the first batch of the step accepted and stamped, the next refused": {running(0), 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newRig(t, Config{SubmitBatch: 2, SettleEvery: -1}, c.job)
+			r.st.pending = rows(6)
+			calls := 0
+			r.mod.submit = func(ctx context.Context, offered []jobs.EngineRow) (SubmitResult, error) {
+				calls++
+				if calls <= c.accept {
+					res := SubmitResult{}
+					for _, o := range offered {
+						res.Accepted = append(res.Accepted, o.ID)
+					}
+					return res, nil
+				}
+				return SubmitResult{}, RefusedWithCode("validation_failed", refusalText)
+			}
+			r.e.Tick(context.Background())
+			s := r.e.Stats()
+			if r.st.log.count("FailJob") != 0 || s.Refused != 0 {
+				t.Fatalf("a job whose rows the module holds was failed: %v / %+v", r.st.log.list(), s)
+			}
+			if s.Waits != 1 || s.Unexpected != 0 || r.st.log.count("Flag") != 1 {
+				t.Errorf("the refusal was not a wait with ONE flag: %v / %+v", r.st.log.list(), s)
+			}
+			if r.st.log.count("Observe") != 1 {
+				t.Errorf("the module was not observed after the refusal (it goes on with the rows it holds, and their results must be recorded): %v", r.st.log.list())
+			}
+			if c.accept > 0 && r.st.log.count("MarkSubmitted") != c.accept {
+				t.Errorf("the rows the module accepted before it refused were not stamped: %v", r.st.log.list())
+			}
+			if len(r.st.flags) != 1 {
+				t.Fatalf("%d flag details", len(r.st.flags))
+			}
+			d := r.st.flags[0]
+			if d["refusal"] != "validation_failed" || d["module"] != "m2" {
+				t.Errorf("the flag names %v / %v, want the module's code word and its id", d["refusal"], d["module"])
+			}
+			for k, v := range d {
+				if strings.Contains(fmt.Sprint(v), "jane.doe") || strings.Contains(fmt.Sprint(v), "leak-check") || strings.Contains(fmt.Sprint(v), "not accepted") {
+					t.Errorf("the flag's %q carries the module's text: %v", k, v)
+				}
+			}
+			// the control: the same refusal, with nothing held, fails the job
+			ctl := newRig(t, Config{SubmitBatch: 2, SettleEvery: -1}, ej(jobA, "m2", jobs.StatusConfirmed))
+			ctl.st.pending = rows(6)
+			ctl.mod.submit = refuseWith("validation_failed")
+			ctl.e.Tick(context.Background())
+			if ctl.st.log.count("FailJob") != 1 || ctl.st.log.count("Flag") != 0 || ctl.e.Stats().Refused != 1 {
+				t.Errorf("the control (nothing held) did not fail the job: %v / %+v", ctl.st.log.list(), ctl.e.Stats())
+			}
+		})
+	}
+}
+
+func TestRefusal_TheFlagIsRaisedOncePerStalenessIntervalAndAFailedWriteIsTriedAgain(t *testing.T) {
+	j := ej(jobA, "m2", jobs.StatusRunning)
+	j.Submitted, j.Pending = 2, 4
+	r := newRig(t, Config{SettleEvery: -1, StaleAfter: map[string]time.Duration{"m2": time.Hour}}, j)
+	r.st.pending = rows(2)
+	r.mod.submit = refuseWith("not_found")
+	for i := 0; i < 4; i++ {
+		r.e.Tick(context.Background())
+	}
+	if r.st.log.count("Flag") != 1 || r.st.log.count("FailJob") != 0 {
+		t.Fatalf("four ticks inside the interval: %v (want one flag and no failure)", r.st.log.list())
+	}
+	*r.now = r.now.Add(61 * time.Minute)
+	j.LastProgressAt = timePtr(r.now.Add(-2 * time.Hour))
+	r.st.work = []jobs.EngineJob{j}
+	r.e.Tick(context.Background())
+	if r.st.log.count("Flag") != 2 || r.st.log.count("FailJob") != 0 {
+		t.Errorf("after the staleness interval: %v (want a second flag, still no failure)", r.st.log.list())
+	}
+	// the refusal never keeps the job from going stale: it made no progress, and the stale event says so
+	if r.st.log.count("AlertStale(1h0m0s)") == 0 {
+		t.Errorf("the job that cannot go on never raised the stale event: %v", r.st.log.list())
+	}
+	// a flag that could not be written is tried again at the next tick, and is no reason to fail the job
+	f := newRig(t, Config{SettleEvery: -1}, j)
+	f.st.pending = rows(2)
+	f.mod.submit = refuseWith("not_found")
+	f.st.errs["Flag"] = errors.New("the database is down")
+	f.e.Tick(context.Background())
+	delete(f.st.errs, "Flag")
+	f.e.Tick(context.Background())
+	if f.st.log.count("Flag") != 2 || len(f.st.flags) != 1 || f.st.log.count("FailJob") != 0 {
+		t.Errorf("a failed flag write: %v / %d written (want two attempts, one written, no failure)", f.st.log.list(), len(f.st.flags))
+	}
+	// the memory of a job that is no longer work is dropped
+	f.st.work = nil
+	f.e.Tick(context.Background())
+	if len(f.e.refusals) != 0 {
+		t.Errorf("the refusals of a finished job were kept: %v", f.e.refusals)
+	}
+}
+
+func TestRefusalCode_IsAWordTheModuleGaveAndNeverItsText(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"a code word", RefusedWithCode("validation_failed", "x"), "validation_failed"},
+		{"upper case and padded", RefusedWithCode("  Not_Found ", "x"), "not_found"},
+		{"wrapped", fmt.Errorf("the step: %w", RefusedWithCode("not_found", "x")), "not_found"},
+		{"no code", Refused("a reason"), "unspecified"},
+		{"an address where a word belongs", RefusedWithCode("jane.doe@leak-check.example", "x"), "unspecified"},
+		{"a sentence", RefusedWithCode("the row is bad", "x"), "unspecified"},
+		{"too long", RefusedWithCode(strings.Repeat("a", 41), "x"), "unspecified"},
+		{"not a refusal at all", errors.New("boom"), "unspecified"},
+	} {
+		if got := RefusalCode(c.err); got != c.want {
+			t.Errorf("%s: RefusalCode = %q, want %q", c.name, got, c.want)
+		}
+	}
+	// the typed refusal is an ErrRefused with the text Refused always had
+	e := RefusedWithCode("validation_failed", "the job is bad")
+	if !errors.Is(e, ErrRefused) || errors.Is(e, ErrWait) || e.Error() != ErrRefused.Error()+": the job is bad" || Refused("the job is bad").Error() != e.Error() {
+		t.Errorf("RefusedWithCode = %q, want an ErrRefused with the text of Refused", e.Error())
+	}
+}
+
+// ---- the job as the store read it ---------------------------------------------------------------------------------------------------------------------------------------------------
+
+// The module's own handle of a job (module 1's job id) is on the job the store reads, and it is that job, unchanged, which the engine hands to Observe: the engine reads no reference of its own and
+// invents none. A job that started in a step is not observed in the same step (the handle reaches Observe on the next tick's read of the job, where Start's write is).
+func TestRunning_TheJobHandedToObserveIsTheJobAsTheStoreReadItModuleReferenceIncluded(t *testing.T) {
+	j := ej(jobA, "m1", jobs.StatusRunning)
+	j.ModuleRef = "module-one-id"
+	r := newRig(t, Config{SettleEvery: -1}, j)
+	r.e.Tick(context.Background())
+	if len(r.mod.observed) != 1 || r.mod.observed[0].ModuleRef != "module-one-id" || r.mod.observed[0].ID != jobA {
+		t.Fatalf("Observe was handed %+v, want the job with the reference the store read", r.mod.observed)
+	}
+	// the control: a job the store read with no reference reaches Observe with none (nothing is filled in from anywhere else), and the engine read nothing but the work
+	n := newRig(t, Config{SettleEvery: -1}, ej(jobA, "m1", jobs.StatusRunning))
+	n.e.Tick(context.Background())
+	if len(n.mod.observed) != 1 || n.mod.observed[0].ModuleRef != "" || n.st.log.count("EngineJobByID") != 0 {
+		t.Errorf("a job with no reference: Observe was handed %+v after %v", n.mod.observed, n.st.log.list())
+	}
+	// the same for the steps of a cancelling and a completing job
+	for _, status := range []string{jobs.StatusCancelling, jobs.StatusCompleting} {
+		jj := ej(jobA, "m2", status)
+		jj.ModuleRef = "a-handle"
+		c := newRig(t, Config{}, jj)
+		c.e.Tick(context.Background())
+		if len(c.mod.observed) != 1 || c.mod.observed[0].ModuleRef != "a-handle" {
+			t.Errorf("%s: Observe was handed %+v", status, c.mod.observed)
+		}
+	}
+}
+
+func TestStarting_AJobThatStartsIsNotObservedInThatStep_TheReferenceReachesObserveWithTheNextRead(t *testing.T) {
+	r := newRig(t, Config{SettleEvery: -1}, ej(jobA, "m1", jobs.StatusConfirmed))
+	r.st.pending = rows(2)
+	r.mod.ref = "handle-1"
+	r.e.Tick(context.Background())
+	if got := r.st.log.joined(); got != "EngineWork,PendingRows,Submit,Start(handle-1),MarkSubmitted" {
+		t.Fatalf("calls = %s: the job that starts is not observed in the same step, and nothing is read between the submit and the stamps", got)
+	}
+	if len(r.mod.observed) != 0 {
+		t.Fatalf("Observe was called in the step that started the job: %+v", r.mod.observed)
+	}
+	// the next tick reads the job as the store now has it: running, with the reference Start recorded; that is what the module is handed
+	started := ej(jobA, "m1", jobs.StatusRunning)
+	started.ModuleRef = "handle-1"
+	r.st.work = []jobs.EngineJob{started}
+	r.e.Tick(context.Background())
+	if len(r.mod.observed) != 1 || r.mod.observed[0].ModuleRef != "handle-1" {
+		t.Errorf("the next tick's Observe was handed %+v, want the reference Start recorded", r.mod.observed)
 	}
 }
 

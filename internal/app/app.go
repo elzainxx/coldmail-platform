@@ -64,6 +64,10 @@ func ExitCode(err error) int {
 // open by a connection nobody returns. A failed pass never ends a loop, and neither loop changes what
 // /healthz and /readyz say.
 //
+// The job engine (internal/jobengine, jobengine.go) runs beside them, in the same instance, under the SAME election (entitlements.Service.Leader): only the leader runs it. On shutdown it is stopped
+// FIRST and waited for, then the entitlement loops (whose Run gives the leader lock and its connection back), then the pool closes: an engine step that is running when the loops stop would meet a
+// released lock and a closing pool. PLATFORM_JOB_ENGINE_ENABLED=false builds none.
+//
 // Beside them runs the reachability sync (reachability.go): from the moment the pool exists, in every instance, it writes PLATFORM_M1_VENDOR_REACHABLE into platform.unit_costs (at start, then every
 // minute; every 5 seconds until the first success). It is stopped and waited for by the same stop function, before the pool closes.
 //
@@ -120,6 +124,11 @@ func Run(ctx context.Context, getenv func(string) string, logw io.Writer) error 
 		return fmt.Errorf("build the entitlement loops: %w", err)
 	}
 
+	eng, err := newJobEngine(cfg, deps, ent.Leader(), log)
+	if err != nil {
+		return err
+	}
+
 	var draining atomic.Bool
 	handler := httpapi.NewHandler(httpapi.Deps{
 		Logger:       log,
@@ -140,7 +149,11 @@ func Run(ctx context.Context, getenv func(string) string, logw io.Writer) error 
 	sc.Ready = ready
 	// The reachability sync (Phase 4, chunk B3) is not a leader's loop: it runs in EVERY instance, from the start and whether or not the server is listening yet, and it stops with the others.
 	reach := newReachabilitySetter(pool, deps.Money, cfg)
-	stopLoops := runLoops(ctx, ent, ready, func(loopCtx context.Context) {
+	var engine loopRunner // a nil *jobengine.Engine must not become a non-nil interface
+	if eng != nil {
+		engine = eng
+	}
+	stopLoops := runLoops(ctx, ent, engine, ready, func(loopCtx context.Context) {
 		syncReachability(loopCtx, reach, cfg.M1VendorReachable, log, sleepContext)
 	})
 
@@ -154,22 +167,54 @@ func Run(ctx context.Context, getenv func(string) string, logw io.Writer) error 
 	return nil
 }
 
-// runLoops starts the entitlement loops once ready delivers (the HTTP server is listening) and returns the
-// function that stops them: it cancels the loops and returns only after they have ended. The loops also end
-// when ctx is cancelled, which is the shutdown signal. If the server never becomes ready (it failed to listen)
-// the loops never start and the stop function returns at once.
+// loopRunner is what runLoops runs: the entitlement service and the job engine (a fake of each in the test of the shutdown order).
+type loopRunner interface {
+	Run(ctx context.Context) error
+}
+
+// runLoops starts the entitlement loops, and the job engine when there is one, once ready delivers (the HTTP server is listening), and returns the function that stops them. It is the ONE
+// shutdown path of everything that runs against the pool, and its ORDER is the contract:
 //
-// Each function of background starts at once, in a goroutine of its own, and runs until the loop context is done (the reachability sync). It is stopped and WAITED FOR by the same stop function, so that
-// there is one shutdown path and nothing runs against the pool once the stop function has returned.
-func runLoops(ctx context.Context, ent *entitlements.Service, ready <-chan net.Addr, background ...func(context.Context)) (stop func()) {
-	loopCtx, cancel := context.WithCancel(ctx)
-	var wg sync.WaitGroup
+//  1. the job engine stops first and is WAITED FOR (its context ends; the step it is in ends with it);
+//  2. then the entitlement loops stop and are waited for (their Run gives the leader lock and its connection back, and the lock is the engine's gate: nothing is left asking a lock that is gone);
+//  3. the functions of background (the reachability sync) stop with the loops;
+//
+// and the caller closes the pool after the stop function returned. The same sequence starts when ctx is cancelled (the shutdown signal), whoever calls stop: the loops' own context is NOT
+// derived from ctx's cancellation, it ends only when the engine has ended. If the server never becomes ready (it failed to listen) nothing starts and the stop function returns at once. The stop
+// function is safe to call more than once and from several goroutines.
+//
+// Each function of background starts at once, in a goroutine of its own, and runs until the loops' context is done (the reachability sync).
+func runLoops(ctx context.Context, ent loopRunner, engine loopRunner, ready <-chan net.Addr, background ...func(context.Context)) (stop func()) {
+	engCtx, engCancel := context.WithCancel(ctx)
+	loopCtx, loopCancel := context.WithCancel(context.WithoutCancel(ctx))
+	var engWG, wg sync.WaitGroup
+
+	// ready carries one value: it is turned into a signal that every starter can see
+	listening := make(chan struct{})
+	go func() {
+		select {
+		case <-ready:
+			close(listening)
+		case <-engCtx.Done():
+		}
+	}()
+	if engine != nil {
+		engWG.Add(1)
+		go func() {
+			defer engWG.Done()
+			select {
+			case <-listening:
+				_ = engine.Run(engCtx) // returns nil once the engine has stopped
+			case <-engCtx.Done():
+			}
+		}()
+	}
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		select {
-		case <-ready:
-			_ = ent.Run(loopCtx) // returns nil once both loops have stopped
+		case <-listening:
+			_ = ent.Run(loopCtx) // returns nil once both loops have stopped and the leader lock is given back
 		case <-loopCtx.Done():
 		}
 	}()
@@ -180,10 +225,27 @@ func runLoops(ctx context.Context, ent *entitlements.Service, ready <-chan net.A
 			f(loopCtx)
 		}()
 	}
-	return func() {
-		cancel()
-		wg.Wait()
+
+	var once sync.Once
+	done := make(chan struct{})
+	shutdown := func() {
+		once.Do(func() {
+			engCancel()
+			engWG.Wait() // the engine has stopped: nothing asks the leader lock any more
+			loopCancel()
+			wg.Wait() // the entitlement loops have stopped and have released the lock; the reachability sync has stopped
+			close(done)
+		})
+		<-done
 	}
+	go func() { // the shutdown signal starts the sequence, whoever calls stop
+		select {
+		case <-ctx.Done():
+			shutdown()
+		case <-done:
+		}
+	}()
+	return shutdown
 }
 
 // entitlementOptions is the list of options the entitlement service is built with. The service passes NONE: leader election is on, so the two loops run only in the instance that holds the leader

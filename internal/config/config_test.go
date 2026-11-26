@@ -105,7 +105,9 @@ func TestVars_AreWellFormed(t *testing.T) {
 			t.Errorf("%s must be declared optional, with the default (unset) and Secret=%v, got %+v", c.name, c.secret, v)
 		}
 	}
-	for name, def := range map[string]string{VarJWTAudience: "authenticated", VarJWTLeewaySec: "30", VarJobMaxRows: "100000", VarJobMaxStartDelayMin: "30", VarResultsPageMax: "1000"} {
+	for name, def := range map[string]string{VarJWTAudience: "authenticated", VarJWTLeewaySec: "30", VarJobMaxRows: "100000", VarJobMaxStartDelayMin: "30", VarResultsPageMax: "1000",
+		VarJobEngineEnabled: "true", VarJobTickMS: "1500", VarJobSettleIntervalSec: "10", VarJobStaleAfterMinM1: "30", VarJobStaleAfterMinM2: "15", VarJobStaleAfterMinM3: "15",
+		VarJobSubmitBatch: "500", VarJobSubmitConcurrency: "8", VarJobStepTimeoutSec: "120"} {
 		if v, ok := byName[name]; !ok || v.Secret || v.Required || v.Default != def {
 			t.Errorf("%s must be declared optional, not secret, with the default %q, got %+v", name, def, v)
 		}
@@ -167,6 +169,16 @@ func TestLoad_DefaultsAreTheDocumentedOnes(t *testing.T) {
 		"PLATFORM_JOB_MAX_START_DELAY_MIN": "30",
 		"PLATFORM_RESULTS_PAGE_MAX":        "1000",
 
+		"PLATFORM_JOB_ENGINE_ENABLED":      "true",
+		"PLATFORM_JOB_TICK_MS":             "1500",
+		"PLATFORM_JOB_SETTLE_INTERVAL_SEC": "10",
+		"PLATFORM_JOB_STALE_AFTER_MIN_M1":  "30",
+		"PLATFORM_JOB_STALE_AFTER_MIN_M2":  "15",
+		"PLATFORM_JOB_STALE_AFTER_MIN_M3":  "15",
+		"PLATFORM_JOB_SUBMIT_BATCH":        "500",
+		"PLATFORM_JOB_SUBMIT_CONCURRENCY":  "8",
+		"PLATFORM_JOB_STEP_TIMEOUT_SEC":    "120",
+
 		"PLATFORM_INSTANCE_ID": "(hostname)",
 	}
 	got := map[string]string{}
@@ -217,6 +229,10 @@ func TestLoad_DefaultsAreTheDocumentedOnes(t *testing.T) {
 	}
 	if cfg.JobMaxRows != 100000 || cfg.JobMaxStartDelay != 30*time.Minute || cfg.ResultsPageMax != 1000 {
 		t.Fatalf("the job dials' defaults did not reach the Config: %v", cfg)
+	}
+	if !cfg.JobEngineEnabled || cfg.JobTick != 1500*time.Millisecond || cfg.JobSettleInterval != 10*time.Second || cfg.JobStaleAfterM1 != 30*time.Minute || cfg.JobStaleAfterM2 != 15*time.Minute ||
+		cfg.JobStaleAfterM3 != 15*time.Minute || cfg.JobSubmitBatch != 500 || cfg.JobSubmitConcurrency != 8 || cfg.JobStepTimeout != 2*time.Minute {
+		t.Fatalf("the job engine dials' defaults did not reach the Config: %v", cfg)
 	}
 
 	// Paired control: a blank value means "unset", so an environment that spells every default out loud
@@ -366,6 +382,16 @@ var alternatives = map[string]string{
 	VarJobMaxRows:          "5000",
 	VarJobMaxStartDelayMin: "45",
 	VarResultsPageMax:      "250",
+
+	VarJobEngineEnabled:     "false",
+	VarJobTickMS:            "400",
+	VarJobSettleIntervalSec: "3",
+	VarJobStaleAfterMinM1:   "61",
+	VarJobStaleAfterMinM2:   "22",
+	VarJobStaleAfterMinM3:   "23",
+	VarJobSubmitBatch:       "40",
+	VarJobSubmitConcurrency: "5",
+	VarJobStepTimeoutSec:    "45",
 
 	VarInstanceID: "platform-2",
 }
@@ -545,6 +571,24 @@ func TestLoad_InvalidValuesNameTheVariableAndNeverEchoTheValue(t *testing.T) {
 		{VarResultsPageMax, "big-XYZ123", "integer"},
 		{VarResultsPageMax, "0", "between 1 and 1000"},
 		{VarResultsPageMax, "1001", "between 1 and 1000"},
+		// The job engine's dials (Phase 4 B9): the switch is strict, the others are whole numbers inside their ranges.
+		{VarJobEngineEnabled, "yes-XYZ123", "true or false"},
+		{VarJobEngineEnabled, "TRUE", "true or false"},
+		{VarJobEngineEnabled, "1", "true or false"},
+		{VarJobTickMS, "fast-XYZ123", "integer"},
+		{VarJobTickMS, "99", "between 100 and 60000"},
+		{VarJobTickMS, "60001", "between 100 and 60000"},
+		{VarJobSettleIntervalSec, "0", "between 1 and 3600"},
+		{VarJobSettleIntervalSec, "3601", "between 1 and 3600"},
+		{VarJobStaleAfterMinM1, "0", "between 1 and 10080"},
+		{VarJobStaleAfterMinM2, "10081", "between 1 and 10080"},
+		{VarJobStaleAfterMinM3, "soon-XYZ123", "integer"},
+		{VarJobSubmitBatch, "0", "between 1 and 5000"},
+		{VarJobSubmitBatch, "5001", "between 1 and 5000"},
+		{VarJobSubmitConcurrency, "0", "between 1 and 64"},
+		{VarJobSubmitConcurrency, "65", "between 1 and 64"},
+		{VarJobStepTimeoutSec, "4", "between 5 and 3600"},
+		{VarJobStepTimeoutSec, "3601", "between 5 and 3600"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name+"="+tc.value, func(t *testing.T) {

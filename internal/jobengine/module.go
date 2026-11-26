@@ -1,8 +1,8 @@
 // Package jobengine is the job engine: the leader-only loops that carry a confirmed job to its end (Docs/phase-4-spec.md, "The loops"). It starts a job (hands its rows to the module, then moves
 // the job to running), observes what the module reports, records every final item (the settlement and the job's results, in one transaction), completes the job, releases what was not used,
 // expires a job the module never took, repairs a terminal job whose reserve still has a remainder, and raises a `stale` event for a job that makes no progress. It writes nothing itself: every
-// change goes through internal/jobs (the one writer of the job tables, scripts/check-job-writers.sh), and it talks to a module only through the Module interface below, which a later chunk
-// implements over the adapters (internal/adapters/{m1,m2,m3}). No HTTP and no SQL lives here.
+// change goes through internal/jobs (the one writer of the job tables, scripts/check-job-writers.sh), and it talks to a module only through the Module interface below, which Registry
+// (modules.go, module_m1.go, module_sendapi.go) implements over the adapters (internal/adapters/{m1,m2,m3}). No SQL lives here, and no HTTP but the adapters' own.
 //
 // THE ENGINE IS LEVEL-TRIGGERED. It keeps no retry state that matters: every tick asks the database what needs doing (jobs.Store.EngineWork) and does the next step of each job. A step that
 // cannot be done (the module does not answer) is simply not done, and the same step is found again at the next tick; a step the process died in leaves a state the next tick continues from,
@@ -21,11 +21,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
+	"strings"
 
 	"github.com/coldmail-platform/platform/internal/jobs"
 )
 
-// Module is the engine's whole view of a module. A later chunk writes the real ones over the adapters; the tests use jobenginetest.FakeModule. A method never panics and never blocks past its
+// Module is the engine's whole view of a module. The real ones are Registry's (over the adapters); the tests use jobenginetest.FakeModule, and both satisfy jobenginetest.ModuleContract. A method never panics and never blocks past its
 // context; its errors are one of the typed errors below (wrapped with %w) or anything else, which the engine treats as unexpected.
 type Module interface {
 	// Submit puts the rows into the module. IDEMPOTENT: a repeat with the same rows is the same job (module 1 keys on the job id, modules 2 and 3 on the row ids). It may take only SOME of the rows
@@ -34,7 +36,8 @@ type Module interface {
 	Submit(ctx context.Context, j jobs.EngineJob, rows []jobs.EngineRow) (SubmitResult, error)
 	// Observe reads the module's state of the job and hands every TERMINAL item it can see to fn, in pages (idempotent: the engine records what it has not recorded, and fn may be called with an item
 	// it has seen before). An item that is not final is NEVER passed. It reports the module's own totals and whether the module says the job is complete. An error from fn stops the walk and is
-	// returned.
+	// returned. The job is the job as the store read it (jobs.EngineJob): a module that keeps its own handle for the job (module 1's job id) finds it in j.ModuleRef, which Start recorded from
+	// SubmitResult.ModuleRef, and reads no database and keeps no memory of its own; with no handle there it cannot say what the module holds and answers ErrWait.
 	Observe(ctx context.Context, j jobs.EngineJob, fn func([]jobs.ResultItem) error) (Observation, error)
 	// Cancel asks the module to cancel the job (idempotent; unclaimed items become cancelled, an item in flight finishes). A module that cannot returns ErrNotSupported.
 	Cancel(ctx context.Context, j jobs.EngineJob) error
@@ -64,7 +67,8 @@ var (
 	// ErrWait: the module cannot answer now (Unavailable, Timeout, Paused, RateLimited, Backpressure, a campaign that is still active). The step stops, the job stays where it is, nothing is invented, and
 	// the next tick tries again.
 	ErrWait = errors.New("jobengine: the module cannot answer now")
-	// ErrRefused: the module refused the job for good (its validation said no). The engine fails the job: the rows nobody settled are free, what was charged stays charged.
+	// ErrRefused: the module refused the job for good (its validation said no). The engine fails the job when the module holds none of its rows: the rows nobody settled are free, what was charged stays
+	// charged. When the module already holds rows of the job the engine NEVER fails it (the module would go on sending rows nobody records or charges): it flags it and waits (Engine.refusal).
 	ErrRefused = errors.New("jobengine: the module refused the job for good")
 	// ErrNotSupported: the module cannot do what was asked (a cancel it does not have).
 	ErrNotSupported = errors.New("jobengine: the module does not support this")
@@ -74,7 +78,38 @@ var (
 func Wait(reason string) error { return fmt.Errorf("%w: %s", ErrWait, reason) }
 
 // Refused wraps ErrRefused with a reason word.
-func Refused(reason string) error { return fmt.Errorf("%w: %s", ErrRefused, reason) }
+func Refused(reason string) error { return &RefusedError{Reason: reason} }
+
+// RefusedWithCode is Refused for a module that gave a code word for its refusal (validation_failed, not_found): the engine can then say WHICH refusal it was without quoting the module's text.
+func RefusedWithCode(code, reason string) error { return &RefusedError{Code: code, Reason: reason} }
+
+// RefusedError is an ErrRefused (errors.Is) that carries the module's own code word for the refusal besides the reason text.
+type RefusedError struct {
+	Code   string // the module's code word, "" when it gave none
+	Reason string
+}
+
+// Error is "<ErrRefused>: <reason>", the text Refused has always had.
+func (e *RefusedError) Error() string { return ErrRefused.Error() + ": " + e.Reason }
+
+// Unwrap makes the error an ErrRefused.
+func (e *RefusedError) Unwrap() error { return ErrRefused }
+
+// reCode is what a refusal's code word looks like: a lower-case word, digits, `_` and `-` (module 2 and 3's `validation_failed`, `not_found`).
+var reCode = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,39}$`)
+
+// RefusalCode is the code word of a refusal, for the places that must name a refusal without quoting the module (a job event): the word a *RefusedError carries when it is a plain code word, and
+// "unspecified" for anything else (no code, or a code that is not shaped like a word: it is never made into a word, so what the module put there never reaches an event). It is never the reason text,
+// which may hold anything the module said.
+func RefusalCode(err error) string {
+	var re *RefusedError
+	if errors.As(err, &re) {
+		if c := strings.ToLower(strings.TrimSpace(re.Code)); reCode.MatchString(c) {
+			return c
+		}
+	}
+	return "unspecified"
+}
 
 // Gate says whether this instance leads: the engine does nothing in a tick the gate refuses. The entitlements Leader satisfies it.
 type Gate interface {

@@ -27,7 +27,7 @@ import (
 //	AStartDeadline...                     a module that never answers: the job expires at its deadline and the reserve goes back
 //	Cancelling...                         the in-flight item is charged once, the cancelled ones are free, the job ends cancelled; module 1 cannot be cancelled
 //	AModuleComplete...                    a module that says complete with a result missing: not completed, flagged, stale after the limit, completed when the result arrives
-//	NotFinal / Repair / Refused           what the engine never invents, the repair pass, a module that refuses the job
+//	NotFinal / Repair / Refused           what the engine never invents, the repair pass, a module that refuses the job (the job fails only while the module holds none of its rows: Refusal...)
 
 // The module-2 shaped fixture of the crash tests: five pending rows, a malformed one and a duplicate; the module takes two rows per call and finishes two items per observation.
 func jeCrashFake() *jobenginetest.FakeModule {
@@ -668,4 +668,118 @@ func TestJobEngineLoop_AModuleThatRefusesTheJobForGoodFailsItFreeAndGivesTheRese
 	}
 	e.requireEnded(j.ID, jobs.StatusFailed, 1)
 	e.requireBal("after the refusal", u, "m2", 1000, 0)
+}
+
+// jeRefuseAfter is a module that is the fake until its accept+1-th Submit call and refuses every call from then on, for good, with a code word and a reason that holds an address (which the platform must
+// not repeat in a job event). accept 0 refuses the very first batch.
+type jeRefuseAfter struct {
+	*jobenginetest.FakeModule
+	accept int
+	calls  atomic.Int64
+}
+
+const jeRefusalText = "the row for jane.doe@leak-check.example is not accepted"
+
+func (r *jeRefuseAfter) Submit(ctx context.Context, j jobs.EngineJob, rows []jobs.EngineRow) (jobengine.SubmitResult, error) {
+	if int(r.calls.Add(1)) > r.accept {
+		return jobengine.SubmitResult{}, jobengine.RefusedWithCode("validation_failed", jeRefusalText)
+	}
+	return r.FakeModule.Submit(ctx, j, rows)
+}
+
+// jeRefusalRig is a four-row module 2 job, an engine with a batch of two over a module that accepts `accept` Submit calls and then refuses, and the clock the engine reads.
+func jeRefusalRig(t *testing.T, accept int) (e *jeEnv, user string, j jobs.Job, fake *jobenginetest.FakeModule, eng *jobengine.Engine, clock *jobenginetest.Clock) {
+	t.Helper()
+	e = newJeEnv(t)
+	user = e.newUser()
+	j = e.confirmN(user, "m2", 4)
+	fake = &jobenginetest.FakeModule{Plan: jePlan(4)}
+	clock = jobenginetest.NewClock(time.Now())
+	eng = e.engineOf(jeSingleModule{&jeRefuseAfter{FakeModule: fake, accept: accept}}, jobenginetest.NewGate(true), clock,
+		jobengine.Config{SubmitBatch: 2, SettleEvery: -1, StaleAfter: map[string]time.Duration{"m2": time.Hour}})
+	return e, user, j, fake, eng, clock
+}
+
+// The module took the first batch and refuses the second: failing the job would write infrastructure_failure for the rows it has no result for, while the module keeps working the two it holds,
+// which would then be sent and never recorded or charged. The job stays running, ONE flag says so (the module's code word, never its text), what the module holds is still observed, recorded and
+// charged, nothing is released, and when time passes the job goes stale like any job that cannot go on. The control is the next test: the same refusal with nothing held fails the job.
+func TestJobEngineLoop_RefusalAfterRowsAreHeldDoesNotFailTheJob(t *testing.T) {
+	e, u, j, fake, eng, clock := jeRefusalRig(t, 1)
+	ctx := testCtx(t)
+
+	eng.Tick(ctx) // the first batch is accepted, stamped, and the job runs
+	if e.jobStatus(j.ID) != jobs.StatusRunning || fake.HeldCount(j.ID) != 2 || e.int("SELECT count(*) FROM platform.job_rows WHERE job_id = $1 AND submitted_at IS NOT NULL", j.ID) != 2 {
+		t.Fatalf("the fixture: the job is %s, the module holds %d", e.jobStatus(j.ID), fake.HeldCount(j.ID))
+	}
+	eng.Tick(ctx) // the second batch is refused for good
+	if got := e.jobStatus(j.ID); got != jobs.StatusRunning {
+		t.Fatalf("a module refused rows of a job it holds and the job is %s: want running (engine stats %+v)", got, eng.Stats())
+	}
+	if n := e.int("SELECT count(*) FROM platform.job_results WHERE job_id = $1 AND (module_state = 'infrastructure_failure' OR rule = 'P-04')", j.ID); n != 0 {
+		t.Fatalf("%d infrastructure_failure results for rows the module may still be sending", n)
+	}
+	if e.transitionCount(j.ID, jobs.StatusFailed) != 0 || e.releaseRows(j.ID) != 0 {
+		t.Fatalf("the job was failed or its reserve released: %d moves to failed, %d release rows", e.transitionCount(j.ID, jobs.StatusFailed), e.releaseRows(j.ID))
+	}
+	if e.eventCount(j.ID, "flag") != 1 {
+		t.Fatalf("%d flag events, want exactly 1", e.eventCount(j.ID, "flag"))
+	}
+	if who, word := e.str("SELECT actor_kind FROM platform.job_events WHERE job_id = $1 AND kind = 'flag'", j.ID), e.str("SELECT detail->>'refusal' FROM platform.job_events WHERE job_id = $1 AND kind = 'flag'", j.ID); who != "engine" || word != "validation_failed" {
+		t.Errorf("the flag was written by %q and names the refusal %q; want the engine and the module's code word", who, word)
+	}
+	if n := e.int(`SELECT count(*) FROM platform.job_events WHERE job_id = $1 AND (reason ILIKE '%jane.doe%' OR reason ILIKE '%leak-check%' OR reason ILIKE '%not accepted%' OR detail::text ILIKE '%jane.doe%'
+		OR detail::text ILIKE '%leak-check%' OR detail::text ILIKE '%not accepted%')`, j.ID); n != 0 {
+		t.Errorf("%d job event(s) repeat the module's text", n)
+	}
+	// the two items the module holds were observed, recorded and charged in that very step; the two it never held have nothing
+	if e.resultCount(j.ID) != 2 || e.chargeRows(j.ID) != 2 {
+		t.Fatalf("%d results and %d charges after the refusal, want the two items the module finished (the refusal must not stop the observation)", e.resultCount(j.ID), e.chargeRows(j.ID))
+	}
+	e.requireSettledLikeTheModule(fake, j.ID)
+	if r, c, l := e.reserveOf(j.ID); r != 4 || c != 2 || l != 0 {
+		t.Errorf("reserve held %d, charged %d, released %d; want 4, 2 and 0 (the rest is held for the job, not released)", r, c, l)
+	}
+	if s := eng.Stats(); s.Refused != 0 || s.Waits < 1 || s.Unexpected != 0 {
+		t.Errorf("engine stats %+v: the refusal is a wait, never a failed job", s)
+	}
+
+	// a refusal at every tick is ONE flag inside the staleness interval, and nothing else is written
+	for i := 0; i < 3; i++ {
+		eng.Tick(ctx)
+	}
+	if e.eventCount(j.ID, "flag") != 1 || e.jobStatus(j.ID) != jobs.StatusRunning || e.resultCount(j.ID) != 2 {
+		t.Fatalf("three more refusals: %d flags, status %s, %d results; want 1, running, 2", e.eventCount(j.ID, "flag"), e.jobStatus(j.ID), e.resultCount(j.ID))
+	}
+	// the staleness limit passes: the job that cannot go on says so (stale event, the flag renewed), and is still not failed
+	clock.Advance(2 * time.Hour)
+	eng.Tick(ctx)
+	if e.eventCount(j.ID, "stale") != 1 || e.eventCount(j.ID, "flag") != 2 || e.jobStatus(j.ID) != jobs.StatusRunning {
+		t.Fatalf("after the limit: %d stale events, %d flags, status %s; want 1, 2, running", e.eventCount(j.ID, "stale"), e.eventCount(j.ID, "flag"), e.jobStatus(j.ID))
+	}
+	if n := e.int("SELECT count(*) FROM platform.job_results WHERE job_id = $1 AND module_state = 'infrastructure_failure'", j.ID); n != 0 {
+		t.Fatalf("%d infrastructure_failure results after the limit", n)
+	}
+	e.requireBooks("after a refusal for a job whose rows the module holds")
+	e.requireBal("after the refusal that did not fail the job", u, "m2", 996, 2)
+}
+
+// The control of the test above: the same four rows, the same refusal, but the FIRST batch is refused, so the module holds nothing: the job fails, every row without a result gets P-04, the whole
+// reserve goes back, and no flag is written (the job did not wait, it ended).
+func TestJobEngineLoop_RefusalWithNothingHeldFailsTheJob(t *testing.T) {
+	e, u, j, fake, eng, _ := jeRefusalRig(t, 0)
+	eng.Tick(testCtx(t))
+	if got := e.jobStatus(j.ID); got != jobs.StatusFailed || eng.Stats().Refused != 1 {
+		t.Fatalf("the job is %s (refused %d), want failed", got, eng.Stats().Refused)
+	}
+	if fake.HeldCount(j.ID) != 0 {
+		t.Fatalf("the module holds %d items of a job it refused", fake.HeldCount(j.ID))
+	}
+	if n := e.int("SELECT count(*) FROM platform.job_results WHERE job_id = $1 AND origin = 'platform' AND rule = 'P-04' AND module_state = 'infrastructure_failure'", j.ID); n != 4 {
+		t.Fatalf("%d P-04 results, want 4", n)
+	}
+	if e.eventCount(j.ID, "flag") != 0 {
+		t.Errorf("%d flag events for a job that was failed, want none", e.eventCount(j.ID, "flag"))
+	}
+	e.requireEnded(j.ID, jobs.StatusFailed, 1)
+	e.requireBal("after the refusal of the first batch", u, "m2", 1000, 0)
 }

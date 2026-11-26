@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # check-install-doc.sh [--root DIR] — BLOCKING gate: Docs/install.md names only what exists, and CI runs the install step it documents.
 #
-#   1. the document names each REQUIRED item (the provisioning file, the platform migrator's command, the first-admin command, the exposed-schemas setting, the module-1 queue key, the vendor price):
+#   1. the document names each REQUIRED item (the provisioning file, the post-module-1 install file, the platform migrator's command, the first-admin command, the exposed-schemas setting, the module-1 queue key, the vendor price):
 #      a document that stops mentioning one of them is red (class 5: a gate satisfied by the absence of the thing it guards)
 #   2. every file path the document puts in backticks (db/…, scripts/…, cmd/…, tests/…) exists in the repository
 #   3. the commands it documents exist: `create-first-admin` is a subcommand of cmd/platform-migrate, `up-and-set-password` is too
 #   4. CI RUNS THE STEP EXACTLY AS THE DOCUMENT SAYS: db/install/preprovision.sql is referenced by the harness compose file, by run-db-tests.sh and by the supabase workflow, and the OLD location
-#      (tests/supabase/preprovision.sql) is referenced by none of the files that run it — so the install step cannot silently stop being exercised
+#      (tests/supabase/preprovision.sql) is referenced by none of the files that run it — so the install step cannot silently stop being exercised; and db/install/postmodule1.sql (step 3b, after module 1's
+#      migrations) is referenced by the harness run script and by the supabase workflow
 #
 # NOT CHECKED (printed on every run): that the prose is true, that a step works against a real project (the supabase and harness workflows run the steps; the dashboard steps are an owner's), or
 # that nothing else is missing from the document. It reads names and paths.
@@ -26,7 +27,7 @@ text="$(tr -d '\r' < "$DOC")"
 
 # 1. required items
 nreq=0
-for item in 'db/install/preprovision.sql' 'up-and-set-password' 'create-first-admin' 'Exposed schemas' 'TM_QUEUE_ADDR_KEY' 'm1_vendor'; do
+for item in 'db/install/preprovision.sql' 'db/install/postmodule1.sql' 'up-and-set-password' 'create-first-admin' 'Exposed schemas' 'TM_QUEUE_ADDR_KEY' 'm1_vendor'; do
   nreq=$((nreq+1))
   printf '%s\n' "$text" | grep -qF -- "$item" || bad "Docs/install.md does not mention '$item' (a required item of the install procedure)"
 done
@@ -61,6 +62,13 @@ for f in tests/harness/docker-compose.yml tests/harness/run-db-tests.sh .github/
   if grep -qF 'tests/supabase/preprovision.sql' "$ROOT/$f"; then bad "$f still references the old location tests/supabase/preprovision.sql"; fi
 done
 [ -f "$ROOT/db/install/preprovision.sql" ] || bad "db/install/preprovision.sql does not exist"
+# the step after module 1's migrations (Docs/install.md step 3b): the harness runs it as the migrating role and the supabase workflow (through tests/supabase/run.sh) applies it on the pinned image
+for f in tests/harness/run.sh .github/workflows/supabase.yml; do
+  nci=$((nci+1))
+  if [ ! -f "$ROOT/$f" ]; then bad "$f does not exist"; continue; fi
+  grep -qF 'db/install/postmodule1.sql' "$ROOT/$f" || bad "$f does not reference db/install/postmodule1.sql: CI would not run the documented step after module 1's migrations"
+done
+[ -f "$ROOT/db/install/postmodule1.sql" ] || bad "db/install/postmodule1.sql does not exist"
 
 echo "check-install-doc: $nreq required item(s), $npaths backticked path(s), $ncmd command(s), $nci CI file(s) checked"
 echo "NOT CHECKED: that the prose is true; that a step works against a real project (the supabase and harness workflows run the steps; the dashboard steps are the owner's); that nothing else is missing"

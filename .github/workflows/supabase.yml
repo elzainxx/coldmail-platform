@@ -5,7 +5,9 @@
 # `postgres` (with the image's own auth schema, auth.users and extensions, which platform_0001 needs) and a pristine cluster: roles are no longer shared between the passes.
 #   BASELINE  NO provisioning                                  -> compared with tests/supabase/baseline-blockers.txt  (what fails without the fix: the evidence that it is needed)
 #   FIXED     db/install/preprovision.sql applied first    -> compared with tests/supabase/known-blockers.txt     (goal: empty). The proposed no-module-change fix: the migrator is
-#             granted the module owner roles WITH INHERIT, SET before the module bootstraps run.
+#             granted the module owner roles WITH INHERIT, SET before the module bootstraps run. The FIXED leg also applies db/install/postmodule1.sql (Phase 4 B16, Docs/install.md step 3b) as `postgres`, twice, right after module 1's
+#             chain and before module 2's (tests/supabase/run.sh --postmodule1): it is the install step that creates platform.provision_m1_caller. The BASELINE leg does not run it: it is no precondition of any migration (the file
+#             makes its own role grant), so there is no failure of it without provisioning to measure.
 # Both legs migrate the database `postgres` as the role `postgres`. Why not two databases cloned in one container: the image's own background workers keep connections open on
 # `postgres` that a non-superuser cannot terminate, so `CREATE DATABASE ... TEMPLATE postgres` fails ("being accessed by other users", measured on the runner); a fresh container per pass is
 # the clean way to isolate the passes. Matrix legs run independently (`fail-fast: false`), so no `if:` is needed to make the second leg run when the first is red; the workflow is red when
@@ -81,9 +83,11 @@ jobs:
           - label: BASELINE
             known: baseline-blockers.txt
             preprovision: ''
+            postmodule1: ''
           - label: FIXED
             known: known-blockers.txt
             preprovision: db/install/preprovision.sql
+            postmodule1: db/install/postmodule1.sql
     env:
       DEPLOY_KEY_COLDMAIL_VERIFY: ${{ secrets.DEPLOY_KEY_COLDMAIL_VERIFY }}
       DEPLOY_KEY_COLDMAIL_SEND_MANAGED: ${{ secrets.DEPLOY_KEY_COLDMAIL_SEND_MANAGED }}
@@ -123,6 +127,7 @@ jobs:
           PASS_LABEL: ${{ matrix.label }}
           PASS_KNOWN: ${{ matrix.known }}
           PASS_PREPROVISION: ${{ matrix.preprovision }}
+          PASS_POSTMODULE1: ${{ matrix.postmodule1 }}
         run: |
           set -euo pipefail
           args=(--label "$PASS_LABEL"
@@ -132,4 +137,6 @@ jobs:
                 --known "coldmail-platform/tests/supabase/$PASS_KNOWN")
           # the provisioning flag exists only for the leg whose matrix entry names a file (empty = none: the baseline)
           if [ -n "$PASS_PREPROVISION" ]; then args+=(--preprovision "coldmail-platform/$PASS_PREPROVISION"); fi
+          # the install step after module 1's migrations (db/install/postmodule1.sql, Docs/install.md step 3b) is applied by the FIXED leg only: the flag exists only for the leg whose matrix entry names a file
+          if [ -n "$PASS_POSTMODULE1" ]; then args+=(--postmodule1 "coldmail-platform/$PASS_POSTMODULE1"); fi
           bash coldmail-platform/tests/supabase/run.sh "${args[@]}"

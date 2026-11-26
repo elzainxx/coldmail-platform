@@ -1,0 +1,8 @@
+# The registry of fault points: every name that non-test Go (internal/, cmd/) passes to faultpoint.Hit, one per line as `<point>.<position>  # where it is hit`, nothing else: no blank line, no duplicate, a comment on every name.
+# scripts/check-faultpoints.sh (gate `gates`) fails on a Hit whose name is not listed here, on a name no Hit uses any more, and on a line that does not parse. The names are what the harness's crash stage arms (name or name:n).
+# Add a name here in the same commit as the Hit, and say where it is hit.
+confirm.before_commit  # internal/jobs/confirm.go, Store.Confirm: at the end of the one transaction, after the reserve, the move to confirmed and the platform's own results, just before the commit
+submit.after_module    # internal/jobengine/engine.go, Engine.submit: right after a module's Submit returned, before the store records the start (the move to running) and stamps the rows submitted
+start.before_running   # internal/jobs/engine.go, Store.Start: after the module reference is written and the move to running is made, just before that transaction commits
+settle.after_commit    # internal/jobs/engine.go, Store.RecordResults: after the settlement transaction committed, once at least one result was recorded (the next observation must find it already settled)
+release.mid_tx         # internal/jobs/engine.go, Store.Release: after the job's move to its end status, before the reserve is released, inside the one transaction

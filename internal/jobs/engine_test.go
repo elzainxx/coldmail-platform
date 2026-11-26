@@ -1,7 +1,9 @@
 package jobs
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -202,11 +204,56 @@ func TestCheckIDs(t *testing.T) {
 			t.Errorf("checkIDs accepted %q: %v", bad, err)
 		}
 	}
-	if _, err := checkIDs(make([]string, engineMaxIDs+1)); !errors.Is(err, ErrBadRequest) {
-		t.Errorf("checkIDs accepted %d ids: %v", engineMaxIDs+1, err)
-	}
 	if got, err := checkIDs(nil); err != nil || len(got) != 0 {
 		t.Errorf("checkIDs(nil) = %v, %v", got, err)
+	}
+}
+
+// listOfIDs is n distinct canonical row ids.
+func listOfIDs(n int) []string {
+	out := make([]string, n)
+	for i := range out {
+		out[i] = fmt.Sprintf("00000000-0000-4000-8000-%012d", i+1)
+	}
+	return out
+}
+
+// MaxEngineIDs is the longest list a job may hold: module 1 takes the WHOLE list in one request, so the engine must be able to name every row of the largest job in one call (it was 20000, and a module 1
+// job above that could never start). The equality is pinned both ways, so that a change to either number is read: the store's own limit (DefaultMaxRows, module 1's limit) and the engine's.
+func TestMaxEngineIDs_IsTheLongestListAJobMayHoldAndNotOneMore(t *testing.T) {
+	engine, store := MaxEngineIDs, DefaultMaxRows
+	if engine != store || engine != 100000 {
+		t.Fatalf("MaxEngineIDs = %d, DefaultMaxRows = %d: the engine must be able to name every row of the largest job in one call (module 1's own limit is 100000)", engine, store)
+	}
+	// checkIDs: exactly the limit is accepted (the control), one more is refused for its count and not for what the ids look like
+	got, err := checkIDs(listOfIDs(MaxEngineIDs))
+	if err != nil || len(got) != MaxEngineIDs {
+		t.Fatalf("checkIDs of %d valid ids = %d ids, %v; want all of them accepted", MaxEngineIDs, len(got), err)
+	}
+	_, err = checkIDs(listOfIDs(MaxEngineIDs + 1))
+	if !errors.Is(err, ErrBadRequest) || !strings.Contains(err.Error(), fmt.Sprint(MaxEngineIDs+1)) || !strings.Contains(err.Error(), fmt.Sprint("the limit is ", MaxEngineIDs)) {
+		t.Errorf("checkIDs of %d valid ids: %v; want ErrBadRequest naming the count and the limit", MaxEngineIDs+1, err)
+	}
+	// the limit of PendingRows is the same number (its check is a pure function: the call itself needs a database, tests/harness/jobs_engine_test.go runs it at the limit)
+	for _, c := range []struct {
+		limit int
+		ok    bool
+	}{{1, true}, {MaxEngineIDs, true}, {0, false}, {-1, false}, {MaxEngineIDs + 1, false}} {
+		err := checkPendingLimit(c.limit)
+		if (err == nil) != c.ok || (err != nil && !errors.Is(err, ErrBadRequest)) {
+			t.Errorf("checkPendingLimit(%d) = %v, want accepted=%v (and ErrBadRequest when refused)", c.limit, err, c.ok)
+		}
+	}
+	// and the calls refuse what the limit refuses before any database is asked (a store with no pool would panic if they got further)
+	s := &Store{}
+	if _, err := s.PendingRows(context.Background(), idA, MaxEngineIDs+1); !errors.Is(err, ErrBadRequest) {
+		t.Errorf("PendingRows(limit %d) = %v, want ErrBadRequest", MaxEngineIDs+1, err)
+	}
+	if err := s.MarkSubmitted(context.Background(), idA, listOfIDs(MaxEngineIDs+1)); !errors.Is(err, ErrBadRequest) {
+		t.Errorf("MarkSubmitted of %d ids = %v, want ErrBadRequest", MaxEngineIDs+1, err)
+	}
+	if _, err := s.EnsureModuleItems(context.Background(), idA, listOfIDs(MaxEngineIDs+1)); !errors.Is(err, ErrBadRequest) {
+		t.Errorf("EnsureModuleItems of %d ids = %v, want ErrBadRequest", MaxEngineIDs+1, err)
 	}
 }
 
@@ -292,15 +339,19 @@ func topLevelColumns(list string) int {
 	return n
 }
 
-// engineJobColumns is jobColumns with the campaign taken out and eleven columns after it; scanEngineJob scans them by position. A change to jobColumns that breaks either is caught here, not as a
+// engineJobColumns is jobColumns with the campaign taken out and twelve columns after it; scanEngineJob scans them by position. A change to jobColumns that breaks either is caught here, not as a
 // scan error on a database nobody has at hand.
 func TestEngineJobColumns_DropTheCampaignAndKeepTheOrder(t *testing.T) {
 	base := topLevelColumns(jobColumns)
 	if base != 19 {
 		t.Fatalf("jobColumns has %d columns, scanJobWith scans 19: update both together", base)
 	}
-	if got := topLevelColumns(engineJobColumns); got != base+11 {
-		t.Errorf("engineJobColumns has %d columns, want %d (jobColumns plus the eleven the engine adds)", got, base+11)
+	if got := topLevelColumns(engineJobColumns); got != base+12 {
+		t.Errorf("engineJobColumns has %d columns, want %d (jobColumns plus the twelve the engine adds)", got, base+12)
+	}
+	// the module's own handle of the job is read with the job (COALESCEd: a job with none has "" and not a NULL the scan cannot take), and it is the LAST column scanEngineJob scans
+	if !strings.HasSuffix(strings.TrimSpace(engineJobColumns), "COALESCE(j.module_job_ref, '')") {
+		t.Errorf("engineJobColumns does not end with the module reference: %s", engineJobColumns)
 	}
 	if !strings.Contains(engineJobColumns, "(j.frozen_settings - 'content')") || strings.Contains(engineJobColumns, "j.frozen_settings,") {
 		t.Errorf("engineJobColumns must select the frozen settings without the campaign: %s", engineJobColumns)

@@ -1,0 +1,11 @@
+# Phase 4, Part B chunk B7: the registry of fault points is the closed list of what non-test Go hits. The fault appends a name to internal/faultpoint/names.txt that no faultpoint.Hit uses (a point whose hit was
+# removed, or one that was registered and never added: a crash test armed on it would prove nothing); the gate must say the name is stale. The control side is the real repository, which must be green.
+# Needs bash only: no database, no module, no Go. The patch appends to the registry, so it applies only to a tree that already holds internal/faultpoint/names.txt, and it stops applying when the registry's last
+# lines change (check-fault-patches keeps it applying: regenerate it with `git diff --binary` after adding a point).
+GATE=faultpoint-stale-name
+TARGET=platform
+SETUP=
+STEP=check-faultpoints on the real repository
+CMD=bash scripts/check-faultpoints.sh
+MESSAGE=: stale name 'zz.never_hit': no non-test Go file under internal/ or cmd/ calls faultpoint.Hit("zz.never_hit") outside a comment
+MESSAGE=check-faultpoints: RED

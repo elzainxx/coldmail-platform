@@ -51,8 +51,10 @@ const MaxDetailBytes = 16 << 10
 // maxReasonBytes bounds a reason the engine writes into an event.
 const maxReasonBytes = 500
 
-// engineMaxIDs bounds the rows one EnsureModuleItems or MarkSubmitted call names.
-const engineMaxIDs = 20000
+// MaxEngineIDs bounds the rows one PendingRows, EnsureModuleItems or MarkSubmitted call names. It is the longest list a job may hold (DefaultMaxRows, which is module 1's own limit for one job; a test pins
+// the two equal): module 1 takes a job's WHOLE list in one request, so the engine must be able to read, hand over and stamp every row of the largest job in one call, or that job could never start.
+// Nothing here is a statement per row: MarkSubmitted is one UPDATE over `= ANY(array)`, EnsureModuleItems one INSERT per rowBatch rows, PendingRows one SELECT.
+const MaxEngineIDs = 100000
 
 // IsTerminal says whether a status is one of the four that end a job.
 func IsTerminal(status string) bool {
@@ -70,6 +72,9 @@ type EngineJob struct {
 
 	LastProgressAt *time.Time // when the job last made progress (set by the move to running and by NoteProgress); nil before the job ran
 	StaleAlertedAt *time.Time // when a `stale` event was last written for it
+	// ModuleRef is the module's own handle for the job (platform.jobs.module_job_ref, which Start writes: module 1's job id), "" when none was recorded (a sender has none; a job that has not started has
+	// none yet). A module reads the handle of a job it did not submit in this process from here, never from a database of its own: the job the engine hands to Observe is the job as the store read it.
+	ModuleRef string
 
 	Metered        bool // modules 1 and 2 hold credits, module 3 does not
 	DeadlinePassed bool // start_deadline <= now() by the DATABASE's clock (a confirmed, scheduled or paused job past it is the engine's to expire)
@@ -122,7 +127,7 @@ type RecordSummary struct {
 var engineJobColumns = strings.Replace(jobColumns, "j.frozen_settings", "(j.frozen_settings - 'content')", 1) + `,
 	j.last_progress_at, j.stale_alerted_at, m.metered, (j.start_deadline IS NOT NULL AND j.start_deadline <= now()),
 	c.n_rows, c.n_pending, c.n_submitted, c.n_results, c.n_pending_results, c.n_unsubmitted,
-	COALESCE(rs.reserved - rs.charged - rs.released, 0)::bigint`
+	COALESCE(rs.reserved - rs.charged - rs.released, 0)::bigint, COALESCE(j.module_job_ref, '')`
 
 // engineJobFrom joins what the counts need: the module, the reserve (one per job at most) and the rows with their results.
 const engineJobFrom = `
@@ -143,7 +148,7 @@ const engineJobFrom = `
 func scanEngineJob(row pgx.Row) (EngineJob, error) {
 	var e EngineJob
 	var rows, pending, submitted, results, pendingResults, unsubmitted int64
-	j, err := scanJobWith(row, &e.LastProgressAt, &e.StaleAlertedAt, &e.Metered, &e.DeadlinePassed, &rows, &pending, &submitted, &results, &pendingResults, &unsubmitted, &e.ReserveRemainder)
+	j, err := scanJobWith(row, &e.LastProgressAt, &e.StaleAlertedAt, &e.Metered, &e.DeadlinePassed, &rows, &pending, &submitted, &results, &pendingResults, &unsubmitted, &e.ReserveRemainder, &e.ModuleRef)
 	if err != nil {
 		return EngineJob{}, err
 	}
@@ -311,13 +316,13 @@ func detailJSON(d map[string]any) string {
 // ---- handing rows to a module ------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 // PendingRows returns the rows of a confirmed, scheduled or running job that the module has not been given and has not answered for: state pending, no submitted_at stamp, no result, by ordinal,
-// at most limit (1 to engineMaxIDs). A job in any other state has nothing to submit (an empty answer, not an error: a cancelling job gets no more rows).
+// at most limit (1 to MaxEngineIDs). A job in any other state has nothing to submit (an empty answer, not an error: a cancelling job gets no more rows).
 func (s *Store) PendingRows(ctx context.Context, jobID string, limit int) ([]EngineRow, error) {
 	if !isUUID(jobID) {
 		return nil, opErr("pending rows", ErrNotFound)
 	}
-	if limit < 1 || limit > engineMaxIDs {
-		return nil, opErr("pending rows", badRequest("the limit must be between 1 and %d", engineMaxIDs))
+	if err := checkPendingLimit(limit); err != nil {
+		return nil, opErr("pending rows", err)
 	}
 	rows, err := s.pool.Query(ctx, `SELECT w.id::text, w.ordinal, w.email_norm, w.fields
 		FROM platform.job_rows w JOIN platform.jobs j ON j.id = w.job_id
@@ -332,6 +337,14 @@ func (s *Store) PendingRows(ctx context.Context, jobID string, limit int) ([]Eng
 	defer rows.Close()
 	out, err := s.scanEngineRows(rows)
 	return out, opErr("pending rows", err)
+}
+
+// checkPendingLimit is the bound of one PendingRows call: 1 to MaxEngineIDs.
+func checkPendingLimit(limit int) error {
+	if limit < 1 || limit > MaxEngineIDs {
+		return badRequest("the limit must be between 1 and %d", MaxEngineIDs)
+	}
+	return nil
 }
 
 // scanEngineRows reads rows of (id, ordinal, email_norm, fields) to the end.
@@ -360,10 +373,10 @@ func (s *Store) scanEngineRows(rows pgx.Rows) ([]EngineRow, error) {
 	return out, nil
 }
 
-// checkIDs validates and de-duplicates the row ids a caller names: each must be the canonical lower-case uuid; at most engineMaxIDs.
+// checkIDs validates and de-duplicates the row ids a caller names: each must be the canonical lower-case uuid; at most MaxEngineIDs.
 func checkIDs(ids []string) ([]string, error) {
-	if len(ids) > engineMaxIDs {
-		return nil, badRequest("%d row ids in one call, the limit is %d", len(ids), engineMaxIDs)
+	if len(ids) > MaxEngineIDs {
+		return nil, badRequest("%d row ids in one call, the limit is %d", len(ids), MaxEngineIDs)
 	}
 	seen := make(map[string]bool, len(ids))
 	out := make([]string, 0, len(ids))

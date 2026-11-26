@@ -10,6 +10,7 @@
 #                     fix). If it fails the pass is RED and the chains are not run: a report about a provisioning that did not happen would be a report about nothing.
 #                     Without it the pass shows what the migrations do with NO provisioning at all (the baseline).
 #     --label         a name for the pass (letters, digits, . _ -), printed in every banner and in the result line; the workflow runs two passes, BASELINE and FIXED
+#     --postmodule1   a SQL file applied as `postgres` right AFTER module 1's chain and BEFORE module 2's, with ON_ERROR_STOP=1, TWICE (db/install/postmodule1.sql, Docs/install.md step 3b: the function through which the#                     platform registers a user's module 1 key). A failure, a second run that fails, or a function that is not what the file claims (owner verify_admin, SECURITY DEFINER, executable by platform_app) is RED#                     and the remaining chains still run, so the report is complete. A pass without it applies nothing here: it is not a precondition of any migration (the file makes its own role grant), so the BASELINE#                     leg has no failure of it to measure and does not run it.
 #   env: S_WORK = the work directory (default: a new temp directory; raw psql output, per-file records and last-report.tsv are written there, never into the repository)
 #        S_WAIT_SECONDS = how long to wait for the database to accept connections (default 180)
 #
@@ -37,8 +38,8 @@ export LC_ALL=C
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLASSIFY="$HERE/classify.sh"
-DSN=""; PLATFORM_DIR=""; MODULES_ROOT=""; KNOWN="$HERE/known-blockers.txt"; PREPROV=""; LABEL=""
-usage() { echo "usage: run.sh --dsn DSN --platform-dir DIR --modules-root DIR [--known FILE] [--preprovision FILE] [--label NAME]" >&2; exit 2; }
+DSN=""; PLATFORM_DIR=""; MODULES_ROOT=""; KNOWN="$HERE/known-blockers.txt"; PREPROV=""; POSTMOD1=""; LABEL=""
+usage() { echo "usage: run.sh --dsn DSN --platform-dir DIR --modules-root DIR [--known FILE] [--preprovision FILE] [--label NAME] [--postmodule1 FILE]" >&2; exit 2; }
 while [ $# -gt 0 ]; do
   case "$1" in
     --dsn)           [ $# -ge 2 ] || usage; DSN="$2"; shift 2;;
@@ -46,6 +47,7 @@ while [ $# -gt 0 ]; do
     --modules-root)  [ $# -ge 2 ] || usage; MODULES_ROOT="$2"; shift 2;;
     --known)         [ $# -ge 2 ] || usage; KNOWN="$2"; shift 2;;
     --preprovision)  [ $# -ge 2 ] || usage; PREPROV="$2"; shift 2;;
+    --postmodule1)   [ $# -ge 2 ] || usage; POSTMOD1="$2"; shift 2;;
     --label)         [ $# -ge 2 ] || usage; LABEL="$2"; shift 2;;
     -h|--help)       usage;;
     *)               echo "run.sh: unknown argument: $1" >&2; usage;;
@@ -99,6 +101,13 @@ if [ -n "$PREPROV" ]; then
   echo "  preprovision:   $PREPROV"
 else
   echo "  preprovision:   none (this pass shows what the migrations do with no provisioning at all)"
+fi
+if [ -n "$POSTMOD1" ]; then
+  [ -f "$POSTMOD1" ] || die "--postmodule1 $POSTMOD1 is not a file: an install step that is named and missing is red, never skipped"
+  POSTMOD1="$(cd "$(dirname "$POSTMOD1")" && pwd)/$(basename "$POSTMOD1")"
+  echo "  postmodule1:    $POSTMOD1"
+else
+  echo "  postmodule1:    none (the step after module 1's migrations is not applied in this pass)"
 fi
 echo "  work directory: $WORK"
 
@@ -267,6 +276,29 @@ for pair in "m2:$M2" "m3:$M3"; do
   fi
 done
 run_chain m1
+
+# the install step AFTER module 1's migrations (--postmodule1; Docs/install.md step 3b): applied as postgres with ON_ERROR_STOP=1 (one transaction, unlike the chains' autocommit), TWICE, then its effect read back. A failure is RED
+# with psql's own output, and the chains of modules 2 and 3 still run so that the report is complete. It runs between module 1's chain and module 2's because it needs module 1's schema and nothing of the others.
+if [ -n "$POSTMOD1" ]; then
+  STAGE=postmodule1; banner q "POSTMODULE1 — $(basename "$POSTMOD1") applied as postgres with ON_ERROR_STOP=1, twice, right after module 1's chain"
+  pm1dir="$(dirname "$POSTMOD1")"; pm1base="$(basename "$POSTMOD1")"; pm1ok=1
+  for pass in 1 2; do
+    ( cd "$pm1dir" && PGCONNECT_TIMEOUT=15 psql -X -w -v ON_ERROR_STOP=1 -f "$pm1base" "$DSN" > "$WORK/raw/postmodule1.$pass.stdout" 2> "$WORK/raw/postmodule1.$pass.stderr" < /dev/null )
+    prc=$?
+    if [ "$prc" -ne 0 ]; then
+      echo "  psql exited $prc applying $pm1base (pass $pass); its output:"; sed 's/^/    | /' "$WORK/raw/postmodule1.$pass.stderr" "$WORK/raw/postmodule1.$pass.stdout" | head -40
+      if [ "$pass" = 1 ]; then red "POSTMODULE1 FAILED: $pm1base did not apply cleanly (psql exit $prc)"; else red "POSTMODULE1 IS NOT RE-RUNNABLE: the second application of $pm1base failed (psql exit $prc)"; fi
+      pm1ok=0; break
+    fi
+    echo "  ok: $pm1base applied, pass $pass of 2 (psql exit 0, ON_ERROR_STOP=1)"
+  done
+  if [ "$pm1ok" = 1 ]; then
+    pm1state="$(q "select pg_get_userbyid(p.proowner) || '|' || p.prosecdef || '|' || has_function_privilege('platform_app', p.oid, 'EXECUTE') from pg_proc p where p.oid = to_regprocedure('platform.provision_m1_caller(uuid, bytea)')")" || pm1state="query failed"
+    if [ "$pm1state" = "verify_admin|true|true" ]; then echo "  ok: platform.provision_m1_caller exists, owned by verify_admin, SECURITY DEFINER, executable by platform_app (read back as postgres)"
+    else red "POSTMODULE1: after $pm1base platform.provision_m1_caller is (owner|SECURITY DEFINER|executable by platform_app) = ($pm1state), want (verify_admin|true|true); an empty answer means the function does not exist"; fi
+  fi
+  STAGE=chains
+fi
 run_chain m2
 run_chain m3
 
@@ -307,7 +339,9 @@ cat <<'EOF'
   - PostgREST, the exposed schemas and the RLS defaults of a real project: no API layer ran, and a hosted project's default exposure and RLS-on-new-tables behaviour were not exercised.
   - extensions available on the hosted service: the image's extension set is what was available here; the hosted service's list and versions can differ.
   - the real project's role grants: this is the image's `postgres` role with the image's default memberships. supabase_admin vs postgres defaults may differ by project age.
-  - runtime behaviour of the modules: migrations only. No service, worker or integration test ran on this image.
+  - runtime behaviour of the modules: migrations only. No service, worker or integration test ran on this image. The one install step run beyond the migrations (--postmodule1, the FIXED leg only: db/install/postmodule1.sql) is shown to apply twice
+    and to leave the function owned, definer and executable as claimed; WHO may call it and WHAT it writes are proven by the full harness (TestM1LiveProvision_*), not here, and the BASELINE leg does not run it (it is no precondition of a migration:
+    the file makes its own role grant, so there is no failure of it without provisioning to measure).
   - transaction shape: psql ran each statement in autocommit, one by one. The modules' migrators run each file in ONE transaction, so there a failing statement aborts the rest of the
     file (25P02 for everything after it) and keeps nothing of it; here the later statements run, so some CASCADE rows above would not occur there and others would read 25P02.
   - the database is the one in the DSN: roles are CLUSTER-wide, so a role that an earlier pass of the same job created in this cluster is already here (and is found by the modules' IF NOT EXISTS guards); tables and schemas are per database (each pass runs in its own clone of the pristine image database, so the platform's public.users and public.job_items are created by the platform's own migrations in each).

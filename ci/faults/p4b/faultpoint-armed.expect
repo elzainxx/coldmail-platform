@@ -1,0 +1,11 @@
+# Phase 4, Part B chunk B7: nothing that can be armed may reach a production build. The fault adds a NEW non-test Go file under internal/faultpoint/ that names the fault-point environment variable and carries
+# no `//go:build faultpoints` line (a file that reads the variable in the default build, where a process could be told to kill itself); the gate must name the file and the line and say it does not start with the build
+# line. The control side is the real repository, which must be green. Needs bash only: no database, no module, no Go.
+# The patch adds a new file, so it depends on no committed file; the control needs scripts/check-faultpoints.sh, internal/faultpoint/names.txt, the Dockerfile and the workflows at HEAD.
+GATE=faultpoint-armed
+TARGET=platform
+SETUP=
+STEP=check-faultpoints on the real repository
+CMD=bash scripts/check-faultpoints.sh
+MESSAGE=internal/faultpoint/zz_armed.go:4: names the fault-point environment variable PLATFORM_FAULTPOINT but does not start with the line //go:build faultpoints
+MESSAGE=check-faultpoints: RED

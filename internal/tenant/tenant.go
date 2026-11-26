@@ -9,7 +9,7 @@
 //     section 3; m3-api.md section 3; module 2 services/control/internal/platformapi/store.go:84-94 at ff8c302).
 //   - Module 1 has no `user_id` parameter at all. Its tenant is the user_id of the CALLER KEY that submits a job: the front door hashes the presented bearer with SHA-256, looks the digest
 //     up in verify.api_callers and stamps the row's user_id on the job, and every job read predicates on it (control-plane/internal/api/api.go:810-845 and internal/store/postgres.go:1345-1363
-//     at 4adc316; migrations 0010 and 0013). So the platform gives each user ONE KEY, derived and never stored: see DeriveM1Key and ProvisionM1Caller.
+//     at 4adc316; migrations 0010 and 0013). So the platform gives each user ONE KEY, derived and never stored: see DeriveM1Key, M1CallerEnsurer (the service registers the key at the first module 1 job, through the privileged function platform.provision_m1_caller) and ProvisionM1Caller (the same row, through a privileged connection: operator tools and tests).
 //
 // WHAT NEVER HAPPENS. (1) A public user id supplied by a caller is never trusted: the only input is the authenticated login id, and Scope re-reads the database and refuses a Tenant whose
 // UserID is not the user of its AuthUserID (a Tenant is a plain struct, so anyone can write one). (2) A login with no platform user is never given one: users are created by an admin, so the
@@ -196,7 +196,7 @@ func (r *Resolver) ByAuthUser(ctx context.Context, authUserID string) (Tenant, e
 
 // Scope builds the module scoping of a tenant. It does NOT trust the Tenant it is given: it reads the database again with the Tenant's AuthUserID and refuses (ErrTenantMismatch) a UserID that
 // is not that login's platform user, and refuses (ErrInactive, ErrUnknownLogin) a user that was switched off or removed since the Tenant was resolved. Every id in the result comes from the
-// database, never from the argument. It writes nothing: the module 1 caller row is created by ProvisionM1Caller, once per user.
+// database, never from the argument. It writes nothing: the module 1 caller row is registered by M1CallerEnsurer.EnsureCaller (the service, at the first module 1 job) or by ProvisionM1Caller (a privileged connection), once per user and key version.
 //
 // ErrNoM1KeySecret is returned when PLATFORM_M1_KEY_SECRET is not configured: a Scope with an empty module 1 key would be a trap, so there is no partial Scope. On any error the Scope is the
 // zero value.

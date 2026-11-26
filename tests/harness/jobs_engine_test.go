@@ -990,6 +990,148 @@ func TestJobsEngine_PendingRowsAndMarkSubmittedHandTheRowsOverOnce(t *testing.T)
 	}
 }
 
+// The module's own handle of a job (module 1's job id) is written by Start into platform.jobs.module_job_ref, and it is read BACK with the job: EngineJobByID and EngineWork both carry it, so that a
+// module needs no memory and no database of its own to find the job it holds (the engine hands Observe the job as the store read it). A job started with none shows "" (a NULL column must not break
+// the scan), and a job never shows another job's handle.
+func TestJobsEngine_EngineJobCarriesTheModuleRef(t *testing.T) {
+	e := newJeEnv(t)
+	ctx := testCtx(t)
+	u1, u2, u3 := e.newUser(), e.newUser(), e.newUser()
+	byID := func(job string) jobs.EngineJob {
+		t.Helper()
+		j, err := e.jobs.EngineJobByID(ctx, job)
+		if err != nil {
+			t.Fatalf("EngineJobByID(%s): %v", job, err)
+		}
+		return j
+	}
+	inWork := func(job string) jobs.EngineJob {
+		t.Helper()
+		j, ok := e.workOf(job)
+		if !ok {
+			t.Fatalf("job %s is not in the engine's work", job)
+		}
+		return j
+	}
+
+	// a job that has not started carries none, in both reads
+	j1 := e.confirmN(u1, "m1", 2)
+	if got := byID(j1.ID).ModuleRef; got != "" {
+		t.Fatalf("EngineJobByID of a job that has not started: ModuleRef %q, want none", got)
+	}
+	if got := inWork(j1.ID).ModuleRef; got != "" {
+		t.Fatalf("EngineWork of a job that has not started: ModuleRef %q, want none", got)
+	}
+	// Start with a reference: the next reads of the job carry it, both of them, and it is what the table holds
+	if _, err := e.jobs.Start(ctx, j1.ID, "mod-job-carried"); err != nil {
+		t.Fatal(err)
+	}
+	if got := byID(j1.ID).ModuleRef; got != "mod-job-carried" {
+		t.Errorf("EngineJobByID after Start: ModuleRef %q, want the reference Start recorded", got)
+	}
+	if got := inWork(j1.ID).ModuleRef; got != "mod-job-carried" {
+		t.Errorf("EngineWork after Start: ModuleRef %q, want the reference Start recorded", got)
+	}
+	if col := e.str("SELECT module_job_ref FROM platform.jobs WHERE id = $1", j1.ID); col != byID(j1.ID).ModuleRef {
+		t.Errorf("the job carries %q and the column holds %q", byID(j1.ID).ModuleRef, col)
+	}
+	// a replay of Start with another reference changes nothing the job carries (the first reference stands)
+	if _, err := e.jobs.Start(ctx, j1.ID, "mod-job-OTHER"); err != nil {
+		t.Fatal(err)
+	}
+	if got := byID(j1.ID).ModuleRef; got != "mod-job-carried" {
+		t.Errorf("after a replay of Start with another reference the job carries %q", got)
+	}
+
+	// the controls: a job started with NO reference shows "" (the column is NULL: the read COALESCEs it), and a second job shows its own reference and nothing of the first
+	j2 := e.running(u2, "m2", 2)
+	if got := byID(j2.ID).ModuleRef; got != "" {
+		t.Errorf("EngineJobByID of a job started with no reference: ModuleRef %q, want none", got)
+	}
+	if got := inWork(j2.ID).ModuleRef; got != "" {
+		t.Errorf("EngineWork of a job started with no reference: ModuleRef %q, want none", got)
+	}
+	if !ledgerBool(t, e.admin, "SELECT module_job_ref IS NULL FROM platform.jobs WHERE id = $1", j2.ID) {
+		t.Fatal("the fixture: the job started with no reference must hold NULL, which is what the read has to turn into an empty string")
+	}
+	j3 := e.confirmN(u3, "m1", 2)
+	if _, err := e.jobs.Start(ctx, j3.ID, "mod-job-third"); err != nil {
+		t.Fatal(err)
+	}
+	if got := byID(j3.ID).ModuleRef; got != "mod-job-third" {
+		t.Errorf("the third job carries %q, want its own reference", got)
+	}
+	if got := inWork(j1.ID).ModuleRef; got != "mod-job-carried" {
+		t.Errorf("the first job carries %q after another job started, want its own", got)
+	}
+}
+
+// ONE call names every row of the largest job: module 1 takes a job's whole list in one request, so PendingRows, MarkSubmitted and EnsureModuleItems accept as many ids as a job may hold
+// (jobs.MaxEngineIDs = jobs.DefaultMaxRows = 100000; it was 20000 and a module 1 job above that could never start) and refuse one more, typed, writing nothing. A job of 100000 rows is too heavy for CI,
+// so this proves the limits on a small job with a call that names 100000 ids: the statement takes the whole list in one go and the rows named are the ones stamped.
+func TestJobsEngine_OneCallTakesTheWholeListOfTheLargestJobAndNotOneMoreRow(t *testing.T) {
+	e := newJeEnv(t)
+	ctx := testCtx(t)
+	if call, job := jobs.MaxEngineIDs, jobs.DefaultMaxRows; call != job || call != 100000 {
+		t.Fatalf("MaxEngineIDs = %d, DefaultMaxRows = %d", call, job)
+	}
+	// ids no row has: canonical, distinct, and none of them a job row (job rows get random ids)
+	filler := func(n int) []string {
+		out := make([]string, n)
+		for i := range out {
+			out[i] = fmt.Sprintf("00000000-0000-4000-8000-%012d", i+1)
+		}
+		return out
+	}
+
+	j := e.running(e.newUser(), "m2", 5)
+	// PendingRows: the limit is accepted at the maximum (the answer is the five rows there are) and refused one above it
+	got, err := e.jobs.PendingRows(ctx, j.ID, jobs.MaxEngineIDs)
+	if err != nil || len(got) != 5 {
+		t.Fatalf("PendingRows(%d) = %d rows, %v; want the job's five rows (the limit is accepted)", jobs.MaxEngineIDs, len(got), err)
+	}
+	if _, err := e.jobs.PendingRows(ctx, j.ID, jobs.MaxEngineIDs+1); !errors.Is(err, jobs.ErrBadRequest) || !strings.Contains(err.Error(), fmt.Sprint(jobs.MaxEngineIDs)) {
+		t.Errorf("PendingRows(%d) = %v, want ErrBadRequest naming the limit", jobs.MaxEngineIDs+1, err)
+	}
+
+	// MarkSubmitted: a call naming MaxEngineIDs ids (the job's five rows and filler) stamps exactly the five, in one statement, and a call naming one more is refused and stamps nothing
+	ids := e.rowIDs(j.ID, "pending")
+	tooMany := append(append([]string{}, ids...), filler(jobs.MaxEngineIDs-len(ids)+1)...)
+	if len(tooMany) != jobs.MaxEngineIDs+1 {
+		t.Fatalf("the fixture names %d ids, want %d", len(tooMany), jobs.MaxEngineIDs+1)
+	}
+	err = e.jobs.MarkSubmitted(ctx, j.ID, tooMany)
+	if !errors.Is(err, jobs.ErrBadRequest) || !strings.Contains(err.Error(), fmt.Sprint(jobs.MaxEngineIDs+1)) {
+		t.Fatalf("MarkSubmitted of %d ids = %v, want ErrBadRequest naming the count", len(tooMany), err)
+	}
+	if n := e.int("SELECT count(*) FROM platform.job_rows WHERE job_id = $1 AND submitted_at IS NOT NULL", j.ID); n != 0 {
+		t.Fatalf("a refused call stamped %d rows", n)
+	}
+	if err := e.jobs.MarkSubmitted(ctx, j.ID, tooMany[:jobs.MaxEngineIDs]); err != nil {
+		t.Fatalf("MarkSubmitted of %d ids (the maximum) = %v, want it accepted", jobs.MaxEngineIDs, err)
+	}
+	if n := e.int("SELECT count(*) FROM platform.job_rows WHERE job_id = $1 AND submitted_at IS NOT NULL", j.ID); n != 5 {
+		t.Fatalf("the call at the maximum stamped %d rows, want the job's five", n)
+	}
+	if got, err := e.jobs.PendingRows(ctx, j.ID, jobs.MaxEngineIDs); err != nil || len(got) != 0 {
+		t.Errorf("after the stamps PendingRows = %d rows, %v; want none", len(got), err)
+	}
+
+	// EnsureModuleItems takes the same number: one more is refused before anything is written, the maximum is accepted (it names rows that are not the job's, which is refused for that reason)
+	s := e.running(e.newUser(), "m2", 2)
+	_, err = e.jobs.EnsureModuleItems(ctx, s.ID, filler(jobs.MaxEngineIDs+1))
+	if !errors.Is(err, jobs.ErrBadRequest) || !strings.Contains(err.Error(), fmt.Sprint(jobs.MaxEngineIDs+1)) {
+		t.Errorf("EnsureModuleItems of %d ids = %v, want ErrBadRequest naming the count", jobs.MaxEngineIDs+1, err)
+	}
+	_, err = e.jobs.EnsureModuleItems(ctx, s.ID, filler(jobs.MaxEngineIDs))
+	if !errors.Is(err, jobs.ErrBadRequest) || strings.Contains(err.Error(), "row ids in one call") {
+		t.Errorf("EnsureModuleItems of %d ids (the maximum) = %v, want it past the count check and refused for the ids not being the job's rows", jobs.MaxEngineIDs, err)
+	}
+	if n := e.int("SELECT count(*) FROM public.job_items WHERE campaign_id = $1", s.ID); n != 0 {
+		t.Errorf("a refused call wrote %d module items", n)
+	}
+}
+
 // Every engine method answers an unknown job ErrNotFound and a job in the wrong state ErrNotAllowed with a reason, and NONE lets a raw database error out.
 func TestJobsEngine_EveryMethodRefusesTheWrongJobAndTheWrongStateWithATypedError(t *testing.T) {
 	e := newJeEnv(t)

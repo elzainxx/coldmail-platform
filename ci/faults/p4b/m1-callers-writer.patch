@@ -1,0 +1,9 @@
+diff --git a/internal/api/zz_m1_callers_writer.go b/internal/api/zz_m1_callers_writer.go
+new file mode 100644
+--- /dev/null
++++ b/internal/api/zz_m1_callers_writer.go
+@@ -0,0 +1,4 @@
++package api
++
++// FAULT: a second writer of module 1's key table, one that skips the install function's read-back of the row and its constant caller_id and leaves a key with no owner.
++const zzM1CallersWriter = `INSERT INTO verify.api_callers (caller_id, key_sha256, not_before) VALUES ($1, $2, now())`

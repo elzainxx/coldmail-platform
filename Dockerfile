@@ -6,7 +6,10 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd/ ./cmd/
 COPY internal/ ./internal/
-RUN CGO_ENABLED=0 GOTOOLCHAIN=local go build -o /out/platform ./cmd/platform \
+# The build tags of the service binary (only the platform: the migrator and the probe are built plain). EMPTY in every image except the harness's, which tests/harness/docker-compose.yml builds with the one tag that
+# arms the fault points; no workflow and no other recipe may pass it (the fault-point gate in scripts/ fails on it), so a default build holds no armed code. An empty value is a build with no tags.
+ARG GO_TAGS=""
+RUN CGO_ENABLED=0 GOTOOLCHAIN=local go build -tags "${GO_TAGS}" -o /out/platform ./cmd/platform \
  && CGO_ENABLED=0 GOTOOLCHAIN=local go build -o /out/platform-migrate ./cmd/platform-migrate \
  && CGO_ENABLED=0 GOTOOLCHAIN=local go build -o /out/platform-probe ./cmd/platform-probe
 

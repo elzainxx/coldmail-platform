@@ -242,6 +242,10 @@ func (s *Service) Health() Health {
 	return h
 }
 
+// Leader is the election this Service's loops ask at every tick, or nil for a Service built without one (tests only). The job engine (internal/jobengine) asks the SAME election, so that one lock
+// decides which instance runs every leader-only loop of the platform, and the loops and the engine are stopped, in that order, before Run's own release of the lock (internal/app).
+func (s *Service) Leader() *Leader { return s.leader }
+
 // Run starts the two loops and returns, nil, only after both have stopped, which happens when ctx is cancelled.
 // A pass that fails, times out or panics is logged and the loop carries on at its next interval: nothing a pass
 // does ends a loop. With leader election on, every tick first asks whether this instance leads and a standby

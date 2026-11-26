@@ -145,9 +145,10 @@ type Engine struct {
 	now  func() time.Time
 	cfg  Config
 
-	mu      sync.Mutex
-	lastObs map[string]observed  // job id -> what the last observation said (memory only)
-	flagged map[string]time.Time // job id -> when the engine last raised a flag for it (memory only)
+	mu       sync.Mutex
+	lastObs  map[string]observed  // job id -> what the last observation said (memory only)
+	flagged  map[string]time.Time // job id -> when the engine last raised a flag for it (memory only)
+	refusals map[string]time.Time // job id -> when the engine last flagged a refusal of a job whose rows the module holds (memory only)
 
 	ticks, standby, steps, waits, conflicts, unexpected, panics, refused atomic.Int64
 }
@@ -183,7 +184,7 @@ func newEngine(st store, mods Modules, gate Gate, log *slog.Logger, now func() t
 	if now == nil {
 		now = time.Now
 	}
-	return &Engine{st: st, mods: mods, gate: gate, log: log, now: now, cfg: cfg, lastObs: map[string]observed{}, flagged: map[string]time.Time{}}, nil
+	return &Engine{st: st, mods: mods, gate: gate, log: log, now: now, cfg: cfg, lastObs: map[string]observed{}, flagged: map[string]time.Time{}, refusals: map[string]time.Time{}}, nil
 }
 
 // Stats returns the counters.
@@ -294,6 +295,11 @@ func (e *Engine) prune(work []jobs.EngineJob) {
 			delete(e.flagged, id)
 		}
 	}
+	for id := range e.refusals {
+		if !live[id] {
+			delete(e.refusals, id)
+		}
+	}
 }
 
 // step is the next step of one job, by the status the work read.
@@ -337,7 +343,7 @@ func (e *Engine) repair(ctx context.Context, j jobs.EngineJob) error {
 
 // starting is the step of a confirmed or scheduled job: past its start deadline (the database's clock, read with the work) it expires and its reserve goes back; otherwise the first batch of
 // rows is handed to the module and, as soon as the module holds at least one, the job is moved to running. The rest of the rows is the running step's. A module that cannot answer leaves the job
-// where it is (it expires at its deadline, never before); a module that refuses the job for good fails it.
+// where it is (it expires at its deadline, never before); a module that refuses the job for good, while it holds none of its rows, fails it (see refusal).
 func (e *Engine) starting(ctx context.Context, j jobs.EngineJob) error {
 	if j.DeadlinePassed {
 		return e.expire(ctx, j)
@@ -354,14 +360,16 @@ func (e *Engine) starting(ctx context.Context, j jobs.EngineJob) error {
 		// a confirmed job always has a pending row without a result; none to hand over means another instance did it a moment ago and the next tick reads the new state
 		return nil
 	}
-	_, err = e.submit(ctx, j, mod, rows)
-	return e.refusedForGood(ctx, j, err)
+	stamped, err := e.submit(ctx, j, mod, rows)
+	_, err = e.refusal(ctx, j, stamped, err)
+	return err
 }
 
 // submit hands one batch of rows to the module and records what it took: the module-facing rows for a send job first (public.job_items, idempotent), then Module.Submit, then, for a job that is not
 // yet running, the move to running (as soon as the module holds a row), and last the stamps. The order is what makes a crash anywhere harmless: a row is stamped only after the module holds it
 // AND the job is running, so there is no state in which a job is confirmed with every row stamped and nothing to start it; a crash before the stamps is repaired by offering the same rows again
-// (Submit is idempotent). It returns how many rows the module took.
+// (Submit is idempotent). It returns how many rows it STAMPED in this call (the rows the module took and the store now says were handed over); an error returns 0, so a count above zero always means
+// rows of the job that the module holds.
 func (e *Engine) submit(ctx context.Context, j jobs.EngineJob, mod Module, rows []jobs.EngineRow) (int, error) {
 	ids := make([]string, len(rows))
 	offered := make(map[string]bool, len(rows))
@@ -403,16 +411,57 @@ func (e *Engine) submit(ctx context.Context, j jobs.EngineJob, mod Module, rows 
 	return len(accepted), nil
 }
 
-// refusedForGood turns a module's final refusal into the end of the job (failed, the unsettled rows free, the remainder released) and passes every other error through.
-func (e *Engine) refusedForGood(ctx context.Context, j jobs.EngineJob, err error) error {
+// refusal is what the engine does with the answer of a Submit. Anything but ErrRefused passes through (failed false). A module's refusal for good ends the job (failed, the unsettled rows free, the
+// remainder released) ONLY while the job holds no row at the module: j.Submitted rows were stamped before this step, stamped were stamped in this step before the refusal, and a RUNNING job was moved
+// to running only after the module held a row (a crash between that move and the stamps leaves it running with none stamped). With rows held, failing the job would write infrastructure_failure for
+// every row without a result while the module goes on sending the queued ones, rows that would be sent and never recorded or charged: so the job is NOT failed. The engine flags it (once per
+// staleness interval, the module's refusal code word only), returns a wait (the job stays where it is, goes stale and raises the stale event) and the running step goes on to observe what the module
+// holds. Nothing is invented. The engine does not depend on the wrappers for this (they too turn a refusal into a wait when rows are held): it is the engine's own rule.
+func (e *Engine) refusal(ctx context.Context, j jobs.EngineJob, stamped int, err error) (failed bool, out error) {
 	if err == nil || !errors.Is(err, ErrRefused) {
-		return err
+		return false, err
+	}
+	if holdsRows(j, stamped) {
+		code := RefusalCode(err)
+		e.flagRefusal(ctx, j, j.Submitted+stamped, code)
+		return false, Wait(fmt.Sprintf("the module refused rows of a job it already holds (%s): the job is not failed and waits", code))
 	}
 	e.refused.Add(1)
 	reason := cutReason("the module refused the job for good: " + err.Error())
 	e.log.WarnContext(ctx, "the module refused the job for good; the job fails", "job", j.ID, "module", j.Module)
 	_, ferr := e.st.FailJob(ctx, j.ID, reason)
-	return ferr
+	return true, ferr
+}
+
+// holdsRows says whether the module holds at least one row of the job, as far as the engine can know: rows stamped before this step (j is the job as the step began), rows stamped in this step before the
+// refusal, or a job that is already running (the move to running follows the module taking a row, and a crash between that move and the stamps leaves it running with none stamped).
+func holdsRows(j jobs.EngineJob, stamped int) bool {
+	return j.Submitted+stamped > 0 || j.Status == jobs.StatusRunning
+}
+
+// flagRefusal writes the `flag` event of a refusal the engine did not fail the job for, at most once per staleness interval of the job's module (a refusal repeats at every tick). The event names the
+// module's code word and the counts, never the module's text.
+func (e *Engine) flagRefusal(ctx context.Context, j jobs.EngineJob, held int, code string) {
+	e.mu.Lock()
+	last, seen := e.refusals[j.ID]
+	due := !seen || e.now().Sub(last) >= e.cfg.staleAfter(j.Module)
+	if due {
+		e.refusals[j.ID] = e.now()
+	}
+	e.mu.Unlock()
+	e.log.WarnContext(ctx, "the module refused rows of a job it already holds; the job is not failed and waits", "job", j.ID, "module", j.Module, "refusal", code, "submitted", held, "pending", j.Pending)
+	if !due {
+		return
+	}
+	if err := e.st.Flag(ctx, j.ID, map[string]any{
+		"reason":  "the module refused rows of a job it already holds: the job is not failed (the module goes on with the rows it holds) and nothing is invented; an administrator decides",
+		"refusal": code, "module": j.Module, "submitted": held, "pending": j.Pending,
+	}); err != nil {
+		e.mu.Lock()
+		delete(e.refusals, j.ID) // not written: the next tick tries again
+		e.mu.Unlock()
+		e.log.WarnContext(ctx, "the engine could not write its flag", "job", j.ID, "why", err.Error())
+	}
 }
 
 func cutReason(s string) string {
@@ -427,7 +476,7 @@ func cutReason(s string) string {
 
 // running is the step of a running job: submit the rows the module does not hold yet (in batches, until the module takes fewer than it was offered), observe what it reports (at most every
 // SettleEvery unless it showed unrecorded terminal items) and record every page, note progress when anything was submitted or recorded, and, when the module says it is complete and every pending
-// row has a result, complete and finish the job in this same step. A submit that fails does not keep the engine from observing: a module that refuses new rows still reports the old ones.
+// row has a result, complete and finish the job in this same step. A submit that fails does not keep the engine from observing: a module that refuses new rows still reports the old ones (a refusal for good, which fails the job only when the module holds none of its rows, is the one that ends the step: see refusal).
 func (e *Engine) running(ctx context.Context, j jobs.EngineJob) error {
 	mod, err := e.mods.For(ctx, j.UserID, j.Module)
 	if err != nil {
@@ -439,10 +488,11 @@ func (e *Engine) running(ctx context.Context, j jobs.EngineJob) error {
 	submitted, err := e.submitRest(ctx, j, mod)
 	progressed = progressed || submitted > 0
 	if err != nil {
-		if errors.Is(err, ErrRefused) {
-			return e.refusedForGood(ctx, j, err)
+		failed, rerr := e.refusal(ctx, j, submitted, err)
+		if failed {
+			return rerr
 		}
-		firstErr = err
+		firstErr = rerr
 	}
 
 	var obs Observation
