@@ -494,6 +494,9 @@ func TestCloseout_NonTerminalJobsMoveOnlyAlongTheLifecycle(t *testing.T) {
 						if from == "running" && to == "paused" || from == "paused" && to == "running" {
 							break // not takeable today: see the doc comment
 						}
+						if from == "paused" && (to == "cancelling" || to == "completing") {
+							break // a row since platform_0016, but only for a job paused from RUNNING (a job this fixture inserts is paused from nothing or from scheduled and the guard refuses it: job_unsubmitted_pause_never_cancelling and _completing); the legal move is proved for the right fixture in job_pause_cancel_test.go
+						}
 						jobHop(t, sp, id, to)
 						if got := jobStatus(t, sp, id); got != to {
 							t.Fatalf("the %s job is %s after its legal move to %s", from, got, to)

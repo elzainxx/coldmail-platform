@@ -233,8 +233,9 @@ func jpcHeldAndResumed(t *testing.T, module string) {
 	if fake.Calls().Pause != 3 || fake.Calls().Resume != 2 {
 		t.Fatalf("after the end the module was asked %d times to pause and %d to resume, want 3 and 2: nothing repeats once the report is what the engine wants", fake.Calls().Pause, fake.Calls().Resume)
 	}
-	if e.jobStatus(control.ID) != jobs.StatusRunning {
-		t.Fatalf("the control job is %s: nothing may have touched it", e.jobStatus(control.ID))
+	// the control job shares the fake module and the engine, so it runs to its end like any job: what must NOT have reached it is the PAUSE of the other job (no move to paused, no note about a module hold)
+	if n := e.transitionCount(control.ID, jobs.StatusPaused); n != 0 || e.eventCount(control.ID, "note") != 0 {
+		t.Fatalf("the control job is %s with %d move(s) to paused and %d note(s): the pause of the other job reached it", e.jobStatus(control.ID), n, e.eventCount(control.ID, "note"))
 	}
 }
 
