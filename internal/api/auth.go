@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/coldmail-platform/platform/internal/auth"
 	"github.com/coldmail-platform/platform/internal/httpapi"
@@ -50,7 +52,24 @@ const (
 	whyBadLoginID     = "login_id_not_a_uuid"
 	whyResolveOther   = "login_refused"
 	whyWrongTenantRow = "resolver_answered_another_user"
+
+	// whyKeysUnavailable is the log word of the one failure that is not a refusal of the login: the verifier could not obtain the keys it needs (the 503 `auth_unavailable`).
+	whyKeysUnavailable = "signing_keys_unavailable"
+
+	// msgKeysUnavailable is the message of the one warn line a stretch of unavailability writes.
+	msgKeysUnavailable = "authentication is unavailable: the signing keys cannot be obtained"
 )
+
+// authRetryAfter is the `Retry-After` of the 503 `auth_unavailable`, in whole seconds: the verifier fetches its key set at most this often (auth.DefaultMinRefreshInterval), so a retry
+// sooner than this meets the same verdict for the tokens that need a fetch, and one after it is the first that can meet a recovered issuer.
+var authRetryAfter = strconv.Itoa(int(auth.DefaultMinRefreshInterval / time.Second))
+
+// keysClassWords are the words the log may carry for why the keys could not be had: this package's own list, chosen from the verifier's class (a closed set of constants), so that nothing
+// but one of these ever reaches a line whatever a Verifier says.
+var keysClassWords = map[string]string{
+	auth.ClassUnreachable: "unreachable", auth.ClassTimeout: "timeout", auth.ClassCertificate: "certificate",
+	auth.ClassStatus: "bad_status", auth.ClassUnreadable: "unreadable", auth.ClassBadKeySet: "bad_key_set",
+}
 
 // verifyWhy names a verifier failure by its sentinel.
 func verifyWhy(err error) string {
@@ -110,7 +129,10 @@ func bearerToken(r *http.Request) (string, string) {
 
 // authenticated wraps a handler in the authentication of Docs/jobs-api.md: the header, the verifier, the resolver, and only then the handler, with the principal in the context.
 // Every refusal of the LOGIN is the same 401, byte for byte but for the request id. A failure of the platform's own database while resolving a login is not a refusal of the login (the
-// token verified): it is a 500 `internal_error`, so that a client does not sign a user out for an outage.
+// token verified): it is a 500 `internal_error`, so that a client does not sign a user out for an outage. The same goes for the verifier's keys: when it could not obtain them (the
+// issuer's key set cannot be fetched) the token is neither accepted nor refused, and the answer is the 503 `auth_unavailable` with a `Retry-After`, never a 401 that tells a user their
+// sign-in is wrong because the platform could not check it. The verifier decides which it is (auth.ErrKeysUnavailable, or any other error); a token that is bad without any key
+// (malformed, "alg":"none", an algorithm it does not take, expired, for another audience) is the 401 whether or not the keys are up, and an HS256 token is judged by its secret alone.
 func (a *API) authenticated(next func(w http.ResponseWriter, r *http.Request, p principal)) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -121,6 +143,10 @@ func (a *API) authenticated(next func(w http.ResponseWriter, r *http.Request, p 
 		}
 		claims, err := a.verifier.Verify(r.Context(), token)
 		if err != nil {
+			if errors.Is(err, auth.ErrKeysUnavailable) {
+				a.keysUnavailable(w, r, err)
+				return
+			}
 			a.refuse(w, r, verifyWhy(err))
 			return
 		}
@@ -139,6 +165,28 @@ func (a *API) authenticated(next func(w http.ResponseWriter, r *http.Request, p 
 		}
 		next(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, principal{UserID: t.UserID, AuthUserID: t.AuthUserID})), principal{UserID: t.UserID, AuthUserID: t.AuthUserID})
 	})
+}
+
+// keysUnavailable answers a request whose token could not be judged because the verifier could not obtain its keys: 503 `auth_unavailable` with `Retry-After` (through the one mapping,
+// classify, which is what also gives the code its fixed message and no detail), and NOT `WWW-Authenticate`: nothing was refused, so there is nothing to challenge.
+//
+// It logs, at warn, ONCE PER STRETCH of unavailability and not once per request: the first error of a stretch (auth.KeysUnavailableError.FirstOfStretch: a stretch opens with the first
+// failed fetch of the key set after a good one and closes with the next good one) is the one request that writes the line, whichever goroutine gets there first, so a long outage under load
+// is one line and a recovery followed by a second outage is a second. The line is the word and the class of the failure from this file's closed list, under the request id; never the
+// key set's address, a key id, a status text or the error's text. A Verifier that is not the auth package's and returns the bare sentinel has no stretch: every such error is first, a
+// line repeated being better than a line lost.
+func (a *API) keysUnavailable(w http.ResponseWriter, r *http.Request, err error) {
+	var down *auth.KeysUnavailableError
+	if !errors.As(err, &down) || down.FirstOfStretch() {
+		class := "unknown"
+		if down != nil {
+			if word, ok := keysClassWords[down.Class()]; ok {
+				class = word
+			}
+		}
+		a.log.WarnContext(r.Context(), msgKeysUnavailable, "reason", whyKeysUnavailable, "class", class)
+	}
+	a.fail(w, r, err)
 }
 
 // refuse answers a refused login: 401, `unauthenticated`, the fixed message, `WWW-Authenticate: Bearer`, and one log line under the request id naming the reason as a word.

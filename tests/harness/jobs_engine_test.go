@@ -673,7 +673,7 @@ func TestJobsEngine_TheRepairSetHoldsAnEndedJobWithARemainderAndNotAReleasedOne(
 	}
 }
 
-func TestJobsEngine_EngineWorkIsTheJobsTheEngineMustLookAtWithTheirCountsOldestProgressFirst(t *testing.T) {
+func TestJobsEngine_EngineWorkIsTheJobsTheEngineMustLookAtNowWithTheirCountsOldestDueFirst(t *testing.T) {
 	e := newJeEnv(t)
 	ctx := testCtx(t)
 	user := func() string { return e.newUser() }
@@ -725,9 +725,11 @@ func TestJobsEngine_EngineWorkIsTheJobsTheEngineMustLookAtWithTheirCountsOldestP
 		t.Fatal(err)
 	}
 
-	// oldest progress first: d, then b, then every other job (their progress is the moment of the test)
-	e.exec("UPDATE platform.jobs SET last_progress_at = now() - interval '2 hours' WHERE id = $1", d.ID)
-	e.exec("UPDATE platform.jobs SET last_progress_at = now() - interval '1 hour' WHERE id = $1", b.ID)
+	// oldest DUE first (Phase 4 close-out D8): d, then b, then every other job (a job that has never been looked at is due since its confirm, which is the moment of the test). last_progress_at no longer
+	// orders the work: the control sets it to the oldest of all on a job that was just looked at and the order does not move
+	e.exec("UPDATE platform.jobs SET next_poll_at = now() - interval '2 hours' WHERE id = $1", d.ID)
+	e.exec("UPDATE platform.jobs SET next_poll_at = now() - interval '1 hour' WHERE id = $1", b.ID)
+	e.exec("UPDATE platform.jobs SET last_progress_at = now() - interval '5 hours' WHERE id = $1", a.ID)
 
 	work := e.work(1000)
 	got := make([]string, len(work))
@@ -743,7 +745,7 @@ func TestJobsEngine_EngineWorkIsTheJobsTheEngineMustLookAtWithTheirCountsOldestP
 			got, wantSet, notDue.ID, pausedAhead.ID, done.ID, draft.ID, dj.ID)
 	}
 	if got[0] != d.ID || got[1] != b.ID {
-		t.Errorf("the order is %v: want the completing job (2 hours without progress) first and the running one (1 hour) second", got[:2])
+		t.Errorf("the order is %v: want the completing job (due 2 hours ago) first and the running one (due 1 hour ago) second, and not the confirmed job whose progress stamp is the oldest (it is not what orders the work)", got[:2])
 	}
 	if two := e.work(2); len(two) != 2 || two[0].ID != d.ID || two[1].ID != b.ID {
 		t.Errorf("a limit of 2 returned %d jobs", len(two))
@@ -1157,6 +1159,7 @@ func TestJobsEngine_EveryMethodRefusesTheWrongJobAndTheWrongStateWithATypedError
 		{"NoteProgress", func(id string) error { return e.jobs.NoteProgress(ctx, id) }, "not_active"},
 		{"CancelUnsubmitted", func(id string) error { _, err := e.jobs.CancelUnsubmitted(ctx, id); return err }, "not_cancelling"},
 		{"EnsureModuleItems", func(id string) error { _, err := e.jobs.EnsureModuleItems(ctx, id, []string{rowID}); return err }, "not_submittable"},
+		{"EnsureJobItems", func(id string) error { _, err := e.jobs.EnsureJobItems(ctx, id); return err }, "not_submittable"},
 		{"MarkSubmitted", func(id string) error { return e.jobs.MarkSubmitted(ctx, id, []string{rowID}) }, "not_submittable"},
 		{"AlertStale", func(id string) error { _, err := e.jobs.AlertStale(ctx, id, time.Hour, nil); return err }, ""},
 		{"Flag", func(id string) error { return e.jobs.Flag(ctx, id, nil) }, ""},
@@ -1341,6 +1344,16 @@ func TestJobsEngine_EveryStepTakesTheUserModuleLockFirst(t *testing.T) {
 	}
 	if e.remainder(j3.ID) != 0 || e.releaseRows(j3.ID) != 1 {
 		t.Fatal("Release did not complete after the holder let go")
+	}
+
+	// the rows of a whole job (D9) are written under the same lock
+	u5 := e.newUser()
+	j5 := e.confirmN(u5, "m2", 2)
+	if err := e.requireBlockedOnTheLock(u5, "m2", func(c context.Context) error { _, err := e.jobs.EnsureJobItems(c, j5.ID); return err }); err != nil {
+		t.Fatalf("EnsureJobItems after the lock was let go: %v", err)
+	}
+	if e.int("SELECT count(*) FROM public.job_items WHERE campaign_id = $1::uuid", j5.ID) != 2 {
+		t.Fatal("EnsureJobItems did not complete after the holder let go")
 	}
 
 	// the control that the holder is what blocks: another user's call is not blocked by it

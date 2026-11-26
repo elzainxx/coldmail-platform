@@ -79,19 +79,28 @@ func TestNormaliseSettings(t *testing.T) {
 		chained bool
 		want    string // "" = refused
 	}{
-		{"", false, UnknownExclude}, {"", true, UnknownExclude}, // the default is the safe one
-		{UnknownExclude, false, UnknownExclude}, {UnknownExclude, true, UnknownExclude},
-		{UnknownInclude, true, UnknownInclude}, // the legal twin of the next row
-		{UnknownInclude, false, ""},            // meaningless without a source: refused, not silently ignored
+		// NO DEFAULT (owner ruling OD-4): nothing said stays nothing said, on a chained job and on one that is not; the user's own choice is kept
+		{"", false, "-"}, {"", true, "-"},
+		{UnknownExclude, true, UnknownExclude}, {UnknownInclude, true, UnknownInclude}, // the legal twins of the refusals below
+		{UnknownInclude, false, ""}, // meaningless without a source: refused, not silently ignored
+		{UnknownExclude, false, ""}, // exclude too: with no default there is nothing for it to restate, and a client that sends it for a list that is not chained has misread the API
 		{"Include", true, ""}, {"yes", true, ""},
 	} {
 		got, err := normaliseSettings(Settings{UnknownChoice: c.in}, c.chained)
+		want := c.want
+		if want == "-" { // the marker of "stays empty"
+			want = ""
+			if err != nil || got.UnknownChoice != "" {
+				t.Errorf("normaliseSettings(%q, chained=%v) = %q, %v; want the empty choice kept (there is no default)", c.in, c.chained, got.UnknownChoice, err)
+			}
+			continue
+		}
 		switch {
-		case c.want == "" && err == nil:
+		case want == "" && err == nil:
 			t.Errorf("normaliseSettings(%q, chained=%v) accepted %q", c.in, c.chained, got.UnknownChoice)
-		case c.want != "" && (err != nil || got.UnknownChoice != c.want):
-			t.Errorf("normaliseSettings(%q, chained=%v) = %q, %v; want %q", c.in, c.chained, got.UnknownChoice, err, c.want)
-		case c.want == "" && !errors.Is(err, ErrBadRequest):
+		case want != "" && (err != nil || got.UnknownChoice != want):
+			t.Errorf("normaliseSettings(%q, chained=%v) = %q, %v; want %q", c.in, c.chained, got.UnknownChoice, err, want)
+		case want == "" && !errors.Is(err, ErrBadRequest):
 			t.Errorf("normaliseSettings(%q, chained=%v): %v is not an ErrBadRequest", c.in, c.chained, err)
 		}
 	}

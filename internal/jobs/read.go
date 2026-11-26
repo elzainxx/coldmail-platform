@@ -56,10 +56,7 @@ func scanJobWith(row pgx.Row, extra ...any) (Job, error) {
 	if err := json.Unmarshal(frozen, &f); err != nil {
 		return Job{}, fmt.Errorf("the frozen settings of job %s are not settings: %w", j.ID, err)
 	}
-	j.Settings, j.Content = f.Settings, f.Content
-	if j.Settings.UnknownChoice == "" {
-		j.Settings.UnknownChoice = UnknownExclude
-	}
+	j.Settings, j.Content = f.Settings, f.Content // an empty choice stays empty: the user has not chosen (no default is invented here)
 	return j, nil
 }
 

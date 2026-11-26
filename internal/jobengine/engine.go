@@ -21,6 +21,10 @@ const (
 	DefaultSubmitBatch = 500
 	DefaultWorkLimit   = 100
 	DefaultStepTimeout = 2 * time.Minute
+	// DefaultBackoffCap is the longest the engine leaves a job alone after a step that made no progress (Phase 4 close-out D8); MaxBackoffCap is the most the dial may say and the wall the database keeps
+	// (platform.jobs_engine_schedule). Whatever the dial says, the engine never waits longer than a quarter of the module's staleness limit (Config.backoff).
+	DefaultBackoffCap = 60 * time.Second
+	MaxBackoffCap     = jobs.MaxPollBackoff
 )
 
 // Config is what the engine needs. A zero field means its default; a negative one is refused by New, except SettleEvery, where a negative value means "observe a running job at every tick"
@@ -36,6 +40,10 @@ type Config struct {
 	SubmitBatchFor map[string]int
 	WorkLimit      int           // how many jobs one tick looks at
 	StepTimeout    time.Duration // the bound of ONE job's step
+	// BackoffCap is the longest the engine leaves a job alone after a step that made no progress: the wait starts at one Tick and doubles with every such step in a row up to this (and never past a
+	// quarter of the module's staleness limit, so a stale job is still noticed on time and a module that recovers is polled again within it). Zero means DefaultBackoffCap; more than MaxBackoffCap is
+	// refused; a negative value switches the backoff off (every idle job is due again at the next tick: for the tests of the engine that tick back to back).
+	BackoffCap time.Duration
 }
 
 func (c Config) withDefaults() (Config, error) {
@@ -43,6 +51,9 @@ func (c Config) withDefaults() (Config, error) {
 		if d < 0 {
 			return Config{}, fmt.Errorf("jobengine: Config.%s must not be negative, got %s", name, d)
 		}
+	}
+	if c.BackoffCap > MaxBackoffCap {
+		return Config{}, fmt.Errorf("jobengine: Config.BackoffCap must not be more than %s, got %s", MaxBackoffCap, c.BackoffCap)
 	}
 	for name, n := range map[string]int{"SubmitBatch": c.SubmitBatch, "WorkLimit": c.WorkLimit} {
 		if n < 0 {
@@ -74,6 +85,9 @@ func (c Config) withDefaults() (Config, error) {
 	if c.StepTimeout == 0 {
 		c.StepTimeout = DefaultStepTimeout
 	}
+	if c.BackoffCap == 0 {
+		c.BackoffCap = DefaultBackoffCap
+	}
 	return c, nil
 }
 
@@ -83,6 +97,26 @@ func (c Config) staleAfter(module string) time.Duration {
 		return d
 	}
 	return DefaultStaleAfter
+}
+
+// longestStale is the longest staleness limit of any module: a memory of the engine older than this can no longer hold anything back.
+func (c Config) longestStale() time.Duration {
+	longest := DefaultStaleAfter
+	for _, d := range c.StaleAfter {
+		longest = max(longest, d)
+	}
+	return longest
+}
+
+// backoff is how the engine spaces its looks at a job of the module that made no progress: the first wait is one Tick, each further wait in a row doubles, and none is longer than the ceiling,
+// which is BackoffCap but never more than a quarter of the module's staleness limit (a job is judged stale only when a step finds it so, and a step happens at least once per ceiling: a quarter
+// of the limit makes the alert at most a quarter late, whatever the dial says). A switched-off backoff is (0, 0): due again at the next tick.
+func (c Config) backoff(module string) (base, ceiling time.Duration) {
+	if c.BackoffCap < 0 {
+		return 0, 0
+	}
+	ceiling = min(c.BackoffCap, c.staleAfter(module)/4)
+	return min(c.Tick, ceiling), ceiling
 }
 
 // batch is the number of rows one Submit call of the module is offered.
@@ -98,7 +132,7 @@ type store interface {
 	EngineWork(ctx context.Context, limit int) ([]jobs.EngineJob, error)
 	EngineJobByID(ctx context.Context, jobID string) (jobs.EngineJob, error)
 	PendingRows(ctx context.Context, jobID string, limit int) ([]jobs.EngineRow, error)
-	EnsureModuleItems(ctx context.Context, jobID string, ids []string) (int, error)
+	EnsureJobItems(ctx context.Context, jobID string) (int, error)
 	MarkSubmitted(ctx context.Context, jobID string, rowIDs []string) error
 	Start(ctx context.Context, jobID, moduleRef string) (jobs.Job, error)
 	RecordResults(ctx context.Context, jobID string, items []jobs.ResultItem) (jobs.RecordSummary, error)
@@ -109,6 +143,7 @@ type store interface {
 	CancelUnsubmitted(ctx context.Context, jobID string) (int, error)
 	Release(ctx context.Context, jobID string) error
 	NoteProgress(ctx context.Context, jobID string) error
+	NotePoll(ctx context.Context, jobID, status string, progressed bool, base, ceiling time.Duration) (bool, error)
 	AlertStale(ctx context.Context, jobID string, after time.Duration, detail map[string]any) (bool, error)
 	Flag(ctx context.Context, jobID string, detail map[string]any) error
 }
@@ -243,19 +278,44 @@ func (e *Engine) leads(ctx context.Context) (leading bool) {
 	return e.gate.Ensure(ctx)
 }
 
-// safely runs one job's step under its own timeout and turns a panic into a log line, a count and the next job.
+// safely runs one job's step under its own timeout and turns a panic into a log line, a count and the next job. Whatever came of the step is then told to the store (notePoll): a job whose step
+// panicked is told as one that made no progress, so a job that panics at every look is not looked at at every tick.
 func (e *Engine) safely(ctx context.Context, j jobs.EngineJob) {
 	defer func() {
 		if p := recover(); p != nil {
 			e.panics.Add(1)
 			e.log.ErrorContext(ctx, "a job step panicked; the loop goes on", "job", j.ID, "module", j.Module, "status", j.Status, "panic", fmt.Sprint(p))
+			e.notePoll(ctx, j, false, nil)
 		}
 	}()
 	sctx, cancel := context.WithTimeout(ctx, e.cfg.StepTimeout)
 	defer cancel()
 	e.steps.Add(1)
-	err := e.step(sctx, j)
+	progressed, err := e.step(sctx, j)
 	e.account(ctx, j.ID, j.Module, err)
+	e.notePoll(ctx, j, progressed, err)
+}
+
+// notePoll tells the store what came of a step (jobs.Store.NotePoll, D8): progress puts the job at the back of the queue, due at the next tick; no progress (a module that cannot answer, an
+// error, a step cut off) leaves it alone for a backoff that doubles from one tick up to the cap. Nothing is told for a job that has ended (the repair set is due whatever its backoff), for a step
+// the lifecycle refused or a race overtook (somebody moved the job and the database woke it) and when the pass itself is ending. A failed note is logged and costs nothing: the job simply stays due.
+func (e *Engine) notePoll(ctx context.Context, j jobs.EngineJob, progressed bool, err error) {
+	if jobs.IsTerminal(j.Status) || ctx.Err() != nil {
+		return
+	}
+	if !progressed && (errors.Is(err, jobs.ErrNotAllowed) || errors.Is(err, jobs.ErrNotFound)) {
+		return
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			e.panics.Add(1)
+			e.log.ErrorContext(ctx, "the job engine's poll note panicked", "job", j.ID, "panic", fmt.Sprint(p))
+		}
+	}()
+	base, ceiling := e.cfg.backoff(j.Module)
+	if _, nerr := e.st.NotePoll(ctx, j.ID, j.Status, progressed, base, ceiling); nerr != nil {
+		e.log.WarnContext(ctx, "the engine could not note what came of a step; the job stays due", "job", j.ID, "module", j.Module, "why", nerr.Error())
+	}
 }
 
 // account classifies what a step returned: nothing, a module that could not answer, a refusal by the lifecycle or a race (the next tick reads the new state), a context that ended, or anything else
@@ -277,7 +337,9 @@ func (e *Engine) account(ctx context.Context, jobID, module string, err error) {
 	}
 }
 
-// prune forgets what the engine remembers of jobs that are not in this tick's work (they finished, or are another instance's now).
+// prune forgets what the engine remembers of jobs that are not in this tick's work. The last observation of a job is forgotten at once (a missing one only makes the next look observe, never skip: it
+// is a throttle). A flag's time is kept until it is older than the longest staleness limit: a job that is not in the work may only be waiting out a backoff (D8), and forgetting the time of its
+// flag would raise the same flag again at every look instead of once per staleness interval; an entry older than every limit can hold nothing back, so it goes (a finished job's entry with it).
 func (e *Engine) prune(work []jobs.EngineJob) {
 	live := make(map[string]bool, len(work))
 	for _, j := range work {
@@ -290,20 +352,19 @@ func (e *Engine) prune(work []jobs.EngineJob) {
 			delete(e.lastObs, id)
 		}
 	}
-	for id := range e.flagged {
-		if !live[id] {
-			delete(e.flagged, id)
-		}
-	}
-	for id := range e.refusals {
-		if !live[id] {
-			delete(e.refusals, id)
+	horizon := e.now().Add(-e.cfg.longestStale())
+	for _, memory := range []map[string]time.Time{e.flagged, e.refusals} {
+		for id, at := range memory {
+			if !live[id] && at.Before(horizon) {
+				delete(memory, id)
+			}
 		}
 	}
 }
 
-// step is the next step of one job, by the status the work read.
-func (e *Engine) step(ctx context.Context, j jobs.EngineJob) error {
+// step is the next step of one job, by the status the work read. It says whether the step made PROGRESS (a row handed to the module, a result recorded, the job moved or ended): what the engine
+// tells the store about the look (notePoll), and with it when the job is looked at again. A step that returns an error may still have progressed (it handed over rows and then met a module that was full).
+func (e *Engine) step(ctx context.Context, j jobs.EngineJob) (progressed bool, err error) {
 	switch j.Status {
 	case jobs.StatusConfirmed, jobs.StatusScheduled:
 		return e.starting(ctx, j)
@@ -311,7 +372,7 @@ func (e *Engine) step(ctx context.Context, j jobs.EngineJob) error {
 		if j.DeadlinePassed {
 			return e.expire(ctx, j)
 		}
-		return nil
+		return false, nil
 	case jobs.StatusRunning:
 		return e.running(ctx, j)
 	case jobs.StatusCancelling:
@@ -322,21 +383,21 @@ func (e *Engine) step(ctx context.Context, j jobs.EngineJob) error {
 	if jobs.IsTerminal(j.Status) {
 		return e.repair(ctx, j)
 	}
-	return fmt.Errorf("jobengine: job %s is in status %q, which the engine has no step for", j.ID, j.Status)
+	return false, fmt.Errorf("jobengine: job %s is in status %q, which the engine has no step for", j.ID, j.Status)
 }
 
-func (e *Engine) expire(ctx context.Context, j jobs.EngineJob) error {
+func (e *Engine) expire(ctx context.Context, j jobs.EngineJob) (bool, error) {
 	_, err := e.st.Expire(ctx, j.ID)
-	return err
+	return err == nil, err
 }
 
 // repair gives back what a terminal job's reserve still holds (a crash between the move and the release, or an administrator who ended the job).
-func (e *Engine) repair(ctx context.Context, j jobs.EngineJob) error {
+func (e *Engine) repair(ctx context.Context, j jobs.EngineJob) (bool, error) {
 	if err := e.st.Release(ctx, j.ID); err != nil {
-		return err
+		return false, err
 	}
 	e.log.InfoContext(ctx, "the remainder of an ended job's reserve was released", "job", j.ID, "module", j.Module, "status", j.Status, "remainder", j.ReserveRemainder)
-	return nil
+	return true, nil
 }
 
 // ---- starting -------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -344,25 +405,25 @@ func (e *Engine) repair(ctx context.Context, j jobs.EngineJob) error {
 // starting is the step of a confirmed or scheduled job: past its start deadline (the database's clock, read with the work) it expires and its reserve goes back; otherwise the first batch of
 // rows is handed to the module and, as soon as the module holds at least one, the job is moved to running. The rest of the rows is the running step's. A module that cannot answer leaves the job
 // where it is (it expires at its deadline, never before); a module that refuses the job for good, while it holds none of its rows, fails it (see refusal).
-func (e *Engine) starting(ctx context.Context, j jobs.EngineJob) error {
+func (e *Engine) starting(ctx context.Context, j jobs.EngineJob) (bool, error) {
 	if j.DeadlinePassed {
 		return e.expire(ctx, j)
 	}
 	mod, err := e.mods.For(ctx, j.UserID, j.Module)
 	if err != nil {
-		return err
+		return false, err
 	}
 	rows, err := e.st.PendingRows(ctx, j.ID, e.cfg.batch(j.Module))
 	if err != nil {
-		return err
+		return false, err
 	}
 	if len(rows) == 0 {
 		// a confirmed job always has a pending row without a result; none to hand over means another instance did it a moment ago and the next tick reads the new state
-		return nil
+		return false, nil
 	}
-	stamped, err := e.submit(ctx, j, mod, rows)
-	_, err = e.refusal(ctx, j, stamped, err)
-	return err
+	stamped, err := e.submit(ctx, &j, mod, rows)
+	failed, err := e.refusal(ctx, j, stamped, err)
+	return stamped > 0 || failed, err
 }
 
 // submit hands one batch of rows to the module and records what it took: the module-facing rows for a send job first (public.job_items, idempotent), then Module.Submit, then, for a job that is not
@@ -370,19 +431,21 @@ func (e *Engine) starting(ctx context.Context, j jobs.EngineJob) error {
 // AND the job is running, so there is no state in which a job is confirmed with every row stamped and nothing to start it; a crash before the stamps is repaired by offering the same rows again
 // (Submit is idempotent). It returns how many rows it STAMPED in this call (the rows the module took and the store now says were handed over); an error returns 0, so a count above zero always means
 // rows of the job that the module holds.
-func (e *Engine) submit(ctx context.Context, j jobs.EngineJob, mod Module, rows []jobs.EngineRow) (int, error) {
-	ids := make([]string, len(rows))
+func (e *Engine) submit(ctx context.Context, j *jobs.EngineJob, mod Module, rows []jobs.EngineRow) (int, error) {
 	offered := make(map[string]bool, len(rows))
-	for i, r := range rows {
-		ids[i] = r.ID
+	for _, r := range rows {
 		offered[r.ID] = true
 	}
-	if j.Module != jobs.ModuleVerify { // modules 2 and 3 read their rows from public.job_items; module 1 is handed the list itself
-		if _, err := e.st.EnsureModuleItems(ctx, j.ID, ids); err != nil {
+	// modules 2 and 3 read their rows from public.job_items; module 1 is handed the list itself. The rows of the WHOLE job are written once (D9): a job that has them (items_ensured_at, read with
+	// the work) costs nothing here, at this tick, at the next and after a restart; the copy of the job this step holds learns it, so the batches of one step ask once.
+	if j.Module != jobs.ModuleVerify && j.ItemsEnsuredAt == nil {
+		if _, err := e.st.EnsureJobItems(ctx, j.ID); err != nil {
 			return 0, err
 		}
+		at := e.now()
+		j.ItemsEnsuredAt = &at
 	}
-	res, err := mod.Submit(ctx, j, rows)
+	res, err := mod.Submit(ctx, *j, rows)
 	if err != nil {
 		return 0, err
 	}
@@ -477,20 +540,20 @@ func cutReason(s string) string {
 // running is the step of a running job: submit the rows the module does not hold yet (in batches, until the module takes fewer than it was offered), observe what it reports (at most every
 // SettleEvery unless it showed unrecorded terminal items) and record every page, note progress when anything was submitted or recorded, and, when the module says it is complete and every pending
 // row has a result, complete and finish the job in this same step. A submit that fails does not keep the engine from observing: a module that refuses new rows still reports the old ones (a refusal for good, which fails the job only when the module holds none of its rows, is the one that ends the step: see refusal).
-func (e *Engine) running(ctx context.Context, j jobs.EngineJob) error {
+func (e *Engine) running(ctx context.Context, j jobs.EngineJob) (bool, error) {
 	mod, err := e.mods.For(ctx, j.UserID, j.Module)
 	if err != nil {
-		return err
+		return false, err
 	}
 	progressed := false
 	var firstErr error
 
-	submitted, err := e.submitRest(ctx, j, mod)
+	submitted, err := e.submitRest(ctx, &j, mod)
 	progressed = progressed || submitted > 0
 	if err != nil {
 		failed, rerr := e.refusal(ctx, j, submitted, err)
 		if failed {
-			return rerr
+			return true, rerr
 		}
 		firstErr = rerr
 	}
@@ -516,17 +579,17 @@ func (e *Engine) running(ctx context.Context, j jobs.EngineJob) error {
 			firstErr = err
 		}
 		if finished {
-			return firstErr
+			return true, firstErr
 		}
 	}
 	if !progressed {
 		e.checkStale(ctx, j)
 	}
-	return firstErr
+	return progressed, firstErr
 }
 
 // submitRest hands the job's remaining rows to the module in batches and returns how many it took in all.
-func (e *Engine) submitRest(ctx context.Context, j jobs.EngineJob, mod Module) (int, error) {
+func (e *Engine) submitRest(ctx context.Context, j *jobs.EngineJob, mod Module) (int, error) {
 	total := 0
 	prevFirst := ""
 	for {
@@ -685,10 +748,10 @@ func (e *Engine) checkStale(ctx context.Context, j jobs.EngineJob) {
 
 // cancelling is the step of a cancelling job: ask the module to cancel (idempotent, at every tick until it reports complete), observe and record, and, once the module is complete, end the rows no
 // module was ever given as the platform's own cancelled results and complete and finish the job (it ends cancelled: the cancel was accepted).
-func (e *Engine) cancelling(ctx context.Context, j jobs.EngineJob) error {
+func (e *Engine) cancelling(ctx context.Context, j jobs.EngineJob) (bool, error) {
 	mod, err := e.mods.For(ctx, j.UserID, j.Module)
 	if err != nil {
-		return err
+		return false, err
 	}
 	var firstErr error
 	if err := mod.Cancel(ctx, j); err != nil {
@@ -713,27 +776,29 @@ func (e *Engine) cancelling(ctx context.Context, j jobs.EngineJob) error {
 			firstErr = serr
 		}
 		if finished {
-			return firstErr
+			return true, firstErr
 		}
 	}
 	if recorded == 0 {
 		e.checkStale(ctx, j)
 	}
-	return firstErr
+	return recorded > 0, firstErr
 }
 
 // completing is the step of a job whose module reported every item final and that was moved to completing in an earlier step (a crash between the two): a final pass of observe and record, then
 // Finish, which re-checks the results and releases the remainder in one transaction.
-func (e *Engine) completing(ctx context.Context, j jobs.EngineJob) error {
+func (e *Engine) completing(ctx context.Context, j jobs.EngineJob) (bool, error) {
 	mod, err := e.mods.For(ctx, j.UserID, j.Module)
 	if err != nil {
-		return err
+		return false, err
 	}
 	var firstErr error
 	if _, _, err := e.observe(ctx, j, mod); err != nil {
 		firstErr = err
 	}
+	finished := true
 	if _, err := e.st.Finish(ctx, j.ID); err != nil {
+		finished = false
 		var inc *jobs.IncompleteError
 		if errors.As(err, &inc) {
 			if fresh, rerr := e.st.EngineJobByID(ctx, j.ID); rerr == nil {
@@ -745,5 +810,5 @@ func (e *Engine) completing(ctx context.Context, j jobs.EngineJob) error {
 			firstErr = err
 		}
 	}
-	return firstErr
+	return finished, firstErr
 }

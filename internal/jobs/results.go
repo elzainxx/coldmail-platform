@@ -35,6 +35,10 @@ type Result struct {
 	Unit     string // the unit charged; "" unless Decision is charge
 	Rule     string // the charge table's rule label
 
+	// Suppressed says the address was on the user's suppression list when the job was confirmed (owner ruling OD-3). In a verify job the address was verified and charged all the same and the
+	// flag is what tells the user; in a send job it is the platform's own `suppressed` result (never sent). The database derives it from the result's row at insert; nobody states it.
+	Suppressed bool
+
 	RecordedAt time.Time // when the result was written (the database's clock, UTC)
 }
 
@@ -54,7 +58,7 @@ func (s *Store) Results(ctx context.Context, userID, jobID string, afterOrdinal,
 		return nil, opErr("results", badRequest("limit must be between 1 and %d", MaxResultsLimit))
 	}
 	// the user's own column is the ownership check: a result row carries the user of its job (the composite foreign key makes the two agree)
-	rows, err := s.pool.Query(ctx, `SELECT r.ordinal, r.email, r.origin, r.module_state, COALESCE(r.reason, ''), r.decision, COALESCE(r.unit, ''), r.rule, r.created_at
+	rows, err := s.pool.Query(ctx, `SELECT r.ordinal, r.email, r.origin, r.module_state, COALESCE(r.reason, ''), r.decision, COALESCE(r.unit, ''), r.rule, r.suppressed, r.created_at
 		FROM platform.job_results r
 		WHERE r.job_id = $1::uuid AND r.user_id = $2::uuid AND r.ordinal > $3
 		ORDER BY r.ordinal LIMIT $4`, jobID, userID, int32OrMax(afterOrdinal), limit)
@@ -66,7 +70,7 @@ func (s *Store) Results(ctx context.Context, userID, jobID string, afterOrdinal,
 	for rows.Next() {
 		var r Result
 		var ord int32
-		if err := rows.Scan(&ord, &r.Email, &r.Origin, &r.State, &r.Reason, &r.Decision, &r.Unit, &r.Rule, &r.RecordedAt); err != nil {
+		if err := rows.Scan(&ord, &r.Email, &r.Origin, &r.State, &r.Reason, &r.Decision, &r.Unit, &r.Rule, &r.Suppressed, &r.RecordedAt); err != nil {
 			return nil, opErr("results", s.fail(err))
 		}
 		r.Ordinal, r.RecordedAt = int(ord), r.RecordedAt.UTC()

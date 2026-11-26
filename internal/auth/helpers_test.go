@@ -365,6 +365,9 @@ func wantErr(t *testing.T, what string, err, want error) {
 		t.Errorf("%s: accepted, want %v", what, want)
 	case want != nil && !errors.Is(err, want):
 		t.Errorf("%s: got %v, want %v", what, err, want)
+	case want == ErrKey && errors.Is(err, ErrKeysUnavailable), want == ErrKeysUnavailable && errors.Is(err, ErrKey):
+		// the two are told apart: a verdict on the token and a verdict on the platform are never one error
+		t.Errorf("%s: %v is both ErrKey and ErrKeysUnavailable", what, err)
 	}
 }
 

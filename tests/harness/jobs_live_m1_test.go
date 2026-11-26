@@ -19,15 +19,15 @@ import (
 // process (the production registry over the production adapter, a real store on the live database) starts it, observes it, settles it and ends it, against module 1's real control plane and bulk queue.
 //
 // THE LIST (known by construction): 32 distinct good addresses at four domains of the harness's own, FOUR the platform's address rule refuses (no @, two @, no local part, a domain with no dot), FOUR repeats of
-// the first addresses in other spellings (upper case, the very text, spaces, a domain in capitals), and two of the good addresses on the user's suppression list. So 30 rows reach module 1 and 10 are the platform's
-// own outcomes (P-08, P-07, P-SUP).
+// the first addresses in other spellings (upper case, the very text, spaces, a domain in capitals), and two of the good addresses on the user's suppression list. So 32 rows reach module 1 (the two suppressed ones among them: owner ruling OD-3, a verify job verifies and charges a suppressed address and flags it in its results) and 8 are the platform's
+// own outcomes (P-08, P-07).
 //
 // THE PROPERTIES, each read from the three places and compared ITEM BY ITEM (jlM1ThreeWay): the ledger's charge rows, platform.job_results and MODULE 1'S OWN REPORT (its status, and its results listing read with the user's
 // derived key, page by page), with the hand-written oracle m1bOracle (not charge.Decide) deciding what each verdict of the report costs. And:
 //
 //	the key        B16: before the job there is no verify.api_callers row for the user, the confirm writes none, the engine's FIRST submit writes exactly one (platform.provision_m1_caller through the real
 //	               tenant.M1CallerEnsurer) and it stays one; module 1 holds the user's job under that key and no other job
-//	one job        module 1 holds ONE job for the platform job (its id is platform.jobs.module_job_ref, written by the move to running), with exactly the 30 rows the platform sent: no malformed row, no repeat
+//	one job        module 1 holds ONE job for the platform job (its id is platform.jobs.module_job_ref, written by the move to running), with exactly the 32 rows the platform sent: no malformed row, no repeat
 //	started once  the job moved to running once (by the engine), to completing once and to succeeded once
 //	the books      the reserve held units x rate, charged what the report says, the remainder is 0, and exactly one release row exists when anything was left (none when every row was charged: a release of 0 writes
 //	               nothing); platform.balance_drift, reserve_overdrawn and job_settlement_drift are empty
@@ -61,15 +61,15 @@ func TestJobsLive_M1_VerifyJobSettlesItemByItem(t *testing.T) {
 	}
 	j := s.create(user, jobs.CreateReq{Module: jobs.ModuleVerify, Rows: list.Rows})
 	pv := s.preview(user, j.ID)
-	if pv.Rows != 40 || pv.Pending != 32 || pv.Malformed != 4 || pv.Duplicates != 4 || pv.Suppressed != 2 || pv.Units != 30 || pv.Excluded != 0 || !pv.Metered {
-		t.Fatalf("the preview counts rows %d pending %d malformed %d duplicates %d suppressed %d units %d excluded %d metered %v, want 40, 32, 4, 4, 2, 30, 0 and metered", pv.Rows, pv.Pending, pv.Malformed, pv.Duplicates, pv.Suppressed, pv.Units, pv.Excluded, pv.Metered)
+	if pv.Rows != 40 || pv.Pending != 32 || pv.Malformed != 4 || pv.Duplicates != 4 || pv.Suppressed != 2 || !pv.SuppressedStillVerified || pv.Units != 32 || pv.Excluded != 0 || !pv.Metered {
+		t.Fatalf("the preview counts rows %d pending %d malformed %d duplicates %d suppressed %d units %d excluded %d metered %v, want 40, 32, 4, 4, 2, 32 (the suppressed rows are still verified), 0 and metered", pv.Rows, pv.Pending, pv.Malformed, pv.Duplicates, pv.Suppressed, pv.Units, pv.Excluded, pv.Metered)
 	}
 	if pv.UnitCost < 1 || pv.Credits != int64(pv.Units)*int64(pv.UnitCost) || pv.Available != grant || pv.Shortfall != 0 {
 		t.Fatalf("the preview prices the list at %d credits (rate %d, unit %s) for %d units with %d available and shortfall %d: want units x rate, the grant of %d and no shortfall", pv.Credits, pv.UnitCost, pv.RateUnit, pv.Units, pv.Available, pv.Shortfall, grant)
 	}
 	res := s.confirmOK(user, j.ID, pv.Fingerprint)
-	if res.Job.Status != jobs.StatusConfirmed || res.Reserved != pv.Credits || res.Pending != 30 || res.Suppressed != 2 {
-		t.Fatalf("the confirm answered status %s reserved %d pending %d suppressed %d, want confirmed, %d, 30 and 2", res.Job.Status, res.Reserved, res.Pending, res.Suppressed, pv.Credits)
+	if res.Job.Status != jobs.StatusConfirmed || res.Reserved != pv.Credits || res.Pending != 32 || res.Suppressed != 2 {
+		t.Fatalf("the confirm answered status %s reserved %d pending %d suppressed %d, want confirmed, %d, 32 and 2 (the flag count)", res.Job.Status, res.Reserved, res.Pending, res.Suppressed, pv.Credits)
 	}
 	if av, rv := s.balance(user, jobs.ModuleVerify); av != grant-pv.Credits || rv != pv.Credits {
 		t.Fatalf("after the confirm the balance is available %d reserved %d, want %d and %d", av, rv, grant-pv.Credits, pv.Credits)
@@ -95,7 +95,7 @@ func TestJobsLive_M1_VerifyJobSettlesItemByItem(t *testing.T) {
 	}
 	ref := s.moduleJobRef(j.ID)
 	rows, results, ledger, prices := s.rows(j.ID), s.results(j.ID), s.ledgerCharges(j.ID), s.prices(j.ID)
-	report := s.m1Report(user, ref, 30)
+	report := s.m1Report(user, ref, 32)
 	view := jlM1View{Rows: rows, Results: results, Ledger: ledger, Prices: prices, Report: report}
 
 	// the list became what it must be, by construction
@@ -106,11 +106,16 @@ func TestJobsLive_M1_VerifyJobSettlesItemByItem(t *testing.T) {
 			t.Errorf("row %d is pending and was never stamped as handed over", r.Ordinal)
 		}
 	}
-	if by["pending"] != 30 || by["malformed"] != 4 || by["duplicate"] != 4 || by["suppressed"] != 2 || len(rows) != 40 || len(results) != 40 {
-		t.Fatalf("the job's rows are %v (%d) and it holds %d results, want pending 30, malformed 4, duplicate 4, suppressed 2 (40) and 40 results", by, len(rows), len(results))
+	if by["pending"] != 32 || by["malformed"] != 4 || by["duplicate"] != 4 || by["suppressed"] != 0 || len(rows) != 40 || len(results) != 40 {
+		t.Fatalf("the job's rows are %v (%d) and it holds %d results, want pending 32 (the two suppressed addresses among them), malformed 4, duplicate 4, no row in the state suppressed (40) and 40 results", by, len(rows), len(results))
 	}
-	if n := len(report); n != 30 {
-		t.Fatalf("module 1's report holds %d row(s), want the 30 the platform sent", n)
+	if n := len(report); n != 32 {
+		t.Fatalf("module 1's report holds %d row(s), want the 32 the platform sent", n)
+	}
+	// owner ruling OD-3: the two suppressed addresses were verified and charged like the others (they are among the 32 of module 1's report) and exactly they carry the flag in the results
+	var flagged int
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM platform.job_results WHERE job_id = $1::uuid AND origin = 'module' AND suppressed`, j.ID).Scan(&flagged); err != nil || flagged != 2 {
+		t.Fatalf("%d module result(s) carry the suppressed flag (error %v), want exactly the 2 suppressed addresses", flagged, err)
 	}
 
 	// (a) the three-way equality, item by item
@@ -120,8 +125,8 @@ func TestJobsLive_M1_VerifyJobSettlesItemByItem(t *testing.T) {
 	}
 	// the platform's own classes never reached module 1 and are free: asserted again from module 1's OWN tables
 	mrows, mmal, mrep, owner := s.m1ModuleRows(ref)
-	if mrows != 30 || mmal != 0 || mrep != 0 || owner != user {
-		t.Fatalf("module 1's own tables hold %d row(s) for the job (%d malformed, %d repeats) owned by %q, want the 30 rows the platform sent, no malformed row, no repeat, owned by the user", mrows, mmal, mrep, owner)
+	if mrows != 32 || mmal != 0 || mrep != 0 || owner != user {
+		t.Fatalf("module 1's own tables hold %d row(s) for the job (%d malformed, %d repeats) owned by %q, want the 32 rows the platform sent, no malformed row, no repeat, owned by the user", mrows, mmal, mrep, owner)
 	}
 	if n := s.count("count module 1's jobs of the user", `SELECT count(*) FROM verify.jobs WHERE owner_user_id = $1::uuid`, user); n != 1 {
 		t.Fatalf("module 1 holds %d job(s) for the user, want ONE: the engine submits a job once under the platform job's id as the idempotency key", n)
@@ -194,7 +199,7 @@ func TestJobsLive_M1_VerifyJobSettlesItemByItem(t *testing.T) {
 		lines = append(lines, fmt.Sprintf("%d x %s", n, k))
 	}
 	sort.Strings(lines)
-	t.Logf("NOTE jl m1: 40 rows (30 sent, 4 malformed P-08, 4 repeats P-07, 2 suppressed P-SUP); module 1 said %s; charged %d (%d credits), free %d, unmapped %d; reserve %d, released %d in %d row(s); key rows 1; module 1 job %s",
+	t.Logf("NOTE jl m1: 40 rows (32 sent, two of them suppressed and flagged, 4 malformed P-08, 4 repeats P-07); module 1 said %s; charged %d (%d credits), free %d, unmapped %d; reserve %d, released %d in %d row(s); key rows 1; module 1 job %s",
 		strings.Join(lines, "; "), charged, wantCharged, free, unmapped, pv.Credits, left, relRows, jlShort(ref))
 	for _, line := range strings.Split(strings.TrimRight(table, "\n"), "\n") {
 		t.Logf("NOTE jl m1 report | %s", line)

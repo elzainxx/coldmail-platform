@@ -353,6 +353,9 @@ func (e *jeEnv) newRig(fake *jobenginetest.FakeModule, cfg jobengine.Config) *je
 // engineOf builds a further engine (a second process) over the same database.
 func (e *jeEnv) engineOf(mods jobengine.Modules, gate jobengine.Gate, clock *jobenginetest.Clock, cfg jobengine.Config) *jobengine.Engine {
 	e.t.Helper()
+	if cfg.BackoffCap == 0 {
+		cfg.BackoffCap = -1 // these tests tick the engine back to back and expect every tick to look at the job: the backoff is OFF unless a test asks for one (jobs_engine_schedule_test.go)
+	}
 	eng, err := jobengine.New(jobengine.Deps{Store: e.jobs, Modules: mods, Leader: gate, Now: clock.Now}, cfg)
 	if err != nil {
 		e.t.Fatalf("jobengine.New: %v", err)

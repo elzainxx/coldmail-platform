@@ -44,8 +44,8 @@ func TestJobsStore_CreateClassifiesAgainstAHandComputedOracle(t *testing.T) {
 		in[i] = jobs.RowIn{Email: r.in}
 	}
 	j := e.createRows(A, "m1", in)
-	if j.Status != jobs.StatusDraft || j.Module != "m1" || j.UserID != A || j.Content != nil || j.Settings.UnknownChoice != jobs.UnknownExclude || j.SourceJobID != "" || j.Preview != nil {
-		t.Fatalf("the new job is %+v, want a draft of module m1 with no content, no source, no preview and the default choice", j)
+	if j.Status != jobs.StatusDraft || j.Module != "m1" || j.UserID != A || j.Content != nil || j.Settings.UnknownChoice != "" || j.SourceJobID != "" || j.Preview != nil {
+		t.Fatalf("the new job is %+v, want a draft of module m1 with no content, no source, no preview and NO choice for unknown verdicts (there is no default)", j)
 	}
 
 	// the number of rows in the table equals the input, and every row equals the oracle
@@ -102,7 +102,7 @@ func TestJobsStore_CreateClassifiesAgainstAHandComputedOracle(t *testing.T) {
 	if !reflect.DeepEqual(p.MalformedReasons, wantReasons) {
 		t.Errorf("the malformed reasons are %v, want %v", p.MalformedReasons, wantReasons)
 	}
-	if !p.Metered || p.UnitCost != 1 || p.RateUnit != "m1_cache" || p.Credits != 6 || p.Available != 0 || p.Shortfall != 6 || p.UnknownChoice != jobs.UnknownExclude || p.Verdicts != nil {
+	if !p.Metered || p.UnitCost != 1 || p.RateUnit != "m1_cache" || p.Credits != 6 || p.Available != 0 || p.Shortfall != 6 || p.UnknownChoice != "" || p.UnknownCount != 0 || p.UnknownChoiceRequired || !p.SuppressedStillVerified || p.Verdicts != nil {
 		t.Errorf("the preview prices %+v, want metered, rate 1 of m1_cache (the first of the equal prices), 6 credits, 0 available, 6 short, no verdicts", p)
 	}
 
@@ -179,6 +179,8 @@ func TestJobsStore_CreateRefusals(t *testing.T) {
 		{"a subject with a line break", jobs.CreateReq{Module: "m2", Rows: rows, Content: &jobs.Content{Subject: "a\r\nb", Text: "t"}}, "content.subject must be one line"},
 		{"merge data over the limit", jobs.CreateReq{Module: "m1", Rows: []jobs.RowIn{{Email: "a@example.test", Fields: manyFields}}}, "merge fields"},
 		{"include on a list that is not chained", jobs.CreateReq{Module: "m2", Rows: rows, Content: jbsContent(), Settings: jobs.Settings{UnknownChoice: "include"}}, "unknown_choice"},
+		// owner ruling OD-4: with no default, EVERY choice is a statement about a chained send; exclude on a list that is not chained is as meaningless as include (it used to pass as "the default written")
+		{"exclude on a list that is not chained", jobs.CreateReq{Module: "m2", Rows: rows, Content: jbsContent(), Settings: jobs.Settings{UnknownChoice: "exclude"}}, "unknown_choice"},
 		{"a choice outside the vocabulary", jobs.CreateReq{Module: "m2", Rows: rows, Content: jbsContent(), Settings: jobs.Settings{UnknownChoice: "maybe"}}, "unknown_choice"},
 		{"a source for a verify job", jobs.CreateReq{Module: "m1", SourceJobID: someJob}, "only a send job"},
 		{"rows with a source", jobs.CreateReq{Module: "m2", Rows: rows, Content: jbsContent(), SourceJobID: someJob}, "none may be supplied"},
@@ -196,14 +198,14 @@ func TestJobsStore_CreateRefusals(t *testing.T) {
 		atLimit[fmt.Sprintf("k%d", i)] = "v"
 	}
 	for name, req := range map[string]jobs.CreateReq{
-		"a verify job":                   {Module: "m1", Rows: rows},
-		"a send job with content":        {Module: "m2", Rows: rows, Content: jbsContent()},
-		"a module 3 job with text only":  {Module: "m3", Rows: rows, Content: &jobs.Content{Subject: "s", Text: "t"}},
-		"merge data at the limit":        {Module: "m1", Rows: []jobs.RowIn{{Email: "a@example.test", Fields: atLimit}}},
-		"the default choice written":     {Module: "m2", Rows: rows, Content: jbsContent(), Settings: jobs.Settings{UnknownChoice: "exclude"}},
-		"a subject of exactly 998 bytes": {Module: "m2", Rows: rows, Content: &jobs.Content{Subject: strings.Repeat("s", jobs.MaxSubjectBytes), Text: "t"}},
-		"a body of exactly 1 MiB (html)": {Module: "m2", Rows: rows, Content: &jobs.Content{Subject: "s", HTML: strings.Repeat("h", jobs.MaxBodyBytes)}},
-		"a reply-to that is one address": {Module: "m2", Rows: rows, Content: &jobs.Content{Subject: "s", Text: "t", ReplyTo: "r@example.test"}},
+		"a verify job":                                    {Module: "m1", Rows: rows},
+		"a send job with content":                         {Module: "m2", Rows: rows, Content: jbsContent()},
+		"a module 3 job with text only":                   {Module: "m3", Rows: rows, Content: &jobs.Content{Subject: "s", Text: "t"}},
+		"merge data at the limit":                         {Module: "m1", Rows: []jobs.RowIn{{Email: "a@example.test", Fields: atLimit}}},
+		"no choice stated (there is no default to write)": {Module: "m2", Rows: rows, Content: jbsContent(), Settings: jobs.Settings{}},
+		"a subject of exactly 998 bytes":                  {Module: "m2", Rows: rows, Content: &jobs.Content{Subject: strings.Repeat("s", jobs.MaxSubjectBytes), Text: "t"}},
+		"a body of exactly 1 MiB (html)":                  {Module: "m2", Rows: rows, Content: &jobs.Content{Subject: "s", HTML: strings.Repeat("h", jobs.MaxBodyBytes)}},
+		"a reply-to that is one address":                  {Module: "m2", Rows: rows, Content: &jobs.Content{Subject: "s", Text: "t", ReplyTo: "r@example.test"}},
 	} {
 		if _, err := e.jobs.CreateDraft(ctx, A, req); err != nil {
 			t.Errorf("the twin %q was refused: %v", name, err)
@@ -252,10 +254,10 @@ func TestJobsStore_ChainedSendTakesTheSourceVerdicts(t *testing.T) {
 	chain := func(user string, choice string) (jobs.Job, error) {
 		return e.jobs.CreateDraft(testCtx(t), user, jobs.CreateReq{Module: "m2", Content: jbsContent(), SourceJobID: src.ID, Settings: jobs.Settings{UnknownChoice: choice}})
 	}
-	// the default: valid and risky are sent to, unknown and invalid are not
+	// nothing said about the unknown verdicts (there is no default since owner ruling OD-4): valid and risky are sent to, unknown and invalid are not, and no choice is recorded
 	ex, err := chain(A, "")
-	mnyNoErr(t, "chain (default choice)", err)
-	if ex.SourceJobID != src.ID || ex.Settings.UnknownChoice != jobs.UnknownExclude || ex.Module != "m2" {
+	mnyNoErr(t, "chain (no choice)", err)
+	if ex.SourceJobID != src.ID || ex.Settings.UnknownChoice != "" || ex.Module != "m2" {
 		t.Fatalf("the chained job is %+v", ex)
 	}
 	got := e.rowsOf(ex.ID)
@@ -273,9 +275,9 @@ func TestJobsStore_ChainedSendTakesTheSourceVerdicts(t *testing.T) {
 		}
 	}
 	p := e.preview(A, ex.ID)
-	if p.Rows != 6 || p.Pending != 3 || p.Excluded != 3 || p.Units != 3 || p.Credits != 3 || p.Selected != 3 || p.UnknownChoice != jobs.UnknownExclude ||
+	if p.Rows != 6 || p.Pending != 3 || p.Excluded != 3 || p.Units != 3 || p.Credits != 3 || p.Selected != 3 || p.UnknownChoice != "" || p.UnknownCount != 2 || !p.UnknownChoiceRequired ||
 		!reflect.DeepEqual(p.Verdicts, map[string]int{"valid": 2, "invalid": 1, "risky": 1, "unknown": 2}) {
-		t.Errorf("the chained preview is %+v, want 3 pending, 3 excluded, 3 credits, verdicts valid 2 invalid 1 risky 1 unknown 2, 3 selected", p)
+		t.Errorf("the chained preview is %+v, want 3 pending, 3 excluded, 3 credits, verdicts valid 2 invalid 1 risky 1 unknown 2, 3 selected, no choice recorded and a choice required for the 2 unknown", p)
 	}
 	// THE CONTROL: the choice for unknown flips exactly the unknown rows
 	in2, err := chain(A, jobs.UnknownInclude)
@@ -287,8 +289,22 @@ func TestJobsStore_ChainedSendTakesTheSourceVerdicts(t *testing.T) {
 	if p.Fingerprint == p2.Fingerprint {
 		t.Error("the two choices share a fingerprint")
 	}
+	// the old default (exclude, with nothing said) is GONE: the confirm of the job above is refused, naming how many results are unknown, and writes nothing
+	before := e.writes()
+	_, err = e.tryConfirm(A, ex.ID, p.Fingerprint, e.key(), nil)
+	var need *jobs.UnknownChoiceRequiredError
+	if !errors.Is(err, jobs.ErrUnknownChoiceRequired) || !errors.As(err, &need) || need.Unknown != 2 {
+		t.Fatalf("a confirm with no choice for 2 unknown results: got %v, want ErrUnknownChoiceRequired naming 2", err)
+	}
+	e.requireWrites("a confirm with no choice for the unknown verdicts", before)
+	// the user says exclude: preview under it (the rows were excluded already, but the choice is part of what is previewed) and confirm with it
+	pe := e.previewChoice(A, ex.ID, jobs.UnknownExclude)
+	if pe.UnknownChoice != jobs.UnknownExclude || pe.Fingerprint == p.Fingerprint || pe.Pending != 3 || pe.Excluded != 3 || pe.Credits != 3 {
+		t.Errorf("the preview under exclude is %+v, want the choice recorded, another fingerprint than the one with no choice, and the same 3 pending and 3 excluded", pe)
+	}
 	// confirming holds credits for the selected rows only and records the excluded rows as free platform results
-	r := e.confirm(A, ex.ID, p.Fingerprint)
+	r, err := e.tryConfirmChoice(A, ex.ID, pe.Fingerprint, e.key(), jobs.UnknownExclude)
+	mnyNoErr(t, "the confirm with an explicit exclude", err)
 	if r.Reserved != 3 || r.Pending != 3 || e.ruleCounts(ex.ID)[jobs.RuleExcluded] != 3 || len(e.ruleCounts(ex.ID)) != 1 {
 		t.Errorf("confirm reserved %d for %d rows with results %v, want 3 credits and three %s results", r.Reserved, r.Pending, e.ruleCounts(ex.ID), jobs.RuleExcluded)
 	}
@@ -674,11 +690,14 @@ func TestJobsStore_TwoRequestsWithOneKeyRacingAreOneConfirm(t *testing.T) {
 	e.requireBooks("after the race")
 }
 
+// A SEND job (module 2): a suppression after the preview leaves the confirm 9 rows to hold credits for, so the shortfall is computed AFTER the list is applied and the suppression the transaction wrote
+// rolls back with the refusal. (This test was written on a module 1 job. Since owner ruling OD-3 a verify job's suppressed rows are verified and charged, so its shortfall counts all 10 rows: that is
+// TestJobsStore_AVerifyJobsShortfallCountsItsSuppressedRowsToo in jobs_suppression_scope_test.go.)
 func TestJobsStore_ShortfallIsExactAndNothingIsWritten(t *testing.T) {
 	e := newJbsEnv(t)
 	A := mnyUserA
-	e.fund(A, "m1", 7)
-	j, p := e.previewed(A, "m1", 10)
+	e.fund(A, "m2", 7)
+	j, p := e.previewed(A, "m2", 10)
 	if p.Credits != 10 || p.Available != 7 || p.Shortfall != 3 {
 		t.Fatalf("the preview says %d credits, %d available, %d short; want 10, 7, 3", p.Credits, p.Available, p.Shortfall)
 	}
@@ -698,15 +717,15 @@ func TestJobsStore_ShortfallIsExactAndNothingIsWritten(t *testing.T) {
 	if e.jobStatus(j.ID) != "previewed" || e.reserveRows(j.ID) != 0 || len(e.frozen(j.ID)) != 0 || e.stateCounts(j.ID)[jobs.StateSuppressed] != 0 || len(e.ruleCounts(j.ID)) != 0 {
 		t.Errorf("the refusal left the job %s, %d reserve rows, snapshot %v, rows %v, results %v", e.jobStatus(j.ID), e.reserveRows(j.ID), e.frozen(j.ID), e.stateCounts(j.ID), e.ruleCounts(j.ID))
 	}
-	e.requireBal("the balance is untouched", A, "m1", 7, 0)
+	e.requireBal("the balance is untouched", A, "m2", 7, 0)
 	// THE CONTROL: two more credits cover exactly the 9 rows that reach the module, and the confirm goes through
-	e.fund(A, "m1", 2)
+	e.fund(A, "m2", 2)
 	r, err := e.tryConfirm(A, j.ID, p.Fingerprint, e.key(), nil)
 	mnyNoErr(t, "the confirm that fits", err)
 	if r.Reserved != 9 || r.Suppressed != 1 || r.Pending != 9 {
 		t.Errorf("confirm: reserved %d suppressed %d pending %d, want 9, 1, 9", r.Reserved, r.Suppressed, r.Pending)
 	}
-	e.requireBal("the whole balance reserved", A, "m1", 0, 9)
+	e.requireBal("the whole balance reserved", A, "m2", 0, 9)
 	e.requireBooks("after the shortfall test")
 }
 
@@ -739,14 +758,26 @@ func TestJobsStore_ConfirmStatusRefusalsAndNothingToDo(t *testing.T) {
 	jbsIs(t, "confirm of a list with nothing to send", err, jobs.ErrNothingToDo)
 	e.requireWrites("confirm of a list with nothing to send", before)
 
-	two, p2 := e.previewed(A, "m1", 2)
+	// (this part was written on a module 1 job: since owner ruling OD-3 suppression empties only a SEND job's list, so it is a module 2 job here, and the module 1 twin below is the new rule)
+	e.fund(A, "m2", 100)
+	two, p2 := e.previewed(A, "m2", 2)
 	e.suppressFor(A, "r00001@example.test", "r00002@example.test")
 	before = e.writes()
 	_, err = e.tryConfirm(A, two.ID, p2.Fingerprint, e.key(), nil)
-	jbsIs(t, "confirm of a list that suppression empties", err, jobs.ErrNothingToDo)
-	e.requireWrites("confirm of a list that suppression empties (the suppression of the rows rolled back)", before)
+	jbsIs(t, "confirm of a send list that suppression empties", err, jobs.ErrNothingToDo)
+	e.requireWrites("confirm of a send list that suppression empties (the suppression of the rows rolled back)", before)
 	if c := e.stateCounts(two.ID); c[jobs.StatePending] != 2 {
 		t.Errorf("the refused confirm left the rows %v, want both still pending", c)
+	}
+	// THE CONTROL OF THE RULING: the same two suppressed addresses in a VERIFY job are not an empty list, they are two rows to verify and charge, flagged
+	B := mnyUserB
+	e.fund(B, "m1", 100)
+	vTwo, vp := e.previewed(B, "m1", 2)
+	e.suppressFor(B, "r00001@example.test", "r00002@example.test")
+	vr, err := e.tryConfirm(B, vTwo.ID, vp.Fingerprint, e.key(), nil)
+	mnyNoErr(t, "the confirm of a verify list that suppression covers entirely", err)
+	if vr.Pending != 2 || vr.Suppressed != 2 || vr.Reserved != 2 || e.stateCounts(vTwo.ID)[jobs.StatePending] != 2 {
+		t.Errorf("a verify list that is all suppressed: pending %d suppressed %d reserved %d rows %v, want 2, 2, 2 and both rows still pending", vr.Pending, vr.Suppressed, vr.Reserved, e.stateCounts(vTwo.ID))
 	}
 	// the control: a list with ONE sendable row confirms, and the platform's results of the other lines are written
 	mixed := e.createRows(A, "m1", []jobs.RowIn{{Email: ""}, {Email: "ok@example.test"}, {Email: "a@"}})

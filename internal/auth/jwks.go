@@ -86,11 +86,16 @@ type keySource struct {
 
 	snap atomic.Pointer[keySnapshot]
 
-	mu          sync.Mutex // serialises fetches; guards the three fields below
+	mu          sync.Mutex // serialises fetches; guards the four fields below
 	attempted   bool
 	lastAttempt time.Time
-	lastFailure string // why the last fetch failed, "" when it did not
+	failed      *keySetError // why the last fetch failed; nil when it did not
+	run         *stretch     // the stretch of unavailability that failure belongs to: non-nil exactly while failed is
 }
+
+// errRefreshLimited is refresh's answer when the rate limit refused a fetch and the fetch before it had not failed: the key set is known and was fetched a moment ago, so a kid it lacks
+// is the token's fault and not the platform's.
+var errRefreshLimited = errors.New("auth: the key set was fetched too recently to be fetched again")
 
 func newKeySource(url string, client *http.Client, now func() time.Time, minRefresh, ttl time.Duration) *keySource {
 	return &keySource{url: url, client: client, now: now, minRefresh: minRefresh, ttl: ttl}
@@ -121,9 +126,15 @@ func hardenedClient(c *http.Client) *http.Client {
 	return &hc
 }
 
-// keyFor returns the key a token with this kid is verified with. A key that is in the current snapshot and not older than the TTL is used as it is. A kid the snapshot lacks, a
-// snapshot older than the TTL and a first use start ONE refresh, which MinRefreshInterval rate limits across all callers. If the refresh cannot be made or fails, a key that was
-// already cached keeps serving (the issuer being unreachable does not sign everyone out); a kid that was never cached is ErrKey.
+// keyFor returns the key a token with this kid is verified with, or says why there is none. The answers, and WHOSE FAULT each one is:
+//
+//   - the kid is in the current snapshot and the snapshot is not older than the TTL: that key, no fetch;
+//   - the kid is in the snapshot, the snapshot is older than the TTL and the refresh fails or is held back: that key still (the issuer being unreachable does not sign everyone out);
+//   - the kid is in no snapshot (it was never fetched, or the kid is not in it): ONE refresh, which MinRefreshInterval rate limits across all callers, and then
+//     the refresh made the set fresh: the kid is in it (that key) or it is not (ErrKey: the token's fault);
+//     the refresh failed, or the last fetch failed and the rate limit holds the next one back: *KeysUnavailableError, which is the platform's: it cannot tell whether the key exists;
+//     the refresh was only refused by the rate limit and the set is known (the last fetch worked): ErrKey, the token's fault, and the user retries once the interval has passed;
+//   - a token with no kid and a set of several keys: ErrKey, which no refresh can settle.
 func (s *keySource) keyFor(ctx context.Context, kid string) (*jwk, error) {
 	snap := s.snap.Load()
 	k := snap.lookup(kid)
@@ -134,8 +145,8 @@ func (s *keySource) keyFor(ctx context.Context, kid string) (*jwk, error) {
 		// A token with no kid and a set of several keys: which one is not for a refresh to settle.
 		return nil, fail(ErrKey, "the token names no kid and the key set holds more than one key")
 	}
-	fresh, why := s.refresh(ctx, snap)
-	if why == "" {
+	fresh, rerr := s.refresh(ctx, snap)
+	if rerr == nil {
 		if k2 := fresh.lookup(kid); k2 != nil {
 			return k2, nil
 		}
@@ -144,43 +155,62 @@ func (s *keySource) keyFor(ctx context.Context, kid string) (*jwk, error) {
 	if k != nil {
 		return k, nil // a stale key is better than none while the issuer cannot be reached
 	}
-	if snap == nil {
-		return nil, fail(ErrKey, "the key set has not been fetched: "+why)
+	var down *KeysUnavailableError
+	if errors.As(rerr, &down) {
+		return nil, down
 	}
-	return nil, fail(ErrKey, "the key set holds no key with the token's kid and could not be refreshed: "+why)
+	return nil, fail(ErrKey, "the key set holds no key with the token's kid and was fetched less than "+s.minRefresh.String()+" ago")
 }
 
 // refresh makes the one fetch a caller asked for, unless another caller has just done it for them (seen is no longer the current snapshot) or the last attempt was less than
-// minRefresh ago. It returns the current snapshot and "" when that snapshot is fresh, and the reason it could not be made fresh otherwise.
-func (s *keySource) refresh(ctx context.Context, seen *keySnapshot) (*keySnapshot, string) {
+// minRefresh ago. It returns the current snapshot and nil when that snapshot is fresh; otherwise a *KeysUnavailableError when the latest fetch (this one, or the one the rate limit is
+// holding the next behind) failed, and errRefreshLimited when the rate limit refused the fetch and the latest one had worked.
+//
+// The state that decides a "stretch" of unavailability is kept here, under the lock, because a fetch is the only thing that learns whether the issuer can be reached: the first failed
+// fetch after a good one (or since the start) opens a stretch, and a good fetch closes it. Every error made while it is open shares it (see stretch).
+func (s *keySource) refresh(ctx context.Context, seen *keySnapshot) (*keySnapshot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if cur := s.snap.Load(); cur != seen {
-		return cur, ""
+		return cur, nil
 	}
 	now := s.now()
 	if s.attempted && now.Sub(s.lastAttempt) < s.minRefresh {
-		why := "the key set was fetched less than " + s.minRefresh.String() + " ago"
-		if s.lastFailure != "" {
-			why += " and that fetch failed: " + s.lastFailure
+		if s.failed != nil {
+			return s.snap.Load(), s.unavailable("the key set was fetched less than " + s.minRefresh.String() + " ago and that fetch failed: " + s.failed.text)
 		}
-		return s.snap.Load(), why
+		return s.snap.Load(), errRefreshLimited
 	}
 	s.attempted, s.lastAttempt = true, now
 	snap, err := s.fetch(ctx, now)
 	if err != nil {
-		s.lastFailure = err.Error()
-		return s.snap.Load(), "the fetch failed: " + s.lastFailure
+		var ke *keySetError
+		if !errors.As(err, &ke) {
+			ke = &keySetError{class: ClassUnreachable, text: "the request failed"}
+		}
+		s.failed = ke
+		if s.run == nil {
+			s.run = &stretch{}
+		}
+		return s.snap.Load(), s.unavailable("the fetch failed: " + ke.text)
 	}
-	s.lastFailure = ""
+	s.failed, s.run = nil, nil
 	s.snap.Store(snap)
-	return snap, ""
+	return snap, nil
 }
 
-// keySetError is a failed fetch or an unusable key set. Its text is a fixed sentence about the response, never the response.
-type keySetError string
+// unavailable is the error of a key set that cannot be had, in the stretch that is open. The caller holds the lock and s.failed is set.
+func (s *keySource) unavailable(reason string) *KeysUnavailableError {
+	return &KeysUnavailableError{class: s.failed.class, reason: reason, run: s.run}
+}
 
-func (e keySetError) Error() string { return string(e) }
+// keySetError is a failed fetch or an unusable key set: a class (one of the Class words) and a fixed sentence about the response, never the response.
+type keySetError struct{ class, text string }
+
+func (e *keySetError) Error() string { return e.text }
+
+// badKeySet is the error of a response that arrived and is not a key set the verifier can use.
+func badKeySet(text string) error { return &keySetError{class: ClassBadKeySet, text: text} }
 
 // fetch gets and parses the key set. One caller's cancelled request must not fail the fetch every waiting caller shares, so the request outlives ctx's cancellation and is bounded by
 // its own timeout.
@@ -189,41 +219,42 @@ func (s *keySource) fetch(ctx context.Context, now time.Time) (*keySnapshot, err
 	defer cancel()
 	req, err := http.NewRequestWithContext(fctx, http.MethodGet, s.url, nil)
 	if err != nil {
-		return nil, keySetError("the request could not be built")
+		return nil, &keySetError{class: ClassUnreachable, text: "the request could not be built"}
 	}
 	req.Header.Set("Accept", "application/json")
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return nil, keySetError(classifyFetchError(err))
+		class, text := classifyFetchError(err)
+		return nil, &keySetError{class: class, text: text}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
-			return nil, keySetError(fmt.Sprintf("the server answered %d: redirects are not followed", resp.StatusCode))
+			return nil, &keySetError{class: ClassStatus, text: fmt.Sprintf("the server answered %d: redirects are not followed", resp.StatusCode)}
 		}
-		return nil, keySetError(fmt.Sprintf("the server answered %d", resp.StatusCode))
+		return nil, &keySetError{class: ClassStatus, text: fmt.Sprintf("the server answered %d", resp.StatusCode)}
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, MaxKeySetBytes+1))
 	if err != nil {
-		return nil, keySetError("the response could not be read")
+		return nil, &keySetError{class: ClassUnreadable, text: "the response could not be read"}
 	}
 	if len(body) > MaxKeySetBytes {
-		return nil, keySetError("the response is larger than 1 MiB")
+		return nil, &keySetError{class: ClassUnreadable, text: "the response is larger than 1 MiB"}
 	}
 	return parseKeySet(body, now)
 }
 
-// classifyFetchError names the kind of a transport failure without repeating the error, which carries the URL.
-func classifyFetchError(err error) string {
+// classifyFetchError names the kind of a transport failure (a Class word and a fixed sentence) without repeating the error, which carries the URL.
+func classifyFetchError(err error) (class, text string) {
 	var certErr *tls.CertificateVerificationError
 	var netErr net.Error
 	switch {
 	case errors.As(err, &certErr):
-		return "the server's certificate was not accepted"
+		return ClassCertificate, "the server's certificate was not accepted"
 	case errors.Is(err, context.DeadlineExceeded), errors.As(err, &netErr) && netErr.Timeout():
-		return "the request timed out"
+		return ClassTimeout, "the request timed out"
 	}
-	return "the request failed"
+	return ClassUnreachable, "the request failed"
 }
 
 // parseKeySet reads a JWKS document. A key it cannot use (another type, another curve, an RSA modulus under MinRSABits, an encryption key, a key whose alg does not fit) is skipped
@@ -233,13 +264,13 @@ func parseKeySet(body []byte, fetchedAt time.Time) (*keySnapshot, error) {
 		Keys []json.RawMessage `json:"keys"`
 	}
 	if err := json.Unmarshal(body, &doc); err != nil {
-		return nil, keySetError("the key set is not a JSON object")
+		return nil, badKeySet("the key set is not a JSON object")
 	}
 	if len(doc.Keys) == 0 {
-		return nil, keySetError("the key set holds no keys")
+		return nil, badKeySet("the key set holds no keys")
 	}
 	if len(doc.Keys) > maxKeysInSet {
-		return nil, keySetError("the key set holds too many keys")
+		return nil, badKeySet("the key set holds too many keys")
 	}
 	skipped := map[string]bool{}
 	var usable []*jwk
@@ -268,7 +299,7 @@ func parseKeySet(body []byte, fetchedAt time.Time) (*keySnapshot, error) {
 			reasons = append(reasons, r)
 		}
 		sort.Strings(reasons)
-		return nil, keySetError("the key set holds no usable key (" + strings.Join(reasons, "; ") + ")")
+		return nil, badKeySet("the key set holds no usable key (" + strings.Join(reasons, "; ") + ")")
 	}
 	snap := &keySnapshot{keys: usable, byKID: map[string]*jwk{}, fetchedAt: fetchedAt}
 	for _, k := range usable {
@@ -276,7 +307,7 @@ func parseKeySet(body []byte, fetchedAt time.Time) (*keySnapshot, error) {
 			continue
 		}
 		if _, dup := snap.byKID[k.kid]; dup {
-			return nil, keySetError("two keys in the key set share a kid")
+			return nil, badKeySet("two keys in the key set share a kid")
 		}
 		snap.byKID[k.kid] = k
 	}

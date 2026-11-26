@@ -84,7 +84,7 @@ func WithMaxStartDelay(d time.Duration) Option { return func(s *Store) { s.maxSt
 // WithPreChecks sets the module 3 pre-check a confirm of a module 3 job makes before its transaction. Without it (or with nil) no pre-check is made.
 func WithPreChecks(p PreChecks) Option { return func(s *Store) { s.pre = p } }
 
-// WithRenderer sets the renderer EnsureModuleItems writes a send job's messages through (default PlainRenderer, the identity: the campaign's subject, body and text as given; the
+// WithRenderer sets the renderer EnsureJobItems and EnsureModuleItems write a send job's messages through (default PlainRenderer, the identity: the campaign's subject, body and text as given; the
 // merge fields, the spintax and the generated plain-text part of Phase 5 replace it behind the same interface). A nil renderer is ignored.
 func WithRenderer(r Renderer) Option {
 	return func(s *Store) {

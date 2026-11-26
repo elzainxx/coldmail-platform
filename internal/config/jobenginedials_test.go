@@ -9,6 +9,7 @@ import (
 
 	"github.com/coldmail-platform/platform/internal/config"
 	"github.com/coldmail-platform/platform/internal/jobengine"
+	"github.com/coldmail-platform/platform/internal/jobs"
 )
 
 // The nine dials of the job engine (Phase 4 B9; CLAUDE.md: "every dial is seeded with a consumer at the commit that seeds it"): PLATFORM_JOB_ENGINE_ENABLED, _TICK_MS, _SETTLE_INTERVAL_SEC,
@@ -34,12 +35,13 @@ func engineDials() []engineDial {
 		{config.VarJobSubmitBatch, "500", 1, 5000, func(c config.Config) time.Duration { return time.Duration(c.JobSubmitBatch) }, 1},
 		{config.VarJobSubmitConcurrency, "8", 1, 64, func(c config.Config) time.Duration { return time.Duration(c.JobSubmitConcurrency) }, 1},
 		{config.VarJobStepTimeoutSec, "120", 5, 3600, func(c config.Config) time.Duration { return c.JobStepTimeout }, time.Second},
+		{config.VarJobBackoffCapSec, "60", 1, 600, func(c config.Config) time.Duration { return c.JobBackoffCap }, time.Second},
 	}
 }
 
 func TestJobEngineDials_DefaultsEdgesAndRefusalsAreAsDocumented(t *testing.T) {
-	if len(engineDials()) != 8 {
-		t.Fatalf("%d numeric engine dials, there are eight", len(engineDials()))
+	if len(engineDials()) != 9 {
+		t.Fatalf("%d numeric engine dials, there are nine", len(engineDials()))
 	}
 	for _, d := range engineDials() {
 		load := func(v *string) (config.Config, error) {
@@ -114,6 +116,7 @@ func TestJobEngineDials_TheDefaultsAreTheEnginesOwnAndTheBoundsWhatItCanTake(t *
 		"stale (m2)":   {cfg.JobStaleAfterM2, jobengine.DefaultStaleAfter},
 		"stale (m3)":   {cfg.JobStaleAfterM3, jobengine.DefaultStaleAfter},
 		"step timeout": {cfg.JobStepTimeout, jobengine.DefaultStepTimeout},
+		"backoff cap":  {cfg.JobBackoffCap, jobengine.DefaultBackoffCap},
 	} {
 		if c.dial != c.engine {
 			t.Errorf("the %s dial defaults to %s, the engine's own default is %s", name, c.dial, c.engine)
@@ -130,6 +133,11 @@ func TestJobEngineDials_TheDefaultsAreTheEnginesOwnAndTheBoundsWhatItCanTake(t *
 	if conc.name != config.VarJobSubmitConcurrency || conc.hi != jobengine.MaxSubmitConcurrency {
 		t.Errorf("the concurrency dial's highest value is %d, the registry takes at most %d", conc.hi, jobengine.MaxSubmitConcurrency)
 	}
+	// the backoff cap's highest value is the engine's own ceiling and the wall of the database (jobs.MaxPollBackoff): one number in three places
+	capDial := ds[8]
+	if capDial.name != config.VarJobBackoffCapSec || time.Duration(capDial.hi)*time.Second != jobengine.MaxBackoffCap || jobengine.MaxBackoffCap != jobs.MaxPollBackoff {
+		t.Errorf("the backoff cap dial's highest value is %d seconds, the engine takes at most %s and the store %s", capDial.hi, jobengine.MaxBackoffCap, jobs.MaxPollBackoff)
+	}
 }
 
 // A dial the owner reads says what it does, what its range is and where it is consumed.
@@ -144,6 +152,7 @@ func engineDialDocMissing(name, doc string) []string {
 		config.VarJobSubmitBatch:       {"module 2 or module 3", "Module 1 takes a job's whole list in one request", "1 to 5000", "jobengine.Config.SubmitBatch"},
 		config.VarJobSubmitConcurrency: {"in flight at once", "first row of a batch always goes alone", "1 to 64", "jobengine.RegistryDeps.SubmitConcurrency"},
 		config.VarJobStepTimeoutSec:    {"ONE job", "PLATFORM_MODULE_TIMEOUT_MS", "5 to 3600", "jobengine.Config.StepTimeout"},
+		config.VarJobBackoffCapSec:     {"no progress", "doubles", "a quarter of the module's staleness limit", "refuses a wait of more than 600 seconds", "1 to 600", "jobengine.Config.BackoffCap"},
 	}[name]
 	var missing []string
 	for _, f := range facts {
@@ -178,7 +187,7 @@ func TestJobEngineDials_TheMeaningSaysWhatTheOwnerMustKnow(t *testing.T) {
 			t.Errorf("a Meaning without %q was reported as missing %q", first, m)
 		}
 	}
-	if seen != 9 {
-		t.Fatalf("found %d of the nine engine dials in Vars(): the check looked at the wrong thing", seen)
+	if seen != 10 {
+		t.Fatalf("found %d of the ten engine dials in Vars(): the check looked at the wrong thing", seen)
 	}
 }

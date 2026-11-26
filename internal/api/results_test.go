@@ -151,14 +151,18 @@ func TestResultsJSON_TheCursorTheLimitAndTheDialAreChecked(t *testing.T) {
 func TestResultsJSON_TheShapeOfAResultAndNothingMoreThanTheCustomerMayKnow(t *testing.T) {
 	r := newRig(t)
 	r.store.results = []jobs.Result{
-		{Ordinal: 1, Email: "a@example.test", Origin: "module", State: "valid", Reason: "", Decision: "charge", Unit: "m1_syntax", Rule: "P-03", RecordedAt: t0},
+		{Ordinal: 1, Email: "a@example.test", Origin: "module", State: "valid", Reason: "", Decision: "charge", Unit: "m1_syntax", Rule: "P-03", Suppressed: true, RecordedAt: t0}, // a verify job's suppressed address: verified, charged, flagged
 		{Ordinal: 2, Email: "no-at-sign", Origin: "platform", State: "malformed", Reason: "no_at", Decision: "free", Rule: "P-08", RecordedAt: t0},
 	}
 	resp, body := r.get(loginA, "/v1/jobs/"+jobIDA+"/results")
 	m := r.wantStatus(resp, body, 200)
 	first, second := m["results"].([]any)[0].(map[string]any), m["results"].([]any)[1].(map[string]any)
-	if len(first) != 9 {
+	if len(first) != 10 {
 		t.Fatalf("a result has %d members: %v", len(first), first)
+	}
+	// the flag is a member of every result, false unless the store says the address was on the user's list (the older nine are unchanged)
+	if first["suppressed"] != true || second["suppressed"] != false {
+		t.Errorf("suppressed: first %v, second %v, want true and false", first["suppressed"], second["suppressed"])
 	}
 	if first["reason"] != nil || first["unit"] != "m1_syntax" || first["recorded_at"] != "2001-09-09T01:46:40Z" || first["decision"] != "charge" {
 		t.Errorf("first = %v", first)
@@ -213,7 +217,7 @@ func TestResultsCSV_AwkwardValuesRoundTripExactlyAndNoCellOpensAsAFormula(t *tes
 		t.Errorf("headers %v", resp.Header)
 	}
 	cr := csv.NewReader(bytes.NewReader(body))
-	cr.FieldsPerRecord = 8
+	cr.FieldsPerRecord = 9
 	recs, err := cr.ReadAll()
 	if err != nil {
 		t.Fatalf("the file is not a CSV: %v", err)
@@ -221,7 +225,7 @@ func TestResultsCSV_AwkwardValuesRoundTripExactlyAndNoCellOpensAsAFormula(t *tes
 	if len(recs) != len(awkward)+1 {
 		t.Fatalf("%d records, want the header and %d", len(recs), len(awkward))
 	}
-	if strings.Join(recs[0], ",") != "ordinal,email,origin,state,reason,decision,unit,rule" {
+	if strings.Join(recs[0], ",") != "ordinal,email,origin,state,reason,decision,unit,rule,suppressed" {
 		t.Fatalf("header %v", recs[0])
 	}
 	triggers := 0
@@ -265,7 +269,7 @@ func TestResultsCSV_AwkwardValuesRoundTripExactlyAndNoCellOpensAsAFormula(t *tes
 func TestResultsCSV_ZeroResultsIsTheHeaderAlone(t *testing.T) {
 	r := newRig(t)
 	resp, body := r.csvOf("/v1/jobs/" + jobIDA + "/results.csv")
-	if resp.StatusCode != 200 || string(body) != "ordinal,email,origin,state,reason,decision,unit,rule\n" {
+	if resp.StatusCode != 200 || string(body) != "ordinal,email,origin,state,reason,decision,unit,rule,suppressed\n" {
 		t.Fatalf("%d %q", resp.StatusCode, body)
 	}
 }

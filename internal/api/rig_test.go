@@ -128,8 +128,12 @@ func (f *fakeStore) List(_ context.Context, user string, o jobs.ListOpts) ([]job
 	return f.list, f.next, nil
 }
 
-func (f *fakeStore) Preview(_ context.Context, user, job string) (jobs.Preview, error) {
-	if err := f.rec("Preview", user, job, nil); err != nil {
+func (f *fakeStore) Preview(_ context.Context, user, job string, opts ...jobs.PreviewOption) (jobs.Preview, error) {
+	var arg any // the unknown choice the options carry, or nil when the request carried none
+	if choice, given := jobs.PreviewChoice(opts...); given {
+		arg = choice
+	}
+	if err := f.rec("Preview", user, job, arg); err != nil {
 		return jobs.Preview{}, err
 	}
 	return f.preview, nil

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/coldmail-platform/platform/internal/charge"
 	"github.com/coldmail-platform/platform/internal/faultpoint"
@@ -66,7 +67,7 @@ func IsTerminal(status string) bool {
 }
 
 // EngineJob is a job as the engine's pass sees it: the job and the counts that decide its step, all read in ONE statement by the database's clock. Content is nil (the campaign's text can be a
-// megabyte and the engine never needs it: the module reads public.job_items; EnsureModuleItems loads it itself).
+// megabyte and the engine never needs it: the module reads public.job_items; EnsureJobItems and EnsureModuleItems load it themselves).
 type EngineJob struct {
 	Job
 
@@ -89,6 +90,10 @@ type EngineJob struct {
 	ReserveRemainder int64 // reserved - charged - released of the job's reserve; 0 when it holds none
 
 	DBNow time.Time // the DATABASE's clock when the job was read: the engine measures how long a job has made no progress against it (last_progress_at is the database's too), never against its own host's clock
+
+	NextPollAt     *time.Time // when the engine may look at the job again (platform.jobs.next_poll_at); nil: due now
+	IdlePolls      int        // how many steps in a row made no progress (platform.jobs.idle_polls)
+	ItemsEnsuredAt *time.Time // when every pending row's public.job_items row was written (platform.jobs.items_ensured_at); nil: not yet, or not a send job
 }
 
 // Unresolved is the number of pending rows that still have no result: a job cannot complete while it is above zero.
@@ -129,7 +134,8 @@ type RecordSummary struct {
 var engineJobColumns = strings.Replace(jobColumns, "j.frozen_settings", "(j.frozen_settings - 'content')", 1) + `,
 	j.last_progress_at, j.stale_alerted_at, m.metered, (j.start_deadline IS NOT NULL AND j.start_deadline <= now()),
 	c.n_rows, c.n_pending, c.n_submitted, c.n_results, c.n_pending_results, c.n_unsubmitted,
-	COALESCE(rs.reserved - rs.charged - rs.released, 0)::bigint, COALESCE(j.module_job_ref, ''), now()`
+	COALESCE(rs.reserved - rs.charged - rs.released, 0)::bigint, COALESCE(j.module_job_ref, ''), now(),
+	j.next_poll_at, j.idle_polls, j.items_ensured_at`
 
 // engineJobFrom joins what the counts need: the module, the reserve (one per job at most) and the rows with their results.
 const engineJobFrom = `
@@ -150,12 +156,15 @@ const engineJobFrom = `
 func scanEngineJob(row pgx.Row) (EngineJob, error) {
 	var e EngineJob
 	var rows, pending, submitted, results, pendingResults, unsubmitted int64
-	j, err := scanJobWith(row, &e.LastProgressAt, &e.StaleAlertedAt, &e.Metered, &e.DeadlinePassed, &rows, &pending, &submitted, &results, &pendingResults, &unsubmitted, &e.ReserveRemainder, &e.ModuleRef, &e.DBNow)
+	var idle int32
+	j, err := scanJobWith(row, &e.LastProgressAt, &e.StaleAlertedAt, &e.Metered, &e.DeadlinePassed, &rows, &pending, &submitted, &results, &pendingResults, &unsubmitted, &e.ReserveRemainder, &e.ModuleRef, &e.DBNow,
+		&e.NextPollAt, &idle, &e.ItemsEnsuredAt)
 	if err != nil {
 		return EngineJob{}, err
 	}
 	e.Job = j
 	e.LastProgressAt, e.StaleAlertedAt = utc(e.LastProgressAt), utc(e.StaleAlertedAt)
+	e.NextPollAt, e.ItemsEnsuredAt, e.IdlePolls = utc(e.NextPollAt), utc(e.ItemsEnsuredAt), int(idle)
 	e.DBNow = e.DBNow.UTC()
 	e.Rows, e.Pending, e.Submitted, e.Results, e.PendingResults, e.Unsubmitted = int(rows), int(pending), int(submitted), int(results), int(pendingResults), int(unsubmitted)
 	return e, nil
@@ -167,13 +176,16 @@ const (
 	MaxEngineWorkLimit     = 10000
 )
 
-// EngineWork returns the jobs the engine must look at, at most limit of them (0 means DefaultEngineWorkLimit), the ones that made progress longest ago first (COALESCE(last_progress_at,
-// confirmed_at), then id), each with its counts. The work is, by the DATABASE's clock:
-//   - every confirmed, running, cancelling and completing job;
-//   - every scheduled job whose scheduled_start has come;
-//   - every paused job whose start_deadline has passed (a job paused before its start that nobody resumed: the engine expires it and releases its reserve);
-//   - the REPAIR set: every terminal job (succeeded, failed, cancelled, expired) whose reserve still holds a remainder (reserved - charged - released > 0): a crash window between the move and
-//     the release, or a job an administrator ended by hand.
+// EngineWork returns the jobs the engine must look at NOW, at most limit of them (0 means DefaultEngineWorkLimit), the ones that have been due longest first (COALESCE(next_poll_at,
+// confirmed_at), then id), each with its counts. The order is what keeps a stuck job from starving a newer one (Phase 4 close-out D8): the engine tells the store after every step what came of it
+// (NotePoll), a job that made no progress is not due again until its backoff has passed, and a job that did (or is new, or was moved by somebody) goes to the back of the queue by the time it
+// became due, so a tick's limit cannot be spent for ever on the same hundred jobs whose module is down. The work is, by the DATABASE's clock:
+//   - every confirmed, running, cancelling and completing job that is DUE (next_poll_at is NULL or has passed);
+//   - every scheduled job whose scheduled_start has come and that is due;
+//   - the jobs whose TIME has come, whatever their backoff: a confirmed or scheduled job past its start_deadline (the engine expires it on time) and a paused job past it (a job paused before its start
+//     that nobody resumed: the engine expires it and releases its reserve);
+//   - the REPAIR set, also whatever its backoff: every terminal job (succeeded, failed, cancelled, expired) whose reserve still holds a remainder (reserved - charged - released > 0): a crash window
+//     between the move and the release, or a job an administrator ended by hand.
 func (s *Store) EngineWork(ctx context.Context, limit int) ([]EngineJob, error) {
 	if limit == 0 {
 		limit = DefaultEngineWorkLimit
@@ -182,12 +194,13 @@ func (s *Store) EngineWork(ctx context.Context, limit int) ([]EngineJob, error) 
 		return nil, opErr("engine work", badRequest("the limit must be between 1 and %d", MaxEngineWorkLimit))
 	}
 	rows, err := s.pool.Query(ctx, `WITH cand AS (
-			SELECT j.id, COALESCE(j.last_progress_at, j.confirmed_at) AS ord
+			SELECT j.id, COALESCE(j.next_poll_at, j.confirmed_at) AS ord
 			FROM platform.jobs j
 			LEFT JOIN platform.reserves rs ON rs.job_id = j.id
-			WHERE j.status IN ('confirmed', 'running', 'cancelling', 'completing')
-			   OR (j.status = 'scheduled' AND j.scheduled_start IS NOT NULL AND j.scheduled_start <= now())
-			   OR (j.status = 'paused' AND j.start_deadline IS NOT NULL AND j.start_deadline <= now())
+			WHERE ((j.status IN ('confirmed', 'running', 'cancelling', 'completing')
+			        OR (j.status = 'scheduled' AND j.scheduled_start IS NOT NULL AND j.scheduled_start <= now()))
+			       AND (j.next_poll_at IS NULL OR j.next_poll_at <= now()))
+			   OR (j.status IN ('confirmed', 'scheduled', 'paused') AND j.start_deadline IS NOT NULL AND j.start_deadline <= now())
 			   OR (j.status IN ('succeeded', 'failed', 'cancelled', 'expired') AND COALESCE(rs.reserved - rs.charged - rs.released, 0) > 0)
 			ORDER BY ord, j.id
 			LIMIT $1)
@@ -430,27 +443,91 @@ func (s *Store) EnsureModuleItems(ctx context.Context, jobID string, ids []strin
 		if len(pend) != len(want) {
 			return badRequest("%d of the %d named rows are not pending rows of the job", len(want)-len(pend), len(want))
 		}
-		msgs := make([]renderedMessage, len(pend))
-		for i, r := range pend {
-			if msgs[i], err = renderRow(s.render, *j.Content, r); err != nil {
-				return err
+		inserted, err = s.insertItems(ctx, tx, j, pend)
+		return err
+	})
+	if err != nil {
+		return 0, err
+	}
+	return inserted, nil
+}
+
+// insertItems renders the rows through the store's Renderer and writes their public.job_items rows, one INSERT per rowBatch rows (ON CONFLICT (id) DO NOTHING: a row that is already there is not
+// touched), in the caller's transaction, and returns how many it newly wrote. A message that does not satisfy checkRendered or a renderer that refuses a row fails the call: the caller's transaction
+// is then rolled back, so nothing of the call is written.
+func (s *Store) insertItems(ctx context.Context, tx pgx.Tx, j Job, pend []EngineRow) (int, error) {
+	inserted := 0
+	for start := 0; start < len(pend); start += rowBatch {
+		end := min(start+rowBatch, len(pend))
+		n := end - start
+		rid, email, subject, body, text, reply := make([]string, n), make([]string, n), make([]string, n), make([]string, n), make([]string, n), make([]string, n)
+		for i := start; i < end; i++ {
+			m, err := renderRow(s.render, *j.Content, pend[i])
+			if err != nil {
+				return 0, err
 			}
+			rid[i-start], email[i-start], subject[i-start], body[i-start], text[i-start], reply[i-start] = pend[i].ID, pend[i].EmailNorm, m.subject, m.html, m.text, m.replyTo
 		}
-		for start := 0; start < len(pend); start += rowBatch {
-			end := min(start+rowBatch, len(pend))
-			n := end - start
-			rid, email, subject, body, text, reply := make([]string, n), make([]string, n), make([]string, n), make([]string, n), make([]string, n), make([]string, n)
-			for i := start; i < end; i++ {
-				rid[i-start], email[i-start], subject[i-start], body[i-start], text[i-start], reply[i-start] = pend[i].ID, pend[i].EmailNorm, msgs[i].subject, msgs[i].html, msgs[i].text, msgs[i].replyTo
-			}
-			tag, err := tx.Exec(ctx, `INSERT INTO public.job_items (id, campaign_id, user_id, recipient_email, rendered_subject, rendered_body, rendered_text, reply_to)
-				SELECT u.id::uuid, $1::uuid, $2::uuid, u.email, u.subject, u.body, NULLIF(u.txt, ''), NULLIF(u.reply, '')
-				FROM unnest($3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[]) AS u(id, email, subject, body, txt, reply)
-				ON CONFLICT (id) DO NOTHING`, j.ID, j.UserID, rid, email, subject, body, text, reply)
+		tag, err := tx.Exec(ctx, `INSERT INTO public.job_items (id, campaign_id, user_id, recipient_email, rendered_subject, rendered_body, rendered_text, reply_to)
+			SELECT u.id::uuid, $1::uuid, $2::uuid, u.email, u.subject, u.body, NULLIF(u.txt, ''), NULLIF(u.reply, '')
+			FROM unnest($3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[]) AS u(id, email, subject, body, txt, reply)
+			ON CONFLICT (id) DO NOTHING`, j.ID, j.UserID, rid, email, subject, body, text, reply)
+		if err != nil {
+			return 0, s.fail(err)
+		}
+		inserted += int(tag.RowsAffected())
+	}
+	return inserted, nil
+}
+
+// EnsureJobItems writes the module-facing rows of a whole SEND job ONCE (Phase 4 close-out D9): one public.job_items row for EVERY pending row of the job (modules 2 and 3), in ONE transaction (the
+// lock first), and records the fact on the job (platform.jobs.items_ensured_at = now(), in the same transaction). The engine calls it for a job whose EngineJob.ItemsEnsuredAt is nil and for no
+// other: a tick of a job whose module is down, a later tick of a running job and a restarted engine write nothing and read nothing for it. Rows are written like EnsureModuleItems writes them
+// (id = job_rows.id, ON CONFLICT (id) DO NOTHING through the store's Renderer), a page of rowBatch rows at a time in the order of their ordinal, so a job of 100,000 rows is read, rendered and
+// written in pages and never held in memory whole. A crash before the commit rolls everything back and the next call writes it all; a crash after it leaves the fact recorded; a rival call that
+// finds the fact recorded writes nothing (it returns 0). It returns how many rows it newly wrote. The job must be a send job (ErrNotAllowed, not_a_send_job) that is confirmed, scheduled or
+// running (not_submittable); a message the shared table or the modules cannot take fails the call (ErrBadRequest) and nothing is written.
+func (s *Store) EnsureJobItems(ctx context.Context, jobID string) (int, error) {
+	inserted := 0
+	_, err := s.engineTx(ctx, "ensure job items", jobID, func(tx pgx.Tx, j Job, _ bool) error {
+		if j.Content == nil {
+			return notAllowed(reasonNotASendJob)
+		}
+		switch j.Status {
+		case StatusConfirmed, StatusScheduled, StatusRunning:
+		default:
+			return notAllowed(reasonNotSubmittable)
+		}
+		var done bool
+		if err := tx.QueryRow(ctx, `SELECT items_ensured_at IS NOT NULL FROM platform.jobs WHERE id = $1::uuid`, j.ID).Scan(&done); err != nil {
+			return s.fail(err)
+		}
+		if done {
+			return nil // another call wrote them while this one waited for the lock
+		}
+		after := 0 // ordinals start at 1: the page is the rows after the last one read
+		for {
+			rows, err := tx.Query(ctx, `SELECT id::text, ordinal, email_norm, fields FROM platform.job_rows
+				WHERE job_id = $1::uuid AND state = 'pending' AND ordinal > $2 ORDER BY ordinal LIMIT $3`, j.ID, after, rowBatch)
 			if err != nil {
 				return s.fail(err)
 			}
-			inserted += int(tag.RowsAffected())
+			pend, err := s.scanEngineRows(rows)
+			if err != nil {
+				return err
+			}
+			n, err := s.insertItems(ctx, tx, j, pend)
+			if err != nil {
+				return err
+			}
+			inserted += n
+			if len(pend) < rowBatch {
+				break
+			}
+			after = pend[len(pend)-1].Ordinal
+		}
+		if _, err := tx.Exec(ctx, `UPDATE platform.jobs SET items_ensured_at = now() WHERE id = $1::uuid AND items_ensured_at IS NULL`, j.ID); err != nil {
+			return s.fail(err)
 		}
 		return nil
 	})
@@ -458,6 +535,22 @@ func (s *Store) EnsureModuleItems(ctx context.Context, jobID string, ids []strin
 		return 0, err
 	}
 	return inserted, nil
+}
+
+// markNeverSubmittedItems is the TERMINAL MARKER of a job that ended without sending (Phase 4 close-out D9): in the transaction that ends the job it moves the public.job_items rows of THIS job
+// (campaign_id = the job, the row's own user) that no module was ever given (the job row has no submitted_at stamp and no result of origin module) from 'pending' to 'cancelled', and returns how many
+// it changed. Nothing is deleted (the roles cannot, and the platform never deletes from this table), no other job's item and no item of a submitted row is touched, and a replay changes nothing (an
+// item that is no longer 'pending' is left alone). NO module reads this column: the marker is the platform's record that the item will never be submitted, not a lock (see the column's comment).
+func (s *Store) markNeverSubmittedItems(ctx context.Context, tx pgx.Tx, jobID string) (int, error) {
+	tag, err := tx.Exec(ctx, `UPDATE public.job_items i SET status = 'cancelled'
+		FROM platform.job_rows w
+		WHERE i.campaign_id = $1::uuid AND w.job_id = $1::uuid AND w.id = i.id AND w.user_id = i.user_id
+		  AND i.status = 'pending' AND w.submitted_at IS NULL
+		  AND NOT EXISTS (SELECT 1 FROM platform.job_results r WHERE r.job_id = w.job_id AND r.item_ref = w.id AND r.origin = 'module')`, jobID)
+	if err != nil {
+		return 0, s.fail(err)
+	}
+	return int(tag.RowsAffected()), nil
 }
 
 // MarkSubmitted stamps submitted_at = now() on the named rows the module now holds, for a job that is confirmed, scheduled, running, cancelling or completing (a stamp for a job in any other status is
@@ -907,6 +1000,9 @@ func (s *Store) Expire(ctx context.Context, jobID string) (Job, error) {
 		if _, err := s.writePlatformEnd(ctx, tx, j.ID, "expired", false); err != nil {
 			return err
 		}
+		if _, err := s.markNeverSubmittedItems(ctx, tx, j.ID); err != nil {
+			return err
+		}
 		return s.releaseIn(ctx, tx, j, metered)
 	})
 }
@@ -929,6 +1025,9 @@ func (s *Store) FailJob(ctx context.Context, jobID, reason string) (Job, error) 
 		if _, err := s.writePlatformEnd(ctx, tx, j.ID, "infrastructure_failure", false); err != nil {
 			return err
 		}
+		if _, err := s.markNeverSubmittedItems(ctx, tx, j.ID); err != nil {
+			return err
+		}
 		return s.releaseIn(ctx, tx, j, metered)
 	})
 }
@@ -945,6 +1044,10 @@ func (s *Store) CancelUnsubmitted(ctx context.Context, jobID string) (int, error
 		}
 		var err error
 		n, err = s.writePlatformEnd(ctx, tx, j.ID, "cancelled", true)
+		if err != nil {
+			return err
+		}
+		_, err = s.markNeverSubmittedItems(ctx, tx, j.ID) // the items of the rows no module was ever given (the same rows)
 		return err
 	})
 	if err != nil {
@@ -964,6 +1067,9 @@ func (s *Store) Release(ctx context.Context, jobID string) error {
 		}
 		if state := endedResultState(j.Status); state != "" {
 			if _, err := s.writePlatformEnd(ctx, tx, j.ID, state, false); err != nil {
+				return err
+			}
+			if _, err := s.markNeverSubmittedItems(ctx, tx, j.ID); err != nil { // a job an administrator ended by hand: its never-submitted items get the same marker
 				return err
 			}
 		}
@@ -989,6 +1095,49 @@ func (s *Store) NoteProgress(ctx context.Context, jobID string) error {
 		return opErr("note progress", s.whyNotWritten(ctx, jobID))
 	}
 	return nil
+}
+
+// MaxPollBackoff is the longest the engine may leave a job alone after a step that made no progress: ten minutes, the wall platform.jobs_engine_schedule keeps in the database (23514,
+// jobs_next_poll_within_the_cap) and the largest value of PLATFORM_JOB_BACKOFF_CAP_SEC (pinned equal by a test). The engine's own cap is smaller (a quarter of the module's staleness limit at most).
+const MaxPollBackoff = 600 * time.Second
+
+// maxIdleExponent bounds the exponent of the backoff: 2^30 times any base is far past every cap, and the bound keeps the arithmetic of the statement from overflowing.
+const maxIdleExponent = 30
+
+// NotePoll tells the store what came of one step of the engine on a job (Phase 4 close-out D8), in ONE statement as the actor engine, and says whether it wrote. status is the status the step READ
+// the job in: the outcome applies only while the job is still in it, so a job that somebody moved in the meantime (the user's cancel) keeps the wake-up the database gave it and does not wait out a
+// backoff. A job that has ended is never written.
+//   - progressed (a row was handed to the module, a result recorded, the job moved or ended): idle_polls = 0 and next_poll_at = now(): due again at the next tick, and at the BACK of the queue by
+//     the time it became due, so a tick's limit is shared by every job that has work;
+//   - no progress: idle_polls grows by one and next_poll_at = now() + min(ceiling, base * 2^idle_polls) (the exponent as it was before this step): exponential from one base (the tick) to the
+//     ceiling, by the database's clock. base 0 makes every idle job due again at once (backoff off: the tests of the engine that tick back to back); the ceiling is at most MaxPollBackoff
+//     (ErrBadRequest otherwise, and the database refuses a later time than that whatever is asked).
+//
+// Safe to repeat: a replay of "progressed" changes nothing but the clock, a replay of "idle" lengthens the wait by one step, never past the ceiling. ErrNotFound for an id that is not a uuid; a job
+// that does not exist, is not in status any more or has ended is (false, nil): the step's outcome is simply no longer anyone's to record.
+func (s *Store) NotePoll(ctx context.Context, jobID, status string, progressed bool, base, ceiling time.Duration) (bool, error) {
+	if !isUUID(jobID) {
+		return false, opErr("note poll", ErrNotFound)
+	}
+	if base < 0 || ceiling < base || ceiling > MaxPollBackoff {
+		return false, opErr("note poll", badRequest("the backoff is a base of 0 or more and a ceiling between the base and %s", MaxPollBackoff))
+	}
+	var tag pgconn.CommandTag
+	var err error
+	if progressed {
+		tag, err = s.pool.Exec(ctx, `UPDATE platform.jobs SET idle_polls = 0, next_poll_at = now()
+			WHERE id = $1::uuid AND status = $2 AND status IN ('confirmed', 'scheduled', 'running', 'paused', 'cancelling', 'completing')`, jobID, status)
+	} else {
+		tag, err = s.pool.Exec(ctx, `UPDATE platform.jobs
+			SET idle_polls = LEAST(idle_polls + 1, 1000000),
+			    next_poll_at = now() + make_interval(secs => LEAST($4::double precision, $3::double precision * power(2::double precision, LEAST(idle_polls, $5::integer)::double precision)))
+			WHERE id = $1::uuid AND status = $2 AND status IN ('confirmed', 'scheduled', 'running', 'paused', 'cancelling', 'completing')`,
+			jobID, status, base.Seconds(), ceiling.Seconds(), maxIdleExponent)
+	}
+	if err != nil {
+		return false, opErr("note poll", s.fail(err))
+	}
+	return tag.RowsAffected() == 1, nil
 }
 
 // whyNotWritten tells a statement that matched no row because the job does not exist (ErrNotFound) from one that matched none because of its status (ErrNotAllowed).

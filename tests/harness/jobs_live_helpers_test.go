@@ -251,6 +251,7 @@ func newJlStack(t *testing.T, ctx context.Context) *jlStack {
 		SubmitBatch:    500,
 		SubmitBatchFor: map[string]int{jobs.ModuleVerify: jobs.MaxEngineIDs},
 		StepTimeout:    jobengine.DefaultStepTimeout,
+		BackoffCap:     2 * time.Second, // an idle job is looked at again within two seconds: these tests wait for outcomes in seconds
 	})
 	if err != nil {
 		t.Fatalf("jobengine.New: %v", err)

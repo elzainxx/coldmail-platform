@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/coldmail-platform/platform/internal/auth"
 	"github.com/coldmail-platform/platform/internal/jobs"
 	"github.com/coldmail-platform/platform/internal/money"
 )
@@ -37,6 +38,11 @@ func mappingTable() []mapping {
 		{"ErrTooManyRows bare", wrapped(jobs.ErrTooManyRows), 413, "too_many_rows", nil},
 		{"ErrNothingToDo", wrapped(jobs.ErrNothingToDo), 422, "nothing_to_do", nil},
 		{"ErrStalePreview", wrapped(jobs.ErrStalePreview), 409, "preview_stale", nil},
+		// owner ruling OD-4: the unknown choice of a chained send. A stale preview that knows its reason says it; the missing choice is a 422 that names how many results are unknown and the two values.
+		{"StalePreviewError, unknown_choice_changed", wrapped(&jobs.StalePreviewError{Reason: jobs.ReasonUnknownChoiceChanged}), 409, "preview_stale", map[string]any{"reason": "unknown_choice_changed"}},
+		{"StalePreviewError with no reason", wrapped(&jobs.StalePreviewError{}), 409, "preview_stale", nil},
+		{"UnknownChoiceRequiredError", wrapped(&jobs.UnknownChoiceRequiredError{Unknown: 3}), 422, "unknown_choice_required", map[string]any{"unknown_rows": float64(3), "allowed": []any{"include", "exclude"}}},
+		{"ErrUnknownChoiceRequired bare", wrapped(jobs.ErrUnknownChoiceRequired), 422, "unknown_choice_required", map[string]any{"allowed": []any{"include", "exclude"}}},
 		{"ErrSlotTaken", wrapped(jobs.ErrSlotTaken), 409, "job_slot_taken", nil},
 		{"ErrConfirmKeyReused", wrapped(jobs.ErrConfirmKeyReused), 409, "idempotency_key_reused", nil},
 		{"ErrNotPreviewed", wrapped(jobs.ErrNotPreviewed), 409, "not_previewed", nil},
@@ -53,6 +59,7 @@ func mappingTable() []mapping {
 		{"ErrNotAllowed, a word of the store's", wrapped(&jobs.NotAllowedError{Reason: "not_a_draft"}), 409, "not_allowed", map[string]any{"reason": "not_a_draft"}},
 		{"ErrNotAllowed bare", wrapped(jobs.ErrNotAllowed), 409, "not_allowed", map[string]any{"reason": "not_allowed"}},
 		{"money.ErrLockTimeout", wrapped(&money.LockTimeoutError{}), 503, "busy", nil},
+		{"auth.ErrKeysUnavailable", wrapped(auth.ErrKeysUnavailable), 503, "auth_unavailable", nil},
 		// what no client route can cause: the engine's sentinels, and anything else, are the server's
 		{"ErrIncomplete (engine only)", wrapped(&jobs.IncompleteError{Missing: 3}), 500, "internal_error", nil},
 		{"ErrModuleRefTaken (engine only)", wrapped(jobs.ErrModuleRefTaken), 500, "internal_error", nil},

@@ -678,13 +678,17 @@ func TestJobsAPI_TheCSVOfAConfirmedJobHoldsOneLinePerRowAndReadsBackExactly(t *t
 	if p["rows"] != float64(11) || p["pending"] != float64(3) || p["malformed"] != float64(7) || p["duplicates"] != float64(1) {
 		t.Fatalf("the preview is %v", p)
 	}
-	c := e.confirmJob(A, id, fp, e.key()).obj(t, 200)
-	if c["pending"] != float64(2) || c["suppressed"] != float64(1) || c["reserved"] != float64(2) {
-		t.Fatalf("the confirm is %v: alice and carol reach the module, bob is on the user's own suppression list", c)
+	// owner ruling OD-3 (this test was written when a verify job left a suppressed address out): bob is counted as suppressed and is STILL verified, so the preview prices all three rows
+	if p["suppressed"] != float64(1) || p["suppressed_still_verified"] != true || p["units"] != float64(3) || p["credits"] != float64(3) {
+		t.Fatalf("the preview of a verify job with a suppressed address is %v, want suppressed 1, still verified, 3 units, 3 credits", p)
 	}
-	// the confirm wrote the platform's own results (7 malformed, 1 repeat, 1 suppressed); the module's two are written here (the engine does it later), free
-	if n := e.int("SELECT count(*) FROM platform.job_results WHERE job_id = $1", id); n != 9 {
-		t.Fatalf("%d results after the confirm, want the platform's 9", n)
+	c := e.confirmJob(A, id, fp, e.key()).obj(t, 200)
+	if c["pending"] != float64(3) || c["suppressed"] != float64(1) || c["reserved"] != float64(3) {
+		t.Fatalf("the confirm is %v: alice, bob and carol reach the module (bob is on the user's own suppression list and is verified all the same), one row carries the flag", c)
+	}
+	// the confirm wrote the platform's own results (7 malformed, 1 repeat: a verify job's suppressed row is the module's, not the platform's); the module's three are written here (the engine does it later), free
+	if n := e.int("SELECT count(*) FROM platform.job_results WHERE job_id = $1", id); n != 8 {
+		t.Fatalf("%d results after the confirm, want the platform's 8", n)
 	}
 	e.recordFreeModuleResults(id)
 
@@ -693,7 +697,7 @@ func TestJobsAPI_TheCSVOfAConfirmedJobHoldsOneLinePerRowAndReadsBackExactly(t *t
 		t.Fatalf("%d %v", resp.Status, resp.Header)
 	}
 	cr := csv.NewReader(bytes.NewReader(resp.Body))
-	cr.FieldsPerRecord = 8
+	cr.FieldsPerRecord = 9
 	recs, err := cr.ReadAll()
 	if err != nil {
 		t.Fatalf("the file is not a CSV: %v\n%s", err, resp.Body)
@@ -701,13 +705,13 @@ func TestJobsAPI_TheCSVOfAConfirmedJobHoldsOneLinePerRowAndReadsBackExactly(t *t
 	if len(recs) != 1+len(inputs) {
 		t.Fatalf("%d lines, want the header and one per row (%d)", len(recs), len(inputs))
 	}
-	if strings.Join(recs[0], ",") != "ordinal,email,origin,state,reason,decision,unit,rule" {
+	if strings.Join(recs[0], ",") != "ordinal,email,origin,state,reason,decision,unit,rule,suppressed" {
 		t.Fatalf("the header is %v", recs[0])
 	}
 	// what the database holds, row by row, against what the file says once the escape is undone; and the typed text of a malformed row exactly as it was typed
 	db := e.rows(`SELECT ordinal, origin, module_state, COALESCE(reason, ''), decision, COALESCE(unit, ''), rule FROM platform.job_results WHERE job_id = $1 ORDER BY ordinal`, id)
 	wantStates := map[int][2]string{ // ordinal -> origin, state: written out by hand from the list above
-		1: {"module", "valid"}, 2: {"platform", "suppressed"}, 3: {"platform", "malformed"}, 4: {"platform", "duplicate"}, 5: {"platform", "malformed"}, 6: {"platform", "malformed"},
+		1: {"module", "valid"}, 2: {"module", "valid"}, 3: {"platform", "malformed"}, 4: {"platform", "duplicate"}, 5: {"platform", "malformed"}, 6: {"platform", "malformed"},
 		7: {"platform", "malformed"}, 8: {"module", "valid"}, 9: {"platform", "malformed"}, 10: {"platform", "malformed"}, 11: {"platform", "malformed"},
 	}
 	for i, rec := range recs[1:] {
@@ -722,6 +726,10 @@ func TestJobsAPI_TheCSVOfAConfirmedJobHoldsOneLinePerRowAndReadsBackExactly(t *t
 		}
 		if rec[2] != wantStates[ord][0] || rec[3] != wantStates[ord][1] {
 			t.Errorf("line %d is %s/%s, want %v", ord, rec[2], rec[3], wantStates[ord])
+		}
+		// the new last column: true for bob (line 2) and for no other line (the eight older columns are where they were)
+		if want := fmt.Sprint(ord == 2); rec[8] != want {
+			t.Errorf("line %d: the suppressed column is %q, want %q", ord, rec[8], want)
 		}
 		if got := rec[2] + "|" + rec[3]; !strings.Contains(db[i], "|"+rec[2]+"|"+rec[3]+"|") {
 			t.Errorf("line %d (%s) does not match the database row %q", ord, got, db[i])
@@ -744,7 +752,11 @@ func TestJobsAPI_TheCSVOfAConfirmedJobHoldsOneLinePerRowAndReadsBackExactly(t *t
 	// the same job over the JSON route says the same, row for row
 	var jsonOrdinals []int
 	for _, x := range e.json(A, "GET", "/v1/jobs/"+id+"/results?limit=100", nil).obj(t, 200)["results"].([]any) {
-		jsonOrdinals = append(jsonOrdinals, int(x.(map[string]any)["ordinal"].(float64)))
+		m := x.(map[string]any)
+		jsonOrdinals = append(jsonOrdinals, int(m["ordinal"].(float64)))
+		if want := m["ordinal"] == float64(2); m["suppressed"] != want { // the flag over JSON is the CSV's column: true on bob alone
+			t.Errorf("JSON result %v: suppressed = %v, want %v", m["ordinal"], m["suppressed"], want)
+		}
 	}
 	if len(jsonOrdinals) != len(inputs) || jsonOrdinals[0] != 1 || jsonOrdinals[len(jsonOrdinals)-1] != len(inputs) {
 		t.Fatalf("the JSON results are %v", jsonOrdinals)

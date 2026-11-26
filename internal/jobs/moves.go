@@ -89,8 +89,9 @@ func (s *Store) Reopen(ctx context.Context, userID, jobID string) (Job, error) {
 }
 
 // CancelBeforeStart cancels a job that holds credits and has not been submitted to its module: confirmed, scheduled, or paused from scheduled. In ONE transaction (the advisory lock first,
-// then the job row): the move to cancelled (actor: the user), the platform's result `cancelled` (rule P-01, free) for every row that has no result yet, and, for a metered module, the release
-// of the whole reserve (money.ReleaseIn): the credits come back, the slot is free.
+// then the job row): the move to cancelled (actor: the user), the platform's result `cancelled` (rule P-01, free) for every row that has no result yet, the terminal marker (public.job_items.status
+// 'cancelled') on the items of the rows no module was ever given (markNeverSubmittedItems), and, for a metered module, the release of the whole reserve (money.ReleaseIn): the credits come back, the
+// slot is free.
 //
 // A RUNNING job is not this store's to cancel: the move is only ATTEMPTED (running -> cancelling, which records the request, sets cancel_requested_at and writes the event) and the DATABASE
 // decides whether the module can do it: module 1 has no per-job cancel, so the refusal arrives as ErrNotAllowed with Reason job_module_cannot_cancel.
@@ -121,6 +122,9 @@ func (s *Store) CancelBeforeStart(ctx context.Context, userID, jobID string) (Jo
 			WHERE r.job_id = $1::uuid AND r.user_id = $2::uuid
 			  AND NOT EXISTS (SELECT 1 FROM platform.job_results x WHERE x.job_id = r.job_id AND x.item_ref = r.id)`, jobID, userID, rule); err != nil {
 			return s.fail(err)
+		}
+		if _, err := s.markNeverSubmittedItems(ctx, tx, jobID); err != nil { // the job ended without sending: the items of its rows get the terminal marker (D9)
+			return err
 		}
 		var metered bool
 		if err := tx.QueryRow(ctx, `SELECT metered FROM platform.modules WHERE id = $1`, j.Module).Scan(&metered); err != nil {

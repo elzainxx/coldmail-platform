@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/coldmail-platform/platform/internal/auth"
 	"github.com/coldmail-platform/platform/internal/httpapi"
 	"github.com/coldmail-platform/platform/internal/jobs"
 	"github.com/coldmail-platform/platform/internal/money"
@@ -25,6 +26,7 @@ const (
 	codeTooManyRows       = "too_many_rows"
 	codeNothingToDo       = "nothing_to_do"
 	codePreviewStale      = "preview_stale"
+	codeUnknownChoice     = "unknown_choice_required"
 	codeJobSlotTaken      = "job_slot_taken"
 	codeIdemReused        = "idempotency_key_reused"
 	codeNotPreviewed      = "not_previewed"
@@ -35,6 +37,7 @@ const (
 	codeModuleUnavailable = "module_unavailable"
 	codeNotAllowed        = "not_allowed"
 	codeBusy              = "busy"
+	codeAuthUnavailable   = "auth_unavailable"
 	codeInternal          = "internal_error"
 )
 
@@ -49,6 +52,7 @@ var messages = map[string]string{
 	codeTooManyRows:       "The list has more rows than a job may hold.",
 	codeNothingToDo:       "No row of the list would reach the module.",
 	codePreviewStale:      "The preview is out of date: preview the job again and confirm what the new preview says.",
+	codeUnknownChoice:     "The list was verified with some unknown results: say whether to include or exclude them.",
 	codeJobSlotTaken:      "You already have an active job on this module.",
 	codeIdemReused:        "This Idempotency-Key already confirmed another job.",
 	codeNotPreviewed:      "The job must be previewed before it can be confirmed.",
@@ -59,6 +63,7 @@ var messages = map[string]string{
 	codeModuleUnavailable: "The module cannot be reached right now; try again later.",
 	codeNotAllowed:        "The job's state does not allow this.",
 	codeBusy:              "The service is busy with another operation on the same credits; try again.",
+	codeAuthUnavailable:   "Authentication is temporarily unavailable; try again shortly.",
 	codeInternal:          "An unexpected error occurred.",
 }
 
@@ -75,12 +80,14 @@ type problem struct {
 // know is a 500 `internal_error` with no detail: the cause is the log's.
 func classify(err error) problem {
 	var (
-		bad  *jobs.BadRequestError
-		many *jobs.TooManyRowsError
-		na   *jobs.NotAllowedError
-		cred jobs.ErrInsufficientCredits
-		inf  jobs.ErrInfeasible
-		big  *http.MaxBytesError
+		bad   *jobs.BadRequestError
+		many  *jobs.TooManyRowsError
+		na    *jobs.NotAllowedError
+		cred  jobs.ErrInsufficientCredits
+		inf   jobs.ErrInfeasible
+		big   *http.MaxBytesError
+		ucr   *jobs.UnknownChoiceRequiredError
+		stale *jobs.StalePreviewError
 	)
 	switch {
 	case errors.Is(err, jobs.ErrNotFound):
@@ -97,6 +104,12 @@ func classify(err error) problem {
 		return problem{status: http.StatusRequestEntityTooLarge, code: codeTooManyRows, expected: true}
 	case errors.Is(err, jobs.ErrNothingToDo):
 		return problem{status: http.StatusUnprocessableEntity, code: codeNothingToDo, expected: true}
+	case errors.As(err, &ucr):
+		return problem{status: http.StatusUnprocessableEntity, code: codeUnknownChoice, details: []any{"unknown_rows", ucr.Unknown, "allowed", []string{jobs.UnknownInclude, jobs.UnknownExclude}}, expected: true}
+	case errors.Is(err, jobs.ErrUnknownChoiceRequired):
+		return problem{status: http.StatusUnprocessableEntity, code: codeUnknownChoice, details: []any{"allowed", []string{jobs.UnknownInclude, jobs.UnknownExclude}}, expected: true}
+	case errors.As(err, &stale) && stale.Reason != "":
+		return problem{status: http.StatusConflict, code: codePreviewStale, details: []any{"reason", stale.Reason}, expected: true}
 	case errors.Is(err, jobs.ErrStalePreview):
 		return problem{status: http.StatusConflict, code: codePreviewStale, expected: true}
 	case errors.Is(err, jobs.ErrSlotTaken):
@@ -121,6 +134,9 @@ func classify(err error) problem {
 		return problem{status: http.StatusConflict, code: codeNotAllowed, details: []any{"reason", "not_allowed"}, expected: true}
 	case errors.Is(err, money.ErrLockTimeout):
 		return problem{status: http.StatusServiceUnavailable, code: codeBusy, expected: true}
+	case errors.Is(err, auth.ErrKeysUnavailable):
+		// the platform could not obtain the keys to judge a token: not the user's fault, so not a 401 (the authentication middleware sends it here)
+		return problem{status: http.StatusServiceUnavailable, code: codeAuthUnavailable, expected: true}
 	}
 	return problem{status: http.StatusInternalServerError, code: codeInternal}
 }
@@ -190,6 +206,9 @@ func (a *API) fail(w http.ResponseWriter, r *http.Request, err error) {
 	}
 	if p.code == codeBusy {
 		w.Header().Set("Retry-After", "1")
+	}
+	if p.code == codeAuthUnavailable {
+		w.Header().Set("Retry-After", authRetryAfter)
 	}
 	httpapi.WriteError(w, r, p.status, p.code, messages[p.code], p.details...)
 }

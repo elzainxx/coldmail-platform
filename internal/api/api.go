@@ -1,7 +1,7 @@
 // Package api is the platform's job HTTP API (Phase 4, chunk B14b): the routes a signed-in user creates, previews, confirms, watches and downloads a job through. P6 builds only UI on it.
 //
 // WHO THE CALLER IS. Every route sits behind one middleware (auth.go): the request must carry exactly one `Authorization: Bearer <token>` header, the token is verified by internal/auth
-// (signature, exp/nbf, iss, aud) and its subject is resolved through tenant.Resolver.ByAuthUser (an unknown, inactive or system login is refused). EVERY failure there is the same 401
+// (signature, exp/nbf, iss, aud) and its subject is resolved through tenant.Resolver.ByAuthUser (an unknown, inactive or system login is refused). EVERY failure there is the same 401 (except the one 503 auth_unavailable: the platform could not obtain the keys to judge the token, internal/auth ErrKeysUnavailable)
 // `unauthenticated`, with the same body and `WWW-Authenticate: Bearer`; the reason goes to the log under the request id and is never the token, a part of it, or anything in the response.
 // The user the request acts for is `public.users.id` of that principal, put in the request context, and it is the ONLY source of the user id of every store call: no path, query, header or
 // body names a user (a body or query that tries is refused as an unknown field, and a header is never read).
@@ -39,7 +39,7 @@ type Service interface {
 	CreateDraft(ctx context.Context, userID string, req jobs.CreateReq) (jobs.Job, error)
 	Get(ctx context.Context, userID, jobID string) (jobs.Job, error)
 	List(ctx context.Context, userID string, opts jobs.ListOpts) ([]jobs.Job, string, error)
-	Preview(ctx context.Context, userID, jobID string) (jobs.Preview, error)
+	Preview(ctx context.Context, userID, jobID string, opts ...jobs.PreviewOption) (jobs.Preview, error)
 	Confirm(ctx context.Context, userID string, req jobs.ConfirmReq) (jobs.ConfirmResult, error)
 	DiscardDraft(ctx context.Context, userID, jobID string) (jobs.Job, error)
 	Reopen(ctx context.Context, userID, jobID string) (jobs.Job, error)

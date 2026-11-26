@@ -110,6 +110,8 @@ func TestTypedErrors_MatchTheirSentinelsAndSayNoAddress(t *testing.T) {
 		{badRequest("row %d is bad", 3), ErrBadRequest, "row 3 is bad"},
 		{&TooManyRowsError{Limit: 10}, ErrTooManyRows, "at most 10"},
 		{notAllowed("job_transition_illegal"), ErrNotAllowed, "job_transition_illegal"},
+		{&UnknownChoiceRequiredError{Unknown: 4}, ErrUnknownChoiceRequired, "4 unknown result(s)"},
+		{&StalePreviewError{Reason: ReasonUnknownChoiceChanged}, ErrStalePreview, "unknown_choice_changed"},
 	}
 	for _, c := range cases {
 		if !errors.Is(c.err, c.is) || errors.Is(c.err, ErrNotFound) || !strings.Contains(c.err.Error(), c.text) {
@@ -244,6 +246,7 @@ func TestRefusalWord(t *testing.T) {
 		"stale_preview": ErrStalePreview, "slot_taken": ErrSlotTaken, "confirm_key_reused": ErrConfirmKeyReused, "not_previewed": ErrNotPreviewed, "no_entitlement": ErrNoEntitlement,
 		"suspended": ErrSuspended, "module_unavailable": ErrModuleUnavailable, "lock_timeout": &money.LockTimeoutError{Wait: time.Second},
 		"insufficient_credits": money.ErrInsufficientCredits{Needed: 2}, "infeasible": ErrInfeasible{Causes: []string{"c"}},
+		"unknown_choice_required": &UnknownChoiceRequiredError{Unknown: 1}, // the typed stale preview is the stale preview's word, with its reason apart
 	} {
 		if got := refusalWord(opErr("confirm", err)); got != want {
 			t.Errorf("refusalWord(%v) = %q, want %q", err, got, want)

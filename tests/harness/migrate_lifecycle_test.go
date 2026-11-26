@@ -107,6 +107,10 @@ var chainRelations = map[string][]string{
 	"0012": {"job_results", "job_rows", "job_settlement_drift"},
 	// platform_0013 adds the history of the reachability flag (the flag itself is three columns of platform.unit_costs)
 	"0013": {"unit_reachability_history"},
+	// platform_0014 adds no relation: the column suppressed on platform.job_rows and on platform.job_results, three CHECKs and the amended text of two guard functions
+	"0014": {},
+	// platform_0015 adds no relation: three annotation columns of platform.jobs (next_poll_at, idle_polls, items_ensured_at), a CHECK, the trigger jobs_engine_schedule and the comment of public.job_items.status
+	"0015": {},
 }
 
 // relationsThrough is the sorted union of what the listed versions add.
@@ -147,6 +151,14 @@ func downStepBefore(t *testing.T, c *pgx.Conn, v string) {
 	t.Helper()
 	when := "before down " + v
 	switch v {
+	case "0015":
+		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015"), when)
+		engineScheduleObjects(t, c, true, when)
+		suppressedFlagObjects(t, c, true, when) // the migration below is whole
+	case "0014":
+		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014"), when)
+		suppressedFlagObjects(t, c, true, when)
+		reachableUnitsObjects(t, c, true, when) // the migration below is whole
 	case "0013":
 		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013"), when)
 		reachableUnitsObjects(t, c, true, when)
@@ -213,6 +225,18 @@ func downStepAfter(t *testing.T, c *pgx.Conn, v string) {
 	t.Helper()
 	when := "after down " + v
 	switch v {
+	case "0015":
+		// the three columns, the CHECK, the trigger and its function are gone and the comment of public.job_items.status is the one of platform_0001 again; the suppressed flag of 0014 and everything below is untouched
+		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014"), when)
+		engineScheduleObjects(t, c, false, when)
+		suppressedFlagObjects(t, c, true, when)
+		jobLifecycleObjects(t, c, true, when)
+	case "0014":
+		// the column on the rows and on the results, the three CHECKs and the amended guards are gone (the guards are platform_0012's text again); the reachable units of 0013 and the list and results of 0012 are untouched
+		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013"), when)
+		suppressedFlagObjects(t, c, false, when)
+		reachableUnitsObjects(t, c, true, when)
+		jobRowsObjects(t, c, true, when)
 	case "0013":
 		// the flag, its history, its writer and the two checks are gone and the older reserve check (every unit of the module is the complete snapshot) is back; the list and the results of 0012 are untouched
 		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012"), when)
@@ -1054,7 +1078,7 @@ func TestRunnerLifecycle(t *testing.T) {
 
 	// The executable expectation of the migration chain. scripts/check-migrations.sh reads this literal and fails when the
 	// newest migration is not named in it, so a migration cannot be added without extending this test.
-	wantChain := []string{"0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013"}
+	wantChain := []string{"0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015"}
 
 	dir := repoMigrationsDir(t)
 	if onDisk := chainOnDisk(t, dir); !sameStrings(onDisk, wantChain) {

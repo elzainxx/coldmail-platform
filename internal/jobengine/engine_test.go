@@ -59,6 +59,14 @@ type fstore struct {
 	started   bool
 	cancelled int
 	flags     []map[string]any // the detail of every Flag call, in order
+	polls     []pollNote       // every NotePoll call, in order
+}
+
+// pollNote is one outcome the engine told the store.
+type pollNote struct {
+	id, status    string
+	progressed    bool
+	base, ceiling time.Duration
 }
 
 func newFstore() *fstore { return &fstore{log: &callLog{}, errs: map[string]error{}} }
@@ -104,11 +112,13 @@ func (s *fstore) PendingRows(ctx context.Context, id string, limit int) ([]jobs.
 	return append([]jobs.EngineRow(nil), s.pending[:min(limit, len(s.pending))]...), nil
 }
 
-func (s *fstore) EnsureModuleItems(ctx context.Context, id string, ids []string) (int, error) {
-	if err := s.hit("EnsureModuleItems"); err != nil {
+func (s *fstore) EnsureJobItems(ctx context.Context, id string) (int, error) {
+	if err := s.hit("EnsureJobItems"); err != nil {
 		return 0, err
 	}
-	return len(ids), nil
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.pending), nil
 }
 
 func (s *fstore) MarkSubmitted(ctx context.Context, id string, ids []string) error {
@@ -168,6 +178,14 @@ func (s *fstore) CancelUnsubmitted(ctx context.Context, id string) (int, error) 
 func (s *fstore) Release(ctx context.Context, id string) error { return s.hit("Release") }
 func (s *fstore) NoteProgress(ctx context.Context, id string) error {
 	return s.hit("NoteProgress")
+}
+
+// NotePoll records the outcome the engine told the store in its OWN list: the sequences the other tests assert (log) are the calls that act on a job, and a note after every step would be in all of them.
+func (s *fstore) NotePoll(ctx context.Context, id, status string, progressed bool, base, ceiling time.Duration) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.polls = append(s.polls, pollNote{id: id, status: status, progressed: progressed, base: base, ceiling: ceiling})
+	return true, s.errs["NotePoll"]
 }
 func (s *fstore) AlertStale(ctx context.Context, id string, after time.Duration, d map[string]any) (bool, error) {
 	if err := s.hit(fmt.Sprintf("AlertStale(%s)", after)); err != nil {
@@ -467,7 +485,7 @@ func TestStarting_SubmitsThenStartsThenStamps_InThatOrder(t *testing.T) {
 	r.mod.accept = 2
 	r.mod.ref = "handle-1"
 	r.e.Tick(context.Background())
-	want := "EngineWork,PendingRows,EnsureModuleItems,Submit,Start(handle-1),MarkSubmitted"
+	want := "EngineWork,PendingRows,EnsureJobItems,Submit,Start(handle-1),MarkSubmitted"
 	if got := r.st.log.joined(); got != want {
 		t.Errorf("calls = %s\nwant    %s (the module holds the rows, THEN the job runs, THEN the stamps: a crash between any two is repaired by offering the rows again)", got, want)
 	}
@@ -478,7 +496,7 @@ func TestStarting_SubmitsThenStartsThenStamps_InThatOrder(t *testing.T) {
 	r1 := newRig(t, Config{}, ej(jobA, "m1", jobs.StatusConfirmed))
 	r1.st.pending = rows(2)
 	r1.e.Tick(context.Background())
-	if r1.st.log.count("EnsureModuleItems") != 0 || r1.st.log.count("Start") != 1 {
+	if r1.st.log.count("EnsureJobItems") != 0 || r1.st.log.count("Start") != 1 {
 		t.Errorf("module 1 calls: %v", r1.st.log.list())
 	}
 }
@@ -738,11 +756,16 @@ func TestRefusal_TheFlagIsRaisedOncePerStalenessIntervalAndAFailedWriteIsTriedAg
 	if f.st.log.count("Flag") != 2 || len(f.st.flags) != 1 || f.st.log.count("FailJob") != 0 {
 		t.Errorf("a failed flag write: %v / %d written (want two attempts, one written, no failure)", f.st.log.list(), len(f.st.flags))
 	}
-	// the memory of a job that is no longer work is dropped
+	// the memory of a job that is no longer work (it finished, or is only waiting out a backoff: D8) is kept while it could still hold a flag back, and dropped once it is older than every staleness limit
 	f.st.work = nil
 	f.e.Tick(context.Background())
+	if len(f.e.refusals) != 1 {
+		t.Errorf("the refusal flag of a job that left the work was forgotten at once, inside the staleness interval: %v", f.e.refusals)
+	}
+	*f.now = f.now.Add(DefaultStaleAfter + time.Minute)
+	f.e.Tick(context.Background())
 	if len(f.e.refusals) != 0 {
-		t.Errorf("the refusals of a finished job were kept: %v", f.e.refusals)
+		t.Errorf("the refusals of a finished job were kept past every staleness limit: %v", f.e.refusals)
 	}
 }
 

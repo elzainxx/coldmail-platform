@@ -70,12 +70,12 @@ var declaredClasses = map[string]privClass{
 	// history of every job (platform_app writes it, by the trigger of a move and by the store; platform_admin reads it; append-only for everybody)
 	"job_transitions": classOf(privSelect, privSelect),
 	"job_events":      classOf(privSelectInsert, privSelect),
-	// platform_0012: a job's list (platform_app inserts and deletes rows and may update exactly the eight columns the preview and the engine write: never id, job_id, user_id, ordinal or created_at), its
+	// platform_0012: a job's list (platform_app inserts and deletes rows and may update exactly the nine columns the preview, the confirm (suppressed, platform_0014) and the engine write: never id, job_id, user_id, ordinal or created_at), its
 	// results (insert-only for everybody: no UPDATE or DELETE for any role, a trigger refuses the owner too) and the database half of the three-way proof (a view: both roles read it)
 	"job_rows": {
 		Owner:        "platform_owner",
 		Grants:       map[string][]string{"platform_app": {"SELECT", "INSERT", "DELETE"}, "platform_admin": privSelect},
-		ColumnGrants: map[string]map[string][]string{"platform_app": {"UPDATE": {"email_raw", "email_norm", "state", "reason", "duplicate_of", "fields", "source_item", "submitted_at"}}},
+		ColumnGrants: map[string]map[string][]string{"platform_app": {"UPDATE": {"email_raw", "email_norm", "state", "reason", "duplicate_of", "fields", "source_item", "submitted_at", "suppressed"}}},
 	},
 	"job_results":          classOf(privSelectInsert, privSelect),
 	"job_settlement_drift": classOf(privSelect, privSelect),
@@ -1057,6 +1057,12 @@ func TestGrantsInvariant_AntiVacuity(t *testing.T) {
 		{"the job_rows column grant of submitted_at taken away (the engine could not stamp a submit)",
 			[]string{"REVOKE UPDATE (submitted_at) ON platform.job_rows FROM platform_app"},
 			[][]string{{"platform.job_rows", "missing column grant", "platform_app", "UPDATE", "submitted_at"}}},
+		{"the job_rows column grant of suppressed taken away (the confirm could not flag a verify job's suppressed rows)",
+			[]string{"REVOKE UPDATE (suppressed) ON platform.job_rows FROM platform_app"},
+			[][]string{{"platform.job_rows", "missing column grant", "platform_app", "UPDATE", "suppressed"}}},
+		{"a column grant of suppressed on job_rows given to platform_admin (the admin surface would write the flag around the store)",
+			[]string{"GRANT UPDATE (suppressed) ON platform.job_rows TO platform_admin"},
+			[][]string{{"platform.job_rows", "column privilege", "platform_admin", "UPDATE", "suppressed"}}},
 		{"DELETE on job_rows taken from platform_app (a draft's list could no longer be replaced)",
 			[]string{"REVOKE DELETE ON platform.job_rows FROM platform_app"},
 			[][]string{{"platform.job_rows", "missing grant", "platform_app", "DELETE"}}},

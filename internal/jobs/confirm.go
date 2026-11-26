@@ -21,9 +21,14 @@ import (
 //  1. BEGIN; the (user, module) advisory lock FIRST (money.Store.LockIn), then the job row FOR UPDATE, scoped by the user (ErrNotFound). The job must be previewed: one that was already confirmed
 //     with this key is the replay the cheap read could not see (two requests racing), any other status is ErrNotPreviewed.
 //  2. the module's price rows are held FOR SHARE and the fingerprint is recomputed exactly as Preview computes it; it must equal both the one the client sent and the one stored, else
-//     ErrStalePreview (the list, the price of a reachable unit, the content, the choice or the source job's results changed).
-//  3. the user's suppression list is applied NOW: the pending rows whose address is on it become suppressed (allowed while the job is previewed). No pending row left is ErrNothingToDo.
-//  4. a metered module (m1, m2): money.ReserveIn holds credits for exactly the pending rows, freezing the price snapshot of the reachable units; a list the balance does not cover is
+//     ErrStalePreview (the list, the price of a reachable unit, the content, the choice or the source job's results changed). Just before that, a chained send whose source job holds `unknown`
+//     results needs the user's explicit choice (ConfirmReq.UnknownChoice): none is ErrUnknownChoiceRequired (with the number of unknown results; nothing was written), one that is not the choice
+//     the job was previewed under is a StalePreviewError (reason unknown_choice_changed): the user previews again under the choice they want. It is judged BEFORE the fingerprint, so that the
+//     refusal names its cause. A job that is not chained takes no choice (a bad request).
+//  3. the user's suppression list is applied NOW, as the module's kind of job needs (owner ruling OD-3). A SEND job (m2, m3): the pending rows whose address is on the list become state suppressed
+//     (and carry the flag), are left out of the reserve and never reach the module; no pending row left is ErrNothingToDo. A VERIFY job (m1): the same rows only get the flag, stay pending, are
+//     verified and charged like any other row and are flagged `suppressed` in the results; a verify list that the suppression covers entirely is not ErrNothingToDo (every row is verified).
+//  4. a metered module (m1, m2): money.ReserveIn holds credits for exactly the rows that reach the module (a verify job's suppressed rows among them), freezing the price snapshot of the reachable units; a list the balance does not cover is
 //     ErrInsufficientCredits with the exact shortfall and the transaction rolls back. Module 3: the entitlement must be enabled and unexpired by the database's clock (ErrNoEntitlement) and the
 //     user not observed suspended (ErrSuspended).
 //  5. ONE UPDATE moves the job (previewed -> confirmed, or -> scheduled when ScheduledStart is given: between 1 minute and 366 days ahead by the database's clock, else ErrBadRequest) and sets
@@ -31,7 +36,7 @@ import (
 //     reason): the guard sets confirmed_at itself. The slot is the unique index jobs_one_active_per_user_module: a loser gets ErrSlotTaken (23505) and the whole transaction rolls back, the
 //     reserve with it; a key held by another job is ErrConfirmKeyReused (23505).
 //  6. AFTER the move (the table refuses results before the job is confirmed) the platform's own results are written, free, one per row that is not pending: malformed (P-08), duplicate (P-07),
-//     suppressed (P-SUP) and excluded (P-EXC).
+//     suppressed (P-SUP) and excluded (P-EXC). Their suppressed flag is derived from the row by the database (platform_0014), not stated here.
 //
 // The slot is not checked in Go, on purpose: the index is what decides (the concurrency test shows both confirms succeed when it is dropped).
 func (s *Store) Confirm(ctx context.Context, userID string, req ConfirmReq) (ConfirmResult, error) {
@@ -46,6 +51,9 @@ func (s *Store) Confirm(ctx context.Context, userID string, req ConfirmReq) (Con
 	}
 	if !validFingerprint(req.Fingerprint) {
 		return ConfirmResult{}, opErr("confirm", badRequest("the fingerprint must be 64 lower-case hex digits"))
+	}
+	if req.UnknownChoice != "" && !validChoice(req.UnknownChoice) {
+		return ConfirmResult{}, opErr("confirm", badRequest("unknown_choice must be %q or %q", UnknownInclude, UnknownExclude))
 	}
 
 	// 0. the cheap replay, outside the transaction
@@ -107,25 +115,35 @@ func (s *Store) Confirm(ctx context.Context, userID string, req ConfirmReq) (Con
 			}
 		}
 
-		// 2. the stale-preview check, over the prices this transaction now holds
+		// 2. the user's choice for the unknown verdicts, then the stale-preview check, over the prices this transaction now holds
 		sn, err := s.takeSnapshot(ctx, tx, j, true)
 		if err != nil {
+			return err
+		}
+		if err := checkUnknownChoice(j.SourceJobID != "", j.Settings.UnknownChoice, sn.verdicts[VerdictUnknown], req.UnknownChoice); err != nil {
 			return err
 		}
 		if sn.fingerprint != req.Fingerprint || sn.fingerprint != j.PreviewFingerprint {
 			return ErrStalePreview
 		}
 
-		// 3. the suppression list, applied now
+		// 3. the suppression list, applied now: a send job leaves the rows out, a verify job verifies them and flags them
 		found, err := suppress.Filter(ctx, tx, userID, sn.pendingEmails)
 		if err != nil {
 			return err
 		}
-		suppressed, err := s.suppressRows(ctx, tx, j.ID, userID, found)
-		if err != nil {
-			return err
+		var suppressed, pending int
+		if j.Module == ModuleVerify {
+			if suppressed, err = s.flagRows(ctx, tx, j.ID, userID, found); err != nil {
+				return err
+			}
+			pending = sn.pending // every pending row reaches module 1, the suppressed ones too
+		} else {
+			if suppressed, err = s.suppressRows(ctx, tx, j.ID, userID, found); err != nil {
+				return err
+			}
+			pending = sn.pending - suppressed
 		}
-		pending := sn.pending - suppressed
 		if pending < 1 {
 			return ErrNothingToDo
 		}
@@ -191,6 +209,10 @@ func (s *Store) preCheck(ctx context.Context, userID string, req ConfirmReq) err
 	if j.Module != ModuleSendBYO || j.Status != StatusPreviewed || j.Preview == nil {
 		return nil
 	}
+	// a request the transaction will refuse for its unknown choice does not ask the module anything (the stored preview knows how many unknown results the source holds)
+	if err := checkUnknownChoice(j.SourceJobID != "", j.Settings.UnknownChoice, j.Preview.UnknownCount, req.UnknownChoice); err != nil {
+		return err
+	}
 	f, err := s.pre.M3Feasibility(ctx, userID, j.ID, j.Preview.Units)
 	if err != nil {
 		s.log.Warn("the module 3 pre-check failed", "job", j.ID)
@@ -210,8 +232,44 @@ func (s *Store) preCheck(ctx context.Context, userID string, req ConfirmReq) err
 	return nil
 }
 
-// suppressRows turns the job's pending rows whose address the user suppresses into suppressed rows (the job is previewed, so its rows may still change) and returns how many it changed.
+// checkUnknownChoice is the rule of the user's choice for the `unknown` verdicts of a chained send, in one place for the transaction (which decides) and the module 3 pre-check (which only avoids
+// asking the module for a request the transaction will refuse). chained says whether the job has a source job; recorded is the choice the previewed job was classified under ("" when none was
+// made); unknown is how many results of the source are `unknown`; requested is what the confirm carries.
+//
+//   - not chained: a choice is a bad request (there is nothing to choose), none is fine
+//   - chained, no unknown result: nothing to choose; a choice (a valid one: the request was checked) is accepted and changes nothing
+//   - chained, some unknown, no choice: ErrUnknownChoiceRequired with the count (never a default)
+//   - chained, some unknown, a choice that is not the recorded one: a StalePreviewError (unknown_choice_changed): the user never saw the list under that choice, so they preview again
+func checkUnknownChoice(chained bool, recorded string, unknown int, requested string) error {
+	switch {
+	case !chained && requested != "":
+		return badRequest("unknown_choice only applies to a send chained to a verify job")
+	case !chained, unknown == 0:
+		return nil
+	case requested == "":
+		return &UnknownChoiceRequiredError{Unknown: unknown}
+	case requested != recorded:
+		return &StalePreviewError{Reason: ReasonUnknownChoiceChanged}
+	}
+	return nil
+}
+
+// suppressRows turns the job's pending rows whose address the user suppresses into suppressed rows (the job is previewed, so its rows may still change) and returns how many it changed. It is
+// for a SEND job: the row's state and its suppressed flag change in one statement (the database ties them: a suppressed row carries the flag), and the row never reaches the module.
 func (s *Store) suppressRows(ctx context.Context, tx pgx.Tx, jobID, userID string, found map[string]bool) (int, error) {
+	return s.markRows(ctx, tx, jobID, userID, found, `UPDATE platform.job_rows SET state = 'suppressed', suppressed = true
+			WHERE job_id = $1::uuid AND user_id = $2::uuid AND state = 'pending' AND email_norm = ANY($3::text[])`)
+}
+
+// flagRows sets the suppressed flag on the job's pending rows whose address the user suppresses and returns how many it flagged. It is for a VERIFY job (owner ruling OD-3): the rows stay pending,
+// are verified and charged like any other row, and the flag reaches the results; the state does not change.
+func (s *Store) flagRows(ctx context.Context, tx pgx.Tx, jobID, userID string, found map[string]bool) (int, error) {
+	return s.markRows(ctx, tx, jobID, userID, found, `UPDATE platform.job_rows SET suppressed = true
+			WHERE job_id = $1::uuid AND user_id = $2::uuid AND state = 'pending' AND email_norm = ANY($3::text[])`)
+}
+
+// markRows runs one of the two statements above over the addresses in batches and returns how many rows it changed.
+func (s *Store) markRows(ctx context.Context, tx pgx.Tx, jobID, userID string, found map[string]bool, statement string) (int, error) {
 	if len(found) == 0 {
 		return 0, nil
 	}
@@ -222,8 +280,7 @@ func (s *Store) suppressRows(ctx context.Context, tx pgx.Tx, jobID, userID strin
 	sort.Strings(list)
 	changed := 0
 	for start := 0; start < len(list); start += rowBatch {
-		tag, err := tx.Exec(ctx, `UPDATE platform.job_rows SET state = 'suppressed'
-			WHERE job_id = $1::uuid AND user_id = $2::uuid AND state = 'pending' AND email_norm = ANY($3::text[])`, jobID, userID, list[start:min(start+rowBatch, len(list))])
+		tag, err := tx.Exec(ctx, statement, jobID, userID, list[start:min(start+rowBatch, len(list))])
 		if err != nil {
 			return 0, s.fail(err)
 		}
@@ -290,7 +347,7 @@ func (s *Store) replayResult(ctx context.Context, q querier, j Job) (ConfirmResu
 	if err := q.QueryRow(ctx, `SELECT COALESCE((SELECT reserved_delta FROM platform.ledger WHERE job_id = $1::uuid AND kind = 'reserve'), 0)`, j.ID).Scan(&reserved); err != nil {
 		return ConfirmResult{}, s.fail(err)
 	}
-	if err := q.QueryRow(ctx, `SELECT count(*) FILTER (WHERE state = 'pending'), count(*) FILTER (WHERE state = 'suppressed')
+	if err := q.QueryRow(ctx, `SELECT count(*) FILTER (WHERE state = 'pending'), count(*) FILTER (WHERE suppressed)
 		FROM platform.job_rows WHERE job_id = $1::uuid AND user_id = $2::uuid`, j.ID, j.UserID).Scan(&pending, &suppressed); err != nil {
 		return ConfirmResult{}, s.fail(err)
 	}

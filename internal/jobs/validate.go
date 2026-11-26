@@ -109,15 +109,14 @@ func validKey(k string) bool { return keyShape.MatchString(k) }
 // validFingerprint is the shape of a preview fingerprint: 64 lower-case hex digits.
 func validFingerprint(f string) bool { return fingerprintShape.MatchString(f) }
 
-// normaliseSettings applies the default and refuses a value outside the vocabulary. chained says whether the job has a source job: the choice is meaningful only then.
+// normaliseSettings refuses a value outside the vocabulary and a choice on a job that is not chained. There is NO default (owner ruling OD-4): "" stays "" (not chosen yet), and Confirm
+// refuses a chained send whose source holds unknown verdicts until the user has said include or exclude. chained says whether the job has a source job: the choice is meaningful only then.
 func normaliseSettings(s Settings, chained bool) (Settings, error) {
 	switch s.UnknownChoice {
 	case "":
-		s.UnknownChoice = UnknownExclude
-	case UnknownExclude:
-	case UnknownInclude:
+	case UnknownExclude, UnknownInclude:
 		if !chained {
-			return Settings{}, badRequest("unknown_choice %q only applies to a send chained to a verify job", UnknownInclude)
+			return Settings{}, badRequest("unknown_choice %q only applies to a send chained to a verify job", s.UnknownChoice)
 		}
 	default:
 		return Settings{}, badRequest("unknown_choice must be %q or %q", UnknownExclude, UnknownInclude)

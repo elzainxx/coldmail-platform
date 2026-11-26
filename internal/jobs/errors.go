@@ -31,6 +31,9 @@ var (
 	// ErrStalePreview: what the preview depended on has changed (the list, the price of a reachable unit, the content, the choice or the source job's results) or the fingerprint is not the
 	// job's: preview again and confirm what the new preview says.
 	ErrStalePreview = errors.New("the preview is stale")
+	// ErrUnknownChoiceRequired is wrapped by every *UnknownChoiceRequiredError: the source job of a chained send holds results with the verdict `unknown` and the confirm carries no choice for them
+	// (owner ruling OD-4: the user decides, never a default). Nothing was written: no reserve, the job is still previewed.
+	ErrUnknownChoiceRequired = errors.New("an explicit choice for the unknown verdicts is required")
 	// ErrSlotTaken: the user already has an active job on this module (the partial unique index jobs_one_active_per_user_module, SQLSTATE 23505). The whole confirm was rolled back: no credits are held.
 	ErrSlotTaken = errors.New("the user already has an active job on this module")
 	// ErrConfirmKeyReused: the confirm key already confirmed ANOTHER job of this user (the unique index jobs_confirm_key_key, or the store's own read of it).
@@ -60,6 +63,32 @@ type ErrInfeasible struct {
 func (e ErrInfeasible) Error() string {
 	return "the campaign is not feasible on module 3: " + strings.Join(e.Causes, ", ")
 }
+
+// ReasonUnknownChoiceChanged is the Reason of the StalePreviewError a confirm gets when its unknown choice differs from the one the previewed job was classified under.
+const ReasonUnknownChoiceChanged = "unknown_choice_changed"
+
+// UnknownChoiceRequiredError is an ErrUnknownChoiceRequired with the number of `unknown` results the source job holds.
+type UnknownChoiceRequiredError struct {
+	Unknown int
+}
+
+func (e *UnknownChoiceRequiredError) Error() string {
+	return fmt.Sprintf("an explicit choice (%s or %s) is required: the source job holds %d unknown result(s)", UnknownInclude, UnknownExclude, e.Unknown)
+}
+
+// Is makes errors.Is(err, ErrUnknownChoiceRequired) true.
+func (e *UnknownChoiceRequiredError) Is(target error) bool { return target == ErrUnknownChoiceRequired }
+
+// StalePreviewError is an ErrStalePreview that says WHY it is stale when the store knows a reason of its own (ReasonUnknownChoiceChanged). A stale preview with no reason of its own is the
+// bare ErrStalePreview.
+type StalePreviewError struct {
+	Reason string
+}
+
+func (e *StalePreviewError) Error() string { return "the preview is stale: " + e.Reason }
+
+// Is makes errors.Is(err, ErrStalePreview) true.
+func (e *StalePreviewError) Is(target error) bool { return target == ErrStalePreview }
 
 // BadRequestError is an ErrBadRequest with the reason, which never contains an address (it may name a row's ordinal, a field, a limit).
 type BadRequestError struct {
@@ -186,7 +215,7 @@ func refusalWord(err error) string {
 		{ErrNotFound, "not_found"}, {ErrBadRequest, "bad_request"}, {ErrTooManyRows, "too_many_rows"}, {ErrNothingToDo, "nothing_to_do"}, {ErrNotAllowed, "not_allowed"},
 		{ErrStalePreview, "stale_preview"}, {ErrSlotTaken, "slot_taken"}, {ErrConfirmKeyReused, "confirm_key_reused"}, {ErrNotPreviewed, "not_previewed"},
 		{ErrNoEntitlement, "no_entitlement"}, {ErrSuspended, "suspended"}, {ErrModuleUnavailable, "module_unavailable"}, {money.ErrLockTimeout, "lock_timeout"},
-		{ErrIncomplete, "incomplete"}, {ErrModuleRefTaken, "module_ref_taken"},
+		{ErrIncomplete, "incomplete"}, {ErrModuleRefTaken, "module_ref_taken"}, {ErrUnknownChoiceRequired, "unknown_choice_required"},
 	} {
 		if errors.Is(err, c.is) {
 			return c.word

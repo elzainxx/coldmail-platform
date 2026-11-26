@@ -143,7 +143,7 @@ func TestJobsLive_Chain_ExactlySelectedVerdictsMove(t *testing.T) {
 	m1Available, m1Reserved := s.balance(user, jobs.ModuleVerify)
 
 	// ---- the two chains, previewed ----
-	ja := s.create(user, jobs.CreateReq{Module: jobs.ModuleSendBYO, SourceJobID: src.ID, Content: jlContent("chain, default choice")})
+	ja := s.create(user, jobs.CreateReq{Module: jobs.ModuleSendBYO, SourceJobID: src.ID, Content: jlContent("chain, exclude"), Settings: jobs.Settings{UnknownChoice: jobs.UnknownExclude}})
 	pa := s.preview(user, ja.ID)
 	s.requireChainPreview("the default chain", srcMod, pa, false)
 	if p := jlChainRowsProblems(srcMod, s.rows(ja.ID), false); len(p) != 0 {
@@ -160,7 +160,7 @@ func TestJobsLive_Chain_ExactlySelectedVerdictsMove(t *testing.T) {
 
 	// ---- a chain with nothing selected: nothing would reach the module, nothing is written, the sink stays empty ----
 	if len(selDefault) == 0 {
-		_, err := s.confirm(user, ja.ID, pa.Fingerprint, nil)
+		_, err := s.confirmChoice(user, ja.ID, pa.Fingerprint, jobs.UnknownExclude)
 		if !errors.Is(err, jobs.ErrNothingToDo) {
 			t.Fatalf("the confirm of a chain that selects nothing answered %v, want ErrNothingToDo", err)
 		}
@@ -174,12 +174,18 @@ func TestJobsLive_Chain_ExactlySelectedVerdictsMove(t *testing.T) {
 		t.Logf("NOTE jl chain default: every verdict of the source is one the default excludes (%s): the confirm is refused with ErrNothingToDo, nothing was written and the sink holds nothing", jlStates(srcMod))
 	}
 
+	// ---- owner ruling OD-4: the source holds unknown verdicts (the test requires it above), so a confirm that says nothing about them is refused, with nothing started (the control of every confirm below, which carries its choice) ----
+	if _, err := s.confirm(user, jb.ID, pb.Fingerprint, nil); !errors.Is(err, jobs.ErrUnknownChoiceRequired) {
+		t.Fatalf("the confirm of a chain whose source holds unknown verdicts, with no choice, answered %v, want ErrUnknownChoiceRequired", err)
+	}
+	s.requireNothingStarted(e, tn, jb.ID, m1Available, m1Reserved, "a chain confirmed with no choice for the unknown verdicts")
+
 	// ---- entitlement: the first chain with rows to send is refused until the user is entitled ----
 	first, firstPv := ja, pa
 	if len(selDefault) == 0 {
 		first, firstPv = jb, pb
 	}
-	_, err := s.confirm(user, first.ID, firstPv.Fingerprint, nil)
+	_, err := s.confirmChoice(user, first.ID, firstPv.Fingerprint, firstPv.UnknownChoice)
 	if !errors.Is(err, jobs.ErrNoEntitlement) {
 		t.Fatalf("the confirm of a chain by a user with no entitlement answered %v, want ErrNoEntitlement (the quote is feasible: the user has a verified sender)", err)
 	}
@@ -191,7 +197,7 @@ func TestJobsLive_Chain_ExactlySelectedVerdictsMove(t *testing.T) {
 		t.Helper()
 		sel := jlSelectedSet(srcMod, include)
 		before = e.sinkView(t)
-		res := s.confirmOK(user, job.ID, pv.Fingerprint)
+		res := s.confirmChoiceOK(user, job.ID, pv.Fingerprint, pv.UnknownChoice)
 		if res.Job.Status != jobs.StatusConfirmed || res.Reserved != 0 || res.Pending != len(sel) {
 			t.Fatalf("%s: the confirm answered status %s reserved %d pending %d, want confirmed, nothing reserved, %d pending", what, res.Job.Status, res.Reserved, res.Pending, len(sel))
 		}

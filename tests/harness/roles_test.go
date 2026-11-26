@@ -94,7 +94,7 @@ var roleStatements = []roleStmt{
 	{"platform.job_rows", "UPDATE", `UPDATE platform.job_rows SET ordinal = ordinal WHERE id = {ROW1}`, "", "", ""},
 	{"platform.job_rows", "DELETE", `DELETE FROM platform.job_rows WHERE id = {ROW1}`, "", "", ""},
 	{"platform.job_rows", "TRUNCATE", `TRUNCATE platform.job_rows CASCADE`, "23001", "append-only", ""},
-	{"platform.job_rows", "UPDATE(email_raw,email_norm,state,reason,duplicate_of,fields,source_item,submitted_at)", `UPDATE platform.job_rows SET email_raw = email_raw, email_norm = email_norm, state = state, reason = reason, duplicate_of = duplicate_of, fields = fields, source_item = source_item, submitted_at = submitted_at WHERE id = {ROW1}`, "", "", "platform_app"},
+	{"platform.job_rows", "UPDATE(email_raw,email_norm,state,reason,duplicate_of,fields,source_item,submitted_at,suppressed)", `UPDATE platform.job_rows SET email_raw = email_raw, email_norm = email_norm, state = state, reason = reason, duplicate_of = duplicate_of, fields = fields, source_item = source_item, submitted_at = submitted_at, suppressed = suppressed WHERE id = {ROW1}`, "", "", "platform_app"},
 	{"platform.job_results", "INSERT", `INSERT INTO platform.job_results (job_id, user_id, item_ref, ordinal, email, origin, module_state, decision, rule) VALUES ({JOB3}, {U1}, {ROW3B}, 2, 'b@example.com', 'module', 'sent', 'free', 'roles proof')`, "", "", ""},
 	{"platform.job_results", "UPDATE", `UPDATE platform.job_results SET rule = 'edited'`, "23001", "append-only", ""},
 	{"platform.job_results", "DELETE", `DELETE FROM platform.job_results`, "23001", "append-only", ""},

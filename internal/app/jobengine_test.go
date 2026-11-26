@@ -306,7 +306,7 @@ func loadEngineCfg(t *testing.T, extra map[string]string) config.Config {
 func TestEngineConfig_EveryEngineDialReachesTheEngine(t *testing.T) {
 	cfg := loadEngineCfg(t, nil)
 	got := engineConfig(cfg)
-	if got.Tick != 1500*time.Millisecond || got.SettleEvery != 10*time.Second || got.SubmitBatch != 500 || got.StepTimeout != 2*time.Minute ||
+	if got.Tick != 1500*time.Millisecond || got.SettleEvery != 10*time.Second || got.SubmitBatch != 500 || got.StepTimeout != 2*time.Minute || got.BackoffCap != time.Minute ||
 		got.StaleAfter[jobs.ModuleVerify] != 30*time.Minute || got.StaleAfter[jobs.ModuleSendManaged] != 15*time.Minute || got.StaleAfter[jobs.ModuleSendBYO] != 15*time.Minute {
 		t.Fatalf("the defaults reached the engine as %+v", got)
 	}
@@ -315,10 +315,10 @@ func TestEngineConfig_EveryEngineDialReachesTheEngine(t *testing.T) {
 	}
 	alt := loadEngineCfg(t, map[string]string{
 		config.VarJobTickMS: "400", config.VarJobSettleIntervalSec: "3", config.VarJobStaleAfterMinM1: "61", config.VarJobStaleAfterMinM2: "22", config.VarJobStaleAfterMinM3: "23",
-		config.VarJobSubmitBatch: "40", config.VarJobStepTimeoutSec: "45",
+		config.VarJobSubmitBatch: "40", config.VarJobStepTimeoutSec: "45", config.VarJobBackoffCapSec: "90",
 	})
 	want := got
-	want.Tick, want.SettleEvery, want.SubmitBatch, want.StepTimeout = 400*time.Millisecond, 3*time.Second, 40, 45*time.Second
+	want.Tick, want.SettleEvery, want.SubmitBatch, want.StepTimeout, want.BackoffCap = 400*time.Millisecond, 3*time.Second, 40, 45*time.Second, 90*time.Second
 	want.StaleAfter = map[string]time.Duration{jobs.ModuleVerify: 61 * time.Minute, jobs.ModuleSendManaged: 22 * time.Minute, jobs.ModuleSendBYO: 23 * time.Minute}
 	if g := engineConfig(alt); !reflect.DeepEqual(g, want) {
 		t.Errorf("the dials reached the engine as\n  %+v\nwant\n  %+v", g, want)
@@ -332,6 +332,7 @@ func TestEngineConfig_EveryEngineDialReachesTheEngine(t *testing.T) {
 		{config.VarJobSettleIntervalSec, "3", func(c *jobengine.Config) { c.SettleEvery = 3 * time.Second }},
 		{config.VarJobSubmitBatch, "40", func(c *jobengine.Config) { c.SubmitBatch = 40 }},
 		{config.VarJobStepTimeoutSec, "45", func(c *jobengine.Config) { c.StepTimeout = 45 * time.Second }},
+		{config.VarJobBackoffCapSec, "90", func(c *jobengine.Config) { c.BackoffCap = 90 * time.Second }},
 		{config.VarJobStaleAfterMinM1, "61", func(c *jobengine.Config) { c.StaleAfter[jobs.ModuleVerify] = 61 * time.Minute }},
 		{config.VarJobStaleAfterMinM2, "22", func(c *jobengine.Config) { c.StaleAfter[jobs.ModuleSendManaged] = 22 * time.Minute }},
 		{config.VarJobStaleAfterMinM3, "23", func(c *jobengine.Config) { c.StaleAfter[jobs.ModuleSendBYO] = 23 * time.Minute }},
@@ -350,9 +351,9 @@ func TestEngine_TheEdgesOfEveryDialAreAcceptedByTheEngineItself(t *testing.T) {
 	log := slog.New(slog.DiscardHandler)
 	for name, env := range map[string]map[string]string{
 		"the lowest": {config.VarJobTickMS: "100", config.VarJobSettleIntervalSec: "1", config.VarJobStaleAfterMinM1: "1", config.VarJobStaleAfterMinM2: "1", config.VarJobStaleAfterMinM3: "1",
-			config.VarJobSubmitBatch: "1", config.VarJobSubmitConcurrency: "1", config.VarJobStepTimeoutSec: "5"},
+			config.VarJobSubmitBatch: "1", config.VarJobSubmitConcurrency: "1", config.VarJobStepTimeoutSec: "5", config.VarJobBackoffCapSec: "1"},
 		"the highest": {config.VarJobTickMS: "60000", config.VarJobSettleIntervalSec: "3600", config.VarJobStaleAfterMinM1: "10080", config.VarJobStaleAfterMinM2: "10080", config.VarJobStaleAfterMinM3: "10080",
-			config.VarJobSubmitBatch: "5000", config.VarJobSubmitConcurrency: "64", config.VarJobStepTimeoutSec: "3600"},
+			config.VarJobSubmitBatch: "5000", config.VarJobSubmitConcurrency: "64", config.VarJobStepTimeoutSec: "3600", config.VarJobBackoffCapSec: "600"},
 	} {
 		cfg := loadEngineCfg(t, env)
 		deps := apiDeps{}

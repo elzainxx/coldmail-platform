@@ -282,8 +282,8 @@ func TestJWKS_AFailingRefreshKeepsTheCachedKeys(t *testing.T) {
 		jw.srv.answer(f.code, f.body)
 		jw.clk.Advance(DefaultMinRefreshInterval)
 		hits++
-		// The refresh is made for the unknown kid and fails; the cached key keeps working, the unknown kid is ErrKey.
-		jw.check(t, f.name+": an unknown kid", "k2", ErrKey, hits)
+		// The refresh is made for the unknown kid and fails; the cached key keeps working, the unknown kid is ErrKeysUnavailable (the platform cannot tell whether the key exists).
+		jw.check(t, f.name+": an unknown kid", "k2", ErrKeysUnavailable, hits)
 		jw.check(t, f.name+": the cached key", "k1", nil, hits)
 	}
 
@@ -297,18 +297,18 @@ func TestJWKS_AFailingRefreshKeepsTheCachedKeys(t *testing.T) {
 	jw.add(t, "k3")
 	jw.clk.Advance(DefaultMinRefreshInterval)
 	_, err := verify(jw.v, jw.token(t, "k3"))
-	wantErr(t, "an unknown kid with the server gone", err, ErrKey)
+	wantErr(t, "an unknown kid with the server gone", err, ErrKeysUnavailable)
 	_, err = verify(jw.v, jw.token(t, "k1"))
 	wantErr(t, "the cached key with the server gone", err, nil)
 }
 
-func TestJWKS_TheFirstFetchFailingIsErrKey(t *testing.T) {
+func TestJWKS_TheFirstFetchFailingIsErrKeysUnavailable(t *testing.T) {
 	jw := newJWKSWorld(t, "k1")
 	jw.srv.answer(500, []byte("boom"))
-	jw.check(t, "the very first fetch fails", "k1", ErrKey, 1)
-	jw.check(t, "the next token, inside the interval, makes no fetch", "k1", ErrKey, 1)
+	jw.check(t, "the very first fetch fails", "k1", ErrKeysUnavailable, 1)
+	jw.check(t, "the next token, inside the interval, makes no fetch", "k1", ErrKeysUnavailable, 1)
 	jw.clk.Advance(DefaultMinRefreshInterval - time.Second)
-	jw.check(t, "still inside the interval", "k1", ErrKey, 1)
+	jw.check(t, "still inside the interval", "k1", ErrKeysUnavailable, 1)
 	jw.srv.answer(200, jw.doc(t, "k1"))
 	jw.clk.Advance(time.Second)
 	jw.check(t, "after the interval the fetch succeeds", "k1", nil, 2)
@@ -317,12 +317,12 @@ func TestJWKS_TheFirstFetchFailingIsErrKey(t *testing.T) {
 	gone := newJWKSWorld(t, "k1")
 	gone.srv.Close()
 	_, err := verify(gone.v, gone.token(t, "k1"))
-	wantErr(t, "no server", err, ErrKey)
+	wantErr(t, "no server", err, ErrKeysUnavailable)
 
 	// A key set with nothing usable in it is the same as none.
 	empty := newJWKSWorld(t, "k1")
 	empty.srv.answer(200, []byte(`{"keys":[]}`))
-	empty.check(t, "an empty set", "k1", ErrKey, 1)
+	empty.check(t, "an empty set", "k1", ErrKeysUnavailable, 1)
 }
 
 func TestJWKS_KeySetParsing(t *testing.T) {
@@ -420,7 +420,7 @@ func TestJWKS_KeySetParsing(t *testing.T) {
 	srv := newJWKSServer(t, jwksDoc(t, rsaJWK(&rsaWeak.PublicKey, "weak")))
 	v := mustNew(t, Options{JWKSURL: srv.url(), AllowInsecureHTTP: true, Now: clk.Now})
 	_, err := verify(v, mint(t, rsaSigner{t, rsaWeak}, "weak", claimsAt(clk.Now())))
-	if !errors.Is(err, ErrKey) || !strings.Contains(err.Error(), "under 2048 bits") {
+	if !errors.Is(err, ErrKeysUnavailable) || !strings.Contains(err.Error(), "under 2048 bits") {
 		t.Errorf("a token signed by a 1024-bit RSA key: %v", err)
 	}
 	srv.answer(200, jwksDoc(t, rsaJWK(&rsaA.PublicKey, "weak")))
@@ -521,7 +521,7 @@ func TestJWKS_TheFetchIsHardened(t *testing.T) {
 	redirector := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) { http.Redirect(rw, r, target.url(), http.StatusFound) }))
 	defer redirector.Close()
 	err := tok(newV(redirector.URL + "/jwks"))
-	if !errors.Is(err, ErrKey) || !strings.Contains(err.Error(), "redirects are not followed") || target.hits.Load() != 0 {
+	if !errors.Is(err, ErrKeysUnavailable) || !strings.Contains(err.Error(), "redirects are not followed") || target.hits.Load() != 0 {
 		t.Errorf("a redirect: %v (the target was asked %d times)", err, target.hits.Load())
 	}
 	if err := tok(newV(target.url())); err != nil {
@@ -529,7 +529,7 @@ func TestJWKS_TheFetchIsHardened(t *testing.T) {
 	}
 	// ... even with a client that would follow them.
 	err = tok(newV(redirector.URL+"/jwks", func(o *Options) { o.HTTPClient = &http.Client{} }))
-	if !errors.Is(err, ErrKey) || target.hits.Load() != 1 {
+	if !errors.Is(err, ErrKeysUnavailable) || target.hits.Load() != 1 {
 		t.Errorf("a caller's client that follows redirects: %v (the target was asked %d times in all, want only the direct request)", err, target.hits.Load())
 	}
 
@@ -542,7 +542,7 @@ func TestJWKS_TheFetchIsHardened(t *testing.T) {
 		t.Errorf("a response of exactly 1 MiB: %v", err)
 	}
 	big2 := newJWKSServer(t, pad(MaxKeySetBytes+1))
-	if err := tok(newV(big2.url())); !errors.Is(err, ErrKey) || !strings.Contains(err.Error(), "larger than 1 MiB") {
+	if err := tok(newV(big2.url())); !errors.Is(err, ErrKeysUnavailable) || !strings.Contains(err.Error(), "larger than 1 MiB") {
 		t.Errorf("a response of 1 MiB and a byte: %v", err)
 	}
 
@@ -556,7 +556,7 @@ func TestJWKS_TheFetchIsHardened(t *testing.T) {
 	defer slow.Close()
 	start := time.Now()
 	err = tok(newV(slow.URL, func(o *Options) { o.HTTPClient = &http.Client{Timeout: 150 * time.Millisecond} }))
-	if !errors.Is(err, ErrKey) || !strings.Contains(err.Error(), "timed out") || time.Since(start) > 4*time.Second {
+	if !errors.Is(err, ErrKeysUnavailable) || !strings.Contains(err.Error(), "timed out") || time.Since(start) > 4*time.Second {
 		t.Errorf("a server that does not answer: %v after %v", err, time.Since(start))
 	}
 
@@ -565,7 +565,7 @@ func TestJWKS_TheFetchIsHardened(t *testing.T) {
 	defer secure.Close()
 	plain := mustNew(t, Options{JWKSURL: secure.URL, Now: w.clk.Now})
 	err = tok(plain)
-	if !errors.Is(err, ErrKey) || !strings.Contains(err.Error(), "certificate") {
+	if !errors.Is(err, ErrKeysUnavailable) || !strings.Contains(err.Error(), "certificate") {
 		t.Errorf("an untrusted certificate: %v", err)
 	}
 	trusting := mustNew(t, Options{JWKSURL: secure.URL, HTTPClient: secure.Client(), Now: w.clk.Now})

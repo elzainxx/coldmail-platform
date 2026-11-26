@@ -95,6 +95,7 @@ const (
 	VarJobSubmitBatch       = "PLATFORM_JOB_SUBMIT_BATCH"
 	VarJobSubmitConcurrency = "PLATFORM_JOB_SUBMIT_CONCURRENCY"
 	VarJobStepTimeoutSec    = "PLATFORM_JOB_STEP_TIMEOUT_SEC"
+	VarJobBackoffCapSec     = "PLATFORM_JOB_BACKOFF_CAP_SEC"
 
 	// Which instance this is, when more than one platform instance runs (Phase 2 close-out D9): the name of the session that holds the leader lock of the loops.
 	VarInstanceID = "PLATFORM_INSTANCE_ID"
@@ -143,6 +144,7 @@ const (
 	maxJobSubmitConc     = 64
 	minJobStepTimeoutSec = 5
 	maxJobStepTimeoutSec = 3600
+	maxJobBackoffCapSec  = 600 // jobs.MaxPollBackoff, which the database keeps as its own wall (platform.jobs_engine_schedule); pinned equal by a test
 )
 
 // Upper bounds on the integer dials. They are sanity guards, not tuning: they keep a typo (an extra digit,
@@ -277,6 +279,8 @@ func Vars() []Var {
 			Doc: fmt.Sprintf("How many run calls to module 2 or module 3 one submit batch has in flight at once; the first row of a batch always goes alone, and the batch stops at the first answer that says the module is busy or cannot answer. Integer, 1 to %d. Consumed by `internal/app` (`jobengine.RegistryDeps.SubmitConcurrency`).", maxJobSubmitConc)},
 		{Name: VarJobStepTimeoutSec, Default: "120",
 			Doc: fmt.Sprintf("The most seconds the engine spends on ONE job in one pass: a module that hangs costs a job this much, then the engine goes on to the next job and tries this one again at the next pass. Keep it above `PLATFORM_MODULE_TIMEOUT_MS` (module 1's bulk submit is given at least two minutes). Integer, %d to %d. Consumed by `internal/app` (`jobengine.Config.StepTimeout`).", minJobStepTimeoutSec, maxJobStepTimeoutSec)},
+		{Name: VarJobBackoffCapSec, Default: "60",
+			Doc: fmt.Sprintf("The longest the engine leaves a job alone after a pass that made no progress on it (its module is down or full: nothing handed over, nothing recorded). The wait starts at one pass (`PLATFORM_JOB_TICK_MS`) and doubles with every such pass in a row up to this, so a hundred jobs whose module is down cannot keep the engine from newer jobs, and a module that recovers is polled again within this many seconds; a job that is moved by someone (a cancel) or makes progress is looked at at the next pass. The engine never waits longer than a quarter of the module's staleness limit (`PLATFORM_JOB_STALE_AFTER_MIN_M1`, `_M2`, `_M3`), so a stale job is still noticed on time, and the database refuses a wait of more than %d seconds whatever this says. Integer, 1 to %d. Consumed by `internal/app` (`jobengine.Config.BackoffCap`).", maxJobBackoffCapSec, maxJobBackoffCapSec)},
 		{Name: VarInstanceID, Default: instanceIDDefault,
 			Doc: fmt.Sprintf("Name of this platform instance, 1 to %d printable ASCII characters. With more than one instance running, only the one holding the leader lock runs the expiry and reconcile loops; the name is the application_name of the database session that holds it (pg_stat_activity) and appears in the loop log lines. Each instance needs its own. The default (hostname) means this machine's host name.", maxInstanceIDBytes)},
 	}
@@ -335,6 +339,7 @@ type Config struct {
 	JobSubmitBatch       int           // the rows one submit call offers module 2 or 3 (internal/app: jobengine.Config.SubmitBatch)
 	JobSubmitConcurrency int           // the run calls to module 2 or 3 in flight at once in one batch (internal/app: jobengine.RegistryDeps.SubmitConcurrency)
 	JobStepTimeout       time.Duration // the bound of one job's step (internal/app: jobengine.Config.StepTimeout)
+	JobBackoffCap        time.Duration // the longest the engine leaves a job alone after a pass that made no progress on it (internal/app: jobengine.Config.BackoffCap)
 
 	InstanceID string // this instance's name; "" means the default, the host name, which the service resolves (internal/entitlements ResolveInstanceID)
 }
@@ -609,6 +614,10 @@ func Load(getenv func(string) string) (Config, error) {
 			if n, ok := intIn(v.Name, raw, minJobStepTimeoutSec, maxJobStepTimeoutSec); ok {
 				c.JobStepTimeout = time.Duration(n) * time.Second
 			}
+		case VarJobBackoffCapSec:
+			if n, ok := intIn(v.Name, raw, 1, maxJobBackoffCapSec); ok {
+				c.JobBackoffCap = time.Duration(n) * time.Second
+			}
 		case VarInstanceID:
 			if raw != v.Default { // the default stands for the host name, which Load does not read (see instanceIDDefault)
 				if !validInstanceID(raw) {
@@ -755,6 +764,7 @@ func (c Config) attrs() []slog.Attr {
 		slog.Int("job_submit_batch", c.JobSubmitBatch),
 		slog.Int("job_submit_concurrency", c.JobSubmitConcurrency),
 		slog.Duration("job_step_timeout", c.JobStepTimeout),
+		slog.Duration("job_backoff_cap", c.JobBackoffCap),
 		slog.String("instance_id", c.InstanceID),
 	}
 }

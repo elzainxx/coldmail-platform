@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/coldmail-platform/platform/internal/charge"
 )
@@ -339,19 +340,20 @@ func topLevelColumns(list string) int {
 	return n
 }
 
-// engineJobColumns is jobColumns with the campaign taken out and thirteen columns after it; scanEngineJob scans them by position. A change to jobColumns that breaks either is caught here, not as a
+// engineJobColumns is jobColumns with the campaign taken out and sixteen columns after it; scanEngineJob scans them by position. A change to jobColumns that breaks either is caught here, not as a
 // scan error on a database nobody has at hand.
 func TestEngineJobColumns_DropTheCampaignAndKeepTheOrder(t *testing.T) {
 	base := topLevelColumns(jobColumns)
 	if base != 19 {
 		t.Fatalf("jobColumns has %d columns, scanJobWith scans 19: update both together", base)
 	}
-	if got := topLevelColumns(engineJobColumns); got != base+13 {
-		t.Errorf("engineJobColumns has %d columns, want %d (jobColumns plus the thirteen the engine adds)", got, base+13)
+	if got := topLevelColumns(engineJobColumns); got != base+16 {
+		t.Errorf("engineJobColumns has %d columns, want %d (jobColumns plus the sixteen the engine adds)", got, base+16)
 	}
-	// the module's own handle of the job is read with the job (COALESCEd: a job with none has "" and not a NULL the scan cannot take), and the database's own clock follows it as the LAST column scanEngineJob scans (the engine measures staleness against it)
-	if !strings.HasSuffix(strings.TrimSpace(engineJobColumns), "COALESCE(j.module_job_ref, ''), now()") {
-		t.Errorf("engineJobColumns does not end with the module reference and the database's clock: %s", engineJobColumns)
+	// the module's own handle of the job is read with the job (COALESCEd: a job with none has "" and not a NULL the scan cannot take), the database's own clock follows it (the engine measures staleness against it) and
+	// the three annotations of the schedule (next_poll_at, idle_polls, items_ensured_at) are the LAST columns scanEngineJob scans
+	if !strings.Contains(engineJobColumns, "COALESCE(j.module_job_ref, ''), now(),") || !strings.HasSuffix(strings.TrimSpace(engineJobColumns), "j.next_poll_at, j.idle_polls, j.items_ensured_at") {
+		t.Errorf("engineJobColumns does not hold the module reference, the database's clock and then the three annotations of the schedule: %s", engineJobColumns)
 	}
 	if !strings.Contains(engineJobColumns, "(j.frozen_settings - 'content')") || strings.Contains(engineJobColumns, "j.frozen_settings,") {
 		t.Errorf("engineJobColumns must select the frozen settings without the campaign: %s", engineJobColumns)
@@ -363,6 +365,47 @@ func TestEngineJobColumns_DropTheCampaignAndKeepTheOrder(t *testing.T) {
 	for _, name := range []string{"n_rows", "n_pending", "n_submitted", "n_results", "n_pending_results", "n_unsubmitted"} {
 		if !strings.Contains(engineJobColumns, "c."+name) || !strings.Contains(engineJobFrom, " AS "+name) {
 			t.Errorf("the count %s is selected and computed in different places", name)
+		}
+	}
+}
+
+// NotePoll refuses what cannot be a backoff before a database is asked (a store with no pool would panic if the call got further): the database's own wall is the 600 seconds MaxPollBackoff says, and a
+// ceiling under the base would make the wait shrink while the job stays idle. The control is a backoff that is allowed: it passes the checks and only then meets the missing pool.
+func TestNotePoll_RefusesWhatCannotBeABackoffBeforeAnyDatabaseIsAsked(t *testing.T) {
+	s := &Store{}
+	for name, c := range map[string]struct{ base, ceiling time.Duration }{
+		"a negative base":                {-time.Second, time.Second},
+		"a ceiling under the base":       {2 * time.Second, time.Second},
+		"a ceiling past the DB's wall":   {time.Second, MaxPollBackoff + time.Nanosecond},
+		"a base past the wall as well":   {MaxPollBackoff + time.Second, MaxPollBackoff + time.Second},
+		"a negative ceiling with a base": {0, -time.Second},
+	} {
+		if _, err := s.NotePoll(context.Background(), idA, StatusRunning, false, c.base, c.ceiling); !errors.Is(err, ErrBadRequest) {
+			t.Errorf("%s: NotePoll = %v, want ErrBadRequest", name, err)
+		}
+	}
+	for _, id := range []string{"", "not-a-uuid", "00000000-0000-4000-8000-00000000000"} {
+		if _, err := s.NotePoll(context.Background(), id, StatusRunning, true, time.Second, time.Minute); !errors.Is(err, ErrNotFound) {
+			t.Errorf("NotePoll(%q) = %v, want ErrNotFound", id, err)
+		}
+	}
+	// the control: the largest backoff the store takes passes the checks (the call then needs its pool: it panics on the empty store, which is the proof that the checks were passed)
+	defer func() {
+		if recover() == nil {
+			t.Error("a ceiling of exactly MaxPollBackoff was refused before the database was asked")
+		}
+	}()
+	_, _ = s.NotePoll(context.Background(), idA, StatusRunning, false, 0, MaxPollBackoff)
+}
+
+// The backoff the engine may ask for and the wall the database keeps are one number, and the statements that write the three schedule columns say what the migration says.
+func TestSchedule_TheWallOfTheDatabaseIsTheCeilingOfTheStoreAndTheStatementsNameTheColumns(t *testing.T) {
+	if MaxPollBackoff != 600*time.Second {
+		t.Errorf("MaxPollBackoff = %s: platform_0015's trigger refuses a wait of more than 600 seconds, PLATFORM_JOB_BACKOFF_CAP_SEC takes at most 600: change the three together", MaxPollBackoff)
+	}
+	for _, col := range []string{"j.next_poll_at", "j.idle_polls", "j.items_ensured_at"} {
+		if !strings.Contains(engineJobColumns, col) {
+			t.Errorf("engineJobColumns does not select %s", col)
 		}
 	}
 }

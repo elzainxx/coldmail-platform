@@ -11,7 +11,7 @@ import (
 )
 
 // sendapiModule is the Module of modules 2 and 3 (the senders) for one user: ONE implementation over the shared sender client (sendapi.Client, whose Profile says what differs between the two:
-// module 3's 409 names its causes, module 2's is back-pressure). The platform job id IS the module's campaign id, and a row's id is the module's job_item_id (EnsureModuleItems wrote
+// module 3's 409 names its causes, module 2's is back-pressure). The platform job id IS the module's campaign id, and a row's id is the module's job_item_id (EnsureJobItems wrote
 // public.job_items with those ids before the engine calls Submit).
 //
 // SUBMIT. Each row is one POST /v1/run, idempotent on the row id at the module (202 is a job just created, 200 is the job that already existed: both are accepted). The FIRST row goes alone,

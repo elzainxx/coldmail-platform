@@ -143,6 +143,7 @@ func engineConfig(cfg config.Config) jobengine.Config {
 		SubmitBatch:    cfg.JobSubmitBatch,
 		SubmitBatchFor: map[string]int{jobs.ModuleVerify: moduleOneBatch},
 		StepTimeout:    cfg.JobStepTimeout,
+		BackoffCap:     cfg.JobBackoffCap,
 	}
 }
 

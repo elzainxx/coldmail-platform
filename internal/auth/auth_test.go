@@ -747,13 +747,13 @@ func TestVerify_NoErrorContainsAnyPartOfTheToken(t *testing.T) {
 	bad.answer(500, []byte(marker+marker))
 	broken := mustNew(t, Options{JWKSURL: bad.url(), AllowInsecureHTTP: true, Now: w.clk.Now})
 	_, err := verify(broken, mint(t, ecSigner{t, w.ec}, ecKID, mk()))
-	if !errors.Is(err, ErrKey) || strings.Contains(err.Error(), marker) || strings.Contains(err.Error(), "127.0.0.1") {
+	if !errors.Is(err, ErrKeysUnavailable) || errors.Is(err, ErrKey) || strings.Contains(err.Error(), marker) || strings.Contains(err.Error(), "127.0.0.1") {
 		t.Errorf("a key set that failed: %v", err)
 	}
 	bad.answer(200, []byte(`{"keys":[{"kty":"oct","k":"`+marker+`"}]}`))
 	w.clk.Advance(time.Minute)
 	_, err = verify(broken, mint(t, ecSigner{t, w.ec}, ecKID, mk()))
-	if !errors.Is(err, ErrKey) || strings.Contains(err.Error(), marker) {
+	if !errors.Is(err, ErrKeysUnavailable) || strings.Contains(err.Error(), marker) {
 		t.Errorf("a key set with an unusable key: %v", err)
 	}
 

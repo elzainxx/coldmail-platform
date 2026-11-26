@@ -107,7 +107,7 @@ func TestVars_AreWellFormed(t *testing.T) {
 	}
 	for name, def := range map[string]string{VarJWTAudience: "authenticated", VarJWTLeewaySec: "30", VarJobMaxRows: "100000", VarJobMaxStartDelayMin: "30", VarResultsPageMax: "1000",
 		VarJobEngineEnabled: "true", VarJobTickMS: "1500", VarJobSettleIntervalSec: "10", VarJobStaleAfterMinM1: "30", VarJobStaleAfterMinM2: "15", VarJobStaleAfterMinM3: "15",
-		VarJobSubmitBatch: "500", VarJobSubmitConcurrency: "8", VarJobStepTimeoutSec: "120"} {
+		VarJobSubmitBatch: "500", VarJobSubmitConcurrency: "8", VarJobStepTimeoutSec: "120", VarJobBackoffCapSec: "60"} {
 		if v, ok := byName[name]; !ok || v.Secret || v.Required || v.Default != def {
 			t.Errorf("%s must be declared optional, not secret, with the default %q, got %+v", name, def, v)
 		}
@@ -178,6 +178,7 @@ func TestLoad_DefaultsAreTheDocumentedOnes(t *testing.T) {
 		"PLATFORM_JOB_SUBMIT_BATCH":        "500",
 		"PLATFORM_JOB_SUBMIT_CONCURRENCY":  "8",
 		"PLATFORM_JOB_STEP_TIMEOUT_SEC":    "120",
+		"PLATFORM_JOB_BACKOFF_CAP_SEC":     "60",
 
 		"PLATFORM_INSTANCE_ID": "(hostname)",
 	}
@@ -231,7 +232,7 @@ func TestLoad_DefaultsAreTheDocumentedOnes(t *testing.T) {
 		t.Fatalf("the job dials' defaults did not reach the Config: %v", cfg)
 	}
 	if !cfg.JobEngineEnabled || cfg.JobTick != 1500*time.Millisecond || cfg.JobSettleInterval != 10*time.Second || cfg.JobStaleAfterM1 != 30*time.Minute || cfg.JobStaleAfterM2 != 15*time.Minute ||
-		cfg.JobStaleAfterM3 != 15*time.Minute || cfg.JobSubmitBatch != 500 || cfg.JobSubmitConcurrency != 8 || cfg.JobStepTimeout != 2*time.Minute {
+		cfg.JobStaleAfterM3 != 15*time.Minute || cfg.JobSubmitBatch != 500 || cfg.JobSubmitConcurrency != 8 || cfg.JobStepTimeout != 2*time.Minute || cfg.JobBackoffCap != time.Minute {
 		t.Fatalf("the job engine dials' defaults did not reach the Config: %v", cfg)
 	}
 
@@ -392,6 +393,7 @@ var alternatives = map[string]string{
 	VarJobSubmitBatch:       "40",
 	VarJobSubmitConcurrency: "5",
 	VarJobStepTimeoutSec:    "45",
+	VarJobBackoffCapSec:     "90",
 
 	VarInstanceID: "platform-2",
 }
@@ -589,6 +591,8 @@ func TestLoad_InvalidValuesNameTheVariableAndNeverEchoTheValue(t *testing.T) {
 		{VarJobSubmitConcurrency, "65", "between 1 and 64"},
 		{VarJobStepTimeoutSec, "4", "between 5 and 3600"},
 		{VarJobStepTimeoutSec, "3601", "between 5 and 3600"},
+		{VarJobBackoffCapSec, "0", "between 1 and 600"},
+		{VarJobBackoffCapSec, "601", "between 1 and 600"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name+"="+tc.value, func(t *testing.T) {

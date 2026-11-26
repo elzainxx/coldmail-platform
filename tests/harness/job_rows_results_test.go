@@ -70,7 +70,7 @@ func TestJobRows_Checks(t *testing.T) {
 		ledgerRefusedInsert(t, tx, "a state that is none of the five", "23514", check("job_rows_state_vocabulary"), jrRows, row("state", "bogus"))
 		ledgerRefusedInsert(t, tx, "a NULL state", "23502", ledgerWhy{Column: "state"}, jrRows, row("state", nil))
 		for _, s := range []string{"suppressed"} {
-			ledgerOKInsert(t, tx, "control: state "+s+" (it needs no reason)", jrRows, row("state", s))
+			ledgerOKInsert(t, tx, "control: state "+s+" (it needs no reason, and carries the flag: platform_0014)", jrRows, row("state", s, "suppressed", true))
 		}
 	})
 
@@ -86,7 +86,7 @@ func TestJobRows_Checks(t *testing.T) {
 		ledgerRefusedInsert(t, tx, "a pending row with no normalised address (the NULL case)", "23514", check("job_rows_email_norm_shape"), jrRows, row("email_norm", nil))
 		ledgerRefusedInsert(t, tx, "a malformed row that has one", "23514", check("job_rows_email_norm_shape"), jrRows, row("state", "malformed", "reason", "no domain"))
 		ledgerOKInsert(t, tx, "control: a malformed row with none and a reason", jrRows, row("state", "malformed", "reason", "no domain", "email_norm", nil))
-		ledgerRefusedInsert(t, tx, "a suppressed row with no normalised address", "23514", check("job_rows_email_norm_shape"), jrRows, row("state", "suppressed", "email_norm", nil))
+		ledgerRefusedInsert(t, tx, "a suppressed row with no normalised address", "23514", check("job_rows_email_norm_shape"), jrRows, row("state", "suppressed", "suppressed", true, "email_norm", nil))
 	})
 
 	t.Run("a row is a duplicate exactly when it names the row it repeats, in the same job", func(t *testing.T) {
@@ -117,7 +117,7 @@ func TestJobRows_Checks(t *testing.T) {
 		const seat = "job_rows_one_pending_per_address"
 		norm := first["email_norm"]
 		ledgerRefusedInsert(t, tx, "a second pending row with the address of the first", "23505", check(seat), jrRows, row("email_norm", norm))
-		ledgerRefusedInsert(t, tx, "a suppressed row with the address of a pending row (a suppressed row is a pending one that the user's own list took out: the index covers both)", "23505", check(seat), jrRows, row("state", "suppressed", "email_norm", norm))
+		ledgerRefusedInsert(t, tx, "a suppressed row with the address of a pending row (a suppressed row is a pending one that the user's own list took out: the index covers both)", "23505", check(seat), jrRows, row("state", "suppressed", "suppressed", true, "email_norm", norm))
 		ledgerOKInsert(t, tx, "control: the same address as a pending row of ANOTHER job", jrRows, ledgerCols{"id": next(), "job_id": other, "user_id": a, "ordinal": 20, "email_raw": "x", "email_norm": norm})
 		ledgerOKInsert(t, tx, "control: the same address as a duplicate row (it names the row it repeats)", jrRows, row("state", "duplicate", "duplicate_of", first["id"], "email_norm", norm))
 		ledgerOKInsert(t, tx, "control: and a second duplicate of it (a duplicate takes no seat)", jrRows, row("state", "duplicate", "duplicate_of", first["id"], "email_norm", norm))
@@ -134,7 +134,7 @@ func TestJobRows_Checks(t *testing.T) {
 	t.Run("only a pending row is submitted", func(t *testing.T) {
 		ledgerOKInsert(t, tx, "control: a pending row that has been submitted", jrRows, row("submitted_at", "2030-01-01T00:00:00Z"))
 		ledgerRefusedInsert(t, tx, "a malformed row that has been submitted", "23514", check("job_rows_only_pending_is_submitted"), jrRows, row("state", "malformed", "email_norm", nil, "reason", "r", "submitted_at", "2030-01-01T00:00:00Z"))
-		ledgerRefusedInsert(t, tx, "a suppressed row that has been submitted", "23514", check("job_rows_only_pending_is_submitted"), jrRows, row("state", "suppressed", "submitted_at", "2030-01-01T00:00:00Z"))
+		ledgerRefusedInsert(t, tx, "a suppressed row that has been submitted", "23514", check("job_rows_only_pending_is_submitted"), jrRows, row("state", "suppressed", "suppressed", true, "submitted_at", "2030-01-01T00:00:00Z"))
 	})
 
 	t.Run("the fields are an object", func(t *testing.T) {
@@ -434,7 +434,7 @@ func TestJobRows_PrivilegesOfTheRoles(t *testing.T) {
 	mine := jrRow(next, &ord, job, a)
 	sql, args := ledgerInsertInto(jrRows, mine)
 	ledgerExpectOK(t, tx, "control: platform_app inserts a row", sql, args...)
-	for _, set := range []string{"email_raw = 'x@example.com'", "email_norm = 'x@example.com'", "state = 'pending'", "reason = 'r'", "duplicate_of = NULL", `fields = '{"a":1}'`, "source_item = NULL", "submitted_at = now()"} {
+	for _, set := range []string{"email_raw = 'x@example.com'", "email_norm = 'x@example.com'", "state = 'pending'", "reason = 'r'", "duplicate_of = NULL", `fields = '{"a":1}'`, "source_item = NULL", "submitted_at = now()", "suppressed = false"} {
 		ledgerExpectOK(t, tx, "control: platform_app updates "+set, "UPDATE platform.job_rows SET "+set+" WHERE id = $1", r["id"])
 	}
 	for _, c := range []string{"id = id", "job_id = job_id", "user_id = user_id", "ordinal = ordinal", "created_at = created_at"} {
@@ -451,6 +451,7 @@ func TestJobRows_PrivilegesOfTheRoles(t *testing.T) {
 	ledgerExpectRefused(t, tx, "platform_admin inserts a row", "42501", denied, sql, args...)
 	ledgerExpectRefused(t, tx, "platform_admin updates a row", "42501", denied, "UPDATE platform.job_rows SET email_raw = 'x@example.com' WHERE id = $1", r["id"])
 	ledgerExpectRefused(t, tx, "platform_admin deletes a row", "42501", denied, "DELETE FROM platform.job_rows WHERE id = $1", r["id"])
+	ledgerExpectRefused(t, tx, "platform_admin flags a row as suppressed", "42501", denied, "UPDATE platform.job_rows SET suppressed = true WHERE id = $1", r["id"])
 	ledgerResetRole(t, tx)
 }
 

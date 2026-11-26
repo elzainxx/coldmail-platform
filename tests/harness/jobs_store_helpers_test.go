@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coldmail-platform/platform/internal/charge"
 	"github.com/coldmail-platform/platform/internal/jobs"
 	"github.com/coldmail-platform/platform/internal/money"
 	"github.com/coldmail-platform/platform/internal/suppress"
@@ -490,4 +491,91 @@ func jbsCompareOracle(want []jbsOracleRow, got []jbsRow) []string {
 		}
 	}
 	return p
+}
+
+// ---- the two rulings of the Phase 4 close-out (suppression scope, the unknown choice) ----
+
+// previewChoice previews the job under the user's choice for the unknown verdicts of a chained send and fails the test on an error.
+func (e *jbsEnv) previewChoice(user, job, choice string) jobs.Preview {
+	e.t.Helper()
+	p, err := e.jobs.Preview(testCtx(e.t), user, job, jobs.PreviewUnknownChoice(choice))
+	if err != nil {
+		e.t.Fatalf("Preview(%s, choice %q): %v", job, choice, err)
+	}
+	return p
+}
+
+// tryConfirmChoice is Confirm with the user's explicit choice for the unknown verdicts.
+func (e *jbsEnv) tryConfirmChoice(user, job, fingerprint, key, choice string) (jobs.ConfirmResult, error) {
+	e.t.Helper()
+	return e.jobs.Confirm(testCtx(e.t), user, jobs.ConfirmReq{JobID: job, Fingerprint: fingerprint, Key: key, UnknownChoice: choice})
+}
+
+// verifiedSource makes a SUCCEEDED verify job of the user whose module results hold the verdicts, in order (one address v<n>@example.test per verdict). The user is funded, the job is previewed and
+// confirmed through the store, the results are written as the superuser (free: the module's word, with no money in it) and the job walks to succeeded, which frees the module 1 slot.
+func (e *jbsEnv) verifiedSource(user string, verdicts ...string) jobs.Job {
+	e.t.Helper()
+	e.fund(user, "m1", 100)
+	rows := make([]jobs.RowIn, len(verdicts))
+	for i := range rows {
+		rows[i] = jobs.RowIn{Email: fmt.Sprintf("v%d@example.test", i+1)}
+	}
+	src := e.createRows(user, "m1", rows)
+	e.confirm(user, src.ID, e.preview(user, src.ID).Fingerprint)
+	for i, v := range verdicts {
+		e.exec(`INSERT INTO platform.job_results (job_id, user_id, item_ref, ordinal, email, origin, module_state, decision, rule)
+			SELECT r.job_id, r.user_id, r.id, r.ordinal, r.email_norm, 'module', $3, 'free', 'M1-19' FROM platform.job_rows r WHERE r.job_id = $1 AND r.ordinal = $2`, src.ID, i+1, v)
+	}
+	jobWalkTo(e.t, e.admin, src.ID, "succeeded")
+	return src
+}
+
+// chainOf creates a module 2 send chained to the source job, with the choice (empty: none stated), and fails the test on an error.
+func (e *jbsEnv) chainOf(user, source, choice string) jobs.Job {
+	e.t.Helper()
+	j, err := e.jobs.CreateDraft(testCtx(e.t), user, jobs.CreateReq{Module: "m2", Content: jbsContent(), SourceJobID: source, Settings: jobs.Settings{UnknownChoice: choice}})
+	if err != nil {
+		e.t.Fatalf("CreateDraft(chained to %s, choice %q): %v", source, choice, err)
+	}
+	return j
+}
+
+// flaggedRows is the ordinals of the job's rows that carry the suppressed flag, in order, as text.
+func (e *jbsEnv) flaggedRows(job string) []string {
+	e.t.Helper()
+	return e.rows("SELECT ordinal FROM platform.job_rows WHERE job_id = $1 AND suppressed ORDER BY ordinal", job)
+}
+
+// flaggedResults is the ordinals of the job's results that carry the suppressed flag, in order, as text.
+func (e *jbsEnv) flaggedResults(job string) []string {
+	e.t.Helper()
+	return e.rows("SELECT ordinal FROM platform.job_results WHERE job_id = $1 AND suppressed ORDER BY ordinal", job)
+}
+
+// chargesByUnit is the job's ledger charges as "unit:count:credits", sorted, so that two jobs can be compared unit by unit.
+func (e *jbsEnv) chargesByUnit(job string) []string {
+	e.t.Helper()
+	return e.rows(`SELECT unit || ':' || count(*) || ':' || sum(units * unit_cost) FROM platform.ledger WHERE job_id = $1 AND kind = 'charge' GROUP BY unit ORDER BY unit`, job)
+}
+
+// jobItemEmails is what module 2 or 3 was handed for the job (public.job_items of the campaign), sorted.
+func (e *jbsEnv) jobItemEmails(job string) []string {
+	e.t.Helper()
+	return e.rows("SELECT recipient_email FROM public.job_items WHERE campaign_id = $1 ORDER BY recipient_email", job)
+}
+
+// settleVerify drives a CONFIRMED verify job the way the engine does: it walks to running, tells the store that module 1 found every pending row valid (a probed 2xx, M1-03, charged at the own
+// unit) through RecordResults, and returns the summary. A job with suppressed rows is told the same of them: the module never knew who is on the user's list.
+func (e *jbsEnv) settleVerify(job string) jobs.RecordSummary {
+	e.t.Helper()
+	jobWalkTo(e.t, e.admin, job, "running")
+	var items []jobs.ResultItem
+	for _, id := range e.rows("SELECT id::text FROM platform.job_rows WHERE job_id = $1 AND state = 'pending' ORDER BY ordinal", job) {
+		items = append(items, jobs.ResultItem{ItemRef: id, Outcome: charge.Outcome{Module: "m1", State: "valid", Reason: "accepted"}})
+	}
+	sum, err := e.jobs.RecordResults(testCtx(e.t), job, items)
+	if err != nil {
+		e.t.Fatalf("RecordResults(%s, %d items): %v", job, len(items), err)
+	}
+	return sum
 }

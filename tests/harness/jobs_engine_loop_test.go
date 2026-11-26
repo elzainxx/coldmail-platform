@@ -150,13 +150,13 @@ func TestJobEngineLoop_Module2ShapeBatchesPartialAcceptanceAndACampaignActiveWai
 	}}
 	rig := e.newRig(fake, jobengine.Config{SubmitBatch: 3})
 
-	// the first tick: the module answers "a campaign is active" to the first Submit. The job stays confirmed, nothing is stamped, the rows of the first batch were prepared for the module
+	// the first tick: the module answers "a campaign is active" to the first Submit. The job stays confirmed, nothing is stamped, and the rows of the WHOLE job (six, not the three of the first batch) were written for the module once (EnsureJobItems: D9)
 	rig.eng.Tick(ctx)
 	if e.jobStatus(j.ID) != jobs.StatusConfirmed || fake.HeldCount(j.ID) != 0 || rig.eng.Stats().Waits != 1 {
 		t.Fatalf("after the wait: %s, the module holds %d, stats %+v", e.jobStatus(j.ID), fake.HeldCount(j.ID), rig.eng.Stats())
 	}
-	if e.int("SELECT count(*) FROM platform.job_rows WHERE job_id = $1 AND submitted_at IS NOT NULL", j.ID) != 0 || e.int("SELECT count(*) FROM public.job_items WHERE campaign_id = $1", j.ID) != 3 {
-		t.Fatal("after the wait: rows were stamped, or the first batch of public.job_items is not there")
+	if e.int("SELECT count(*) FROM platform.job_rows WHERE job_id = $1 AND submitted_at IS NOT NULL", j.ID) != 0 || e.int("SELECT count(*) FROM public.job_items WHERE campaign_id = $1", j.ID) != 6 || e.int("SELECT count(*) FROM platform.jobs WHERE id = $1 AND items_ensured_at IS NOT NULL", j.ID) != 1 {
+		t.Fatal("after the wait: rows were stamped, or the items of the whole job are not written and recorded (six rows, items_ensured_at)")
 	}
 	if e.resultCount(j.ID) != 0 || e.chargeRows(j.ID) != 0 {
 		t.Fatal("after the wait: something was recorded or charged")

@@ -8,10 +8,25 @@
 //
 //  1. structure: three base64url segments, no padding, at most MaxTokenBytes in all; the header and the payload are JSON objects without a repeated key (ErrMalformed)
 //  2. algorithm: an allow-list that follows the configured key sources, nothing else (ErrAlgorithm)
-//  3. signature (ErrSignature); a kid the key set does not hold is ErrKey after at most one refresh of the set
+//  3. signature (ErrSignature): HS256 by the secret and nothing else, ES256 and RS256 by the key the token's kid names in the key set; a kid the set does not hold is ErrKey after at
+//     most one refresh of the set, and a key set the platform cannot obtain is ErrKeysUnavailable (below)
 //  4. time: exp required, nbf and iat when present, with a leeway (ErrExpired, ErrNotYetValid)
 //  5. iss when an issuer is configured, aud always (ErrIssuer, ErrAudience)
 //  6. sub, a canonical lower-case hyphenated uuid (ErrSubject)
+//
+// A BAD TOKEN IS NOT A BROKEN PLATFORM. Every sentinel above is a verdict on the TOKEN (the API answers all of them the one 401). ErrKeysUnavailable is the only verdict on the PLATFORM:
+// the signing keys could not be obtained, so the token can be neither accepted nor refused (the API answers 503 and the user is not blamed). The order above is what keeps the two
+// apart, deliberately:
+//
+//   - checks 1 and 2 need no key, so they run first and nothing the key set does can change them: a malformed token, "alg":"none" and every algorithm outside the allow-list are refused
+//     (401) with the key set down, and are never a reason to fetch it. HS256 is checked by the secret alone, so a key set that is down can never change the verdict of an HS256 token
+//     (accepted, or ErrSignature), and a verifier with no JWKS URL has no code path to ErrKeysUnavailable at all.
+//   - only an ES256 or RS256 token whose key cannot be found reaches ErrKeysUnavailable. When it would, the token's own unsigned claims are judged first (checks 4 to 6): a token that
+//     is expired, not yet valid, for another issuer or audience, or has no usable subject is refused for that, because no key could make it good. What is left is a well-formed token
+//     that only the missing key could judge: that one, and only that one, is ErrKeysUnavailable. (With the key set healthy the order is the documented one, signature first.)
+//   - a kid the key set does not hold, while the set is known (the last fetch worked) and the rate limit holds the next fetch back, is ErrKey and the user simply retries after
+//     MinRefreshInterval. The same kid while the last fetch FAILED is ErrKeysUnavailable (the platform cannot tell whether the key exists). A key that IS in the set verifies while the
+//     set is stale and the issuer cannot be reached, as it always has: that is not an outage for the token.
 //
 // ALGORITHM CONFUSION. The allow-list is per key source. An HMAC secret allows HS256 and nothing else; a JWKS URL allows ES256 and RS256 and nothing else; "none", every other
 // name and every case variant of a name ("None", "hs256") are refused. A key taken from a JWKS is a typed public key (ecdsa or rsa) that can only verify an asymmetric signature, so it
@@ -46,7 +61,7 @@ var (
 	ErrMalformed   = errors.New("auth: malformed token")
 	ErrAlgorithm   = errors.New("auth: algorithm not accepted")
 	ErrSignature   = errors.New("auth: signature does not verify")
-	ErrKey         = errors.New("auth: no key to verify the token with")
+	ErrKey         = errors.New("auth: no key to verify the token with") // a verdict on the token: the key set is known and holds no key for it (ErrKeysUnavailable is another thing)
 	ErrExpired     = errors.New("auth: token expired")
 	ErrNotYetValid = errors.New("auth: token not yet valid")
 	ErrIssuer      = errors.New("auth: issuer not accepted")
@@ -275,7 +290,7 @@ func validClaimText(s string) bool {
 }
 
 // Verify checks the raw token (the HTTP layer strips "Bearer ") and returns its claims. On any failure the Claims are the zero value and the error is one of the sentinels above,
-// wrapped with a fixed reason.
+// wrapped with a fixed reason; ErrKeysUnavailable (a *KeysUnavailableError) is the one that says the platform, and not the token, is what failed.
 func (v *Verifier) Verify(ctx context.Context, bearer string) (Claims, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -285,14 +300,14 @@ func (v *Verifier) Verify(ctx context.Context, bearer string) (Claims, error) {
 	if err != nil {
 		return Claims{}, err
 	}
-	if err := v.verifySignature(ctx, tok); err != nil {
+	if err := v.verifySignature(ctx, now, tok); err != nil {
 		return Claims{}, err
 	}
 	return v.checkClaims(now, tok.payload)
 }
 
-// verifySignature is checks 2 and 3: the algorithm allow-list, then the key and the signature.
-func (v *Verifier) verifySignature(ctx context.Context, t *parsedToken) error {
+// verifySignature is checks 2 and 3: the algorithm allow-list, then the key and the signature. now is only for the claims judged when the keys are unavailable (see the package comment).
+func (v *Verifier) verifySignature(ctx context.Context, now time.Time, t *parsedToken) error {
 	alg, ok := asString(t.header["alg"])
 	if !ok {
 		return fail(ErrAlgorithm, "the header names no algorithm")
@@ -320,6 +335,13 @@ func (v *Verifier) verifySignature(ctx context.Context, t *parsedToken) error {
 		}
 		k, err := v.keys.keyFor(ctx, kid)
 		if err != nil {
+			if errors.Is(err, ErrKeysUnavailable) {
+				// The platform cannot judge the signature. A token that its own claims already refuse is a bad token, not an outage: no key could make it good (checks 4 to 6, on
+				// claims that nothing has authenticated: they can only turn a 503 into a 401, never accept anything).
+				if _, cerr := v.checkClaims(now, t.payload); cerr != nil {
+					return cerr
+				}
+			}
 			return err
 		}
 		if k.alg != alg {

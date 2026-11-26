@@ -30,8 +30,9 @@ func strPtr(s string) *string {
 	return &s
 }
 
+// settingsView shows the job's settings; unknown_choice is null until the user has chosen (there is no default).
 type settingsView struct {
-	UnknownChoice string `json:"unknown_choice"`
+	UnknownChoice *string `json:"unknown_choice"`
 }
 
 type contentView struct {
@@ -41,10 +42,12 @@ type contentView struct {
 	ReplyTo string `json:"reply_to"`
 }
 
-// previewView is jobs.Preview with the time as the UTC string the rest of the API uses (the embedded struct supplies every other member; the outer ComputedAt hides its time).
+// previewView is jobs.Preview with the time as the UTC string the rest of the API uses and the unknown choice as null when the user has not made one (the embedded struct supplies every other
+// member; the outer ComputedAt and UnknownChoice hide the embedded ones).
 type previewView struct {
 	jobs.Preview
-	ComputedAt string `json:"computed_at"`
+	ComputedAt    string  `json:"computed_at"`
+	UnknownChoice *string `json:"unknown_choice"`
 }
 
 // jobView is a job as a client sees it. The owner (user_id) and the confirm key are not part of it. content is present only on a send job and is left out of a list (a list of 100 jobs must
@@ -75,7 +78,7 @@ func viewJob(j jobs.Job, withContent bool) jobView {
 	v := jobView{
 		ID: j.ID, Module: j.Module, Status: j.Status,
 		SourceJobID: strPtr(j.SourceJobID), ScheduledStart: stampPtr(j.ScheduledStart), StartDeadline: stampPtr(j.StartDeadline), PausedFrom: strPtr(j.PausedFrom),
-		Settings:           settingsView{UnknownChoice: j.Settings.UnknownChoice},
+		Settings:           settingsView{UnknownChoice: strPtr(j.Settings.UnknownChoice)},
 		PreviewFingerprint: strPtr(j.PreviewFingerprint),
 		PreviewedAt:        stampPtr(j.PreviewedAt), ConfirmedAt: stampPtr(j.ConfirmedAt), StartedAt: stampPtr(j.StartedAt), FinishedAt: stampPtr(j.FinishedAt),
 		CancelRequestedAt: stampPtr(j.CancelRequestedAt),
@@ -89,7 +92,7 @@ func viewJob(j jobs.Job, withContent bool) jobView {
 		if p.MalformedReasons == nil {
 			p.MalformedReasons = map[string]int{} // an object, never null: a client counts its members
 		}
-		v.Preview = &previewView{Preview: p, ComputedAt: stamp(p.ComputedAt)}
+		v.Preview = &previewView{Preview: p, ComputedAt: stamp(p.ComputedAt), UnknownChoice: strPtr(p.UnknownChoice)}
 	}
 	return v
 }
@@ -119,10 +122,13 @@ type resultView struct {
 	Unit       *string `json:"unit"`
 	Rule       string  `json:"rule"`
 	RecordedAt string  `json:"recorded_at"`
+	// Suppressed is added after the older members (they keep their names, meaning and order): the address was on the user's suppression list when the job was confirmed. In a verify job it was
+	// verified and charged all the same (the platform tells the user, it does not skip the row); in a send job it was never sent.
+	Suppressed bool `json:"suppressed"`
 }
 
 func viewResult(r jobs.Result) resultView {
-	return resultView{Ordinal: r.Ordinal, Email: r.Email, Origin: r.Origin, State: r.State, Reason: strPtr(r.Reason), Decision: r.Decision, Unit: strPtr(r.Unit), Rule: r.Rule, RecordedAt: stamp(r.RecordedAt)}
+	return resultView{Ordinal: r.Ordinal, Email: r.Email, Origin: r.Origin, State: r.State, Reason: strPtr(r.Reason), Decision: r.Decision, Unit: strPtr(r.Unit), Rule: r.Rule, RecordedAt: stamp(r.RecordedAt), Suppressed: r.Suppressed}
 }
 
 // writeJSON writes a success body: the status, the content type of the envelope and the JSON of v. A value that cannot be encoded is a bug and is a 500 before a byte is written.

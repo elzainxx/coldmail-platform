@@ -13,6 +13,7 @@ import (
 // snapshot is everything a preview (and the confirm that checks it) reads about a job in one pass: the counts of its rows, the pending addresses the suppression list is asked about, the
 // digest of the list, the source job's verdicts, the reserve rate and the fingerprint over all of it. Preview and Confirm both build it with takeSnapshot, so they compute one thing.
 type snapshot struct {
+	module  string // the job's module (m1 for a verify job: its suppressed rows stay in the job)
 	metered bool
 
 	rows       int
@@ -36,7 +37,7 @@ type snapshot struct {
 // takeSnapshot reads the job's list, its source and its prices in the caller's transaction and computes the fingerprint. lockPrices takes the module's price rows FOR SHARE first (the confirm
 // does: a price that changes after the comparison waits for the reserve, so the reserve is made at the prices that were compared). The job must be the user's (the caller read it).
 func (s *Store) takeSnapshot(ctx context.Context, tx pgx.Tx, j Job, lockPrices bool) (*snapshot, error) {
-	sn := &snapshot{reasons: map[string]int{}}
+	sn := &snapshot{module: j.Module, reasons: map[string]int{}}
 
 	if err := tx.QueryRow(ctx, `SELECT metered FROM platform.modules WHERE id = $1`, j.Module).Scan(&sn.metered); err != nil {
 		return nil, s.fail(err)

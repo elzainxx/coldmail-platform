@@ -637,6 +637,10 @@ func phase2CatalogCheck(ctx context.Context, q querier) ([]string, error) {
 		// platform_0013: the reachability flag's source is named when it is stated, and the history says who said so
 		{"platform.unit_costs", "unit_costs_reachable_source_not_blank", []string{"reachable_source IS NULL", "btrim(reachable_source)"}},
 		{"platform.unit_reachability_history", "unit_reachability_history_source_not_blank", []string{"btrim(source)"}},
+		// platform_0014 (owner ruling OD-3): a suppressed row carries the flag, the flag is only on a row that is pending or suppressed, the platform's own suppressed result carries it
+		{"platform.job_rows", "job_rows_suppressed_state_has_the_flag", []string{"'suppressed'", "OR suppressed"}},
+		{"platform.job_rows", "job_rows_flag_only_on_listable_rows", []string{"NOT suppressed", "'pending'", "'suppressed'"}},
+		{"platform.job_results", "job_results_suppressed_platform_outcome", []string{"'platform'", "'suppressed'", "OR suppressed"}},
 	} {
 		rows, err := phase2Rows(ctx, q, `SELECT c.contype::text, c.convalidated::text, pg_get_constraintdef(c.oid) FROM pg_constraint c WHERE c.conrelid = to_regclass($1::text) AND c.conname::text = $2`, c.rel, c.name)
 		if err != nil {
@@ -858,8 +862,8 @@ func phase2CatalogCheck(ctx context.Context, q querier) ([]string, error) {
 		{"jobs_record_transition", []string{"platform.job_events", "platform.actor_kind", "platform.actor_id", "platform.reason", "'transition'"}},
 		{"job_events_check_actor", []string{"require_active_admin", "job_event_actor_is_the_owner", "platform.jobs"}},
 		{"job_transition", []string{"platform.actor_kind", "platform.actor_id", "platform.reason", "UPDATE platform.jobs", "RETURNING"}},
-		{"job_rows_frozen", []string{"job_rows_frozen", "platform.jobs", "'draft'", "'previewed'", "submitted_at", "IS NOT DISTINCT FROM"}},
-		{"job_results_after_confirm", []string{"jobs_results_after_confirm", "platform.jobs", "'draft'", "'previewed'"}},
+		{"job_rows_frozen", []string{"job_rows_frozen", "platform.jobs", "'draft'", "'previewed'", "submitted_at", "IS NOT DISTINCT FROM", "job_rows_pending_flag_is_verify_only", "suppressed"}},
+		{"job_results_after_confirm", []string{"jobs_results_after_confirm", "platform.jobs", "'draft'", "'previewed'", "suppressed"}},
 		{"job_unit_prices_only_reachable", []string{"snapshot_only_reachable_units", "platform.unit_costs", "reachable"}},
 		{"unit_costs_record_reachability", []string{"platform.unit_reachability_history", "reachable_source"}},
 		{"set_unit_reachable", []string{"22023", "P0002", "FOR UPDATE", "platform.unit_costs", "reachable_source", "reachable_changed_at"}},
@@ -1333,6 +1337,13 @@ func TestSchemaLocks_Phase2Rulings(t *testing.T) {
 			[]string{"ALTER TABLE platform.job_rows DROP CONSTRAINT job_rows_state_vocabulary",
 				"ALTER TABLE platform.job_rows ADD CONSTRAINT job_rows_state_vocabulary CHECK (state IN ('pending', 'malformed', 'duplicate', 'suppressed'))"},
 			[][]string{{"platform.job_rows.job_rows_state_vocabulary", "lacks", "'excluded'"}}},
+		{"the suppressed-row CHECK dropped (a suppressed row could be written without the flag)",
+			[]string{"ALTER TABLE platform.job_rows DROP CONSTRAINT job_rows_suppressed_state_has_the_flag"},
+			[][]string{{"platform.job_rows.job_rows_suppressed_state_has_the_flag", "missing"}}},
+		{"the results guard that no longer derives the flag from the row",
+			[]string{"CREATE OR REPLACE FUNCTION platform.job_results_after_confirm() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$ BEGIN " +
+				"PERFORM 1 FROM platform.jobs WHERE status IN ('draft', 'previewed'); IF false THEN RAISE EXCEPTION 'x' USING CONSTRAINT = 'jobs_results_after_confirm'; END IF; RETURN NEW; END $$"},
+			[][]string{{"job_results_after_confirm()", "its body does not mention", "suppressed"}}},
 		{"the charged-result CHECK that does not name the unit",
 			[]string{"ALTER TABLE platform.job_results DROP CONSTRAINT job_results_charged_names_its_unit"},
 			[][]string{{"platform.job_results.job_results_charged_names_its_unit", "missing"}}},

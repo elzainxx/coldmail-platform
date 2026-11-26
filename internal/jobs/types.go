@@ -28,11 +28,15 @@ const (
 	StatusExpired    = "expired"
 )
 
-// The unknown-verdict choice of a chained send (Settings.UnknownChoice).
+// The unknown-verdict choice of a chained send (Settings.UnknownChoice). There is NO default (owner ruling OD-4): the user states it, and a chained send whose source job has an `unknown`
+// verdict cannot be confirmed until they have. "" is "not chosen yet".
 const (
-	UnknownExclude = "exclude" // the default, the one that is safe for the customer
+	UnknownExclude = "exclude"
 	UnknownInclude = "include"
 )
+
+// validChoice says whether c is one of the two values a user may choose.
+func validChoice(c string) bool { return c == UnknownExclude || c == UnknownInclude }
 
 // Job is a row of platform.jobs as the store returns it. Times are the database's; a time the job has not reached is nil.
 type Job struct {
@@ -66,8 +70,9 @@ type Job struct {
 
 // Settings are the job's frozen choices (platform.jobs.frozen_settings, key "settings").
 type Settings struct {
-	// UnknownChoice is what a chained send does with the source job's `unknown` verdicts: UnknownExclude (the default, written when the field is empty) or UnknownInclude. It is meaningful
-	// only for a chained send (a request that sets "include" on a job with no source is refused).
+	// UnknownChoice is what a chained send does with the source job's `unknown` verdicts: UnknownExclude or UnknownInclude, or "" while the user has not chosen (the rows of the unknown verdict are then
+	// classified excluded, the safe reading, and Confirm refuses a job whose source holds any until a choice is given). It is meaningful only for a chained send: any choice on a job with no source is
+	// refused as a bad request. The choice is part of the frozen settings and of the preview's fingerprint.
 	UnknownChoice string `json:"unknown_choice"`
 }
 
@@ -102,15 +107,23 @@ type Preview struct {
 	MalformedReasons map[string]int `json:"malformed_reasons"` // malformed rows by reason word (never an address)
 	Duplicates       int            `json:"duplicates"`        // rows that repeat an earlier row's normalised address
 	Excluded         int            `json:"excluded"`          // a chained send's rows whose source verdict was not selected
-	Suppressed       int            `json:"suppressed"`        // pending rows on the user's suppression list: left out at confirm, counted here
+	Suppressed       int            `json:"suppressed"`        // pending rows on the user's suppression list: counted here; a send job leaves them out at confirm, a verify job does not (SuppressedStillVerified)
 	MissingFields    int            `json:"missing_fields"`    // 0 until phase 5 (merge fields)
 
-	Units int `json:"units"` // rows that would reach the module: Pending - Suppressed
+	// SuppressedStillVerified is true for a verify job (module 1): its suppressed rows are NOT skipped. They are verified and charged like any other row (they are in Units and Credits) and the
+	// results flag them `suppressed` (owner ruling OD-3). False for a send job, whose suppressed rows are left out at confirm.
+	SuppressedStillVerified bool `json:"suppressed_still_verified"`
+
+	Units int `json:"units"` // rows that would reach the module: Pending - Suppressed for a send job, Pending for a verify job
 
 	// Chained sends only: the source job's module results by verdict (all four keys present) and how many the choice selects.
-	Verdicts      map[string]int `json:"verdicts,omitempty"`
-	Selected      int            `json:"selected"`
-	UnknownChoice string         `json:"unknown_choice"`
+	Verdicts map[string]int `json:"verdicts,omitempty"`
+	Selected int            `json:"selected"`
+	// UnknownChoice is the choice recorded on the job ("" when the user has not made one: the API shows null). UnknownCount is how many of the source job's results are `unknown`;
+	// UnknownChoiceRequired is true when there is at least one: Confirm then needs an explicit choice, equal to UnknownChoice here (0 and false for a job that is not chained).
+	UnknownChoice         string `json:"unknown_choice"`
+	UnknownCount          int    `json:"unknown_count"`
+	UnknownChoiceRequired bool   `json:"unknown_choice_required"`
 
 	// Credits. Metered is false for module 3 (entitlement, no credits): the rest is then 0.
 	Metered   bool   `json:"metered"`
@@ -130,15 +143,47 @@ type ConfirmReq struct {
 	Fingerprint    string
 	Key            string
 	ScheduledStart *time.Time // nil: start as soon as the engine can; otherwise between one minute and 366 days ahead by the database's clock
+	// UnknownChoice is the user's explicit choice for the `unknown` verdicts of a chained send's source job: UnknownInclude or UnknownExclude, "" for none. It is REQUIRED when the source job holds at
+	// least one unknown result (ErrUnknownChoiceRequired) and must equal the choice the job was previewed under (a StalePreviewError with reason unknown_choice_changed otherwise: the user must preview
+	// again, so that nobody confirms a list under a choice they did not see). With no unknown result a choice is accepted and changes nothing; on a job that is not chained it is a bad request.
+	UnknownChoice string
 }
 
 // ConfirmResult is what a confirm did. Replayed is true when the key had already confirmed this job: the job is then returned as it is now and nothing was written.
 type ConfirmResult struct {
-	Job        Job
-	Replayed   bool
-	Reserved   int64 // credits held (0 for module 3)
-	Pending    int   // rows that will reach the module
-	Suppressed int   // rows left out because the user suppresses the address
+	Job      Job
+	Replayed bool
+	Reserved int64 // credits held (0 for module 3)
+	Pending  int   // rows that will reach the module (for a verify job: every pending row, the suppressed ones included)
+	// Suppressed is how many rows hold the user's suppression flag: for a send job, the rows left out (state suppressed, never sent); for a verify job, the rows that are STILL verified and charged
+	// and flagged in the results.
+	Suppressed int
+}
+
+// PreviewOption changes what Preview does; the zero call (no option) recomputes the preview of the job as it is.
+type PreviewOption func(*previewOpts)
+
+type previewOpts struct {
+	choice      string
+	choiceGiven bool
+}
+
+// PreviewUnknownChoice makes Preview record the user's choice for the `unknown` verdicts of a chained send (UnknownInclude or UnknownExclude) before it computes the preview: the unknown rows are
+// reclassified (pending for include, excluded for exclude) while the job is draft or previewed and the snapshot, with its new fingerprint, is the answer. A value that is neither is a bad request,
+// and so is a choice on a job that is not chained.
+func PreviewUnknownChoice(choice string) PreviewOption {
+	return func(o *previewOpts) { o.choice, o.choiceGiven = choice, true }
+}
+
+// PreviewChoice reads the unknown choice the options carry (given is false when none does). It is how a Service that is not the store (a test's fake) sees what it was asked.
+func PreviewChoice(opts ...PreviewOption) (choice string, given bool) {
+	var o previewOpts
+	for _, f := range opts {
+		if f != nil {
+			f(&o)
+		}
+	}
+	return o.choice, o.choiceGiven
 }
 
 // ListOpts pages the user's jobs, newest first. After is the cursor a previous page returned; Limit is 1..100 (0 means 25).

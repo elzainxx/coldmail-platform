@@ -1,8 +1,10 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -198,12 +200,47 @@ func (a *API) results(w http.ResponseWriter, r *http.Request, p principal) {
 
 // ---- the moves ------------------------------------------------------------------------------------------------------
 
+// previewBody is the optional body of a preview: the user's choice for the `unknown` verdicts of a chained send. A preview with no body (or an empty one) is a preview of the job as it is.
+type previewBody struct {
+	UnknownChoice *string `json:"unknown_choice"`
+}
+
+// previewOptions reads the preview's optional body (at most 64 KiB, JSON, no member the API does not know) and returns the store's options for it. It answers the failure itself.
+func (a *API) previewOptions(w http.ResponseWriter, r *http.Request) ([]jobs.PreviewOption, bool) {
+	if a.tooBig(w, r, maxSmallBody) {
+		return nil, false
+	}
+	done := extendReadDeadline(w, smallBodyWindow)
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxSmallBody))
+	done()
+	if err != nil {
+		a.badBody(w, r, err)
+		return nil, false
+	}
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return nil, true
+	}
+	r.Body = io.NopCloser(bytes.NewReader(raw))
+	var body previewBody
+	if !a.readJSON(w, r, maxSmallBody, smallBodyWindow, &body) {
+		return nil, false
+	}
+	if body.UnknownChoice == nil {
+		return nil, true
+	}
+	return []jobs.PreviewOption{jobs.PreviewUnknownChoice(*body.UnknownChoice)}, true
+}
+
 func (a *API) preview(w http.ResponseWriter, r *http.Request, p principal) {
 	id, ok := a.jobID(w, r)
-	if !ok || !a.drain(w, r) {
+	if !ok {
 		return
 	}
-	if _, err := a.svc.Preview(r.Context(), p.UserID, id); err != nil {
+	opts, ok := a.previewOptions(w, r)
+	if !ok {
+		return
+	}
+	if _, err := a.svc.Preview(r.Context(), p.UserID, id, opts...); err != nil {
 		a.fail(w, r, err)
 		return
 	}
@@ -252,10 +289,12 @@ func (a *API) resume(w http.ResponseWriter, r *http.Request, p principal) {
 	a.move(w, r, p, a.svc.ResumeScheduled)
 }
 
-// confirmBody is the body of a confirm: the fingerprint of the preview the user saw, and optionally when to start.
+// confirmBody is the body of a confirm: the fingerprint of the preview the user saw, optionally when to start, and, for a chained send whose source job holds `unknown` verdicts, the
+// user's explicit choice for them (the store refuses a confirm that has none, and one that differs from the choice the job was previewed under).
 type confirmBody struct {
 	Fingerprint    string  `json:"fingerprint"`
 	ScheduledStart *string `json:"scheduled_start"`
+	UnknownChoice  *string `json:"unknown_choice"`
 }
 
 func (a *API) confirm(w http.ResponseWriter, r *http.Request, p principal) {
@@ -278,6 +317,9 @@ func (a *API) confirm(w http.ResponseWriter, r *http.Request, p principal) {
 		return
 	}
 	req := jobs.ConfirmReq{JobID: id, Fingerprint: body.Fingerprint, Key: keys[0]}
+	if body.UnknownChoice != nil {
+		req.UnknownChoice = *body.UnknownChoice
+	}
 	if body.ScheduledStart != nil {
 		t, err := time.Parse(time.RFC3339, *body.ScheduledStart)
 		if err != nil {

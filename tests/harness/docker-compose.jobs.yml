@@ -48,6 +48,7 @@ services:
       PLATFORM_JOB_ENGINE_ENABLED: "true"
       PLATFORM_JOB_TICK_MS: "200"
       PLATFORM_JOB_SETTLE_INTERVAL_SEC: "1"
+      PLATFORM_JOB_BACKOFF_CAP_SEC: "2"                  # an idle job is looked at again within two seconds: the stage waits for outcomes in seconds
       PLATFORM_JOB_STALE_AFTER_MIN_M1: "1"
       PLATFORM_M1_URL: http://m1j:8080
       PLATFORM_M1_KEY_SECRET: ${H_JOBS_M1_KEY_SECRET:?}
@@ -87,6 +88,7 @@ services:
       PLATFORM_JOB_ENGINE_ENABLED: "true"
       PLATFORM_JOB_TICK_MS: "200"
       PLATFORM_JOB_SETTLE_INTERVAL_SEC: "1"
+      PLATFORM_JOB_BACKOFF_CAP_SEC: "2"                  # an idle job is looked at again within two seconds: the stage waits for outcomes in seconds
       PLATFORM_JOB_STALE_AFTER_MIN_M1: "1"
       PLATFORM_M1_URL: http://m1j:8080
       PLATFORM_M1_KEY_SECRET: ${H_JOBS_M1_KEY_SECRET:?}

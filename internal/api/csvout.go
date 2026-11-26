@@ -10,8 +10,9 @@ import (
 	"github.com/coldmail-platform/platform/internal/jobs"
 )
 
-// resultsCSVHeader is the first line of results.csv: the columns of a result, in this order, in the words of the JSON.
-var resultsCSVHeader = []string{"ordinal", "email", "origin", "state", "reason", "decision", "unit", "rule"}
+// resultsCSVHeader is the first line of results.csv: the columns of a result, in this order, in the words of the JSON. `suppressed` (true or false) was added after the eight older columns, which keep
+// their order and meaning.
+var resultsCSVHeader = []string{"ordinal", "email", "origin", "state", "reason", "decision", "unit", "rule", "suppressed"}
 
 // resultsCSV streams every result of the job as a CSV that opens safely in a spreadsheet and reads back exactly (internal/csvsafe: every cell through encoding/csv, one leading apostrophe on a
 // cell that starts with = + - @ TAB CR or '; csvsafe.Unescape is the exact inverse).
@@ -62,7 +63,7 @@ func (a *API) resultsCSV(w http.ResponseWriter, r *http.Request, p principal) {
 				return err
 			}
 		}
-		if err := cw.Write([]string{strconv.Itoa(res.Ordinal), res.Email, res.Origin, res.State, res.Reason, res.Decision, res.Unit, res.Rule}); err != nil {
+		if err := cw.Write([]string{strconv.Itoa(res.Ordinal), res.Email, res.Origin, res.State, res.Reason, res.Decision, res.Unit, res.Rule, strconv.FormatBool(res.Suppressed)}); err != nil {
 			return err
 		}
 		rows++

@@ -14,8 +14,9 @@ Every route needs `Authorization: Bearer <token>`, where the token is the **acce
 - **Exactly one `Authorization` header.** The scheme is `Bearer` in any letter case; the token is at most **8 KiB**. A token in the query string, a cookie or another header is not read.
 - The token is verified (signature, `exp`, `nbf`, `iss`, `aud`: [`config-reference.md`](config-reference.md), "How the job API verifies a login") and its `sub` is resolved to a platform user. An
   unknown login, an inactive user and the system user are refused.
-- **Every one of those failures is the same answer**: `401`, the code `unauthenticated`, the same message, `WWW-Authenticate: Bearer`. Nothing in the response says why (an expired token and a forged one are
+- **Every one of those failures is the same answer, except one (`503 auth_unavailable`, below)**: `401`, the code `unauthenticated`, the same message, `WWW-Authenticate: Bearer`. Nothing in the response says why (an expired token and a forged one are
   indistinguishable); the reason is in the service's log, under the request id, as a word, never the token or a part of it.
+- **The one exception is the platform's own inability to judge the token**: when the signing keys cannot be obtained (the JWKS endpoint is down, times out, answers garbage, or the key set was never loaded) the answer is `503 auth_unavailable` with `Retry-After: 30`, never a 401 that blames the user. A token that is bad by itself (expired, wrong audience or issuer, not yet valid) stays a 401 even then; an HS256 token is judged by its secret alone and never meets the 503; an unknown key id within 30 seconds of a good fetch of the key set is a 401 (retry).
 - A failure of the platform's own database while the login is resolved is **not** a refusal of the login (the token verified): it is `500 internal_error`, so that a client does not sign a user out for an outage.
 - **The user is the principal and nothing else.** The user a request acts for is the platform user of the verified login. No path, query, header or body names a user: a body or a query that tries (`user_id`, `owner`, ...)
   is refused as an unknown member (`400 bad_request`) and reaches nothing. A job of another user is `404 not_found`, **the same answer, byte for byte but for the request id, as a job that does not exist**.
@@ -39,8 +40,8 @@ Every route needs `Authorization: Bearer <token>`, where the token is the **acce
 | `POST /v1/jobs` | create a draft from a list (JSON or CSV) | `201`, the job, `Location: /v1/jobs/{id}` |
 | `GET /v1/jobs` | the user's jobs, newest first (`cursor`, `limit` 1 to 100, default 25) | `200`, `{"jobs":[...],"next_cursor":...}` |
 | `GET /v1/jobs/{id}` | one job | `200`, `{"job":{...}}` |
-| `POST /v1/jobs/{id}/preview` | compute what the list will cost; a draft becomes `previewed` | `200`, the job with its `preview` |
-| `POST /v1/jobs/{id}/confirm` | confirm a previewed job: `Idempotency-Key` required; body `{"fingerprint","scheduled_start"?}` | `200`, the job and what the confirm did |
+| `POST /v1/jobs/{id}/preview` | compute what the list will cost; a draft becomes `previewed`; optional body `{"unknown_choice"?}` | `200`, the job with its `preview` |
+| `POST /v1/jobs/{id}/confirm` | confirm a previewed job: `Idempotency-Key` required; body `{"fingerprint","scheduled_start"?,"unknown_choice"?}` | `200`, the job and what the confirm did |
 | `POST /v1/jobs/{id}/discard` | cancel a draft or a previewed job (it holds nothing) | `200`, the job |
 | `POST /v1/jobs/{id}/reopen` | take a previewed job back to draft (its preview is cleared) | `200`, the job |
 | `POST /v1/jobs/{id}/cancel` | cancel before the job started (credits come back), or ask for a cancel of a running job | `200`, the job |
@@ -66,10 +67,10 @@ can pause one running job, and module 1 cannot cancel one. The API does not pret
     "scheduled_start": null,
     "start_deadline": null,
     "paused_from": null,
-    "settings": {"unknown_choice": "exclude"},
+    "settings": {"unknown_choice": null},
     "preview": {
-      "rows": 5, "pending": 3, "malformed": 1, "malformed_reasons": {"no_at": 1}, "duplicates": 1, "excluded": 0, "suppressed": 0, "missing_fields": 0,
-      "units": 3, "selected": 0, "unknown_choice": "exclude",
+      "rows": 5, "pending": 3, "malformed": 1, "malformed_reasons": {"no_at": 1}, "duplicates": 1, "excluded": 0, "suppressed": 1, "suppressed_still_verified": true, "missing_fields": 0,
+      "units": 3, "selected": 0, "unknown_choice": null, "unknown_count": 0, "unknown_choice_required": false,
       "metered": true, "rate_unit": "m1_own", "unit_cost": 1, "credits": 3, "available": 100, "shortfall": 0,
       "fingerprint": "3f9a...c1", "computed_at": "2026-12-01T09:00:00.123456Z"
     },
@@ -85,6 +86,15 @@ can pause one running job, and module 1 cannot cancel one. The API does not pret
 `content` (`subject`, `html`, `text`, `reply_to`), which the list leaves out. The `preview` counts are the store's: `credits` is what a confirm would hold, `shortfall` what the balance lacks of it, and the
 `fingerprint` names everything the numbers depended on (a confirm refuses a stale one).
 
+**Suppression applies to send jobs only** (modules 2 and 3). `suppressed` is how many pending rows the user's own suppression list holds. In a **send** job they are left out at the confirm (never sent, never
+reserved, a free `suppressed` result) and `units` and `credits` do not count them. In a **verify** job (module 1) nobody is e-mailed, so they are **not** skipped: they are verified and charged like any other
+row, `units` and `credits` count them, `suppressed_still_verified` is `true`, and the results carry `"suppressed": true` on them (below). A chained send still excludes them: its rows are the verify job's results,
+and the user's list is applied again at the send's own confirm, so an address suppressed after the verify job finished is not sent to.
+
+**The `unknown` choice of a chained send is never defaulted.** `settings.unknown_choice` and `preview.unknown_choice` are `null` until the user says `include` or `exclude`; until then the `unknown` rows are shown
+as excluded (the safe reading) and `selected` counts them out. `preview.unknown_count` is how many of the source job's results are `unknown`, and `preview.unknown_choice_required` is `true` when there is at least
+one: the confirm then **must** carry `unknown_choice`, equal to the one the preview shows. A job that is not chained has none of this (`unknown_count` 0, `required` false, and a choice on it is `400 validation_failed`).
+
 ### Create a draft
 
 `POST /v1/jobs` with `Content-Type: application/json`:
@@ -96,14 +106,15 @@ can pause one running job, and module 1 cannot cancel one. The API does not pret
     {"email": "ann@example.test", "fields": {"first_name": "Ann"}},
     {"email": "bob@example.test"}
   ],
-  "content": {"subject": "Hello", "html": "<p>Hi</p>", "text": "Hi", "reply_to": "me@example.test"},
-  "source_job_id": "",
-  "settings": {"unknown_choice": "exclude"}
+  "content": {"subject": "Hello", "html": "<p>Hi</p>", "text": "Hi", "reply_to": "me@example.test"}
 }
 ```
 
+(`source_job_id` and `settings.unknown_choice` are for a chained send only: a choice on a list that is not chained is `400 validation_failed`, `exclude` as much as `include`.)
+
 `module` is `m1` (verify, no content), `m2` or `m3` (send, content required). A send **chained** to a succeeded verify job of the same user names it in `source_job_id` and sends no rows: its rows are that job's results,
-selected by verdict (`valid` and `risky` in, `invalid` out, `unknown` by `settings.unknown_choice`, `exclude` unless the user says `include`). `fields` values are strings.
+selected by verdict (`valid` and `risky` in, `invalid` out, `unknown` by `settings.unknown_choice`: `include` or `exclude`, **no default**; it may be left out here and given at the preview, see below).
+`fields` values are strings.
 
 **Or a CSV body** (`Content-Type: text/csv`): a header row is required, the column named `email` (any letter case, surrounding space ignored) is the address and **every other column becomes a merge field** named by its
 header. The rest travels in the query, percent-encoded: `module`, `source_job_id`, `unknown_choice`, `subject`, `html`, `text`, `reply_to` (**64 KiB of query in all**; any other parameter is refused).
@@ -124,6 +135,13 @@ naming the line and never quoting the file. A CSV with no rows is a CSV with no 
 **The row cap is the store's** (`PLATFORM_JOB_MAX_ROWS`, default 100000): a longer list is `413 too_many_rows` with `details.limit`; a CSV is cut off at the limit while it is read, so a list far over it is refused without
 being read to its end.
 
+### Preview, and the `unknown` choice
+
+`POST /v1/jobs/{id}/preview` takes **no body, or an optional JSON body** `{"unknown_choice": "include"}` (or `"exclude"`; at most 64 KiB; a body that is not JSON is `415`, a member the API does not know is
+`400 bad_request`). The choice is for a **chained send** only: it is recorded in the job's settings and the source job's `unknown` rows are reclassified (pending for `include`, excluded for `exclude`) while the job
+is draft or previewed, so the answer is the preview of the list *under that choice*, with the fingerprint that names it. On a job that is not chained, or with a value that is neither, it is
+`400 validation_failed` and nothing is written. `POST /v1/jobs` may also carry the choice (`settings.unknown_choice`, or the `unknown_choice` query of a CSV create) with the same rules.
+
 ### Confirm, and the idempotency rule
 
 ```
@@ -131,16 +149,19 @@ POST /v1/jobs/{id}/confirm
 Idempotency-Key: send-001
 Content-Type: application/json
 
-{"fingerprint": "3f9a...c1", "scheduled_start": "2026-12-02T09:30:00Z"}
+{"fingerprint": "3f9a...c1", "scheduled_start": "2026-12-02T09:30:00Z", "unknown_choice": "include"}
 ```
 
 `Idempotency-Key` is **required, exactly once** (1 to 128 characters of letters, digits and `. _ : -`): a missing one is `400 validation_failed`. `fingerprint` is the one of the preview the user saw; `scheduled_start`
-is optional (between one minute and 366 days ahead by the database's clock: the job is then `scheduled` and waits for its time, holding the slot and the credits).
+is optional (between one minute and 366 days ahead by the database's clock: the job is then `scheduled` and waits for its time, holding the slot and the credits). `unknown_choice` is **required when the
+chained send's source job holds at least one `unknown` result** (`preview.unknown_choice_required`): with none the answer is `422 unknown_choice_required` (`details.unknown_rows` and `details.allowed`) and
+**nothing is written** (no credits held, the job is still previewed); with one that is not the choice the job was previewed under it is `409 preview_stale` with `details.reason` `unknown_choice_changed` (preview again
+with the choice you want), so nobody confirms a list under a choice they did not see. With no unknown result no choice is needed and one given changes nothing; on a job that is not chained it is `400 validation_failed`.
 
 - **The same key on the same job is one confirm.** The first request does the work; a second (a retry, a double click, a lost response) is answered `200` with `"replayed": true` and the numbers the first one had, and
   writes nothing. The same key on **another** job of the user is `409 idempotency_key_reused`.
-- The answer: `{"job": {...}, "replayed": false, "reserved": 3, "pending": 3, "suppressed": 0}`: `reserved` is the credits held (0 for module 3), `pending` the rows that will reach the module, `suppressed` the rows left
-  out because the user suppresses the address.
+- The answer: `{"job": {...}, "replayed": false, "reserved": 3, "pending": 3, "suppressed": 0}`: `reserved` is the credits held (0 for module 3), `pending` the rows that will reach the module, `suppressed` the rows
+  that carry the user's suppression flag: in a **send** job they were left out (and are not in `pending`); in a **verify** job they are still in `pending`, verified and reserved, and flagged in the results.
 - A confirm is one transaction: it either holds the credits and takes the slot (one active job per user and module) or leaves nothing behind.
 
 ### Events
@@ -154,13 +175,15 @@ is optional (between one minute and 366 days ahead by the database's clock: the 
 
 ```json
 {"results": [
-  {"ordinal": 1, "email": "ann@example.test", "origin": "module", "state": "valid", "reason": null, "decision": "charge", "unit": "m1_own", "rule": "M1-03", "recorded_at": "2026-12-01T09:05:00Z"},
-  {"ordinal": 2, "email": "no-at-sign", "origin": "platform", "state": "malformed", "reason": "no_at", "decision": "free", "unit": null, "rule": "P-08", "recorded_at": "2026-12-01T09:05:00Z"}
+  {"ordinal": 1, "email": "ann@example.test", "origin": "module", "state": "valid", "reason": null, "decision": "charge", "unit": "m1_own", "rule": "M1-03", "recorded_at": "2026-12-01T09:05:00Z", "suppressed": true},
+  {"ordinal": 2, "email": "no-at-sign", "origin": "platform", "state": "malformed", "reason": "no_at", "decision": "free", "unit": null, "rule": "P-08", "recorded_at": "2026-12-01T09:05:00Z", "suppressed": false}
 ], "next_cursor": "bzEw"}
 ```
 
 `origin` says who decided (`module` or `platform`: the platform's own outcomes are `malformed`, `duplicate`, `suppressed`, `excluded`, `cancelled`, `expired`, `failed`), `decision` is `charge`, `free` or `unmapped`,
-and a charged row names its `unit`. The results are **immutable and keyed by ordinal**, so walking the pages of a **finished** job with `next_cursor` neither repeats nor skips a row; the last page has
+and a charged row names its `unit`. **`suppressed`** (added after the others, which keep their names, meaning and order) is `true` when the address was on the user's suppression list when the job was confirmed.
+In a **verify** job that row is a module result like any other (verified, charged) and the flag is how the user learns the address is suppressed; in a **send** job it is the platform's own `suppressed` result (never
+sent, free, rule `P-SUP`). It is `false` for every other row. The results are **immutable and keyed by ordinal**, so walking the pages of a **finished** job with `next_cursor` neither repeats nor skips a row; the last page has
 `next_cursor: null` (a page is never followed by an empty one). **While a job is running** its results appear in the order the module settles the rows, not the order of the list, so a result can be recorded with an
 ordinal a walk has already passed: such a walk shows what was final when it went by, and a client that wants the whole list walks again once the job has `succeeded`. A cursor is opaque: one the API did not give is
 `400 validation_failed`. `limit` is 1 to `PLATFORM_RESULTS_PAGE_MAX` (default 1000); without one a page is 100 results, or the dial when it is smaller.
@@ -173,9 +196,9 @@ ordinal a walk has already passed: such a walk shows what was final when it went
 Content-Type: text/csv; charset=utf-8
 Content-Disposition: attachment; filename="job-<id>.csv"
 
-ordinal,email,origin,state,reason,decision,unit,rule
-1,ann@example.test,module,valid,,charge,m1_own,M1-03
-2,no-at-sign,platform,malformed,no_at,free,,P-08
+ordinal,email,origin,state,reason,decision,unit,rule,suppressed
+1,ann@example.test,module,valid,,charge,m1_own,M1-03,true
+2,no-at-sign,platform,malformed,no_at,free,,P-08,false
 ```
 
 - **One line per result, including the platform's own** (malformed, duplicate, suppressed, excluded), written through `encoding/csv` (commas, quotes and line breaks are quoted by the standard rules), LF line ends.
@@ -203,8 +226,9 @@ no SQL is ever in it.
 | 413 | `payload_too_large` | the body is over its cap, or the query of a CSV create is over 64 KiB | `limit_bytes` |
 | 413 | `too_many_rows` | the list is longer than `PLATFORM_JOB_MAX_ROWS` | `limit` |
 | 415 | `unsupported_media_type` | the body is not `application/json` (or `text/csv` on a create) | `reason` |
-| 422 | `nothing_to_do` | not one row would reach the module (every row malformed, a repeat, excluded or suppressed) | none |
-| 409 | `preview_stale` | what the preview depended on changed (the list, a price, the content, the choice, the source job's results): preview again | none |
+| 422 | `nothing_to_do` | not one row would reach the module (every row malformed, a repeat, excluded or, **for a send job only**, suppressed: a verify job whose rows are all suppressed is verified) | none |
+| 422 | `unknown_choice_required` | the confirm of a chained send whose source job holds `unknown` results carries no `unknown_choice`; nothing was written | `unknown_rows`: how many results are unknown; `allowed`: `["include","exclude"]` |
+| 409 | `preview_stale` | what the preview depended on changed (the list, a price, the content, the choice, the source job's results), or the confirm's `unknown_choice` is not the one the job was previewed under: preview again | none, or `reason`: `unknown_choice_changed` |
 | 409 | `job_slot_taken` | the user already has an active job on this module; nothing was held | none |
 | 409 | `idempotency_key_reused` | the key already confirmed another job of the user | none |
 | 409 | `not_previewed` | the job is not previewed (or was confirmed with another key) | none |
@@ -215,6 +239,7 @@ no SQL is ever in it.
 | 403 | `suspended` | module 3 is observed holding the user suspended | none |
 | 503 | `module_unavailable` | module 3 could not be asked and an immediate confirm will not hold credits for a job that cannot start | none |
 | 503 | `busy` | another operation on the same user's credits did not finish within `PLATFORM_MONEY_LOCK_TIMEOUT_MS`; nothing was written, try again (`Retry-After: 1`) | none |
+| 503 | `auth_unavailable` | the platform could not obtain the keys to judge the token (the JWKS endpoint is down, times out, answers garbage, or the key set was never loaded); not the user's fault, retry. A bad token stays the 401, an HS256 token is judged by its secret alone, and an unknown key id within 30 s of a good fetch is a 401 | none; `Retry-After: 30`, no `WWW-Authenticate` |
 | 500 | `internal_error` | anything else: the cause is in the service's log under the request id, never in the answer | none |
 | 405 | `method_not_allowed` | the path exists for other verbs (`Allow` names them) | none |
 

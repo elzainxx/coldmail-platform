@@ -217,7 +217,7 @@ func TestResult_HoldsExactlyWhatACustomerMaySee(t *testing.T) {
 	for i := 0; i < rt.NumField(); i++ {
 		names = append(names, rt.Field(i).Name)
 	}
-	want := "Ordinal,Email,Origin,State,Reason,Decision,Unit,Rule,RecordedAt"
+	want := "Ordinal,Email,Origin,State,Reason,Decision,Unit,Rule,Suppressed,RecordedAt" // Suppressed (owner ruling OD-3) is shown on purpose: the JSON and CSV views carry it
 	if got := strings.Join(names, ","); got != want {
 		t.Fatalf("Result has fields %s, want %s: a new field of a result is shown to the customer only on purpose (update internal/api's views with it)", got, want)
 	}

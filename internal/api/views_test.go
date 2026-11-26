@@ -80,7 +80,7 @@ func TestViews_EveryFieldOfTheStoresTypesIsShownOrLeftOutOnPurpose(t *testing.T)
 
 	// every member of a preview the store computes is shown (the view embeds the type), so a new one is shown at once: the pinned list is how a reviewer sees it arrive
 	pv := keysOfJSON(t, viewJob(fullJob(), true).Preview)
-	wantPV := []string{"available", "computed_at", "credits", "duplicates", "excluded", "fingerprint", "malformed", "malformed_reasons", "metered", "missing_fields", "pending", "rate_unit", "rows", "selected", "shortfall", "suppressed", "unit_cost", "units", "unknown_choice"}
+	wantPV := []string{"available", "computed_at", "credits", "duplicates", "excluded", "fingerprint", "malformed", "malformed_reasons", "metered", "missing_fields", "pending", "rate_unit", "rows", "selected", "shortfall", "suppressed", "suppressed_still_verified", "unit_cost", "units", "unknown_choice", "unknown_choice_required", "unknown_count"}
 	if !reflect.DeepEqual(pv, wantPV) {
 		t.Fatalf("a preview is shown with the members\n  %v\nwant\n  %v", pv, wantPV)
 	}
@@ -98,7 +98,7 @@ func TestViews_EveryFieldOfTheStoresTypesIsShownOrLeftOutOnPurpose(t *testing.T)
 		t.Fatalf("an event is shown with %v, want %v", got, wantEv)
 	}
 
-	res := map[string]string{"Ordinal": "ordinal", "Email": "email", "Origin": "origin", "State": "state", "Reason": "reason", "Decision": "decision", "Unit": "unit", "Rule": "rule", "RecordedAt": "recorded_at"}
+	res := map[string]string{"Ordinal": "ordinal", "Email": "email", "Origin": "origin", "State": "state", "Reason": "reason", "Decision": "decision", "Unit": "unit", "Rule": "rule", "Suppressed": "suppressed", "RecordedAt": "recorded_at"}
 	checkAccounted(t, reflect.TypeOf(jobs.Result{}), res, nil)
 	var wantRes []string
 	for _, m := range res {
