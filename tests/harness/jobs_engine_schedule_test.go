@@ -868,7 +868,7 @@ func TestJobItemsMarker_NoModuleStatementReadsAnItemsStatusSoTheMarkerIsARecordA
 	var all []stmt
 	for _, line := range strings.Split(strings.ReplaceAll(string(raw), "\r", ""), "\n") {
 		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "module-dir|") { // the two header lines name each module's directory; every other line is a statement
 			continue
 		}
 		p := strings.SplitN(line, "|", 5)
