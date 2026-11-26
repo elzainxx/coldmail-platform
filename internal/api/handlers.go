@@ -274,19 +274,23 @@ func (a *API) reopen(w http.ResponseWriter, r *http.Request, p principal) {
 	a.move(w, r, p, a.svc.Reopen)
 }
 
-// cancel attempts the move the job's state calls for (the store decides which, and the database whether the module can do it): module 1 has no per-job cancel, so the answer for a running
-// module 1 job is the typed refusal not_allowed / cancel_not_supported.
+// cancel attempts the move the job's state calls for (the store decides which, and the database whether the module can do it): a job that holds nothing at a module (confirmed, scheduled, paused
+// before its start) is cancelled at once and its reserve released; a job the module holds (running, or paused while it was running) becomes cancelling and the engine ends it (the answer says
+// `cancelling`, and the job ends `cancelled` when the module has reported what finished). No seeded module is refused any more; a module whose capability row says it cannot would be the typed
+// refusal not_allowed / cancel_not_supported.
 func (a *API) cancel(w http.ResponseWriter, r *http.Request, p principal) {
-	a.move(w, r, p, a.svc.CancelBeforeStart)
+	a.move(w, r, p, a.svc.Cancel)
 }
 
-// pause defers a scheduled job; on a running job the store's attempt is refused by the database (no module can pause one job today): not_allowed / pause_not_supported.
+// pause holds a job: a scheduled job's start is deferred, and a RUNNING job of a module that can pause one (modules 2 and 3) is paused the moment the answer is sent (the module is told at the
+// engine's next tick, and the items it had already claimed finish). The database decides: module 1 cannot, which is the typed refusal not_allowed / pause_not_supported.
 func (a *API) pause(w http.ResponseWriter, r *http.Request, p principal) {
-	a.move(w, r, p, a.svc.PauseScheduled)
+	a.move(w, r, p, a.svc.Pause)
 }
 
+// resume lets a paused job go on, to the state it paused from (scheduled or running).
 func (a *API) resume(w http.ResponseWriter, r *http.Request, p principal) {
-	a.move(w, r, p, a.svc.ResumeScheduled)
+	a.move(w, r, p, a.svc.Resume)
 }
 
 // confirmBody is the body of a confirm: the fingerprint of the preview the user saw, optionally when to start, and, for a chained send whose source job holds `unknown` verdicts, the

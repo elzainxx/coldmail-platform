@@ -30,6 +30,9 @@ type apiDeps struct {
 	Jobs *jobs.Store
 	// PreChecks is the module 3 pre-check the job store was given: nil when module 3 is not configured (the store then makes none).
 	PreChecks jobs.PreChecks
+	// Vendor is module 1's vendor reachability, read through its describe: the provider the job store was given (before every module 1 preview and confirm) and the reachability loop reads. A nil
+	// INTERFACE when module 1 cannot be asked in this process (PLATFORM_M1_URL or PLATFORM_M1_KEY_SECRET unset): the store then reads nothing and the loop does not run.
+	Vendor jobs.VendorReachability
 	// Adapters are the three module adapters, built once from the configuration; a nil one is a module whose dials are unset (its jobs wait).
 	Adapters moduleAdapters
 	// Registry is what the job engine reaches the modules through (jobengine.Registry over Adapters).
@@ -73,23 +76,26 @@ func newJobStore(pool *pgxpool.Pool, mny *money.Store, cfg config.Config, log *s
 // can put a fake in its place; nothing else assigns it.
 var apiResolver = func(t *tenant.Resolver) api.Resolver { return t }
 
-// build makes what needs the pool: the money store, the module adapters, the job store (with module 3's pre-check when module 3 is configured), the tenant resolver, the module registry and, when
-// the verifier exists, the job API. It runs once, after the pool is open and before the server listens. With no key source the API is not built and its routes are not mounted: a request for one is the 404 of any unknown path.
+// build makes what needs the pool: the money store, the module adapters, the tenant resolver, the job store (with module 3's pre-check when module 3 is configured and module 1's vendor reachability
+// when module 1 can be asked), the module registry and, when the verifier exists, the job API. It runs once, after the pool is open and before the server listens. With no key source the API is not built and its routes are not mounted: a request for one is the 404 of any unknown path.
 func (d *apiDeps) build(pool *pgxpool.Pool, cfg config.Config, log *slog.Logger) error {
 	d.Money = newMoneyStore(pool, cfg)
 	var err error
 	if d.Adapters, err = newModuleAdapters(cfg, log); err != nil {
 		return err
 	}
+	if d.Tenants, err = tenant.NewResolver(pool, cfg.M1KeySecret, tenant.WithM1KeyVersion(cfg.M1KeyVersion)); err != nil {
+		return fmt.Errorf("build the tenant resolver: %w", err)
+	}
 	var more []jobs.Option
 	if d.PreChecks = preChecksOf(d.Adapters); d.PreChecks != nil {
 		more = append(more, jobs.WithPreChecks(d.PreChecks))
 	}
+	if d.Vendor = newVendorProvider(d.Adapters, d.Tenants, pool, cfg); d.Vendor != nil {
+		more = append(more, jobs.WithVendorReachability(d.Vendor))
+	}
 	if d.Jobs, err = newJobStore(pool, d.Money, cfg, log, more...); err != nil {
 		return fmt.Errorf("build the job store: %w", err)
-	}
-	if d.Tenants, err = tenant.NewResolver(pool, cfg.M1KeySecret, tenant.WithM1KeyVersion(cfg.M1KeyVersion)); err != nil {
-		return fmt.Errorf("build the tenant resolver: %w", err)
 	}
 	d.Registry = newModuleRegistry(pool, cfg, d.Adapters, d.Tenants, log)
 	if d.Auth == nil {

@@ -77,6 +77,9 @@ func Profile() sendapi.Profile {
 		LinearCost:       false,
 		Cancel:           true,
 		RunConflict:      sendapi.ConflictCauses,
+		// POST /v1/pause and POST /v1/resume (Phase 4 C1, additive; the shared body's Pause and Resume): describe.capabilities.pause_resume says the module has them (module 2 names its flag campaign_pause_resume).
+		// A describe without the key is a module older than C1 and means "cannot", never an error.
+		PauseCapability: "pause_resume",
 	}
 }
 

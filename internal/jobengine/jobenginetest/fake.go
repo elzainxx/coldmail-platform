@@ -45,13 +45,16 @@ func (it Item) isFinal() bool {
 }
 
 // Counts is how many times each method was called (every call counts, whether it answered or not).
-type Counts struct{ Submit, Observe, Cancel, Total int }
+type Counts struct{ Submit, Observe, Cancel, Pause, Resume, Total int }
 
 type fakeJob struct {
 	items     map[string]*Item
 	order     []string // refs in the order the module accepted them
 	cancelled bool
+	paused    bool // the module HOLDS the campaign: its worker claims no queued item (an item in flight finishes)
 	ref       string
+
+	pauseCalls, resumeCalls int // how many Pause and Resume calls this job got (PauseAckAfter, ResumeAckAfter)
 }
 
 // FakeModule is a module the tests drive. Every field is set before the engine runs (or between ticks, from the test's own goroutine) and read under the lock. The zero value is a module 2 that
@@ -72,6 +75,9 @@ type FakeModule struct {
 	PageSize int
 	// LeakNotFinal makes Observe hand over the items that are not final too (a misbehaving module): the platform must record none of them.
 	LeakNotFinal bool
+	// PauseAckAfter and ResumeAckAfter make the module LAG: it answers every Pause (Resume) with success but only HOLDS (lets go of) the campaign from the n-th call of that job on, so its report keeps
+	// saying the old thing until then (0 or 1: the first call). The engine must go on asking until the report says it, and must not take an answered call for a held campaign.
+	PauseAckAfter, ResumeAckAfter int
 	// Manual makes the module's worker settle NOTHING by itself: an item becomes final only when a test calls Settle for it (or Cancel takes it back). It is the lever of ModuleContract, which has
 	// to say exactly which item is final and with what outcome, the way a stand-in of a real module is driven.
 	Manual bool
@@ -203,9 +209,13 @@ func (f *FakeModule) FinalOutcomes(jobID string) map[string]charge.Outcome {
 	return out
 }
 
-// reportedOf is what the module reports for a final item: its planned outcome, or `cancelled` for an item the module took back before it was claimed.
+// reportedOf is what the module reports for a final item: its planned outcome, or `cancelled` for an item the module took back before it was claimed (module 1 words it with its own reason,
+// cancelled_by_caller, the one row of the charge table that names a module 1 cancel).
 func (f *FakeModule) reportedOf(it Item) charge.Outcome {
 	if it.State == StateCancelled {
+		if f.module() == jobs.ModuleVerify {
+			return charge.Outcome{Module: jobs.ModuleVerify, State: StateCancelled, Reason: "cancelled_by_caller"}
+		}
 		return charge.Outcome{Module: f.module(), State: StateCancelled}
 	}
 	return it.Final
@@ -273,6 +283,10 @@ func (f *FakeModule) begin(method string) (err error, afterCall func()) {
 		f.counts.Observe++
 	case "cancel":
 		f.counts.Cancel++
+	case "pause":
+		f.counts.Pause++
+	case "resume":
+		f.counts.Resume++
 	}
 	if f.down {
 		return jobengine.Wait("the module is down"), nil
@@ -338,7 +352,7 @@ func (f *FakeModule) Submit(ctx context.Context, j jobs.EngineJob, rows []jobs.E
 }
 
 // work moves the module's worker on by one Observe: items in flight finish first, then queued ones are claimed and finished, FinalizePerObserve in all (0: every one), unless the job is cancelled
-// (nothing new is claimed once the module has cancelled the job).
+// (nothing new is claimed once the module has cancelled the job) or the campaign is held (a paused campaign's queued items are not claimed; those in flight finish and are reported once).
 func (f *FakeModule) work(fj *fakeJob) {
 	if f.Manual {
 		return
@@ -356,7 +370,7 @@ func (f *FakeModule) work(fj *fakeJob) {
 			budget--
 		}
 	}
-	if fj.cancelled {
+	if fj.cancelled || fj.paused { // nothing new is claimed once the job is cancelled, nor while the campaign is held
 		return
 	}
 	for _, ref := range fj.order {
@@ -398,7 +412,7 @@ func (f *FakeModule) Observe(ctx context.Context, j jobs.EngineJob, fn func([]jo
 			items = append(items, jobs.ResultItem{ItemRef: it.Ref, Outcome: charge.Outcome{Module: f.module(), State: StateQueued}})
 		}
 	}
-	obs := jobengine.Observation{Complete: len(fj.order) > 0 && terminal == len(fj.order), Total: len(fj.order), Terminal: terminal, Detail: map[string]any{"fake": true}}
+	obs := jobengine.Observation{Complete: len(fj.order) > 0 && terminal == len(fj.order), Total: len(fj.order), Terminal: terminal, Paused: fj.paused, Detail: map[string]any{"fake": true}}
 	page := f.PageSize
 	if page <= 0 {
 		page = len(items)
@@ -414,7 +428,8 @@ func (f *FakeModule) Observe(ctx context.Context, j jobs.EngineJob, fn func([]jo
 	return obs, nil
 }
 
-// Cancel cancels the job: every item that is still queued becomes cancelled, an item in flight finishes as it was going to, nothing new is claimed. Module 1 cannot.
+// Cancel cancels the job: every item that is still queued becomes cancelled, an item in flight finishes as it was going to, nothing new is claimed. Every module can (module 1 since its
+// POST /v1/jobs/{id}/cancel; module 2 also deletes the pause of a campaign it holds, and module 3's report says paused false after a cancel: the hold ends here for both).
 func (f *FakeModule) Cancel(ctx context.Context, j jobs.EngineJob) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -423,17 +438,86 @@ func (f *FakeModule) Cancel(ctx context.Context, j jobs.EngineJob) error {
 	} else if after != nil {
 		defer after()
 	}
-	if f.module() == jobs.ModuleVerify {
-		return jobengine.ErrNotSupported
-	}
 	fj := f.job(j.ID)
 	fj.cancelled = true
+	fj.paused = false
 	for _, ref := range fj.order {
 		if it := fj.items[ref]; it.State == StateQueued {
 			it.State = StateCancelled
 		}
 	}
 	return nil
+}
+
+// Pause holds the campaign (idempotent): its queued items are not claimed until Resume or Cancel, an item in flight finishes and is reported once, no item changes state. Module 1 has no per-job pause.
+// With PauseAckAfter set the module lags: it answers success and holds nothing until its n-th call.
+func (f *FakeModule) Pause(ctx context.Context, j jobs.EngineJob) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err, after := f.begin("pause"); err != nil {
+		return err
+	} else if after != nil {
+		defer after()
+	}
+	if f.module() == jobs.ModuleVerify {
+		return jobengine.ErrNotSupported
+	}
+	fj := f.job(j.ID)
+	fj.pauseCalls++
+	if fj.cancelled || len(fj.order) == 0 { // a cancelled or unknown campaign is a no-op: a pause never un-cancels anything and never holds nothing
+		return nil
+	}
+	if fj.pauseCalls >= max(f.PauseAckAfter, 1) {
+		fj.paused = true
+	}
+	return nil
+}
+
+// Resume lets a held campaign go on (idempotent: a campaign that is not held is a no-op). Module 1 has no per-job pause. With ResumeAckAfter set the module lags like Pause does.
+func (f *FakeModule) Resume(ctx context.Context, j jobs.EngineJob) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err, after := f.begin("resume"); err != nil {
+		return err
+	} else if after != nil {
+		defer after()
+	}
+	if f.module() == jobs.ModuleVerify {
+		return jobengine.ErrNotSupported
+	}
+	fj := f.job(j.ID)
+	fj.resumeCalls++
+	if fj.resumeCalls >= max(f.ResumeAckAfter, 1) {
+		fj.paused = false
+	}
+	return nil
+}
+
+// Paused says whether the module holds the campaign of the job now (what its report says).
+func (f *FakeModule) Paused(jobID string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if j := f.jobs[jobID]; j != nil {
+		return j.paused
+	}
+	return false
+}
+
+// Claim is the module's worker trying to claim one queued item (by the row's id): it puts it in flight (sending) and says true, unless the campaign is held or cancelled, the item is not queued or the
+// module does not hold it (false, nothing changes). It is the lever with which a test proves that a held campaign claims nothing while an item already in flight finishes.
+func (f *FakeModule) Claim(jobID, ref string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	j := f.jobs[jobID]
+	if j == nil || j.paused || j.cancelled {
+		return false
+	}
+	it := j.items[ref]
+	if it == nil || it.State != StateQueued {
+		return false
+	}
+	it.State = StateSending
+	return true
 }
 
 var _ jobengine.Module = (*FakeModule)(nil)

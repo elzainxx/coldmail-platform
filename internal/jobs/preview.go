@@ -38,8 +38,14 @@ func (s *Store) Preview(ctx context.Context, userID, jobID string, opts ...Previ
 	if choiceGiven && !validChoice(choice) {
 		return Preview{}, opErr("preview", badRequest("unknown_choice must be %q or %q", UnknownInclude, UnknownExclude))
 	}
+	// module 1's vendor reachability is read BEFORE the transaction (never an HTTP call under a lock) and makes the stored flag module 1's current answer, so the rate this preview shows is the
+	// rate a confirm would reserve at (vendor.go); an unreadable module 1 changes nothing and the preview says so (VendorReachableKnown false)
+	vendorKnown, err := s.syncVendor(ctx, userID, jobID, false, false)
+	if err != nil {
+		return Preview{}, opErr("preview", err)
+	}
 	var out Preview
-	err := s.inTx(ctx, func(tx pgx.Tx) error {
+	err = s.inTx(ctx, func(tx pgx.Tx) error {
 		j, err := s.getJob(ctx, tx, userID, jobID, true)
 		if err != nil {
 			return err
@@ -60,6 +66,7 @@ func (s *Store) Preview(ctx context.Context, userID, jobID string, opts ...Previ
 		if err != nil {
 			return err
 		}
+		p.VendorReachableKnown = vendorKnown && j.Module == ModuleVerify
 		doc, err := json.Marshal(p)
 		if err != nil {
 			return err

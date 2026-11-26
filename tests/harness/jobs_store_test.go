@@ -349,6 +349,9 @@ func TestJobsStore_UsersNeverSeeEachOthersJobs(t *testing.T) {
 		"CancelBeforeStart": func(u, j string) error { _, err := e.jobs.CancelBeforeStart(testCtx(t), u, j); return err },
 		"PauseScheduled":    func(u, j string) error { _, err := e.jobs.PauseScheduled(testCtx(t), u, j); return err },
 		"ResumeScheduled":   func(u, j string) error { _, err := e.jobs.ResumeScheduled(testCtx(t), u, j); return err },
+		"Cancel":            func(u, j string) error { _, err := e.jobs.Cancel(testCtx(t), u, j); return err },
+		"Pause":             func(u, j string) error { _, err := e.jobs.Pause(testCtx(t), u, j); return err },
+		"Resume":            func(u, j string) error { _, err := e.jobs.Resume(testCtx(t), u, j); return err },
 	}
 	before := e.writes()
 	for name, op := range ops {
@@ -1215,59 +1218,199 @@ func TestJobsStore_PauseAndResumeAScheduledJob(t *testing.T) {
 	e.requireBooks("after pause and resume")
 }
 
-// What a module can do to a RUNNING job is the database's: the store only attempts the move and reports the database's refusal, with its constraint's name.
+// What a module can do to a RUNNING job is the database's: the store only attempts the move and reports the database's refusal, with its constraint's name. Since platform_0016 module 1 CAN be cancelled
+// while it runs (POST /v1/jobs/{id}/cancel) but has no per-job pause, modules 2 and 3 can be paused and resumed while they run (POST /v1/pause, /v1/resume) and every module can be cancelled. A pause of
+// a running job is the job's own the moment the store returns (paused, paused_from running: the engine tells the module at its next tick); a resume goes back to where the job paused from; and a cancel
+// of a job the module holds (running, or paused while it was running) is only the REQUEST (cancelling): the engine tells the module, records what finished and ends it, never the store.
 func TestJobsStore_TheModuleDecidesWhatARunningJobCanDo(t *testing.T) {
 	e := newJbsEnv(t)
-	A, B := mnyUserA, mnyUserB
+	ctx := testCtx(t)
+	A, B, C := mnyUserA, mnyUserB, mnyUserC
 
-	// module 1 has no per-job cancel: refused by the database, nothing changes
+	// module 1 has no per-job PAUSE (its only paused is the operator's kill switch): refused by the database, nothing changes, whichever name the caller uses
 	j1, _ := e.confirmed(A, "m1", 3)
 	jobWalkTo(t, e.admin, j1.ID, "running")
 	before := e.writes()
-	_, err := e.jobs.CancelBeforeStart(testCtx(t), A, j1.ID)
-	jbsNotAllowed(t, "cancelling a running module 1 job", err, "job_module_cannot_cancel")
-	e.requireWrites("the refused cancel of a running module 1 job", before)
-	// no module can pause one job
-	_, err = e.jobs.PauseScheduled(testCtx(t), A, j1.ID)
+	_, err := e.jobs.Pause(ctx, A, j1.ID)
 	jbsNotAllowed(t, "pausing a running module 1 job", err, "job_module_cannot_pause")
-	e.requireWrites("the refused pause", before)
+	_, err = e.jobs.PauseScheduled(ctx, A, j1.ID)
+	jbsNotAllowed(t, "pausing a running module 1 job by the older name", err, "job_module_cannot_pause")
+	e.requireWrites("the refused pauses of a running module 1 job", before)
 
-	// module 2 CAN be cancelled while running: the request is recorded (cancelling, with its time, its actor and its reason), nothing is released and no result is written: the engine finishes it
+	// ... but it CAN be cancelled while it runs: the request is recorded (cancelling, with its time, its actor and its reason), nothing is released and no result is written: the engine finishes it
+	got, err := e.jobs.Cancel(ctx, A, j1.ID)
+	mnyNoErr(t, "cancelling a running module 1 job", err)
+	if got.Status != jobs.StatusCancelling || got.CancelRequestedAt == nil {
+		t.Errorf("the module 1 job is %s (cancel requested at %v), want cancelling with the time of the request", got.Status, got.CancelRequestedAt)
+	}
+	lines := e.eventLines(j1.ID)
+	if last := lines[len(lines)-1]; last != "transition|running>cancelling|user|"+A+"|cancel requested by the user" {
+		t.Errorf("the last event of the module 1 job is %q", last)
+	}
+	if e.int("SELECT count(*) FROM platform.ledger WHERE job_id = $1 AND kind = 'release'", j1.ID) != 0 || len(e.ruleCounts(j1.ID)) != 0 {
+		t.Error("the cancel request of a running module 1 job released credits or wrote results: that is the engine's, after the module has answered")
+	}
+	e.requireBal("the reserve of a cancelling module 1 job is still held", A, "m1", 997, 3)
+	// the control: a second cancel is not repeated, the lifecycle refuses it (cancelling is no state to cancel from), and nothing is written
+	before = e.writes()
+	_, err = e.jobs.Cancel(ctx, A, j1.ID)
+	jbsNotAllowed(t, "cancelling a job that is already cancelling", err, "job_transition_illegal")
+	e.requireWrites("the second cancel", before)
+
+	// module 2 CAN be paused while it runs: the job is paused the moment the store returns, paused from running, and the reserve and the slot are still held
 	j2, _ := e.confirmed(B, "m2", 4)
 	jobWalkTo(t, e.admin, j2.ID, "running")
-	got, err := e.jobs.CancelBeforeStart(testCtx(t), B, j2.ID)
-	mnyNoErr(t, "cancelling a running module 2 job", err)
-	if got.Status != jobs.StatusCancelling || got.CancelRequestedAt == nil {
-		t.Errorf("the job is %s (cancel requested at %v), want cancelling with the time of the request", got.Status, got.CancelRequestedAt)
+	paused, err := e.jobs.Pause(ctx, B, j2.ID)
+	mnyNoErr(t, "pausing a running module 2 job", err)
+	if paused.Status != jobs.StatusPaused || paused.PausedFrom != jobs.StatusRunning {
+		t.Fatalf("the module 2 job is %s paused from %q, want paused from running", paused.Status, paused.PausedFrom)
 	}
-	lines := e.eventLines(j2.ID)
-	if last := lines[len(lines)-1]; last != "transition|running>cancelling|user|"+B+"|cancel requested by the user" {
-		t.Errorf("the last event is %q", last)
+	lines = e.eventLines(j2.ID)
+	if last := lines[len(lines)-1]; last != "transition|running>paused|user|"+B+"|paused by the user" {
+		t.Errorf("the last event of the paused module 2 job is %q", last)
+	}
+	e.requireBal("a job paused while running holds its reserve", B, "m2", 996, 4)
+	if e.int("SELECT count(*) FROM platform.ledger WHERE job_id = $1 AND kind = 'release'", j2.ID) != 0 {
+		t.Error("a pause released credits")
+	}
+	// a second pause is an idempotent no-op (a status written back to itself is no move): the job is as it was and no event is written
+	before = e.writes()
+	again, err := e.jobs.Pause(ctx, B, j2.ID)
+	mnyNoErr(t, "pausing a job that is paused", err)
+	if again.Status != jobs.StatusPaused || again.PausedFrom != jobs.StatusRunning {
+		t.Errorf("a second pause left the job %s from %q", again.Status, again.PausedFrom)
+	}
+	e.requireWrites("the second pause", before)
+	// a resume goes back to where the job paused from (RUNNING, not scheduled) and clears paused_from; a resume of a running job is the store's not_paused
+	resumed, err := e.jobs.Resume(ctx, B, j2.ID)
+	mnyNoErr(t, "resuming a job paused while running", err)
+	if resumed.Status != jobs.StatusRunning || resumed.PausedFrom != "" {
+		t.Errorf("the resumed job is %s (from %q), want running", resumed.Status, resumed.PausedFrom)
+	}
+	lines = e.eventLines(j2.ID)
+	if last := lines[len(lines)-1]; last != "transition|paused>running|user|"+B+"|resumed by the user" {
+		t.Errorf("the last event of the resumed job is %q", last)
+	}
+	_, err = e.jobs.Resume(ctx, B, j2.ID)
+	jbsNotAllowed(t, "resuming a running job", err, "not_paused")
+	// the older name resumes the same way
+	_, err = e.jobs.Pause(ctx, B, j2.ID)
+	mnyNoErr(t, "pausing again", err)
+	if r, err := e.jobs.ResumeScheduled(ctx, B, j2.ID); err != nil || r.Status != jobs.StatusRunning {
+		t.Errorf("ResumeScheduled of a job paused while running: %v, %s: it is Resume under its older name", err, r.Status)
+	}
+
+	// a user's cancel of a job PAUSED WHILE RUNNING is the request (cancelling), never cancelled: the module holds its items, so the engine tells it and the reserve stays held until then
+	_, err = e.jobs.Pause(ctx, B, j2.ID)
+	mnyNoErr(t, "pausing before the cancel", err)
+	cj, err := e.jobs.Cancel(ctx, B, j2.ID)
+	mnyNoErr(t, "cancelling a job paused while running", err)
+	if cj.Status != jobs.StatusCancelling || cj.PausedFrom != "" || cj.CancelRequestedAt == nil {
+		t.Fatalf("the cancelled paused job is %s (from %q, cancel requested at %v), want cancelling with the time of the request", cj.Status, cj.PausedFrom, cj.CancelRequestedAt)
+	}
+	lines = e.eventLines(j2.ID)
+	if last := lines[len(lines)-1]; last != "transition|paused>cancelling|user|"+B+"|cancel requested by the user while the job was paused: the module is told and releases what it holds" {
+		t.Errorf("the last event of the cancelled paused job is %q", last)
 	}
 	if e.int("SELECT count(*) FROM platform.ledger WHERE job_id = $1 AND kind = 'release'", j2.ID) != 0 || len(e.ruleCounts(j2.ID)) != 0 {
-		t.Error("a cancel request of a running job released credits or wrote results: that is the engine's, after the module has answered")
+		t.Error("the cancel request of a paused job released credits or wrote results: that is the engine's")
 	}
-	e.requireBal("the reserve of a cancelling job is still held", B, "m2", 996, 4)
+	e.requireBal("the reserve of a cancelling job that was paused is still held", B, "m2", 996, 4)
 
-	// THE CONTROL: the refusal is the capability's, not a Go if. Give module 2 a per-job pause and the same attempt succeeds; the job then resumes only where it paused from
-	e.exec("UPDATE platform.modules SET can_pause = true WHERE id = 'm2'")
-	C := mnyUserC
+	// THE DATABASE'S WALL, for a writer that skips the store: a job paused while running is never taken straight to cancelled, by any actor (its module still holds items)
 	j3, _ := e.confirmed(C, "m2", 2)
 	jobWalkTo(t, e.admin, j3.ID, "running")
-	paused, err := e.jobs.PauseScheduled(testCtx(t), C, j3.ID)
-	mnyNoErr(t, "pausing a running job of a module that can", err)
-	if paused.Status != jobs.StatusPaused || paused.PausedFrom != jobs.StatusRunning {
-		t.Fatalf("the job is %s paused from %q", paused.Status, paused.PausedFrom)
+	if _, err := e.jobs.Pause(ctx, C, j3.ID); err != nil {
+		t.Fatalf("pausing the third job: %v", err)
 	}
-	// a job paused from running was submitted: the store does not resume it as a scheduled job (the database) and does not cancel it as if nothing was submitted
-	_, err = e.jobs.ResumeScheduled(testCtx(t), C, j3.ID)
-	jbsNotAllowed(t, "resuming a job that paused from running as a scheduled one", err, "job_resume_to_where_it_paused_from")
-	_, err = e.jobs.CancelBeforeStart(testCtx(t), C, j3.ID)
-	jbsNotAllowed(t, "cancelling a job that was submitted as if it had not started", err, "submitted_job_ends_through_the_engine")
-	if e.int("SELECT count(*) FROM platform.ledger WHERE job_id = $1 AND kind = 'release'", j3.ID) != 0 {
-		t.Error("a refused cancel released credits")
+	jpcRefuseMove(t, e.admin, j3.ID, "cancelled", "user", C, "job_submitted_pause_cancels_through_the_engine")
+	jpcRefuseMove(t, e.admin, j3.ID, "cancelled", "admin", mnyAdminA, "job_submitted_pause_cancels_through_the_engine")
+	if e.jobStatus(j3.ID) != "paused" || e.reserveRows(j3.ID) != 1 {
+		t.Fatalf("a refused direct cancel left the job %s with %d reserve row(s)", e.jobStatus(j3.ID), e.reserveRows(j3.ID))
 	}
-	e.requireBooks("after the running-job refusals")
+	// the control: the same user's cancel THROUGH THE STORE is accepted and is the request
+	if c3, err := e.jobs.Cancel(ctx, C, j3.ID); err != nil || c3.Status != jobs.StatusCancelling {
+		t.Fatalf("the control: the store's cancel of the same job: %v, %s", err, c3.Status)
+	}
+	e.requireBooks("after the running-job moves")
+}
+
+// THE CAPABILITY IS A ROW, not a Go if: flipping platform.modules.can_pause or can_cancel changes what the store's answer to the very same job is, in BOTH directions, for a pause, for the cancel of a
+// running job and for the cancel of a job paused while running (platform_0016 widened the cancel check to it). cancel_not_supported is the API's word for the second refusal and no seed reaches it any
+// more: this test is the only thing that does. The scratch database is this test's own, and each flip is put back.
+func TestJobsStore_TheCapabilityRowNotAGoIfDecidesWhatTheStoreAnswers(t *testing.T) {
+	e := newJbsEnv(t)
+	ctx := testCtx(t)
+	flip := func(col, module string, v bool) {
+		t.Helper()
+		e.exec("UPDATE platform.modules SET "+col+" = $1 WHERE id = $2", v, module)
+		if got := e.str("SELECT "+col+"::text FROM platform.modules WHERE id = $1", module); got != fmt.Sprint(v) {
+			t.Fatalf("platform.modules.%s of %s is %s after setting it to %v", col, module, got, v)
+		}
+	}
+	// the seeds this test starts from (platform_0016): the test would prove nothing against another starting point
+	if got := e.rows("SELECT id || '|' || can_pause::text || '|' || can_cancel::text FROM platform.modules ORDER BY id"); fmt.Sprint(got) != "[m1|false|true m2|true|true m3|true|true]" {
+		t.Fatalf("the capabilities seeded are %v, want [m1|false|true m2|true|true m3|true|true]", got)
+	}
+
+	// PAUSE of a running module 2 job: refused once the row says false, accepted once it says true again
+	u1 := e.newUser()
+	j1, _ := e.confirmed(u1, "m2", 2)
+	jobWalkTo(t, e.admin, j1.ID, "running")
+	flip("can_pause", "m2", false)
+	before := e.writes()
+	_, err := e.jobs.Pause(ctx, u1, j1.ID)
+	jbsNotAllowed(t, "pausing a running job of a module whose can_pause is false", err, "job_module_cannot_pause")
+	e.requireWrites("the refused pause", before)
+	flip("can_pause", "m2", true)
+	p1, err := e.jobs.Pause(ctx, u1, j1.ID)
+	mnyNoErr(t, "pausing the same job once the module can", err)
+	if p1.Status != jobs.StatusPaused || p1.PausedFrom != jobs.StatusRunning {
+		t.Fatalf("the paused job is %s from %q", p1.Status, p1.PausedFrom)
+	}
+
+	// CANCEL of a job paused while running: the widened check. can_cancel false refuses it (and moves nothing); true accepts it
+	flip("can_cancel", "m2", false)
+	before = e.writes()
+	_, err = e.jobs.Cancel(ctx, u1, j1.ID)
+	jbsNotAllowed(t, "cancelling a job paused while running, its module unable to cancel", err, "job_module_cannot_cancel")
+	e.requireWrites("the refused cancel of a paused job", before)
+	if e.jobStatus(j1.ID) != "paused" {
+		t.Fatalf("the refused cancel left the job %s", e.jobStatus(j1.ID))
+	}
+	flip("can_cancel", "m2", true)
+	if c1, err := e.jobs.Cancel(ctx, u1, j1.ID); err != nil || c1.Status != jobs.StatusCancelling {
+		t.Fatalf("cancelling the paused job once the module can: %v, %s", err, c1.Status)
+	}
+
+	// CANCEL of a running module 1 job (cancel_not_supported in the API's words): refused while can_cancel is false, accepted while it is true
+	u2 := e.newUser()
+	j2, _ := e.confirmed(u2, "m1", 2)
+	jobWalkTo(t, e.admin, j2.ID, "running")
+	flip("can_cancel", "m1", false)
+	before = e.writes()
+	_, err = e.jobs.Cancel(ctx, u2, j2.ID)
+	jbsNotAllowed(t, "cancelling a running job of a module whose can_cancel is false", err, "job_module_cannot_cancel")
+	_, err = e.jobs.CancelBeforeStart(ctx, u2, j2.ID)
+	jbsNotAllowed(t, "the same by the older name", err, "job_module_cannot_cancel")
+	e.requireWrites("the refused cancels", before)
+	flip("can_cancel", "m1", true)
+	if c2, err := e.jobs.Cancel(ctx, u2, j2.ID); err != nil || c2.Status != jobs.StatusCancelling {
+		t.Fatalf("cancelling the running module 1 job once the module can: %v, %s", err, c2.Status)
+	}
+
+	// and the reverse of the seed for PAUSE: module 1 is refused only because its row says false; give it the capability and the same attempt is accepted
+	u3 := e.newUser()
+	j3, _ := e.confirmed(u3, "m1", 2)
+	jobWalkTo(t, e.admin, j3.ID, "running")
+	_, err = e.jobs.Pause(ctx, u3, j3.ID)
+	jbsNotAllowed(t, "pausing a running module 1 job", err, "job_module_cannot_pause")
+	flip("can_pause", "m1", true)
+	if p3, err := e.jobs.Pause(ctx, u3, j3.ID); err != nil || p3.Status != jobs.StatusPaused {
+		t.Fatalf("pausing the module 1 job once its row says it can: %v, %s", err, p3.Status)
+	}
+	flip("can_pause", "m1", false)
+	e.requireBooks("after the capability flips")
 }
 
 func TestJobsStore_DiscardAndReopen(t *testing.T) {

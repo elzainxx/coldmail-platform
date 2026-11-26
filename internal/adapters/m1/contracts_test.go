@@ -1026,13 +1026,14 @@ func TestContracts_TheRoutesTheAdapterCallsAreCoveredOrDeclaredUncovered(t *test
 	_, _, _ = a.Results(ctx, testJob, "", 0)
 	_, _ = a.Describe(ctx)
 	_, _ = a.CheckVocabularies(ctx)
+	_, _ = a.Cancel(ctx, testJob) // the stand-in answers it with the status fixture, which has no cancel_outcome: a Contract error, but the request was made, which is what is counted here
 	called := map[string]bool{}
 	for _, c := range f.seen() {
 		p := strings.ReplaceAll(c.Path, testJob, "{id}")
 		called[c.Method+" "+p] = true
 	}
-	if len(called) != 7 {
-		t.Fatalf("the adapter's methods called %d distinct route(s) (%v), want 7", len(called), called)
+	if len(called) != 8 {
+		t.Fatalf("the adapter's methods called %d distinct route(s) (%v), want 8 (7 before module 1's cancel)", len(called), called)
 	}
 	covered := map[string]bool{}
 	for _, c := range Contracts() {

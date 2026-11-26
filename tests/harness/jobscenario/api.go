@@ -352,6 +352,7 @@ func confirmRef(job string) string { return "jobs-" + job }
 //
 //	ok           a 200: the job is confirmed (or the confirm is replayed, which the answer says)
 //	no-response  NO HTTP answer at all: the process was killed inside the request, which is what the point confirm.before_commit does
+//	refused:<c>  the platform REFUSED the confirm with the envelope's code <c> (a 4xx or 5xx whose error.code is exactly <c>): the stale preview of stage J6 is refused:preview_stale
 func confirmJob(ctx context.Context, d *db, sg *signer, o confirmOpts) error {
 	h, err := d.head(ctx, o.job)
 	if err != nil {
@@ -384,6 +385,13 @@ func confirmJob(ctx context.Context, d *db, sg *signer, o confirmOpts) error {
 		fact("confirm", "job", o.job, "outcome", "answered", "status", a.Status, "retry", o.retry)
 		return failf(exitFail, "the confirm of job %s was ANSWERED (%d): it was meant to be killed inside the request, so the fault point did not fire", o.job, a.Status)
 	}
+	if code, wantRefusal := strings.CutPrefix(o.expect, "refused:"); wantRefusal {
+		fact("confirm", "job", o.job, "outcome", "refused", "status", a.Status, "code", orDash(a.ErrorCode), "retry", o.retry)
+		if a.Status < 400 || a.ErrorCode != code {
+			return failf(exitFail, "the confirm of job %s was answered %d %s, want a refusal with the code %s", o.job, a.Status, orDash(a.ErrorCode), code)
+		}
+		return nil
+	}
 	if a.Status != http.StatusOK {
 		fact("confirm", "job", o.job, "outcome", "refused", "status", a.Status, "code", orDash(a.ErrorCode), "retry", o.retry)
 		return refused("confirming the job", a)
@@ -413,15 +421,18 @@ func cmdConfirm(args []string, retry bool) error {
 	fs.StringVar(&o.job, "job", "", "the previewed job")
 	fs.StringVar(&o.ref, "key", "", "the idempotency key (default: one per job)")
 	fs.IntVar(&o.scheduledIn, "scheduled-in", 0, "seconds ahead to schedule the start (at least 60), 0 for now")
-	fs.StringVar(&o.expect, "expect", "ok", "ok, or no-response (the process is killed inside the request)")
+	fs.StringVar(&o.expect, "expect", "ok", "ok, no-response (the process is killed inside the request) or refused:<code> (the platform refuses with that code)")
 	if err := parse(fs, args); err != nil {
 		return err
 	}
 	if o.job == "" {
 		return failf(exitUsage, "--job is required")
 	}
-	if o.expect != "ok" && o.expect != "no-response" {
-		return failf(exitUsage, "--expect is ok or no-response")
+	if o.expect != "ok" && o.expect != "no-response" && !strings.HasPrefix(o.expect, "refused:") {
+		return failf(exitUsage, "--expect is ok, no-response or refused:<code>")
+	}
+	if strings.HasPrefix(o.expect, "refused:") && len(o.expect) == len("refused:") {
+		return failf(exitUsage, "--expect refused: needs a code, for example refused:preview_stale")
 	}
 	if retry && o.expect != "ok" {
 		return failf(exitUsage, "a confirm-retry must be answered: --expect ok")

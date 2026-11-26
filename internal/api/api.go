@@ -43,9 +43,9 @@ type Service interface {
 	Confirm(ctx context.Context, userID string, req jobs.ConfirmReq) (jobs.ConfirmResult, error)
 	DiscardDraft(ctx context.Context, userID, jobID string) (jobs.Job, error)
 	Reopen(ctx context.Context, userID, jobID string) (jobs.Job, error)
-	CancelBeforeStart(ctx context.Context, userID, jobID string) (jobs.Job, error)
-	PauseScheduled(ctx context.Context, userID, jobID string) (jobs.Job, error)
-	ResumeScheduled(ctx context.Context, userID, jobID string) (jobs.Job, error)
+	Cancel(ctx context.Context, userID, jobID string) (jobs.Job, error)
+	Pause(ctx context.Context, userID, jobID string) (jobs.Job, error)
+	Resume(ctx context.Context, userID, jobID string) (jobs.Job, error)
 	Events(ctx context.Context, userID, jobID string, afterID int64, limit int) ([]jobs.Event, error)
 	Results(ctx context.Context, userID, jobID string, afterOrdinal, limit int) ([]jobs.Result, error)
 	EachResult(ctx context.Context, userID, jobID string, fn func(jobs.Result) error) error

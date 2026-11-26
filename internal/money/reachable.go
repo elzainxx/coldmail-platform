@@ -5,15 +5,23 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// MaxSourceBytes bounds the source of a reachability change (who said so: "config: PLATFORM_M1_VENDOR_REACHABLE"), after trimming. The history table keeps it as text; this keeps a hostile or
+// MaxSourceBytes bounds the source of a reachability change (who said so: "m1_describe", module 1's own answer), after trimming. The history table keeps it as text; this keeps a hostile or
 // runaway caller from filling it.
 const MaxSourceBytes = 200
+
+// UnitM1Vendor is module 1's vendor unit, the one unit whose reachability the platform learns from module 1 (its describe's vendor_fallback.reachable) and writes through SetUnitReachable.
+const UnitM1Vendor = "m1_vendor"
+
+// ReachableSourceM1Describe is the source of a reachability change that module 1 itself reported (GET /v1/describe, vendor_fallback.reachable). A flag whose stored source is this word was
+// last SET from module 1's answer; any other source (the seed of platform_0013, or a flag written by an earlier build of the platform from its own configuration) was not module 1's word.
+const ReachableSourceM1Describe = "m1_describe"
 
 // maxUnitBytes bounds a unit's name before the database is asked: the units are short identifiers (m1_vendor), and a megabyte "unit" must cost no round trip.
 const maxUnitBytes = 64
@@ -63,6 +71,42 @@ func (s *Store) setUnitReachable(ctx context.Context, tx pgx.Tx, unit string, re
 		return false, s.failReachable(err, unit)
 	}
 	return changed, nil
+}
+
+// UnitReachability is the stored state of a unit's reachable flag: the flag, who said so last (the source of the latest change, or the seed's) and when.
+type UnitReachability struct {
+	Reachable bool
+	// Source is platform.unit_costs.reachable_source: ReachableSourceM1Describe when module 1's answer set the flag last, the seed's text ("seed: ...") until anything changes it, or an earlier
+	// build's own word; "" when the column holds NULL (a unit that was never given one).
+	Source string
+	// ChangedAt is when the flag last changed (the database's clock); the zero time for a unit whose flag never changed.
+	ChangedAt time.Time
+}
+
+// FromModule reports whether module 1 (or another module's own answer) set the flag last: the stored source is ReachableSourceM1Describe.
+func (u UnitReachability) FromModule() bool { return u.Source == ReachableSourceM1Describe }
+
+// UnitReachability reads the reachable flag of a unit with its source (one SELECT on the pool, no lock, no transaction). A unit that is not a row of platform.unit_costs is ErrUnknownUnit; a
+// blank or over-long unit is refused before the database is asked, like SetUnitReachable's.
+func (s *Store) UnitReachability(ctx context.Context, unit string) (UnitReachability, error) {
+	if _, err := validateReachable(unit, "unused"); err != nil {
+		return UnitReachability{}, opErr("unit_reachability", err)
+	}
+	var (
+		u  UnitReachability
+		at *time.Time
+	)
+	err := s.pool.QueryRow(ctx, `SELECT reachable, COALESCE(reachable_source, ''), reachable_changed_at FROM platform.unit_costs WHERE unit = $1`, unit).Scan(&u.Reachable, &u.Source, &at)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return UnitReachability{}, opErr("unit_reachability", fmt.Errorf("%w: %q", ErrUnknownUnit, clip(unit)))
+	}
+	if err != nil {
+		return UnitReachability{}, opErr("unit_reachability", s.fail(err, pgCtx{}))
+	}
+	if at != nil {
+		u.ChangedAt = *at
+	}
+	return u, nil
 }
 
 // validateReachable checks a SetUnitReachable request and returns the source as it is stored (trimmed). Both refusals are InvalidErrors that name the field.

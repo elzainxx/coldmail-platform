@@ -18,6 +18,8 @@ import (
 //  0. the key is validated (1 to 128 characters of letters, digits and . _ : -) and, before the transaction, the cheap replay is answered: a job of this user that already holds the key is
 //     returned as Replayed when it is this job (its status as it is now, nothing written) and ErrConfirmKeyReused when it is another. A module 3 job is pre-checked (PreChecks.M3Feasibility,
 //     never an HTTP call under the lock): the module could not be asked is ErrModuleUnavailable for an immediate confirm (ignored for a scheduled one), a campaign it cannot run is ErrInfeasible.
+//     A module 1 job reads module 1's vendor reachability in the same place (syncVendor, vendor.go): the stored flag becomes module 1's current answer, so the reserve below is made at the rate it can
+//     really charge, and a price the platform cannot know (module 1 unreadable and the flag off but never set by module 1) is refused the same way for an immediate confirm.
 //  1. BEGIN; the (user, module) advisory lock FIRST (money.Store.LockIn), then the job row FOR UPDATE, scoped by the user (ErrNotFound). The job must be previewed: one that was already confirmed
 //     with this key is the replay the cheap read could not see (two requests racing), any other status is ErrNotPreviewed.
 //  2. the module's price rows are held FOR SHARE and the fingerprint is recomputed exactly as Preview computes it; it must equal both the one the client sent and the one stored, else
@@ -73,6 +75,12 @@ func (s *Store) Confirm(ctx context.Context, userID string, req ConfirmReq) (Con
 		return ConfirmResult{}, opErr("confirm", s.fail(err))
 	}
 	if err := s.preCheck(ctx, userID, req); err != nil {
+		return ConfirmResult{}, opErr("confirm", err)
+	}
+	// a module 1 job: module 1's vendor reachability is read now, before the transaction, and the stored flag made equal to it, so that the reserve below is made at the rate module 1 can really
+	// charge; an immediate confirm that module 1 cannot price (unreadable, and the flag off but never module 1's word) is refused here, with nothing held (vendor.go has the whole rule)
+	if _, err := s.syncVendor(ctx, userID, req.JobID, true, req.ScheduledStart == nil); err != nil {
+		s.log.Info("confirm refused", "job", req.JobID, "reason", refusalWord(err))
 		return ConfirmResult{}, opErr("confirm", err)
 	}
 

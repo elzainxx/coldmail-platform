@@ -34,6 +34,7 @@ func TestProfileIsTheDocumentedOne(t *testing.T) {
 		QuoteFeasibility: true,
 		Cancel:           true,
 		RunConflict:      sendapi.ConflictCauses,
+		PauseCapability:  "pause_resume",
 	}
 	if got := m3.Profile(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("the profile is not the documented one:\n got %+v\nwant %+v", got, want)

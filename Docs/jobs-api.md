@@ -44,16 +44,42 @@ Every route needs `Authorization: Bearer <token>`, where the token is the **acce
 | `POST /v1/jobs/{id}/confirm` | confirm a previewed job: `Idempotency-Key` required; body `{"fingerprint","scheduled_start"?,"unknown_choice"?}` | `200`, the job and what the confirm did |
 | `POST /v1/jobs/{id}/discard` | cancel a draft or a previewed job (it holds nothing) | `200`, the job |
 | `POST /v1/jobs/{id}/reopen` | take a previewed job back to draft (its preview is cleared) | `200`, the job |
-| `POST /v1/jobs/{id}/cancel` | cancel before the job started (credits come back), or ask for a cancel of a running job | `200`, the job |
-| `POST /v1/jobs/{id}/pause` | defer a **scheduled** job until it is resumed | `200`, the job |
-| `POST /v1/jobs/{id}/resume` | put a paused job back to scheduled | `200`, the job |
+| `POST /v1/jobs/{id}/cancel` | cancel before the job started (credits come back), or ask for a cancel of a running or paused-while-running job (it becomes `cancelling` and ends `cancelled`) | `200`, the job |
+| `POST /v1/jobs/{id}/pause` | defer a **scheduled** job, or hold a **running** job of module 2 or 3, until it is resumed | `200`, the job |
+| `POST /v1/jobs/{id}/resume` | put a paused job back to the state it paused from (`scheduled` or `running`) | `200`, the job |
 | `GET /v1/jobs/{id}/events` | the job's history (`after`, `limit` 1 to 1000, default 100) | `200`, `{"events":[...],"next_after":...}` |
 | `GET /v1/jobs/{id}/results` | the results by row (`cursor`, `limit`) | `200`, `{"results":[...],"next_cursor":...}` |
 | `GET /v1/jobs/{id}/results.csv` | every result as a CSV, streamed | `200`, `text/csv` |
 
-The five moves (`discard`, `reopen`, `cancel`, `pause`, `resume`) take no body. **What a module can do to a running job is data** (`platform.modules.can_pause`, `can_cancel`), and the database refuses what it cannot: no module
-can pause one running job, and module 1 cannot cancel one. The API does not pretend: `cancel` attempts the right move for the job's state, and on a running module 1 job the answer is `409 not_allowed` with
-`details.reason` `cancel_not_supported`; `pause` on a running job is `409 not_allowed` with `pause_not_supported`.
+The five moves (`discard`, `reopen`, `cancel`, `pause`, `resume`) take no body. **What a module can do to a running job is data** (`platform.modules.can_pause`, `can_cancel`), and the database refuses what it cannot:
+modules 2 and 3 can pause and resume one running job, every module can cancel one, and module 1 has no pause. The API does not pretend: each move attempts the right move for the job's state and the database
+decides. A `pause` of a running module 1 job is `409 not_allowed` with `details.reason` `pause_not_supported`. The word `cancel_not_supported` is **reserved**: no module the platform seeds is refused a cancel
+any more, so it is returned only if a module's capability row says it cannot cancel.
+
+### Pause, resume and cancel of a running job
+
+| Request | The job is | The answer | What happens next |
+|---|---|---|---|
+| `pause`, module 2 or 3 | `running` | `200`, `status: paused`, `paused_from: running` | the engine tells the module at its next tick; the items the module had already claimed finish and are reported once |
+| `pause`, module 1 | `running` | `409 not_allowed`, `reason: pause_not_supported` | nothing changed |
+| `resume` | `paused` from `running` | `200`, `status: running` | the engine tells the module to let the campaign go on; the rest of the list is submitted and the job completes |
+| `resume` | `paused` from `scheduled` | `200`, `status: scheduled` (`start_deadline_passed` when its deadline has passed) | the engine starts it at its time |
+| `cancel`, any module | `running`, or `paused` from `running` | `200`, `status: cancelling` | the engine tells the module, records what finished, releases the rest of the reserve once and ends the job `cancelled` |
+| `cancel` | `confirmed`, `scheduled`, or `paused` from `scheduled` | `200`, `status: cancelled` | nothing was submitted: every row has the platform's free `cancelled` result and the whole reserve is back |
+
+**The lag is real and it is visible.** A job is `paused` the moment the API answers, but the module is told by the engine at its next tick (at most one tick, 1.5 seconds by default, once the engine looks at
+the job), and a module that claimed an item a moment before keeps working that item: it finishes and is reported once, settled and charged as any item is. When the module's own report first says the campaign
+is held, the engine writes a `note` event whose `reason` begins `module_paused`; when it stops saying so, one that begins `module_resumed`. The job's `paused` transition event is the API's answer, the `note` is
+the module's acknowledgement, and the time between them is the lag. A module that does not acknowledge keeps being asked at every look.
+
+**A paused job holds its credits.** The reserve and the one-active-job slot stay held while the job is paused (and while it is `cancelling`) until the user resumes it or cancels it. **There is no automatic expiry
+of a pause taken while the job was running** (a job that was running has no start to miss, and the database refuses to expire it); a job paused *before* its start still expires at its start deadline. While a
+job is paused the engine submits nothing and raises no `stale` alert (nothing is expected to progress); when the job resumes its staleness clock starts again. If everything the module held finishes while the
+job is paused, the job completes the normal way.
+
+**Module 1's cancel** is real: the rows it had not started become `cancelled` results (free: `cancelled_by_caller`, never a verdict), the rows it was already checking finish and are charged as the charge table
+says, and the module's own counts add up as `submitted = settled + cancelled + pending` (the platform's results hold the cancelled rows as `cancelled`, decision `free`, rule `M1-24`). A cancel of a job that
+had nothing left to cancel still ends `cancelled`: the request was accepted.
 
 ### The job
 
@@ -72,6 +98,7 @@ can pause one running job, and module 1 cannot cancel one. The API does not pret
       "rows": 5, "pending": 3, "malformed": 1, "malformed_reasons": {"no_at": 1}, "duplicates": 1, "excluded": 0, "suppressed": 1, "suppressed_still_verified": true, "missing_fields": 0,
       "units": 3, "selected": 0, "unknown_choice": null, "unknown_count": 0, "unknown_choice_required": false,
       "metered": true, "rate_unit": "m1_own", "unit_cost": 1, "credits": 3, "available": 100, "shortfall": 0,
+      "vendor_reachable_known": true,
       "fingerprint": "3f9a...c1", "computed_at": "2026-12-01T09:00:00.123456Z"
     },
     "preview_fingerprint": "3f9a...c1",
@@ -90,6 +117,8 @@ can pause one running job, and module 1 cannot cancel one. The API does not pret
 reserved, a free `suppressed` result) and `units` and `credits` do not count them. In a **verify** job (module 1) nobody is e-mailed, so they are **not** skipped: they are verified and charged like any other
 row, `units` and `credits` count them, `suppressed_still_verified` is `true`, and the results carry `"suppressed": true` on them (below). A chained send still excludes them: its rows are the verify job's results,
 and the user's list is applied again at the send's own confirm, so an address suppressed after the verify job finished is not sent to.
+
+**`vendor_reachable_known`** (a module 1 job): module 1 says in its `describe` whether its vendor fallback is reachable NOW (fallback enabled, DPA confirmed, key present, spend cap above zero, kill switch off), and the platform reads that at every preview and every confirm, so the reserve (1 credit per row with the vendor off, 2 with it on) follows module 1's own configuration and there is no platform dial for it. `vendor_reachable_known` is `true` when module 1 answered for this preview, `false` when it could not be read (a stored reading is then used) and for jobs of any other module. A confirm made under the other reachability than the one the preview saw is `409 preview_stale`; an IMMEDIATE confirm that cannot be priced (module 1 unreadable and the stored reading was never set by module 1) is `503 module_unavailable`; a scheduled confirm is not refused for it. A job already confirmed never changes its reserve or its price snapshot.
 
 **The `unknown` choice of a chained send is never defaulted.** `settings.unknown_choice` and `preview.unknown_choice` are `null` until the user says `include` or `exclude`; until then the `unknown` rows are shown
 as excluded (the safe reading) and `selected` counts them out. `preview.unknown_count` is how many of the source job's results are `unknown`, and `preview.unknown_choice_required` is `true` when there is at least
@@ -237,13 +266,14 @@ no SQL is ever in it.
 | 402 | `insufficient_credits` | the balance does not cover the whole list | `available`, `needed`, `shortfall` |
 | 403 | `no_entitlement` | module 3 is not enabled (or has expired) for the user | none |
 | 403 | `suspended` | module 3 is observed holding the user suspended | none |
-| 503 | `module_unavailable` | module 3 could not be asked and an immediate confirm will not hold credits for a job that cannot start | none |
+| 503 | `module_unavailable` | module 3 could not be asked whether the campaign is feasible, or module 1 could not be asked whether its vendor fallback is reachable (so the job cannot be priced), and an immediate confirm will not hold credits for a job that cannot start (a scheduled confirm is not refused for it) | none |
 | 503 | `busy` | another operation on the same user's credits did not finish within `PLATFORM_MONEY_LOCK_TIMEOUT_MS`; nothing was written, try again (`Retry-After: 1`) | none |
 | 503 | `auth_unavailable` | the platform could not obtain the keys to judge the token (the JWKS endpoint is down, times out, answers garbage, or the key set was never loaded); not the user's fault, retry. A bad token stays the 401, an HS256 token is judged by its secret alone, and an unknown key id within 30 s of a good fetch is a 401 | none; `Retry-After: 30`, no `WWW-Authenticate` |
 | 500 | `internal_error` | anything else: the cause is in the service's log under the request id, never in the answer | none |
 | 405 | `method_not_allowed` | the path exists for other verbs (`Allow` names them) | none |
 
-`not_allowed`'s `reason` is a word of the API's, never the database's constraint name: the two refusals a module's capabilities cause are `pause_not_supported` and `cancel_not_supported`, and every other refusal of the
+`not_allowed`'s `reason` is a word of the API's, never the database's constraint name: the two refusals a module's capabilities cause are `pause_not_supported` (module 1 has no per-job pause) and
+`cancel_not_supported` (reserved: no seeded module reaches it), a job the module holds that somebody tried to end without the engine is `submitted_job_ends_through_the_engine`, and every other refusal of the
 lifecycle that has no word of its own is `not_allowed`.
 
 ## Limits and dials

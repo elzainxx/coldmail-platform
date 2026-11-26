@@ -82,10 +82,6 @@ func TestVars_AreWellFormed(t *testing.T) {
 	if v, ok := byName[VarM1KeySecret]; !ok || !v.Secret || v.Required || v.Default != "(unset)" {
 		t.Errorf("%s must be declared Secret, not Required, with the default (unset), got %+v", VarM1KeySecret, v)
 	}
-	// The vendor switch (Phase 4 B3): optional, not secret, and its default is the real value false (not the "(unset)" marker: it has no "not configured" state, off is a state).
-	if v, ok := byName[VarM1VendorReachable]; !ok || v.Secret || v.Required || v.Default != "false" {
-		t.Errorf("%s must be declared optional, not secret, with the default false, got %+v", VarM1VendorReachable, v)
-	}
 	// The four optional module dials: the two base URLs are not secrets, the two service tokens are, and none of the four is required (unset means "not configured", the documented marker).
 	for _, c := range []struct {
 		name   string
@@ -152,8 +148,6 @@ func TestLoad_DefaultsAreTheDocumentedOnes(t *testing.T) {
 		"PLATFORM_M1_KEY_SECRET":  "(unset)",
 		"PLATFORM_M1_KEY_VERSION": "1",
 
-		"PLATFORM_M1_VENDOR_REACHABLE": "false",
-
 		"PLATFORM_M1_URL":           "(unset)",
 		"PLATFORM_M2_URL":           "(unset)",
 		"PLATFORM_M2_SERVICE_TOKEN": "(unset)",
@@ -214,9 +208,6 @@ func TestLoad_DefaultsAreTheDocumentedOnes(t *testing.T) {
 	// The optional dials' default is "not configured": an empty field, never the marker text itself.
 	if cfg.M1KeyVersion != 1 {
 		t.Fatalf("the module 1 key version default did not reach the Config: %d", cfg.M1KeyVersion)
-	}
-	if cfg.M1VendorReachable {
-		t.Fatalf("the vendor switch is on in a Config built from nothing: the fallback ships disabled, so a module 1 job reserves 1 credit per row until the owner says otherwise")
 	}
 	if cfg.M1URL != "" || cfg.M2URL != "" || cfg.M2ServiceToken != "" || cfg.M3ServiceToken != "" || cfg.M1KeySecret != "" || cfg.InstanceID != "" {
 		t.Fatalf("an optional dial's default did not load as empty: %v", cfg)
@@ -367,8 +358,6 @@ var alternatives = map[string]string{
 	VarM1KeySecret:  strings.Repeat("alt-", 9), // 36 bytes
 	VarM1KeyVersion: "3",
 
-	VarM1VendorReachable: "true",
-
 	VarM1URL:          "http://m1.internal:8081",
 	VarM2URL:          "https://m2.internal:9444/api",
 	VarM2ServiceToken: "alt-m2-service-token",
@@ -515,13 +504,6 @@ func TestLoad_InvalidValuesNameTheVariableAndNeverEchoTheValue(t *testing.T) {
 		{VarModuleRetryBackoffMS, "0.5", "integer"},
 		{VarModuleRetryBackoffMS, "-1", "between 0 and 30000"},
 		{VarModuleRetryBackoffMS, "30001", "between 0 and 30000"},
-		// The vendor switch (Phase 4 B3): exactly true or false; a switch that read "yes" or "1" as off would reserve a customer at the wrong rate without a word.
-		{VarM1VendorReachable, "maybe-XYZ123", "must be true or false"},
-		{VarM1VendorReachable, "TRUE", "must be true or false"},
-		{VarM1VendorReachable, "True", "must be true or false"},
-		{VarM1VendorReachable, "yes", "must be true or false"},
-		{VarM1VendorReachable, "1", "must be true or false"},
-		{VarM1VendorReachable, "on", "must be true or false"},
 		{VarM3AdminToken, "two words-XYZ123", "printable ASCII"},
 		{VarM3AdminToken, "café-key-XYZ123", "printable ASCII"},
 		{VarM3AdminToken, "inner\ttab-XYZ123", "printable ASCII"},

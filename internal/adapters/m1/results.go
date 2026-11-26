@@ -26,10 +26,11 @@ type Row struct {
 	ItemID string
 	// DuplicateOf is the ordinal of the FIRST row of the job with the same address; nil on a first row and on every malformed row.
 	DuplicateOf *int
-	// Status and Reason are the verdict (valid, invalid, risky, unknown; and the reason vocabulary).
+	// Status and Reason are the verdict (valid, invalid, risky, unknown; and the reason vocabulary), or, for a row the caller cancelled before its check began (module 1 migration 0020),
+	// the two NON-VERDICT words StatusCancelled and ReasonCancelledByCaller: such a row has no verdict, is free (charge-table rule M1-24) and is never a probe's result.
 	Status string
 	Reason string
-	// FromCache is flags.from_cache (never meta.from_cache, which is always false in a bulk result).
+	// FromCache is flags.from_cache (never meta.from_cache, which is always false in a bulk result). false for a cancelled row, which carries none.
 	FromCache bool
 	// SkipReason is signals.smtp_skipped_reason ("" = absent).
 	SkipReason string
@@ -45,6 +46,11 @@ func (r Row) Outcome() charge.Outcome {
 	// by duplicate_of, so a repeat looks like a full answer; the adapter maps it to the platform's duplicate outcome so the one check is charged once, on the first row.
 	if r.DuplicateOf != nil {
 		return charge.Outcome{Module: "platform", State: "duplicate"}
+	}
+	if r.Status == StatusCancelled {
+		// a row cancelled before its check began has no verdict and none of a verdict's provenance: the outcome is its two words and nothing else (charge-table rule M1-24: free), so that
+		// no cache flag, skip token or origin can reach another row of the table
+		return charge.Outcome{Module: "m1", State: r.Status, Reason: r.Reason}
 	}
 	return charge.Outcome{Module: "m1", State: r.Status, Reason: r.Reason, FromCache: r.FromCache, SkipReason: r.SkipReason, FailureOrigin: r.FailureOrigin}
 }
@@ -72,7 +78,8 @@ type wireRow struct {
 	Status      string `json:"status"`
 	Reason      string `json:"reason"`
 	Flags       struct {
-		FromCache bool `json:"from_cache"`
+		// a pointer: absent is not false. A VERDICT row must carry it (rowOf), a cancelled row has none.
+		FromCache *bool `json:"from_cache"`
 	} `json:"flags"`
 	Signals struct {
 		SMTPSkippedReason string `json:"smtp_skipped_reason"`
@@ -84,13 +91,21 @@ type wireRow struct {
 // field gets none of it into an error).
 func rowOf(i int, w wireRow) (Row, string, string) {
 	at := func(k string) string { return "results[" + strconv.Itoa(i) + "]." + k }
+	verdict := knownStatus(w.Status)
 	switch {
+	// the cache signal is what the charge table prices a verdict by, so a VERDICT row without it is refused (it was required by the row's shape before a cancelled row, which has no
+	// verdict and `flags: {}`, could be served): a module that stopped sending it must never make every cached answer read as a fresh one
+	case verdict && w.Flags.FromCache == nil:
+		return Row{}, at("flags.from_cache"), "a verdict row carries no flags.from_cache, the cache signal the charge table prices it by"
 	case w.Ordinal < 0:
 		return Row{}, at("ordinal"), "the ordinal is negative"
-	case !knownStatus(w.Status):
-		return Row{}, at("status"), "the status is not one of module 1's four"
-	case !knownReason(w.Reason):
+	case !verdict && !knownNonVerdictStatus(w.Status):
+		return Row{}, at("status"), "the status is not one of module 1's four verdict words or its one non-verdict word (cancelled)"
+	case verdict && !knownReason(w.Reason):
 		return Row{}, at("reason"), "the reason is not one of module 1's vocabulary"
+	case !verdict && !knownNonVerdictReason(w.Reason):
+		// a cancelled row carries exactly one reason; any other is a module this platform does not understand, and a row it cannot map is never guessed free
+		return Row{}, at("reason"), "a cancelled row carries a reason other than cancelled_by_caller"
 	case strings.TrimSpace(w.ItemID) == "":
 		return Row{}, at("item_id"), "the item_id is blank, so the result cannot be attributed to an input row"
 	case w.DuplicateOf != nil && (*w.DuplicateOf < 0 || *w.DuplicateOf >= w.Ordinal):
@@ -107,7 +122,7 @@ func rowOf(i int, w wireRow) (Row, string, string) {
 		Ordinal: w.Ordinal, ItemID: w.ItemID, DuplicateOf: w.DuplicateOf, Status: w.Status, Reason: w.Reason,
 		// MODULE-FORCED(M1-F6): the cache signal is flags.from_cache; meta.from_cache is ALWAYS false in a bulk result (the bulk meta is skeletal), so reading the obvious key would
 		// bill every cached answer as a fresh one.
-		FromCache:     w.Flags.FromCache,
+		FromCache:     w.Flags.FromCache != nil && *w.Flags.FromCache,
 		SkipReason:    w.Signals.SMTPSkippedReason,
 		FailureOrigin: w.Signals.FailureOrigin,
 	}, "", ""

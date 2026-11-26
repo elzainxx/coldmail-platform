@@ -151,9 +151,13 @@ var notAllowedWords = map[string]string{
 	"start_deadline_passed":                 "start_deadline_passed",
 	"submitted_job_ends_through_the_engine": "submitted_job_ends_through_the_engine",
 	"job_status_has_no_preview":             "job_status_has_no_preview",
-	// the database's constraint names, in a user's words
+	// the database's constraint names, in a user's words. cancel_not_supported is RESERVED: no module the platform seeds is refused a cancel any more (platform_0016: every module can cancel one job), so the
+	// word is returned only for a module whose capability row says it cannot (a test flips it); pause_not_supported is module 1's (no per-job pause).
 	"job_module_cannot_pause":  "pause_not_supported",
 	"job_module_cannot_cancel": "cancel_not_supported",
+	// platform_0016's walls: a job the module holds ends through the engine, and a job paused before its start never went through it. A user reaches them only through a store function that was
+	// written to skip the engine (the admin surface is such a writer), so the word says what the user should do: the job ends through the engine (cancel it, the platform tells the module).
+	jobs.ReasonSubmittedJobCancelsThroughTheEngine: "submitted_job_ends_through_the_engine",
 }
 
 // notAllowedWord is the reason a client is told for a refusal of the job's lifecycle. A constraint's name is never sent: it is translated when it has a word (a module that cannot pause or

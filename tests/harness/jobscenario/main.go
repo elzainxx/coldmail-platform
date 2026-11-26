@@ -10,13 +10,17 @@
 // Subcommands (flags; one JSON object per line on stdout, a `fact` member names the line; a failure is a non-zero exit with the reason on stderr; a secret and a token are never printed):
 //
 //	create   --api URL --rows N [--module m1] [--bad K] [--dup D] [--grant G]   a fresh user with credits (through the ledger), a draft of N lines, its preview: prints the user, the job, the fingerprint
-//	confirm  --api URL --job J [--key K] [--scheduled-in S] [--expect ok|no-response]   one confirm of a previewed job (exit 0 only when the answer is the one expected)
+//	confirm  --api URL --job J [--key K] [--scheduled-in S] [--expect ok|no-response|refused:<code>]   one confirm of a previewed job (exit 0 only when the answer is the one expected)
 //	confirm-retry  the same flags and the same confirm key: the replay after a kill (it must answer 200)
 //	setup    create + confirm in one call (the flags of both)
 //	wait     --job J --until terminal|running|any:<status>[,<status>] [--timeout S]   polls the database; prints the status history of the job from platform.job_events
 //	state    --job J [--expect name=value,name>value,...]   one line with what the database holds of the job (status, rows stamped, results, the reserve, module 1's holding); the conditions are asserted
 //	verify   --job J   the invariants of a finished job, each printed as `OK <name>` or failed by name (see verify.go)
 //	leader   which of the instances holds the engine's leader lock (pg_stat_activity.application_name)
+//
+// and the five of stage J6 (vendor.go; each takes --expect conditions of the syntax of `state`): vendor (module 1's own describe: vendor_fallback.reachable), flag (the platform's stored flag of m1_vendor and
+// its history), preview (a job previewed again through the API: the rate, the credits, whether module 1 was read), reserve (what the ledger and the price snapshot of a job hold) and cancel (the user's
+// cancel of a scheduled job).
 //
 // Environment (a missing one fails the command naming it): HARNESS_ADMIN_DATABASE_URL (the harness's superuser connection), JOBS_JWT_SECRET and JOBS_JWT_ISSUER (the platform's PLATFORM_JWT_* of the
 // instances: HS256, minted per run), JOBS_M1_KEY_SECRET (the platform's PLATFORM_M1_KEY_SECRET), and, optional, JOBS_JWT_AUDIENCE (authenticated), JOBS_M1_KEY_VERSION (1), JOBS_M1_URL (http://m1:8080).
@@ -80,7 +84,7 @@ func mustJSON(v any) []byte {
 	return out
 }
 
-const usageText = `usage: jobscenario <create|confirm|confirm-retry|setup|wait|state|verify|leader> [flags]   (see the header of tests/harness/jobscenario/main.go)`
+const usageText = `usage: jobscenario <create|confirm|confirm-retry|setup|wait|state|verify|leader|vendor|flag|preview|reserve|cancel> [flags]   (see the header of tests/harness/jobscenario/main.go)`
 
 func main() { os.Exit(run(os.Args[1:])) }
 
@@ -108,6 +112,16 @@ func run(args []string) int {
 		err = cmdVerify(rest)
 	case "leader":
 		err = cmdLeader(rest)
+	case "vendor":
+		err = cmdVendor(rest)
+	case "flag":
+		err = cmdFlag(rest)
+	case "preview":
+		err = cmdPreview(rest)
+	case "reserve":
+		err = cmdReserve(rest)
+	case "cancel":
+		err = cmdCancel(rest)
 	case "-h", "--help", "help":
 		fmt.Fprintln(os.Stderr, usageText)
 		return exitUsage

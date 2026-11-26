@@ -80,7 +80,7 @@ func TestViews_EveryFieldOfTheStoresTypesIsShownOrLeftOutOnPurpose(t *testing.T)
 
 	// every member of a preview the store computes is shown (the view embeds the type), so a new one is shown at once: the pinned list is how a reviewer sees it arrive
 	pv := keysOfJSON(t, viewJob(fullJob(), true).Preview)
-	wantPV := []string{"available", "computed_at", "credits", "duplicates", "excluded", "fingerprint", "malformed", "malformed_reasons", "metered", "missing_fields", "pending", "rate_unit", "rows", "selected", "shortfall", "suppressed", "suppressed_still_verified", "unit_cost", "units", "unknown_choice", "unknown_choice_required", "unknown_count"}
+	wantPV := []string{"available", "computed_at", "credits", "duplicates", "excluded", "fingerprint", "malformed", "malformed_reasons", "metered", "missing_fields", "pending", "rate_unit", "rows", "selected", "shortfall", "suppressed", "suppressed_still_verified", "unit_cost", "units", "unknown_choice", "unknown_choice_required", "unknown_count", "vendor_reachable_known"}
 	if !reflect.DeepEqual(pv, wantPV) {
 		t.Fatalf("a preview is shown with the members\n  %v\nwant\n  %v", pv, wantPV)
 	}
@@ -175,7 +175,7 @@ func TestRoutes_TheMovesCallTheirStoreMethodForThePrincipalAndAnswerWithTheJob(t
 	r := newRig(t)
 	r.store.job.Status = jobs.StatusCancelled
 	for path, method := range map[string]string{
-		"discard": "DiscardDraft", "reopen": "Reopen", "cancel": "CancelBeforeStart", "pause": "PauseScheduled", "resume": "ResumeScheduled",
+		"discard": "DiscardDraft", "reopen": "Reopen", "cancel": "Cancel", "pause": "Pause", "resume": "Resume",
 	} {
 		r.store.reset()
 		resp, body := r.post(loginA, "/v1/jobs/"+jobIDA+"/"+path, nil)

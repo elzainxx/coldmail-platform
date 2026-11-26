@@ -15,8 +15,8 @@ var (
 	ErrNoDeadline = errors.New("m1: Drain needs a context with a deadline")
 	// ErrCursorStuck (Contract): a page named, as the next position, the position it was asked from.
 	ErrCursorStuck = errors.New("m1: the next cursor is the cursor that was sent: the listing does not advance")
-	// ErrIncomplete (Contract): the job reports complete, but the rows read are not the rows its totals say are settled (totals.settled), or its settled rows are not all of the rows it
-	// says were submitted (totals.settled != totals.submitted).
+	// ErrIncomplete (Contract): the job reports complete, but the rows read are not the rows its totals say are final (totals.settled + totals.cancelled), or its final rows are not all of
+	// the rows it says were submitted (totals.settled + totals.cancelled != totals.submitted, that is, a row is still pending).
 	ErrIncomplete = errors.New("m1: the job is complete but the results read do not match its totals")
 )
 
@@ -53,8 +53,8 @@ type DrainStats struct {
 //  1. follows next_cursor while there is one, handing fn the rows it has not delivered before (an ordinal is delivered once, whatever the page it appears on);
 //  2. when the list is exhausted, asks the job: not complete means wait Poll and look again from the SAME cursor (the first position it has not finished);
 //  3. complete means the listing is stable (module 1 documents and tests that two full walks of a complete job's results are identical): if the rows delivered are not the number of
-//     rows the job's totals say are settled, one full walk from the start delivers whatever settled behind the cursor; and if they are still not, or the job's settled rows are not all
-//     of its submitted rows, ErrIncomplete: the platform never reports a job it did not read in full.
+//     rows the job's totals say are final (settled with a verdict, or cancelled since module 1's cancel), one full walk from the start delivers whatever settled behind the cursor; and if
+//     they are still not, or the job's final rows are not all of its submitted rows, ErrIncomplete: the platform never reports a job it did not read in full.
 //
 // A callback error stops the drain and is returned unchanged. The context must carry a deadline (ErrNoDeadline otherwise); when it expires the error says what module 1 last
 // reported, so a stuck job explains itself.
@@ -99,8 +99,8 @@ func (a *Adapter) Drain(ctx context.Context, jobID string, fn func(rows []Row) e
 		if !haveLast || ctx.Err() == nil {
 			return err
 		}
-		return fmt.Errorf("%w (module 1 last said status %q, total %d, settled %d, pending %d, processing_paused %t; %d row(s) delivered)",
-			err, last.Status, last.Totals.Submitted, last.Totals.Settled, last.Totals.Pending, last.ProcessingPaused, len(seen))
+		return fmt.Errorf("%w (module 1 last said status %q, total %d, settled %d, pending %d, cancelled %d, processing_paused %t; %d row(s) delivered)",
+			err, last.Status, last.Totals.Submitted, last.Totals.Settled, last.Totals.Pending, last.Totals.Cancelled, last.ProcessingPaused, len(seen))
 	}
 	cursor := ""
 	for {
@@ -125,7 +125,9 @@ func (a *Adapter) Drain(ctx context.Context, jobID string, fn func(rows []Row) e
 		}
 		last, haveLast = job, true
 		if job.Complete {
-			if len(seen) != job.Totals.Settled {
+			// the listing of a job holds its verdict rows (settled) AND, since module 1's cancel (migration 0020), its cancelled rows: both are served as rows, so the rows a complete job lists
+			// are settled + cancelled (cancelled is 0 for a job never cancelled and for an older module, which leaves the arithmetic exactly what it was)
+			if len(seen) != job.Totals.Settled+job.Totals.Cancelled {
 				before := st.Rows
 				// MODULE-FORCED(M1-F4): while a job RUNS, module 1's listing is a moving target (documented: a row that settles at an ordinal BELOW a cursor already issued is not revisited
 				// by that walk, and next_cursor "" means "nothing further as the listing stands now", not "done"), so a job that completes after the streaming pass is read once more
@@ -136,9 +138,10 @@ func (a *Adapter) Drain(ctx context.Context, jobID string, fn func(rows []Row) e
 				}
 				st.CatchUp = st.Rows - before
 			}
-			// complete means every submitted row is settled and every settled row was read: the totals come from one snapshot with `complete`, so rows delivered = settled = submitted
-			if len(seen) != job.Totals.Settled || job.Totals.Settled != job.Totals.Submitted {
-				return st, withCause(modclient.Contract, ErrIncomplete, "the job is complete but %d row(s) were read and it says total %d, settled %d, pending %d", len(seen), job.Totals.Submitted, job.Totals.Settled, job.Totals.Pending)
+			// complete means every submitted row is FINAL (settled with a verdict, or cancelled) and every such row was read: the totals come from one snapshot with `complete`, so rows
+			// delivered = settled + cancelled = submitted, and pending is 0. A complete that is believed with a row still pending is exactly what this refuses.
+			if len(seen) != job.Totals.Settled+job.Totals.Cancelled || job.Totals.Settled+job.Totals.Cancelled != job.Totals.Submitted {
+				return st, withCause(modclient.Contract, ErrIncomplete, "the job is complete but %d row(s) were read and it says total %d, settled %d, pending %d, cancelled %d", len(seen), job.Totals.Submitted, job.Totals.Settled, job.Totals.Pending, job.Totals.Cancelled)
 			}
 			return st, nil
 		}

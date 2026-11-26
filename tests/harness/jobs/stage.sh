@@ -16,15 +16,23 @@
 #                 the lock within 60 s and finishes it exactly once; the killed instance comes back as a standby, and a second job runs on the survivor with no engine line in the standby's log.
 #   J4 outage     module 1 is STOPPED while the job runs: for 25 s the job stays running, nothing is recorded, nothing is charged, nothing is invented; after the staleness limit a `stale` event exists and the job is
 #                 still running; module 1 is started again and the job completes exactly once.
-#   evidence      every `verify` prints one `OK <name>` line per invariant (JOBS_VERIFY_OKS); a run that prints fewer, more or other lines is RED, and so is a run with fewer `verify` runs than the stages make.
+#   J6 vendor     module 1's vendor fallback is switched OFF, ON and OFF again by RE-CREATING its container with the four dials and the key of the compose overlay set (jobs_m1j_vendor; the key is a value minted per
+#                 run, never printed, and the harness network is internal), and each time what the platform does is read from four places that cannot agree by accident: module 1's own describe, the platform's stored
+#                 flag and its history, the preview the API answers and the ledger and price snapshot of a SCHEDULED confirm (an hour ahead, so the engine never starts it) and of its cancel. OFF: a preview shows 1
+#                 credit per pending row, the confirm reserves 1 per row and the cancel releases it; ON: the next preview shows 2 per row (and a preview made under OFF is refused 409 preview_stale at the confirm),
+#                 the confirm reserves 2 per row, frozen into the job's price snapshot with the vendor unit; OFF again: 1 per row, and the job confirmed under ON keeps its reserve and its snapshot. Last, module 1 is
+#                 STOPPED: a preview says it was not read (vendor_reachable_known false) at the rate of the stored flag, and says it is read again once module 1 is back. Every assertion prints `J6 OK <name>`
+#                 (JOBS_J6_OKS), each exactly once, and the summary is red without them.
+#   evidence      every `verify` prints one `OK <name>` line per invariant (JOBS_VERIFY_OKS); a run that prints fewer, more or other lines is RED, and so is a run with fewer `verify` runs than the stages make; J6's
+#                 `J6 OK` lines are counted the same way.
 #
 # What is here, in the order run.sh calls it:
-#   jobs_mint            stage 2: the JWT secret the instances verify access tokens with and the secret module 1's per-user keys are derived from, minted with openssl, masked, appended mode 600 to the env file
-#   jobs_scope_run       H_SCOPE=jobs: Postgres + migrations + the first admin (stages 1-4b ran), then J0-J4 and the checks below, then the end of the run: it never returns
-#   jobs_run             the stages J0-J4 and the summary (what a full run calls once `jobs` is in FULL_INCLUDES)
+#   jobs_mint            stage 2: the JWT secret the instances verify access tokens with, the secret module 1's per-user keys are derived from and the stand-in vendor key of stage J6, minted with openssl, masked, appended mode 600 to the env file
+#   jobs_scope_run       H_SCOPE=jobs: Postgres + migrations + the first admin (stages 1-4b ran), then J0-J4, J6 and the checks below, then the end of the run: it never returns
+#   jobs_run             the stages J0-J4 and J6 and the summary (what a full run calls once `jobs` is in FULL_INCLUDES)
 # Nothing here prints a credential: no `set -x`, no environment dump; the scenario program prints neither a secret nor a token.
 
-JOBS_JWT=""; JOBS_M1K=""                     # set by jobs_mint (only the shell's copies: the leak scan looks for them)
+JOBS_JWT=""; JOBS_M1K=""; JOBS_VENDOR=""     # set by jobs_mint (only the shell's copies: the leak scan looks for them)
 JOBS_API_A="http://jobs-a:8080"; JOBS_API_B="http://jobs-b:8080"
 JOBS_POINTS=(confirm.before_commit submit.after_module start.before_running settle.after_commit release.mid_tx)
 # the lines `verify` must print, one each (tests/harness/jobscenario/verify.go, verifyOKs: the selftest holds the two lists equal)
@@ -48,8 +56,29 @@ JOBS_VERIFY_OKS=(
   proof_not_vacuous
   control_checks_detect_corruption
 )
-JOBS_VERIFY_RUNS_WANTED=9                    # J1 one, J2 five (one per point), J3 two, J4 one
+JOBS_VERIFY_RUNS_WANTED=9                    # J1 one, J2 five (one per point), J3 two, J4 one (J6 verifies no job: nothing it confirms is ever started)
 JOBS_VERIFIED=0
+# the lines stage J6 must print, one each, as `J6 OK <name>` (jobs_j6_ok; the selftest holds the list equal to the calls of jobs_j6)
+JOBS_J6_OKS=(
+  platform_registered_its_service_caller
+  module_says_off_at_the_start
+  off_preview_is_1_per_row_and_read_from_module_1
+  off_confirm_reserves_1_per_row_without_the_vendor_unit
+  off_cancel_releases_the_whole_reserve
+  module_says_on_after_the_flip
+  a_preview_made_under_off_is_stale_at_the_confirm
+  the_flag_follows_module_1_and_says_whose_word_it_is
+  on_preview_is_2_per_row_at_the_vendor_unit
+  on_confirm_reserves_2_per_row_with_the_vendor_unit_frozen
+  module_says_off_again
+  off_again_preview_is_1_per_row
+  off_again_confirm_reserves_1_per_row
+  a_job_confirmed_under_on_is_not_changed_by_the_later_off
+  a_module_that_cannot_be_read_is_said_not_to_be_read
+  a_module_that_is_back_is_read_again
+)
+JOBS_J6_ROWS="${JOBS_J6_ROWS:-40}"           # J6: a list of 40 lines, 2 malformed and 2 repeats: 36 pending rows, so 1 credit a row is 36 and 2 a row is 72
+JOBS_VENDOR_MEMORY_SEC=5                     # how long the platform keeps module 1's answer (internal/jobs DefaultVendorReadTTL: the selftest holds the two equal); J6 waits longer than this after every flip
 JOBS_OUT=""; JOBS_ERR=""; JOBS_RC=0
 # the size of the lists (a job of N lines has N-bad-dup addresses module 1 is asked about): small for the points whose kill needs no timing, large where the proof needs module 1 to still be working
 JOBS_SMALL="${JOBS_SMALL:-60}"               # J1 and every point but settle.after_commit
@@ -67,22 +96,24 @@ jobs_cid() { DC ps -a -q "$1" 2>/dev/null | head -1; }
 jobs_sleep() { sleep "${JOBS_SLEEP:-1}"; }
 
 # ── stage 2: secrets ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-# Called right AFTER run.sh wrote $WORK/harness.env: it mints, masks, then appends its two lines to the same file (written under umask 077, so mode 600, checked where the host keeps modes). Both are 32 random bytes
-# in hex (64 characters: the platform asks for at least 32 bytes of printable ASCII for the first and at least 32 bytes for the second). Neither is ever printed.
+# Called right AFTER run.sh wrote $WORK/harness.env: it mints, masks, then appends its three lines to the same file (written under umask 077, so mode 600, checked where the host keeps modes). Each is 32 random
+# bytes in hex (64 characters: the platform asks for at least 32 bytes of printable ASCII for the first and at least 32 bytes for the second; the third is the stand-in API key of module 1's vendor fallback,
+# which module 1 only tests for presence and which the stage hands to the compose file for the one command that switches the vendor ON). None is ever printed, and the leak scan looks for all three.
 jobs_mint() {
-  local a b m
-  a="$(openssl rand -hex 32)"; b="$(openssl rand -hex 32)"
-  [ "${#a}" = 64 ] && [ "${#b}" = 64 ] || die "could not mint the jobs scope's two secrets (openssl rand printed ${#a} and ${#b} characters, want 64 and 64)"
+  local a b c m
+  a="$(openssl rand -hex 32)"; b="$(openssl rand -hex 32)"; c="$(openssl rand -hex 32)"
+  [ "${#a}" = 64 ] && [ "${#b}" = 64 ] && [ "${#c}" = 64 ] || die "could not mint the jobs scope's three secrets (openssl rand printed ${#a}, ${#b} and ${#c} characters, want 64, 64 and 64)"
   [ "$a" != "$b" ] || die "the jobs scope's two secrets are the same value: the JWT secret and the key-derivation secret must be different credentials"
-  mask "$a"; mask "$b"                                                  # masked BEFORE they are written anywhere or handed to any command
+  [ "$a" != "$c" ] && [ "$b" != "$c" ] || die "the jobs scope's vendor key equals another of its secrets: the three must be different credentials"
+  mask "$a"; mask "$b"; mask "$c"                                       # masked BEFORE they are written anywhere or handed to any command
   [ -f "$WORK/harness.env" ] || die "the env file is missing: jobs_mint runs after run.sh wrote it"
   if [ "$(uname -s)" = Linux ]; then
     m="$(stat -c '%a' "$WORK/harness.env" 2>/dev/null)"
     [ "$m" = 600 ] || die "the env file $WORK/harness.env is mode ${m:-unknown}, expected 600: it holds this run's secrets"
   fi
-  ( umask 077; { echo "H_JOBS_JWT_SECRET=$a"; echo "H_JOBS_M1_KEY_SECRET=$b"; } >> "$WORK/harness.env" ) || die "could not append the jobs scope's secrets to the env file"
-  JOBS_JWT="$a"; JOBS_M1K="$b"
-  echo "  minted for the jobs scope: 1 JWT secret (HS256, 32 random bytes in hex) and 1 module-1 key-derivation secret (32 random bytes in hex) — masked, none printed"
+  ( umask 077; { echo "H_JOBS_JWT_SECRET=$a"; echo "H_JOBS_M1_KEY_SECRET=$b"; echo "H_JOBS_VENDOR_KEY=$c"; } >> "$WORK/harness.env" ) || die "could not append the jobs scope's secrets to the env file"
+  JOBS_JWT="$a"; JOBS_M1K="$b"; JOBS_VENDOR="$c"
+  echo "  minted for the jobs scope: 1 JWT secret (HS256, 32 random bytes in hex), 1 module-1 key-derivation secret and 1 stand-in vendor key (32 random bytes in hex each) — masked, none printed"
 }
 
 # ── the scenario program ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -421,10 +452,195 @@ jobs_j4() {
   echo "  the job completed exactly once after the outage: succeeded, one reserve, started once, results $(jobs_get "$(jobs_fact state)" results) of $(jobs_get "$(jobs_fact state)" rows) rows (verify: one release, one finished transition)"
 }
 
+# ── J6: module 1's vendor fallback, switched by re-creating module 1 ──────────────────────────────────────────────────────────────────────────────────────────────
+# jobs_j6_ok <name>: one assertion of J6 held: its line is printed and kept (jobs_summary counts them).
+jobs_j6_ok() {
+  echo "  J6 OK $1"
+  echo "J6 OK $1" >> "$WORK/jobs-j6.log"
+}
+
+# jobs_m1j_vendor <on|off>: (re-)creates module 1 (service m1j) with the dials of its vendor fallback ON (TM_FALLBACK_MODE=enabled, TM_EXTERNAL_DPA_CONFIRMED=true, a daily spend cap of 100, the key variable
+# holding this run's stand-in key) or OFF (off, false, 0, the key variable empty), waits until it is healthy, and PROVES the container got what was said from `docker inspect` (the names and the dials printed,
+# the key only as present or absent and equal to the minted value, never printed). The values reach the compose file through variables set for this one command (docker-compose.jobs.yml, the m1j environment),
+# like the fault points of the instances. The log of the container that is about to go is kept first (a re-created container's log is gone), so the leak scan still reads it.
+jobs_m1j_vendor() {
+  local mode="$1" want_mode want_dpa want_cap key="" cid env_out got_key
+  case "$mode" in
+    on)  want_mode=enabled; want_dpa=true;  want_cap=100; key="$JOBS_VENDOR";;
+    off) want_mode=off;     want_dpa=false; want_cap=0;;
+    *)   die "jobs_m1j_vendor: $mode is neither on nor off";;
+  esac
+  [ "$mode" = off ] || [ -n "$key" ] || die "jobs_m1j_vendor on: the stand-in vendor key was not minted (jobs_mint): module 1 would see no key and the vendor would stay unreachable"
+  JOBS_M1J_GEN=$(( ${JOBS_M1J_GEN:-0} + 1 ))
+  if [ -n "$(jobs_cid m1j)" ]; then
+    DC logs --no-color m1j > "$WORK/jobs-m1j-before-switch-$JOBS_M1J_GEN.log" 2>&1 || die "could not keep the log of module 1 before it is re-created"
+  fi
+  ( export H_M1J_FALLBACK_MODE="$want_mode" H_M1J_DPA_CONFIRMED="$want_dpa" H_M1J_DAILY_SPEND_CAP="$want_cap" H_M1J_VENDOR_KEY="$key"
+    DC up -d --no-deps --force-recreate --wait --wait-timeout 240 m1j ) > "$WORK/jobs-up-m1j.log" 2>&1 || { sed 's/^/     | /' "$WORK/jobs-up-m1j.log" | tail -20; die "module 1 (m1j) did not become healthy with its vendor fallback $mode"; }
+  cid="$(jobs_cid m1j)"; [ -n "$cid" ] || die "module 1 (m1j) has no container after it was re-created"
+  env_out="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$cid" 2>/dev/null)"
+  [ -n "$env_out" ] || die "could not read the environment of module 1's container"
+  printf '%s\n' "$env_out" | grep -qx "TM_FALLBACK_MODE=$want_mode" || die "module 1's container has TM_FALLBACK_MODE=$(printf '%s\n' "$env_out" | sed -n 's/^TM_FALLBACK_MODE=//p'), want $want_mode"
+  printf '%s\n' "$env_out" | grep -qx "TM_EXTERNAL_DPA_CONFIRMED=$want_dpa" || die "module 1's container has TM_EXTERNAL_DPA_CONFIRMED=$(printf '%s\n' "$env_out" | sed -n 's/^TM_EXTERNAL_DPA_CONFIRMED=//p'), want $want_dpa"
+  printf '%s\n' "$env_out" | grep -qx "TM_EXTERNAL_DAILY_SPEND_CAP=$want_cap" || die "module 1's container has TM_EXTERNAL_DAILY_SPEND_CAP=$(printf '%s\n' "$env_out" | sed -n 's/^TM_EXTERNAL_DAILY_SPEND_CAP=//p'), want $want_cap"
+  printf '%s\n' "$env_out" | grep -qx "TM_EXTERNAL_ZEROBOUNCE_KEY_ENV=M1J_VENDOR_KEY" || die "module 1's container does not name M1J_VENDOR_KEY as the variable that holds the vendor key"
+  got_key="$(printf '%s\n' "$env_out" | sed -n 's/^M1J_VENDOR_KEY=//p')"
+  if [ "$mode" = on ]; then
+    [ -n "$got_key" ] && [ "$got_key" = "$JOBS_VENDOR" ] || die "module 1's key variable M1J_VENDOR_KEY is not the minted stand-in key (it is ${#got_key} characters long): the switch did not reach the container"
+  else
+    [ -z "$got_key" ] || die "module 1's key variable M1J_VENDOR_KEY holds a value (${#got_key} characters) with the vendor switched off"
+  fi
+  got_key=""
+  echo "  module 1 (m1j) was re-created with its vendor fallback $mode: TM_FALLBACK_MODE=$want_mode, TM_EXTERNAL_DPA_CONFIRMED=$want_dpa, TM_EXTERNAL_DAILY_SPEND_CAP=$want_cap, the key variable M1J_VENDOR_KEY $([ "$mode" = on ] && echo 'holds the minted stand-in key (not shown)' || echo 'is empty')"
+}
+
+# jobs_remember_wait: waits longer than the platform keeps module 1's last answer, so that the next preview or confirm asks module 1 again
+jobs_remember_wait() { sleep "$((JOBS_VENDOR_MEMORY_SEC + 2))"; }
+
+# jobs_vendor_says <true|false> <label>: module 1 ITSELF (its describe, read with the platform's own service caller's key) says vendor_fallback.reachable <the value>
+jobs_vendor_says() {
+  jobs_scn vendor --expect "known=1,reachable=$1"
+  jobs_need "J6 $2: module 1's own describe"
+  echo "  module 1 itself says vendor_fallback.reachable = $1 ($2)"
+}
+
+# jobs_j6_job <label>: a fresh user with a draft of the J6 list, previewed (sets JOB, PENDING, FP: the fingerprint of that preview)
+jobs_j6_job() {
+  local f
+  jobs_create "$JOBS_API_A" "$JOBS_J6_ROWS" 2 2
+  f="$(jobs_fact created)"; FP="$(jobs_get "$f" fingerprint)"
+  [ "${#FP}" = 64 ] || die "J6 $1: the preview of the new job has no fingerprint: $f"
+  [ "$PENDING" = "$((JOBS_J6_ROWS - 4))" ] || die "J6 $1: the job has $PENDING pending rows, want $((JOBS_J6_ROWS - 4))"
+}
+
+# jobs_j6_preview <job> <rate> <vendor on|off> <label>: the preview of the job, again, is at <rate> credits per pending row, module 1 was read for it, and the rate unit is (or is not) the vendor unit
+jobs_j6_preview() {
+  local job="$1" rate="$2" vendor="$3" label="$4" unit
+  if [ "$vendor" = on ]; then unit="rate_unit=m1_vendor"; else unit="rate_unit!=m1_vendor"; fi
+  jobs_scn preview --api "$JOBS_API_A" --job "$job" --expect "unit_cost=$rate,credits=$((PENDING * rate)),units=$PENDING,known=1,$unit"
+  jobs_need "J6 $label: the preview of job $job"
+}
+
+# jobs_j6_reserve <job> <rate> <vendor on|off> <label>: the job holds <PENDING x rate> credits, frozen at <rate>, in a snapshot that holds the vendor unit exactly when the vendor was on at its confirm
+jobs_j6_reserve() {
+  local job="$1" rate="$2" vendor="$3" label="$4" snap
+  if [ "$vendor" = on ]; then snap="snapshot_units=3,snapshot_vendor=2,rate_unit=m1_vendor"; else snap="snapshot_units=2,snapshot_vendor=0,rate_unit!=m1_vendor"; fi
+  jobs_scn reserve --job "$job" --expect "reserve_rows=1,unit_cost=$rate,units=$PENDING,reserved_credits=$((PENDING * rate)),reserved=$((PENDING * rate)),charged=0,$snap"
+  jobs_need "J6 $label: the reserve of job $job"
+}
+
+jobs_j6() {
+  STAGE=jobs-vendor; banner J6 "module 1's vendor fallback is switched OFF, ON and OFF again by re-creating module 1: the platform reads it at the preview and the confirm, and the reserve is 1 credit a row, then 2, then 1"
+  local f ja js jc jd fp0 pend2
+  : > "$WORK/jobs-j6.log"
+  DC stop -t 10 jobs-b >/dev/null 2>&1 || true                          # ONE instance: the one that serves every request below also runs the engine, which never starts a job scheduled an hour ahead
+  jobs_up jobs-a ""
+
+  # (a) OFF at the start: forced, through the very function that flips it later, so the stage does not depend on what an earlier stage left
+  jobs_m1j_vendor off
+  jobs_scn vendor --wait-registered 120 --expect "known=1,reachable=false"
+  jobs_need "J6 the platform's service caller and module 1's answer at the start"
+  jobs_j6_ok platform_registered_its_service_caller
+  echo "  module 1 itself says vendor_fallback.reachable = false (the platform's own service caller is registered at module 1: it registered itself)"
+  jobs_j6_ok module_says_off_at_the_start
+  jobs_remember_wait
+
+  # (b) OFF: a job is previewed at 1 per row, confirmed SCHEDULED (an hour ahead: the engine does not start it) and the reserve is 1 per row; its cancel releases all of it
+  jobs_j6_job "off"; ja="$JOB"
+  jobs_j6_preview "$ja" 1 off "off"
+  jobs_scn flag --expect "reachable=false"; jobs_need "J6 off: the platform's flag"
+  jobs_j6_ok off_preview_is_1_per_row_and_read_from_module_1
+  jobs_scn confirm --api "$JOBS_API_A" --job "$ja" --scheduled-in 3600
+  jobs_need "J6 off: the scheduled confirm"
+  f="$(jobs_fact confirm)"
+  [ "$(jobs_get "$f" status)" = scheduled ] && [ "$(jobs_get "$f" reserved)" = "$PENDING" ] || die "J6 off: the scheduled confirm did not hold $PENDING credits as a scheduled job: $f"
+  jobs_j6_reserve "$ja" 1 off "off"
+  jobs_j6_ok off_confirm_reserves_1_per_row_without_the_vendor_unit
+  jobs_scn cancel --api "$JOBS_API_A" --job "$ja"; jobs_need "J6 off: the cancel of the scheduled job"
+  jobs_scn reserve --job "$ja" --expect "reserve_rows=1,reserved=$PENDING,released=$PENDING,remainder=0,release_rows=1,balance_reserved=0"
+  jobs_need "J6 off: the release after the cancel"
+  jobs_j6_ok off_cancel_releases_the_whole_reserve
+
+  # (c) a job is PREVIEWED under off and left there; then the vendor is switched ON
+  jobs_j6_job "the job previewed under off"; js="$JOB"; fp0="$FP"
+  jobs_j6_preview "$js" 1 off "the job previewed under off"
+  fp0="$(jobs_get "$(jobs_fact preview)" fingerprint)"
+  jobs_m1j_vendor on
+  jobs_vendor_says true "after the flip"
+  jobs_j6_ok module_says_on_after_the_flip
+  jobs_remember_wait
+
+  # (d) the confirm of the preview made under off: the platform reads module 1 (on), the flag and the prices follow, the fingerprint is not the one the user saw: refused, nothing held
+  jobs_scn confirm --api "$JOBS_API_A" --job "$js" --scheduled-in 3600 --expect refused:preview_stale
+  jobs_need "J6 on: the confirm of the preview made under off"
+  jobs_scn reserve --job "$js" --expect "reserve_rows=0,reserved=0,snapshot_units=0,balance_reserved=0"
+  jobs_need "J6 on: the refused confirm held something"
+  jobs_j6_ok a_preview_made_under_off_is_stale_at_the_confirm
+  jobs_scn flag --expect "reachable=true,source=m1_describe,from_module1>=1,last_reachable=true,last_source=m1_describe"
+  jobs_need "J6 on: the platform's flag"
+  jobs_j6_ok the_flag_follows_module_1_and_says_whose_word_it_is
+
+  # (e) previewed again: 2 per row at the vendor unit, a new fingerprint; the scheduled confirm reserves 2 per row and freezes the vendor unit into the job's snapshot
+  jobs_j6_preview "$js" 2 on "on"
+  [ "$(jobs_get "$(jobs_fact preview)" fingerprint)" != "$fp0" ] || die "J6 on: the preview under on has the fingerprint of the preview under off ($fp0): the price of a reachable unit is not part of it"
+  jobs_j6_ok on_preview_is_2_per_row_at_the_vendor_unit
+  jobs_scn confirm --api "$JOBS_API_A" --job "$js" --scheduled-in 3600
+  jobs_need "J6 on: the scheduled confirm"
+  f="$(jobs_fact confirm)"; pend2=$((PENDING * 2))
+  [ "$(jobs_get "$f" status)" = scheduled ] && [ "$(jobs_get "$f" reserved)" = "$pend2" ] || die "J6 on: the scheduled confirm did not hold $pend2 credits as a scheduled job: $f"
+  jobs_j6_reserve "$js" 2 on "on"
+  jobs_j6_ok on_confirm_reserves_2_per_row_with_the_vendor_unit_frozen
+
+  # (f) OFF again: module 1 says so, a new job is previewed at 1 per row and reserves 1 per row; the job confirmed under ON is NOT changed
+  jobs_m1j_vendor off
+  jobs_vendor_says false "after the second flip"
+  jobs_j6_ok module_says_off_again
+  jobs_remember_wait
+  jobs_j6_job "off again"; jc="$JOB"
+  jobs_j6_preview "$jc" 1 off "off again"
+  jobs_scn flag --expect "reachable=false,source=m1_describe,from_module1>=2,last_reachable=false,last_source=m1_describe"
+  jobs_need "J6 off again: the platform's flag"
+  jobs_j6_ok off_again_preview_is_1_per_row
+  jobs_scn confirm --api "$JOBS_API_A" --job "$jc" --scheduled-in 3600
+  jobs_need "J6 off again: the scheduled confirm"
+  f="$(jobs_fact confirm)"
+  [ "$(jobs_get "$f" status)" = scheduled ] && [ "$(jobs_get "$f" reserved)" = "$PENDING" ] || die "J6 off again: the scheduled confirm did not hold $PENDING credits as a scheduled job: $f"
+  jobs_j6_reserve "$jc" 1 off "off again"
+  jobs_j6_ok off_again_confirm_reserves_1_per_row
+  jobs_j6_reserve "$js" 2 on "the job confirmed under on, after the flip back"
+  jobs_scn state --job "$js" --expect "status=scheduled,reserves=1,releases=0"
+  jobs_need "J6 off again: the job confirmed under on"
+  jobs_j6_ok a_job_confirmed_under_on_is_not_changed_by_the_later_off
+  jobs_scn cancel --api "$JOBS_API_A" --job "$jc"; jobs_need "J6 off again: the cancel"
+  jobs_scn reserve --job "$jc" --expect "reserved=$PENDING,released=$PENDING,remainder=0,release_rows=1"
+  jobs_need "J6 off again: the release after the cancel"
+  jobs_scn cancel --api "$JOBS_API_A" --job "$js"; jobs_need "J6 on: the cancel of the job confirmed under on"
+  jobs_scn reserve --job "$js" --expect "reserved=$pend2,released=$pend2,remainder=0,release_rows=1,balance_reserved=0"
+  jobs_need "J6 on: the release after the cancel"
+  echo "  both scheduled jobs were cancelled and every credit they held is back (the job confirmed under on released its $pend2, the other its $PENDING)"
+
+  # (g) module 1 is STOPPED: a preview says it was not read, at the rate of the flag it last stored (off, set by module 1); module 1 comes back: read again
+  jobs_j6_job "module 1 stopped"; jd="$JOB"
+  DC stop -t 30 m1j >/dev/null 2>&1 || die "J6: could not stop module 1 (service m1j)"
+  f="$(jobs_probe_m1j)" && die "J6: module 1 still answers after it was stopped: $f"
+  jobs_remember_wait
+  jobs_scn preview --api "$JOBS_API_A" --job "$jd" --expect "known=0,unit_cost=1,credits=$PENDING,rate_unit!=m1_vendor"
+  jobs_need "J6 stopped: the preview"
+  jobs_scn flag --expect "reachable=false,source=m1_describe"; jobs_need "J6 stopped: the flag"
+  jobs_j6_ok a_module_that_cannot_be_read_is_said_not_to_be_read
+  echo "  module 1 is stopped: the preview says vendor_reachable_known = false, at 1 per row (the flag module 1 last set), and the flag is untouched"
+  DC up -d --no-deps --wait --wait-timeout 240 m1j >/dev/null 2>&1 || die "J6: module 1 did not become healthy again"
+  jobs_remember_wait
+  jobs_scn preview --api "$JOBS_API_A" --job "$jd" --expect "known=1,unit_cost=1,credits=$PENDING"
+  jobs_need "J6 back: the preview"
+  jobs_j6_ok a_module_that_is_back_is_read_again
+  echo "  module 1 is back: the next preview says vendor_reachable_known = true"
+}
+
 # ── the end: evidence, leak scan, exposure ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 jobs_summary() {
   local want n
-  STAGE=jobs-summary; banner "J5" "what the scenario program verified"
+  STAGE=jobs-summary; banner "J5" "what the scenario program verified (and the assertions of J6)"
   [ "$JOBS_VERIFIED" = "$JOBS_VERIFY_RUNS_WANTED" ] || die "the stages ran $JOBS_VERIFIED verify run(s), want $JOBS_VERIFY_RUNS_WANTED (J1, five kills, two jobs of J3, J4): a stage did not reach its verify"
   want=$(( JOBS_VERIFY_RUNS_WANTED * ${#JOBS_VERIFY_OKS[@]} ))
   [ -s "$WORK/jobs-ok.log" ] || die "no OK line was kept: the scenario program verified nothing"
@@ -434,24 +650,40 @@ jobs_summary() {
   sed 's/ OK .*//' "$WORK/jobs-ok.log" | sort | uniq -c | sed 's/^/     /'
   echo "  by invariant (each must hold in every run):"
   sed 's/^.* OK //' "$WORK/jobs-ok.log" | sort | uniq -c | sed 's/^/     /'
+  jobs_j6_summary
 }
 
-# the secrets of this run, and anything shaped like a JWT, in no log that is printed or kept: the logs of the instances, of module 1 and of the fixture, and the scenario program's own output. grep reads the
-# patterns from a file descriptor, so no secret is on a command line; nothing is printed but a name.
+# jobs_j6_summary: the J6 evidence: every name of JOBS_J6_OKS printed exactly once and nothing else, by the lines jobs_j6_ok kept
+jobs_j6_summary() {
+  local name c total
+  [ -s "$WORK/jobs-j6.log" ] || die "no J6 line was kept: stage J6 proved nothing (it did not run, or it printed no assertion)"
+  for name in "${JOBS_J6_OKS[@]}"; do
+    c="$(grep -cx "J6 OK $name" "$WORK/jobs-j6.log" || true)"
+    [ "$c" = 1 ] || die "J6 printed 'J6 OK $name' $c time(s), want exactly once: the assertion did not run (or ran twice)"
+  done
+  total="$(grep -c '^J6 OK ' "$WORK/jobs-j6.log" || true)"
+  [ "$total" = "${#JOBS_J6_OKS[@]}" ] || die "J6 printed $total 'J6 OK' line(s), want exactly ${#JOBS_J6_OKS[@]}: it printed an assertion this stage does not know"
+  echo "  J6: ${#JOBS_J6_OKS[@]} of ${#JOBS_J6_OKS[@]} assertions held (module 1's vendor fallback off, on, off again, and unreadable)"
+}
+
+# the secrets of this run, and anything shaped like a JWT, in no log that is printed or kept: the logs of the instances, of module 1 (the container that runs now AND every one re-created away by J6, whose log
+# jobs_m1j_vendor kept) and of the fixture, and the scenario program's own output. The three secrets are the JWT secret, the key-derivation secret and the stand-in vendor key. grep reads the patterns from a
+# file descriptor, so no secret is on a command line; nothing is printed but a name.
 jobs_secret_leak() {
-  local svc f
-  [ -n "$JOBS_JWT" ] && [ -n "$JOBS_M1K" ] || die "the secrets of this run are empty: the leak scan would look for nothing"
+  local svc f kept
+  [ -n "$JOBS_JWT" ] && [ -n "$JOBS_M1K" ] && [ -n "$JOBS_VENDOR" ] || die "the secrets of this run are empty: the leak scan would look for nothing"
   for svc in jobs-a jobs-b m1j jobsdns; do
     DC logs --no-color "$svc" > "$WORK/leak-$svc.log" 2>&1 || die "could not read the logs of $svc"
     [ -s "$WORK/leak-$svc.log" ] || { rm -f "$WORK/leak-$svc.log"; die "the log of $svc, which the leak check must read, is empty: the instrument matched nothing"; }
   done
-  for f in "$WORK/leak-jobs-a.log" "$WORK/leak-jobs-b.log" "$WORK/leak-m1j.log" "$WORK/leak-jobsdns.log" "$WORK/jobs-run.log"; do
+  kept="$(ls "$WORK"/jobs-m1j-before-switch-*.log 2>/dev/null | tr '\n' ' ')"
+  for f in "$WORK/leak-jobs-a.log" "$WORK/leak-jobs-b.log" "$WORK/leak-m1j.log" "$WORK/leak-jobsdns.log" "$WORK/jobs-run.log" $kept; do
     [ -s "$f" ] || die "the log $(basename "$f"), which the leak check must read, is missing or empty"
-    if grep -qFf <(printf '%s\n' "$JOBS_JWT" "$JOBS_M1K") "$f"; then rm -f "$WORK"/leak-*.log; die "a secret of this run (the JWT secret or the key-derivation secret) appears in $(basename "$f") (the log is not shown: it is public)"; fi
+    if grep -qFf <(printf '%s\n' "$JOBS_JWT" "$JOBS_M1K" "$JOBS_VENDOR") "$f"; then rm -f "$WORK"/leak-*.log; die "a secret of this run (the JWT secret, the key-derivation secret or the stand-in vendor key) appears in $(basename "$f") (the log is not shown: it is public)"; fi
     if grep -qE 'eyJ[A-Za-z0-9_-]{5,}\.eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}' "$f"; then rm -f "$WORK"/leak-*.log; die "something shaped like a JWT (an access token) appears in $(basename "$f") (the log is not shown: it is public)"; fi
   done
   rm -f "$WORK"/leak-*.log
-  echo "  neither the JWT secret nor the key-derivation secret of this run, nor anything shaped like a JWT, appears in the logs of jobs-a, jobs-b, m1j and jobsdns or in the scenario program's own output"
+  echo "  none of the three secrets of this run (the JWT secret, the key-derivation secret, the stand-in vendor key), nor anything shaped like a JWT, appears in the logs of jobs-a, jobs-b, m1j and jobsdns (module 1: the present container and $(printf '%s' "$kept" | wc -w | tr -d ' ') kept before a switch) or in the scenario program's own output"
 }
 
 jobs_exposure() {
@@ -470,7 +702,8 @@ jobs_exposure() {
 
 # ── the whole stage, and the scope ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 jobs_run() {
-  : > "$WORK/jobs-run.log"; : > "$WORK/jobs-ok.log"
+  : > "$WORK/jobs-run.log"; : > "$WORK/jobs-ok.log"; : > "$WORK/jobs-j6.log"
+  rm -f "$WORK"/jobs-m1j-before-switch-*.log
   # in a full run the legacy platform containers (engine OFF) would win the leader lock and hold every job where it is, and the legacy module 1 would drain the same queue: they stop here
   if [ "$SCOPE" = full ]; then DC stop -t 10 platform platform-2 m1 >/dev/null 2>&1 || true; fi
   jobs_infra
@@ -478,12 +711,13 @@ jobs_run() {
   jobs_j2
   jobs_j3
   jobs_j4
+  jobs_j6
   jobs_summary
   jobs_secret_leak
   jobs_exposure
 }
 
-# H_SCOPE=jobs: Postgres, the four migration chains, the install step after module 1's and the first admin (stages 1-4b ran), then the stages above and nothing else (no module 2 or 3, no probe, no outage or
+# H_SCOPE=jobs: Postgres, the four migration chains, the install step after module 1's and the first admin (stages 1-4b ran), then the stages above (J0-J4 and J6) and nothing else (no module 2 or 3, no probe, no outage or
 # leader stage of the full run). Called by run.sh after stage 4b; it never returns (it exits with the run's own status, the EXIT trap tears the stack down).
 jobs_scope_run() {
   STAGE=services; banner 5 "scope jobs: module 1 (m1j), its fixture DNS and two platform instances with the job engine on (modules 2 and 3 are not started)"
@@ -494,7 +728,7 @@ jobs_scope_run() {
   jobs_not_checked
   echo "  - everything outside the job engine: module 2, module 3, the probe, the outage and leader stages of the full run and the ledger check are NOT run in this scope (H_SCOPE=full runs them)"
   echo
-  echo "HARNESS RESULT: GREEN (scope jobs: $JOBS_VERIFIED verified jobs, $(grep -c ' OK ' "$WORK/jobs-ok.log" || true) invariant lines) — the platform's own process was killed at five points, a leader was killed, module 1 was stopped: every job ended with the books closed"
+  echo "HARNESS RESULT: GREEN (scope jobs: $JOBS_VERIFIED verified jobs, $(grep -c ' OK ' "$WORK/jobs-ok.log" || true) invariant lines, ${#JOBS_J6_OKS[@]} J6 assertions) — the platform's own process was killed at five points, a leader was killed, module 1 was stopped: every job ended with the books closed; module 1's vendor fallback was switched off, on and off again and the reserve followed it (1, 2, 1 credits a row)"
   exit 0
 }
 
@@ -510,6 +744,10 @@ jobs_not_checked() {
     shortened (TM_QUEUE_LEASE_MARGIN_SECONDS 5) for the run, not module 1's default.
   - module 1's answers come from a fixture DNS (names under .test: NXDOMAIN, so invalid/no_mx and a charge; one name with an MX, so risky/plausible with smtp_unwired and no charge) and an unwired SMTP stage: a valid, a catch-all, a greylisted, a
     vendor (m1_vendor) or a cached answer never occurs, and neither does an unmapped one. What is proven is the platform's handling of module 1's answers and its books, not module 1's verdicts.
+  - J6 switches module 1's vendor fallback by re-creating its container (module 1 has no hot reload: a change of a dial is a restart) and reads the PREVIEW and the RESERVE of a scheduled job and its cancel; NOT exercised: a vendor
+    answer (module 1 is given a stand-in key and no verification is ever sent to the vendor: the network is internal and J6 starts no job), the charge of a vendor answer (the platform's settlement of m1_vendor is the db-tests'), a
+    confirm that module 1's unreadable describe refuses (it needs the seeded flag that module 1 never set, which J1-J4 have already made module 1's word: the db-tests prove it, TestJobsStore_VendorReachabilityFromTheModule*),
+    an IMMEDIATE confirm under any of the three states, and more than one platform instance reading module 1 at once.
   - the two instances share one database and one network: a partition between the leader and the database (a leader that is cut off and not killed keeps its server-side session and so the lock), more than two instances and a pass that is
     already running when its instance loses the lock are not exercised; the leader is killed with SIGKILL, so the server sees the closed socket at once.
   - the scenario program mints its users' tokens itself (HS256, the secret both instances were given): GoTrue's own tokens are the gotrue scope's; the program is a harness caller, not a browser.

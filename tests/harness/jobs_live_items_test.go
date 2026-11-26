@@ -3,11 +3,13 @@
 package harness
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/coldmail-platform/platform/internal/adapters/sendapi"
 	"github.com/coldmail-platform/platform/internal/config"
 	"github.com/coldmail-platform/platform/internal/jobs"
 )
@@ -34,7 +36,7 @@ func (s *jlStack) itemStatuses(job string) string {
 	return strings.Join(out, ",")
 }
 
-// TestJobsLive_M3_NeverSubmittedItemsOfAnExpiredJobAreMarkedAndNeverRunAndTheMarkIsNotALock (Phase 4 close-out D9, with the REAL module 3, its workers and its sink). A module 3 send job is confirmed and the platform's
+// TestJobsLive_M3_NeverSubmittedItemsOfAnExpiredJobAreMarkedAndCannotBeRun (Phase 4 close-out D9, with the REAL module 3, its workers and its sink). A module 3 send job is confirmed and the platform's
 // path to module 3 is cut before the engine's first tick (the store's max start delay is 10 s): the engine writes the job's public.job_items rows ONCE (its first tick: the module being down does not stop that), waits,
 // and at the deadline EXPIRES the job; in the same transaction every item of a row no module was given is marked 'cancelled' (nothing is deleted). THE THREE THINGS PROVED:
 //
@@ -42,12 +44,11 @@ func (s *jlStack) itemStatuses(job string) string {
 //	never run      after the expiry, with every tick of the engine and the module's own loops, module 3 holds no job of the user, its campaign report has nothing for the job and the sink holds no message to the tenant
 //	the control    the very next job of the same user and module (the link open) is run and sent to the last recipient, three ways equal, and ITS items are not marked: a job that sends keeps its items 'pending'
 //
-// AND ONE FINDING, recorded as a measurement and not hidden: module 3 does not read an item's status (its two statements on the table, `SELECT campaign_id ... WHERE id AND user_id` and `INSERT ... SELECT ... WHERE
-// id AND user_id`: db/module-statements.txt, pinned to its code), so a DIRECT Run(job_item_id) of a marked item through the adapter is ACCEPTED: module 3 creates its own job for it. The marker is the platform's record
-// that the item will never be submitted, not a lock; what keeps it from being run is that nothing calls Run for a job that has ended (the engine submits the rows of confirmed, scheduled and running jobs only, and
-// no module scans the table). The test cancels the campaign it started with that one call at once. If module 3 starts REFUSING such a run, this test is red on purpose: Docs/install.md ("What a module can do with an
-// item that was never submitted") is then the document to change with it.
-func TestJobsLive_M3_NeverSubmittedItemsOfAnExpiredJobAreMarkedAndNeverRunAndTheMarkIsNotALock(t *testing.T) {
+// AND THE FOURTH THING (the owner's ruling D9: no module can act on such a row): module 3's run route reads the item's status in the SAME statement that reads and freezes it and REFUSES a marked item with 409
+// `job_item_cancelled` (module 3 59b2d2e: db/module-statements.txt J1 and J2, pinned to its code), so a DIRECT Run(job_item_id) of a marked item through the adapter is refused with sendapi.ErrItemCancelled, creates
+// no module job, and the sink stays empty; the paired control is the control job above, whose items are pending and run. (Until the guard existed module 3 accepted such a run: Docs/install.md, "What a module can do
+// with an item that was never submitted", says what changed.)
+func TestJobsLive_M3_NeverSubmittedItemsOfAnExpiredJobAreMarkedAndCannotBeRun(t *testing.T) {
 	ctx := jlCtx(t, 12*time.Minute)
 	e := newM3aEnv(t, ctx)
 	e.prepare(t, true, true)
@@ -156,38 +157,27 @@ func TestJobsLive_M3_NeverSubmittedItemsOfAnExpiredJobAreMarkedAndNeverRunAndThe
 	s.requireBooks("after the module 3 control job")
 	t.Logf("NOTE jl items m3 control: the next job of the same user and module ran and sent %d message(s) three ways equal; its %d items are pending", n, n)
 
-	// ---- the finding: the marker is not a lock ----
+	// ---- the marker is a lock in the module: a direct run of a marked item is refused ----
 	var marked string
 	if err := s.admin.QueryRow(ctx, `SELECT id::text FROM public.job_items WHERE campaign_id = $1::uuid ORDER BY id LIMIT 1`, a.ID).Scan(&marked); err != nil {
 		t.Fatalf("read a marked item: %v", err)
 	}
 	run, err := tn.C.Run(ctx, marked)
-	if err != nil {
-		t.Fatalf("module 3 REFUSED a direct Run of an item the platform marked cancelled (%s): the marker works as a lock after all, so the finding of this test (module 3 does not read an item's status) is wrong: change Docs/install.md, \"What a module can do with an item that was never submitted\", and this test", e.raw.scrub(err.Error()))
+	if err == nil {
+		t.Fatalf("module 3 ACCEPTED a direct Run of an item the platform marked cancelled (%+v): its run route must refuse it with 409 job_item_cancelled (module 3 at or after 59b2d2e); a module started a job for an item that was never submitted", run)
 	}
-	if !run.Created {
-		t.Fatalf("module 3 answered a direct Run of a marked item with %+v, want a new job (the item had never been run)", run)
+	if !errors.Is(err, sendapi.ErrItemCancelled) {
+		t.Fatalf("module 3 refused a direct Run of a marked item with %s, want sendapi.ErrItemCancelled (409 job_item_cancelled): the refusal must be the module's own code, not a conflict, a wait or an outage", e.raw.scrub(err.Error()))
 	}
-	if own := s.m3JobsOfCampaign(e, tn, a.ID); len(own) != 1 {
-		t.Fatalf("after the direct Run module 3's own table holds %d job(s) of the expired campaign, want exactly the one it just created", len(own))
+	if own := s.m3JobsOfCampaign(e, tn, a.ID); len(own) != 0 {
+		t.Fatalf("after the refused run module 3's own table holds %d job(s) of the expired campaign, want none: %v", len(own), own)
 	}
-	// end what that one call started: cancel the campaign and wait until module 3 has nothing in flight for it (a campaign left sending would put a message into the next test's sink)
-	if _, err := tn.C.Cancel(ctx, a.ID); err != nil {
-		t.Fatalf("cancel the campaign the direct Run started: %s", e.raw.scrub(err.Error()))
-	}
-	s.tickUntil("module 3 has nothing in flight for the campaign the direct Run started", 90*time.Second, time.Second, diag, func() (bool, string) {
-		own := s.m3JobsOfCampaign(e, tn, a.ID)
-		if len(own) != 1 {
-			return false, fmt.Sprintf("module 3's table holds %d job(s) of the campaign", len(own))
+	// nothing may reach the sink for the expired campaign after the refused run, for longer than three of the module's dispatch ticks: the tenant's prefix also covers the control job's n recipients, so the count must still be exactly n
+	for until := time.Now().Add(8 * time.Second); time.Now().Before(until); time.Sleep(time.Second) {
+		s.eng.Tick(ctx)
+		if m := jlSinkCount(e.sinkView(t), tn.Prefix); m != n {
+			t.Fatalf("the sink holds %d message(s) to the tenant after the refused run, want exactly the control job's %d", m, n)
 		}
-		for _, st := range own {
-			switch st {
-			case "cancelled", "sent", "bounced", "failed":
-				return true, st
-			}
-			return false, st
-		}
-		return false, ""
-	})
-	t.Logf("NOTE jl items m3 finding: a direct Run of a marked item through the adapter was ACCEPTED by module 3 (a new job): it does not read an item's status. The marker is the platform's record, not a lock; the campaign was cancelled at once")
+	}
+	t.Logf("NOTE jl items m3 guard: a direct Run of a marked item through the adapter was REFUSED (ErrItemCancelled, 409 job_item_cancelled); module 3 holds no job for the expired campaign and the sink holds only the control job's %d message(s)", n)
 }

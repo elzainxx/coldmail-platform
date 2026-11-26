@@ -165,14 +165,14 @@ func (f *fakeStore) DiscardDraft(c context.Context, u, j string) (jobs.Job, erro
 func (f *fakeStore) Reopen(c context.Context, u, j string) (jobs.Job, error) {
 	return f.move(c, "Reopen", u, j)
 }
-func (f *fakeStore) CancelBeforeStart(c context.Context, u, j string) (jobs.Job, error) {
-	return f.move(c, "CancelBeforeStart", u, j)
+func (f *fakeStore) Cancel(c context.Context, u, j string) (jobs.Job, error) {
+	return f.move(c, "Cancel", u, j)
 }
-func (f *fakeStore) PauseScheduled(c context.Context, u, j string) (jobs.Job, error) {
-	return f.move(c, "PauseScheduled", u, j)
+func (f *fakeStore) Pause(c context.Context, u, j string) (jobs.Job, error) {
+	return f.move(c, "Pause", u, j)
 }
-func (f *fakeStore) ResumeScheduled(c context.Context, u, j string) (jobs.Job, error) {
-	return f.move(c, "ResumeScheduled", u, j)
+func (f *fakeStore) Resume(c context.Context, u, j string) (jobs.Job, error) {
+	return f.move(c, "Resume", u, j)
 }
 
 func (f *fakeStore) Events(_ context.Context, user, job string, after int64, limit int) ([]jobs.Event, error) {

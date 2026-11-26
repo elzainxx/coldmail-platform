@@ -17,6 +17,11 @@ var (
 	// ErrConflictUnexplained: a 409 on run whose cause the module does not say: a module 3 older than Phase 3 close-out C2 (its 409 carries no details) answers so. It is NEVER what a module that
 	// names its causes answers (that is a *ConflictError), and module 2 (back-pressure, ErrBackpressure) never answers it. The adapter never picks a cause for it.
 	ErrConflictUnexplained = errors.New("sendapi: the module refused the run with a conflict whose cause it does not say")
+	// ErrItemCancelled: a run of a job item the platform marked cancelled (public.job_items.status = 'cancelled': the item was never submitted and its job ended without it), answered 409 with the
+	// code `job_item_cancelled` (Phase 4 D9, both senders). It is a code of its own, NOT a cause of `conflict`: it is never back-pressure (ErrBackpressure), never an unexplained conflict
+	// (ErrConflictUnexplained) and never one of module 3's causes (CausesOf is empty). It is permanent (the marker is never moved back) and is a refusal for good of THAT item: retrying
+	// it unchanged can never succeed. It also unwraps to the modclient Refused error (status 409, code job_item_cancelled).
+	ErrItemCancelled = errors.New("sendapi: the module refused the run: the platform marked this job item cancelled")
 	// ErrBadCursor: the module did not accept a cursor (a 400 validation_failed naming the cursor). The adapter only ever passes back the next_cursor the module issued, so this means a forged or
 	// corrupted cursor. A module fault (a 500) on a request that carried a cursor is NOT this error: it stays an Internal error.
 	ErrBadCursor = errors.New("sendapi: the module did not accept the page cursor")
@@ -178,6 +183,8 @@ func (c *Client) mapErr(op string, err error, usedCursor bool) error {
 		return err
 	}
 	switch {
+	case op == opRun && e.Kind == modclient.Refused && e.Status == 409 && e.Code == CodeItemCancelled:
+		return refine(ErrItemCancelled, err) // its own code: never read as a conflict, whatever the profile's RunConflict says
 	case op == opRun && e.Kind == modclient.Refused && e.Status == 409 && e.Code == "conflict":
 		// MODULE-FORCED(SA-F1): module 2 answers run's 409 with one body (code conflict, no details; owner ruling OD-5) and a module 3 older than the close-out answers it the same way, so the adapter can only call the first back-pressure and the second unexplained, never name a cause the body does not.
 		if c.p.RunConflict == ConflictBackpressure {

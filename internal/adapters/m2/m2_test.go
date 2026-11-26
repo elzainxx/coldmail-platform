@@ -101,6 +101,7 @@ func TestProfileIsTheDocumentedOne(t *testing.T) {
 			"no_eligible_account", "waiting_for_capacity", "dispatch_paused"},
 		ErrorCodes:    []string{"validation_failed", "unauthenticated", "not_found", "method_not_allowed", "conflict", "internal_error", "paused"},
 		AlwaysPresent: true, LinearCost: true, Cancel: true, RunConflict: sendapi.ConflictBackpressure,
+		PauseCapability: "campaign_pause_resume",
 	}
 	if got := m2.Profile(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("the profile is not the documented one:\n got %+v\nwant %+v", got, want)

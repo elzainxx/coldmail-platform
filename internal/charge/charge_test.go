@@ -38,6 +38,36 @@ var neverEmittedM1Reasons = []string{"invalid_domain", "blacklisted_domain", "bl
 // legalM2States are the item states module 2 defines (cancelled since B4).
 var legalM2States = []string{"sent", "bounced", "failed", "queued", "assigned", "sending", "cancelled"}
 
+// nonVerdictStatuses and nonVerdictReasons are module 1's `non_verdict_status` and `non_verdict_reason` (coldmail-verify Docs/api-contract.md, "Cancelling a job", migration 0020): the words
+// a result row carries when it was cancelled before its check began. They are NOT verdict words (a verdict is never cancelled), they are not in legalStatuses or legalReasons, and exactly
+// one row of the table, nonVerdictRow, may name them.
+var (
+	nonVerdictStatuses = []string{"cancelled"}
+	nonVerdictReasons  = []string{"cancelled_by_caller"}
+)
+
+const nonVerdictRow = "M1-24"
+
+// m1RowVocabProblems says, for every module 1 row of a table, which status or reason it names that is not in module 1's vocabulary: the verdict words for every row, and the two
+// non-verdict words for the row nonVerdictRow alone.
+func m1RowVocabProblems(rules []Rule) []string {
+	var out []string
+	for _, r := range rules {
+		if r.Module != "m1" {
+			continue
+		}
+		okStatus := contains(legalStatuses, r.State) || (r.ID == nonVerdictRow && contains(nonVerdictStatuses, r.State))
+		okReason := contains(legalReasons, r.Reason) || (r.ID == nonVerdictRow && contains(nonVerdictReasons, r.Reason))
+		if r.State != "*" && !okStatus {
+			out = append(out, fmt.Sprintf("row %s names status %q, which is not in module 1's vocabulary", r.ID, r.State))
+		}
+		if r.Reason != "*" && !okReason {
+			out = append(out, fmt.Sprintf("row %s names reason %q, which is not in module 1's vocabulary", r.ID, r.Reason))
+		}
+	}
+	return out
+}
+
 // originValues are the values of M1's signals.failure_origin plus the absent key; garbageOrigins are strings the table must never read as an origin.
 var originValues = []string{"", "own", "remote", "undetermined"}
 
@@ -96,6 +126,7 @@ var rowCases = []rowCase{
 	{"M1-21", m1o("unknown", "smtp_timeout", "own"), fre("M1-21")},
 	{"M1-22", m1o("unknown", "smtp_timeout", "undetermined"), fre("M1-22")},
 	{"M1-23", m1("unknown", "smtp_timeout"), unm("M1-23")},
+	{"M1-24", m1("cancelled", "cancelled_by_caller"), fre("M1-24")},
 	{"M1-99", m1("invalid", "role_account"), unm("M1-99")},
 	{"M2-01", Outcome{Module: "m2", State: "sent", FromCache: true, SkipReason: "audit_red", FailureOrigin: "remote"}, chg("M2-01", "m2_accepted")},
 	{"M2-02", Outcome{Module: "m2", State: "bounced"}, chg("M2-02", "m2_bounced")},
@@ -487,7 +518,9 @@ func TestDecide_M2Failed(t *testing.T) {
 	}
 }
 
-// TestDecide_M2Cancelled: an item cancelled before it was claimed (B4) is work not done: free (M2-08). The control: the platform's own `cancelled` is P-01 and module 1 has no such state.
+// TestDecide_M2Cancelled: an item cancelled before it was claimed (B4) is work not done: free (M2-08). The controls: the platform's own `cancelled` is P-01; module 1's `cancelled` is the
+// non-verdict word of its cancel (migration 0020) and is free ONLY with its own reason (M1-24, TestDecide_M1Cancelled): with no reason, or any other, it is not a state the table can map
+// and stays unmapped (M1-99), the pin this test has always held for module 1.
 func TestDecide_M2Cancelled(t *testing.T) {
 	for _, re := range []string{"", "cancelled_by_user", "x"} {
 		if got := Decide(m2("cancelled", re)); !sameDecision(got, fre("M2-08")) {
@@ -502,7 +535,8 @@ func TestDecide_M2Cancelled(t *testing.T) {
 		want Decision
 	}{
 		{Outcome{Module: "platform", State: "cancelled"}, fre("P-01")},
-		{m1("cancelled", ""), unm("M1-99")},
+		{m1("cancelled", ""), unm("M1-99")},                    // module 1 with no reason: not the row's two words
+		{m1("cancelled", "cancelled_by_caller"), fre("M1-24")}, // module 1 with its own reason: the row of its cancel
 		{Outcome{Module: "m3", State: "cancelled"}, fre("M3-01")},
 		{m2("Cancelled", ""), unm("M2-99")},
 		{m2("canceled", ""), unm("M2-99")}, // the American spelling is not a state module 2 defines
@@ -510,6 +544,79 @@ func TestDecide_M2Cancelled(t *testing.T) {
 		if got := Decide(c.in); !sameDecision(got, c.want) {
 			t.Errorf("Decide(%+v) = {%s}, want {%s}", c.in, describe(got), describe(c.want))
 		}
+	}
+}
+
+// TestDecide_M1Cancelled: a row module 1 cancelled before its check began (POST /v1/jobs/{id}/cancel, migration 0020) has no verdict, was never probed and is free: M1-24, with no unit,
+// whatever else the outcome says (the row is FIRST in the table, so the cache wildcard of M1-01 cannot take it). The paired controls are the neighbours that must NOT be free by this row:
+// the right state with another reason (or none) is unmapped (M1-99: a state the table cannot map is flagged, never guessed free or charged), a verdict status carrying the cancel's reason is
+// unmapped, a wrong-case spelling matches nothing, the other modules' `cancelled` keep their own rows, and a VERDICT is still charged beside it (the row does not widen).
+func TestDecide_M1Cancelled(t *testing.T) {
+	for _, o := range []Outcome{
+		m1("cancelled", "cancelled_by_caller"),
+		{Module: "m1", State: "cancelled", Reason: "cancelled_by_caller", FromCache: true},                                     // M1-01's cache wildcard is below this row
+		{Module: "m1", State: "cancelled", Reason: "cancelled_by_caller", SkipReason: "smtp_unwired", FailureOrigin: "remote"}, // nothing on the outcome can make it charge
+		{Module: "m1", State: "cancelled", Reason: "cancelled_by_caller", FromCache: true, SkipReason: "audit_red", FailureOrigin: "remote"},
+	} {
+		got := Decide(o)
+		if !sameDecision(got, fre("M1-24")) || got.Unit != "" || got.Kind == Charge {
+			t.Errorf("Decide(%+v) = {%s}, want free by M1-24 with no unit", o, describe(got))
+		}
+	}
+	for _, c := range []struct {
+		name string
+		in   Outcome
+		want Decision
+	}{
+		{"cancelled with another reason", m1("cancelled", "plausible"), unm("M1-99")},
+		{"cancelled with no reason", m1("cancelled", ""), unm("M1-99")},
+		{"cancelled with the wildcard text as its reason", m1("cancelled", "*"), unm("M1-99")},
+		{"cancelled with a reason in another case", m1("cancelled", "Cancelled_By_Caller"), unm("M1-99")},
+		{"a verdict status with the cancel's reason", m1("valid", "cancelled_by_caller"), unm("M1-99")},
+		{"an unknown with the cancel's reason and a remote origin", m1o("unknown", "cancelled_by_caller", "remote"), chg("M1-20", "m1_own")},
+		{"the state in another case", m1("Cancelled", "cancelled_by_caller"), unm("M1-99")},
+		{"the American spelling", m1("canceled", "cancelled_by_caller"), unm("M1-99")},
+		{"module 2 with the cancel's reason is module 2's own row", m2("cancelled", "cancelled_by_caller"), fre("M2-08")},
+		{"module 3 with the cancel's reason is module 3's own row", Outcome{Module: "m3", State: "cancelled", Reason: "cancelled_by_caller"}, fre("M3-01")},
+		{"the platform's cancelled is P-01", Outcome{Module: "platform", State: "cancelled", Reason: "cancelled_by_caller"}, fre("P-01")},
+		{"control: a verdict beside it is still charged", m1("valid", "accepted"), chg("M1-03", "m1_own")},
+	} {
+		if got := Decide(c.in); !sameDecision(got, c.want) {
+			t.Errorf("%s: Decide(%+v) = {%s}, want {%s}", c.name, c.in, describe(got), describe(c.want))
+		}
+	}
+	// the row is the table's FIRST row: moved just below the cache wildcard it would let a cached cancelled row be charged (the control that this test can fail: a table with the row
+	// one place lower decides the cached case otherwise)
+	rules := Rules()
+	if rules[0].ID != nonVerdictRow {
+		t.Errorf("the first row of the table is %s, want %s (a cancelled row must meet its own row before any wildcard)", rules[0].ID, nonVerdictRow)
+	}
+	lines := strings.Split(strings.TrimSuffix(rulesPSV, "\n"), "\n")
+	var rowLine string
+	for _, l := range lines[1:] {
+		if strings.HasPrefix(l, nonVerdictRow+"|") {
+			rowLine = l
+		}
+	}
+	if rowLine == "" {
+		t.Fatalf("control setup: no line of the table starts with %s", nonVerdictRow)
+	}
+	var lowered []string
+	for _, l := range lines {
+		if l == rowLine {
+			continue
+		}
+		lowered = append(lowered, l)
+		if strings.HasPrefix(l, "M1-01|") {
+			lowered = append(lowered, rowLine)
+		}
+	}
+	below, err := parse(strings.Join(lowered, "\n") + "\n")
+	if err != nil {
+		t.Fatalf("control setup: the table with the row below M1-01 does not parse: %v", err)
+	}
+	if got := decide(below, Outcome{Module: "m1", State: "cancelled", Reason: "cancelled_by_caller", FromCache: true}); !sameDecision(got, chg("M1-01", "m1_cache")) {
+		t.Errorf("control: with the row below M1-01 a cached cancelled row decides {%s}, want the cache's charge M1-01: the test could not tell the row's place", describe(got))
 	}
 }
 
@@ -541,18 +648,33 @@ func TestDecide_PlatformDuplicate(t *testing.T) {
 }
 
 // TestDecide_EveryLegalM1PairIsRuled: every legal status/reason pair of module 1 is matched by an explicit row or by the explicit catch-all; the pairs the module cannot emit are
-// Unmapped and never Charge; and no M1 row names a status or reason that is not in the vocabulary (a typo in the table would be a row nothing can reach).
+// Unmapped and never Charge; and no M1 row names a status or reason that is not in the vocabulary (a typo in the table would be a row nothing can reach). Since module 1's cancel
+// (migration 0020) the vocabulary has two NON-VERDICT words besides the verdict ones, `cancelled` and `cancelled_by_caller`, and exactly ONE row may name them, M1-24 (the same row, the
+// same two words: the exception is not "any row may use them"); a paired control feeds the check a table with the reason mistyped on M1-24 and a table where another row names `cancelled`.
 func TestDecide_EveryLegalM1PairIsRuled(t *testing.T) {
 	isLegal := func(list []string, v string) bool { return contains(list, v) }
-	for _, r := range Rules() {
-		if r.Module != "m1" {
-			continue
+	if p := m1RowVocabProblems(Rules()); len(p) != 0 {
+		t.Errorf("the table's module 1 rows name words outside module 1's vocabulary: %s", strings.Join(p, "; "))
+	}
+	for _, c := range []struct {
+		name, from, to, want string
+	}{
+		{"a typo in M1-24's reason", "cancelled|cancelled_by_caller|", "cancelled|cancelled_by_caler|", "row M1-24 names reason"},
+		{"a typo in M1-24's state", "M1-24|m1|cancelled|", "M1-24|m1|canceled|", "row M1-24 names status"},
+		{"another row naming the non-verdict status", "M1-03|m1|valid|accepted|", "M1-03|m1|cancelled|accepted|", "row M1-03 names status"},
+		{"another row naming the non-verdict reason", "M1-03|m1|valid|accepted|", "M1-03|m1|valid|cancelled_by_caller|", "row M1-03 names reason"},
+	} {
+		mutated := strings.Replace(rulesPSV, c.from, c.to, 1)
+		if mutated == rulesPSV {
+			t.Fatalf("control %q: the mutation changed nothing, so it proves nothing", c.name)
 		}
-		if r.State != "*" && !isLegal(legalStatuses, r.State) {
-			t.Errorf("row %s names status %q, which is not in module 1's vocabulary", r.ID, r.State)
+		rules, err := parse(mutated)
+		if err != nil {
+			t.Fatalf("control %q: the mutated table no longer parses (%v), so the control would prove a parse error and not the vocabulary check", c.name, err)
 		}
-		if r.Reason != "*" && !isLegal(legalReasons, r.Reason) {
-			t.Errorf("row %s names reason %q, which is not in module 1's vocabulary", r.ID, r.Reason)
+		p := m1RowVocabProblems(rules)
+		if len(p) != 1 || !strings.Contains(p[0], c.want) {
+			t.Errorf("control %q: the vocabulary check said %v, want exactly one problem naming %q", c.name, p, c.want)
 		}
 	}
 	emitted := map[string]bool{}
@@ -1230,22 +1352,44 @@ func TestRules_OnlyTheUnknownRowsReadTheOrigin(t *testing.T) {
 	}
 }
 
-// TestRules_IdsAreUniqueAndOrdered: within a module the numeric parts of the ids rise by one from 01 (the catch-all 99 last), so a renumbering that leaves a hole or reorders rows is visible.
-func TestRules_IdsAreUniqueAndOrdered(t *testing.T) {
+// placedFirst are the rows that sit at the head of their module's rows although their id is the module's last number before the catch-all. The table is first-match-wins, so a row that must be
+// seen before a wildcard is placed above it, and renumbering the rows below it would change the id of every rule the ledger and the stored results already cite (a result row keeps its rule
+// id): the new row takes the next free number and goes first. The only one is M1-24, module 1's cancelled row (placed first like module 3's M3-01, whose id happens to be 01).
+var placedFirst = map[string]bool{nonVerdictRow: true}
+
+// idOrderProblems is the ids rule of the table: within a module the numeric parts of the ids rise by one from 01 in the order of the rows (the catch-all 99 last), so a renumbering that
+// leaves a hole or reorders rows is visible; a row of `placed` is outside that run and instead is the FIRST row of its module and carries the number right after the run's last (no hole).
+func idOrderProblems(rules []Rule, placed map[string]bool) []string {
+	var out []string
 	next := map[string]int{}
+	last := map[string]int{}
+	first := map[string]string{}
 	seen := map[string]bool{}
-	for _, r := range Rules() {
+	type placedRow struct {
+		id     string
+		prefix string
+		n      int
+	}
+	var pl []placedRow
+	for _, r := range rules {
 		if seen[r.ID] {
-			t.Errorf("duplicate id %s", r.ID)
+			out = append(out, "duplicate id "+r.ID)
 		}
 		seen[r.ID] = true
 		prefix, num, ok := strings.Cut(r.ID, "-")
 		if !ok {
-			t.Fatalf("id %s has no dash", r.ID)
+			return append(out, "id "+r.ID+" has no dash")
 		}
 		var n int
 		if _, err := fmt.Sscanf(num, "%d", &n); err != nil {
-			t.Fatalf("id %s: %v", r.ID, err)
+			return append(out, fmt.Sprintf("id %s: %v", r.ID, err))
+		}
+		if _, ok := first[prefix]; !ok {
+			first[prefix] = r.ID
+		}
+		if placed[r.ID] {
+			pl = append(pl, placedRow{r.ID, prefix, n})
+			continue
 		}
 		if n == 99 {
 			next[prefix] = 100
@@ -1255,12 +1399,78 @@ func TestRules_IdsAreUniqueAndOrdered(t *testing.T) {
 			next[prefix] = 1
 		}
 		if n != next[prefix] {
-			t.Errorf("id %s: the next id of %s is %02d (ids rise by one, the catch-all 99 is last)", r.ID, prefix, next[prefix])
+			out = append(out, fmt.Sprintf("id %s: the next id of %s is %02d (ids rise by one, the catch-all 99 is last)", r.ID, prefix, next[prefix]))
 		}
 		next[prefix] = n + 1
+		last[prefix] = n
+	}
+	for _, p := range pl {
+		if first[p.prefix] != p.id {
+			out = append(out, fmt.Sprintf("id %s is a placed-first row but %s comes before it in module %s", p.id, first[p.prefix], p.prefix))
+		}
+		if p.n != last[p.prefix]+1 {
+			out = append(out, fmt.Sprintf("id %s is a placed-first row and must take the number after the run's last (%02d), not %02d: a hole or a reuse", p.id, last[p.prefix]+1, p.n))
+		}
 	}
 	if len(seen) < 30 {
-		t.Errorf("only %d ids examined (floor 30)", len(seen))
+		out = append(out, fmt.Sprintf("only %d ids examined (floor 30)", len(seen)))
+	}
+	return out
+}
+
+// TestRules_IdsAreUniqueAndOrdered: see idOrderProblems. The paired controls feed it a table with the placed-first row renumbered (a hole), the same row moved below the cache wildcard (no longer
+// first), two ordinary rows swapped (a reordering) and a table where the row is not declared as placed first: each is reported for its own reason.
+func TestRules_IdsAreUniqueAndOrdered(t *testing.T) {
+	if p := idOrderProblems(Rules(), placedFirst); len(p) != 0 {
+		t.Errorf("the ids of the table: %s", strings.Join(p, "; "))
+	}
+	lines := strings.Split(strings.TrimSuffix(rulesPSV, "\n"), "\n")
+	rebuild := func(f func(ls []string) []string) []Rule {
+		rs, err := parse(strings.Join(f(append([]string(nil), lines...)), "\n") + "\n")
+		if err != nil {
+			t.Fatalf("control setup: the mutated table does not parse: %v", err)
+		}
+		return rs
+	}
+	swap := func(a, b string) func(ls []string) []string {
+		return func(ls []string) []string {
+			ia, ib := -1, -1
+			for i, l := range ls {
+				switch {
+				case strings.HasPrefix(l, a+"|"):
+					ia = i
+				case strings.HasPrefix(l, b+"|"):
+					ib = i
+				}
+			}
+			if ia < 0 || ib < 0 {
+				t.Fatalf("control setup: %s or %s is not in the table", a, b)
+			}
+			ls[ia], ls[ib] = ls[ib], ls[ia]
+			return ls
+		}
+	}
+	for _, c := range []struct {
+		name   string
+		rules  []Rule
+		placed map[string]bool
+		want   string
+	}{
+		{"the placed-first row renumbered: a hole", rebuild(func(ls []string) []string {
+			ls[1] = strings.Replace(ls[1], nonVerdictRow+"|", "M1-25|", 1)
+			return ls
+		}), map[string]bool{"M1-25": true}, "must take the number after the run's last (24), not 25"},
+		{"the placed-first row moved below the cache wildcard", rebuild(func(ls []string) []string {
+			ls[1], ls[2] = ls[2], ls[1]
+			return ls
+		}), placedFirst, "is a placed-first row but M1-01 comes before it"},
+		{"two ordinary rows swapped", rebuild(swap("M1-05", "M1-06")), placedFirst, "id M1-06: the next id of M1 is 05"},
+		{"the placed-first row not declared", Rules(), map[string]bool{}, "id M1-24: the next id of M1 is 01"},
+	} {
+		p := idOrderProblems(c.rules, c.placed)
+		if len(p) == 0 || !strings.Contains(strings.Join(p, "\n"), c.want) {
+			t.Errorf("control %q: the ids check said %v, want a problem containing %q", c.name, p, c.want)
+		}
 	}
 }
 
@@ -1294,9 +1504,13 @@ func TestUnitsMatchTheSeededUnitCosts(t *testing.T) {
 
 func TestRulesAndUnits_ReturnCopies(t *testing.T) {
 	r := Rules()
-	r[0].Unit, r[0].Kind = "m2_bounced", Free
+	head, tail := r[0], r[len(r)-1] // what the table's first and last rows are (the first is M1-24 since module 1's cancel, which is free; it was M1-01): a copy the test holds before it mutates the other one
+	if head.ID != nonVerdictRow || tail.ID != "P-08" {
+		t.Fatalf("the table starts with %s and ends with %s, want %s and P-08", head.ID, tail.ID, nonVerdictRow)
+	}
+	r[0].Unit, r[0].Kind = "m2_bounced", Charge
 	r[len(r)-1].ID = "ZZ-99"
-	if again := Rules(); again[0].Unit != "m1_cache" || again[0].Kind != Charge || again[len(again)-1].ID != "P-08" {
+	if again := Rules(); again[0] != head || again[len(again)-1] != tail {
 		t.Errorf("mutating the slice Rules() returned changed the table: %+v ... %+v", again[0], again[len(again)-1])
 	}
 	if got := Decide(m1("valid", "accepted")); !sameDecision(got, chg("M1-03", "m1_own")) {

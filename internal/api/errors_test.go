@@ -55,6 +55,10 @@ func mappingTable() []mapping {
 		{"ErrModuleUnavailable", wrapped(jobs.ErrModuleUnavailable), 503, "module_unavailable", nil},
 		{"ErrNotAllowed, the module cannot pause", wrapped(&jobs.NotAllowedError{Reason: "job_module_cannot_pause"}), 409, "not_allowed", map[string]any{"reason": "pause_not_supported"}},
 		{"ErrNotAllowed, the module cannot cancel", wrapped(&jobs.NotAllowedError{Reason: "job_module_cannot_cancel"}), 409, "not_allowed", map[string]any{"reason": "cancel_not_supported"}},
+		// platform_0016: the walls of the pause pairs. The one a user can act on (a job the module holds is ended through the engine) has a word of the API's; the one for a job that never reached its module has none
+		{"ErrNotAllowed, a job the module holds is not ended directly", wrapped(&jobs.NotAllowedError{Reason: jobs.ReasonSubmittedJobCancelsThroughTheEngine}), 409, "not_allowed", map[string]any{"reason": "submitted_job_ends_through_the_engine"}},
+		{"ErrNotAllowed, a job paused before its start is never cancelling", wrapped(&jobs.NotAllowedError{Reason: "job_unsubmitted_pause_never_cancelling"}), 409, "not_allowed", map[string]any{"reason": "not_allowed"}},
+		{"ErrNotAllowed, a job paused before its start is never completing", wrapped(&jobs.NotAllowedError{Reason: "job_unsubmitted_pause_never_completing"}), 409, "not_allowed", map[string]any{"reason": "not_allowed"}},
 		{"ErrNotAllowed, a constraint with no word", wrapped(&jobs.NotAllowedError{Reason: "job_transition_illegal"}), 409, "not_allowed", map[string]any{"reason": "not_allowed"}},
 		{"ErrNotAllowed, a word of the store's", wrapped(&jobs.NotAllowedError{Reason: "not_a_draft"}), 409, "not_allowed", map[string]any{"reason": "not_a_draft"}},
 		{"ErrNotAllowed bare", wrapped(jobs.ErrNotAllowed), 409, "not_allowed", map[string]any{"reason": "not_allowed"}},
@@ -146,31 +150,35 @@ func TestClassify_TheTableNamesEverySentinelOfTheStore(t *testing.T) {
 
 func TestClassify_ANotAllowedReasonIsAWordAndNeverAConstraintName(t *testing.T) {
 	for reason, want := range map[string]string{
-		"job_module_cannot_pause":               "pause_not_supported",
-		"job_module_cannot_cancel":              "cancel_not_supported",
-		"job_transition_illegal":                "not_allowed",
-		"job_transition_actor_not_allowed":      "not_allowed",
-		"job_transition_needs_an_actor":         "not_allowed",
-		"jobs_terminal_is_final":                "not_allowed",
-		"job_resume_to_where_it_paused_from":    "not_allowed",
-		"restricted":                            "not_allowed",
-		"a reason nobody has heard of":          "not_allowed",
-		"":                                      "not_allowed",
-		"not_a_draft":                           "not_a_draft",
-		"already_a_draft":                       "already_a_draft",
-		"not_confirmed":                         "not_confirmed",
-		"not_paused":                            "not_paused",
-		"start_deadline_passed":                 "start_deadline_passed",
-		"submitted_job_ends_through_the_engine": "submitted_job_ends_through_the_engine",
-		"job_status_has_no_preview":             "job_status_has_no_preview",
+		"job_module_cannot_pause":            "pause_not_supported",
+		"job_module_cannot_cancel":           "cancel_not_supported",
+		"job_transition_illegal":             "not_allowed",
+		"job_transition_actor_not_allowed":   "not_allowed",
+		"job_transition_needs_an_actor":      "not_allowed",
+		"jobs_terminal_is_final":             "not_allowed",
+		"job_resume_to_where_it_paused_from": "not_allowed",
+		// platform_0016: the database's three walls of the pause pairs; only the one a user can act on has a word of its own
+		"job_submitted_pause_cancels_through_the_engine": "submitted_job_ends_through_the_engine",
+		"job_unsubmitted_pause_never_cancelling":         "not_allowed",
+		"job_unsubmitted_pause_never_completing":         "not_allowed",
+		"restricted":                                     "not_allowed",
+		"a reason nobody has heard of":                   "not_allowed",
+		"":                                               "not_allowed",
+		"not_a_draft":                                    "not_a_draft",
+		"already_a_draft":                                "already_a_draft",
+		"not_confirmed":                                  "not_confirmed",
+		"not_paused":                                     "not_paused",
+		"start_deadline_passed":                          "start_deadline_passed",
+		"submitted_job_ends_through_the_engine":          "submitted_job_ends_through_the_engine",
+		"job_status_has_no_preview":                      "job_status_has_no_preview",
 	} {
 		got := notAllowedWord(reason)
 		if got != want {
 			t.Errorf("reason %q is told as %q, want %q", reason, got, want)
 		}
-		// a constraint's name (and a name nobody listed) is never what a client is told: only the two translations and "not_allowed"
+		// a constraint's name (and a name nobody listed) is never what a client is told: only the three translations and "not_allowed"
 		if (strings.HasPrefix(reason, "job_") || strings.HasPrefix(reason, "jobs_")) && reason != "job_status_has_no_preview" {
-			if got != "pause_not_supported" && got != "cancel_not_supported" && got != "not_allowed" {
+			if got != "pause_not_supported" && got != "cancel_not_supported" && got != "submitted_job_ends_through_the_engine" && got != "not_allowed" {
 				t.Errorf("reason %q reached the client as %q, which is not a word of the API's", reason, got)
 			}
 		}

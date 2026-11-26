@@ -58,8 +58,10 @@ type fstore struct {
 	panicOn   string           // method name that panics
 	started   bool
 	cancelled int
-	flags     []map[string]any // the detail of every Flag call, in order
-	polls     []pollNote       // every NotePoll call, in order
+	flags     []map[string]any    // the detail of every Flag call, in order
+	polls     []pollNote          // every NotePoll call, in order
+	holds     []bool              // the `held` of every NoteModuleHold call, in order (kept out of the call log like NotePoll: a note after every observation would be in every sequence the other tests assert)
+	recorded  [][]jobs.ResultItem // the items of every RecordResults call, in order
 }
 
 // pollNote is one outcome the engine told the store.
@@ -153,6 +155,9 @@ func (s *fstore) RecordResults(ctx context.Context, id string, items []jobs.Resu
 	if err := s.hit("RecordResults"); err != nil {
 		return jobs.RecordSummary{}, err
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.recorded = append(s.recorded, append([]jobs.ResultItem(nil), items...))
 	return jobs.RecordSummary{Recorded: len(items)}, nil
 }
 
@@ -203,6 +208,14 @@ func (s *fstore) Flag(ctx context.Context, id string, d map[string]any) error {
 	return nil
 }
 
+// NoteModuleHold records what the engine told the store about the module's hold of a job, in its OWN list (see holds); errs["NoteModuleHold"] makes it fail, after recording the attempt.
+func (s *fstore) NoteModuleHold(ctx context.Context, id string, held bool) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.holds = append(s.holds, held)
+	return true, s.errs["NoteModuleHold"]
+}
+
 var _ store = (*fstore)(nil)
 
 type stubMod struct {
@@ -212,6 +225,8 @@ type stubMod struct {
 	submit  func(ctx context.Context, rows []jobs.EngineRow) (SubmitResult, error)
 	observe func(ctx context.Context, fn func([]jobs.ResultItem) error) (Observation, error)
 	cancel  func() error
+	pause   func() error // nil: the call answers nil
+	resume  func() error
 	// what the module was handed, as the engine handed it
 	submitted, observed []jobs.EngineJob
 }
@@ -246,6 +261,22 @@ func (m *stubMod) Cancel(ctx context.Context, j jobs.EngineJob) error {
 	m.log.add("Cancel")
 	if m.cancel != nil {
 		return m.cancel()
+	}
+	return nil
+}
+
+func (m *stubMod) Pause(ctx context.Context, j jobs.EngineJob) error {
+	m.log.add("Pause")
+	if m.pause != nil {
+		return m.pause()
+	}
+	return nil
+}
+
+func (m *stubMod) Resume(ctx context.Context, j jobs.EngineJob) error {
+	m.log.add("Resume")
+	if m.resume != nil {
+		return m.resume()
 	}
 	return nil
 }
@@ -563,12 +594,15 @@ func TestStarting_PastTheDeadlineTheJobExpiresAndNothingIsSubmitted(t *testing.T
 	// a scheduled job past its deadline expires the same way; a paused one only when its deadline passed
 	js := ej(jobA, "m2", jobs.StatusScheduled)
 	js.DeadlinePassed = true
-	rs := newRig(t, Config{}, js, ej(jobB, "m2", jobs.StatusPaused))
+	jpb := ej(jobB, "m2", jobs.StatusPaused)
+	jpb.PausedFrom = jobs.StatusScheduled
+	rs := newRig(t, Config{}, js, jpb)
 	rs.e.Tick(context.Background())
 	if rs.st.log.count("Expire") != 1 {
 		t.Errorf("scheduled past its deadline and paused before it: %v", rs.st.log.list())
 	}
 	jp := ej(jobB, "m2", jobs.StatusPaused)
+	jp.PausedFrom = jobs.StatusScheduled // a job paused BEFORE its start: the one a missed deadline expires (a job paused while running never is: TestPausedRunning_*)
 	jp.DeadlinePassed = true
 	rp := newRig(t, Config{}, jp)
 	rp.e.Tick(context.Background())
@@ -1125,8 +1159,10 @@ func TestCancelling_AsksTheModuleAtEveryTickAndEndsTheRowsNoModuleHeldBeforeItCo
 	}
 }
 
+// Module 1 CAN cancel since the close-out (POST /v1/jobs/{id}/cancel: TestCancelling_Module1IsAskedToCancelLikeTheSenders), so no seeded module answers ErrNotSupported to a cancel; the engine's branch
+// stays for a module whose capability row was flipped or whose route is older than its seed, which this test drives with a stub on module 2.
 func TestCancelling_AModuleThatCannotCancelIsLoggedAndObservedNotInvented(t *testing.T) {
-	r := newRig(t, Config{}, ej(jobA, "m1", jobs.StatusCancelling))
+	r := newRig(t, Config{}, ej(jobA, "m2", jobs.StatusCancelling))
 	r.mod.cancel = func() error { return ErrNotSupported }
 	r.e.Tick(context.Background())
 	if r.st.log.count("Observe") != 1 || r.st.log.count("Complete") != 0 || r.st.log.count("FailJob") != 0 {
@@ -1164,7 +1200,9 @@ func TestRepair_ReleasesATerminalJobAndLeavesEveryOtherStatusAlone(t *testing.T)
 		}
 	}
 	// a paused job inside its deadline, and a status the engine has no step for, do nothing / are reported
-	r := newRig(t, Config{}, ej(jobA, "m2", jobs.StatusPaused))
+	pj := ej(jobA, "m2", jobs.StatusPaused)
+	pj.PausedFrom = jobs.StatusScheduled // paused before its start: nothing to look at (a job paused while running is looked at: TestPausedRunning_*)
+	r := newRig(t, Config{}, pj)
 	r.e.Tick(context.Background())
 	if got := r.st.log.joined(); got != "EngineWork" {
 		t.Errorf("a paused job: %s", got)
@@ -1208,10 +1246,12 @@ func TestShouldObserve_Table(t *testing.T) {
 		want bool
 	}{
 		{"never observed", nil, true},
-		{"observed a second ago, nothing new", &observed{at: now.Add(-time.Second), terminal: 2}, false},
-		{"observed a second ago, the module showed one more terminal item", &observed{at: now.Add(-time.Second), terminal: 3}, true},
-		{"observed a second ago, the module said complete (the completion is retried)", &observed{at: now.Add(-time.Second), terminal: 2, complete: true}, true},
-		{"observed a minute ago", &observed{at: now.Add(-time.Minute), terminal: 2}, true},
+		{"observed a second ago, nothing new", &observed{at: now.Add(-time.Second), terminal: 2, status: jobs.StatusRunning}, false},
+		{"observed a second ago, the module showed one more terminal item", &observed{at: now.Add(-time.Second), terminal: 3, status: jobs.StatusRunning}, true},
+		{"observed a second ago, the module said complete (the completion is retried)", &observed{at: now.Add(-time.Second), terminal: 2, complete: true, status: jobs.StatusRunning}, true},
+		{"observed a minute ago", &observed{at: now.Add(-time.Minute), terminal: 2, status: jobs.StatusRunning}, true},
+		{"observed a second ago, nothing new, but the module said it HOLDS the campaign (the engine must see the hold end at once)", &observed{at: now.Add(-time.Second), terminal: 2, paused: true, status: jobs.StatusRunning}, true},
+		{"observed a second ago, nothing new, in ANOTHER status (the job was resumed or moved since)", &observed{at: now.Add(-time.Second), terminal: 2, status: jobs.StatusPaused}, true},
 	} {
 		r.e.mu.Lock()
 		delete(r.e.lastObs, jobA)

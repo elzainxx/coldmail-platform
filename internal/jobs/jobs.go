@@ -50,13 +50,14 @@ type Store struct {
 	maxStartDelay time.Duration
 	pre           PreChecks
 	render        Renderer
+	vendor        vendorHook // module 1's vendor reachability, read before a module 1 preview and confirm (vendor.go)
 }
 
 // Option configures a Store at New.
 type Option func(*Store)
 
 // WithClock replaces the store's clock. It is for tests of NON-database time only: the database's now() stays the authority for every deadline (the store passes durations, SQL adds them),
-// and the clock stamps nothing but a preview's informational computed_at.
+// and the clock stamps nothing but a preview's informational computed_at and ages the few seconds the store remembers module 1's vendor reachability for (vendor.go).
 func WithClock(now func() time.Time) Option {
 	return func(s *Store) {
 		if now != nil {
@@ -111,6 +112,7 @@ func New(pool *pgxpool.Pool, mny *money.Store, opts ...Option) (*Store, error) {
 		maxRows:       DefaultMaxRows,
 		maxStartDelay: DefaultMaxStartDelay,
 		render:        PlainRenderer{},
+		vendor:        vendorHook{ttl: DefaultVendorReadTTL},
 	}
 	for _, o := range opts {
 		o(s)
@@ -120,6 +122,9 @@ func New(pool *pgxpool.Pool, mny *money.Store, opts ...Option) (*Store, error) {
 	}
 	if s.maxStartDelay <= 0 || s.maxStartDelay > MaxStartDelayLimit {
 		return nil, fmt.Errorf("jobs.New: the max start delay must be above 0 and at most %s, got %s", MaxStartDelayLimit, s.maxStartDelay)
+	}
+	if s.vendor.ttl < 0 {
+		return nil, fmt.Errorf("jobs.New: the vendor reachability memory must be 0 or more, got %s", s.vendor.ttl)
 	}
 	return s, nil
 }

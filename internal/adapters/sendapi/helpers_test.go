@@ -38,6 +38,7 @@ func m2like() sendapi.Profile {
 			"no_eligible_account", "waiting_for_capacity", "dispatch_paused"},
 		ErrorCodes:    []string{"validation_failed", "unauthenticated", "not_found", "method_not_allowed", "conflict", "internal_error", "paused"},
 		AlwaysPresent: true, LinearCost: true, Cancel: true, RunConflict: sendapi.ConflictBackpressure,
+		PauseCapability: "campaign_pause_resume",
 	}
 }
 
@@ -53,6 +54,7 @@ func m3like() sendapi.Profile {
 		QuoteFeasibility: true,
 		Cancel:           true,
 		RunConflict:      sendapi.ConflictCauses,
+		PauseCapability:  "pause_resume",
 	}
 }
 

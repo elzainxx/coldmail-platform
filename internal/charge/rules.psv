@@ -1,4 +1,5 @@
 id|module|state|reason|cache|skip|origin|decision|unit|note
+M1-24|m1|cancelled|cancelled_by_caller|*|*|*|free||a row cancelled before its check began by the caller's POST /v1/jobs/{id}/cancel (module 1 migration 0020): no verdict, no probe, work not done, free; the two words are module 1's non_verdict_status and non_verdict_reason, not verdict words; placed first, like M3-01, so that a cancelled row is named and can never meet the cache wildcard of M1-01
 M1-01|m1|*|*|yes|*|*|charge|m1_cache|answered from the cache, full price: the answer is the value (flags.from_cache, M1-G3)
 M1-02|m1|*|external_verified|no|*|*|charge|m1_vendor|the premium unit; reachable only when the owner switches the ZeroBounce fallback on (it ships disabled); only a vendor ANSWER carries this reason, a vendor non-answer leaves M1's own result standing and is charged by the ordinary rows, never as vendor
 M1-03|m1|valid|accepted|no|*|*|charge|m1_own|a probed 2xx with no catch-all

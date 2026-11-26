@@ -60,6 +60,9 @@ func Profile() sendapi.Profile {
 		QuoteFeasibility: false, // quote is arithmetic and nothing else
 		LinearCost:       true,  // cost = recipient_count * unit_price_credits
 		Cancel:           true,  // POST /v1/cancel (the shared body's Cancel)
+		// POST /v1/pause and POST /v1/resume (send_managed_0031, additive; the shared body's Pause and Resume): describe.capabilities.campaign_pause_resume says the module has them. A describe without the key
+		// is a module older than that migration and means "cannot", never an error.
+		PauseCapability: "campaign_pause_resume",
 		// MODULE-FORCED(M2-F3): module 2 answers run's 409 with code conflict and no details (owner ruling OD-5: back-pressure, the platform's job engine of phase 4 serialises a user's campaigns), so the adapter can only call it back-pressure and can never say which of its causes it was.
 		RunConflict: sendapi.ConflictBackpressure,
 	}

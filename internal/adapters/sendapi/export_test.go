@@ -15,3 +15,7 @@ func UnvalidatedClientForTest(p Profile) *Client { return &Client{p: p.clone()} 
 func ClientShapesForTest(c *Client) map[string]modclient.Shape {
 	return map[string]modclient.Shape{"quote": c.sh.quote, "run": c.sh.run, "job": c.sh.job, "page": c.sh.page, "describe": c.sh.describe, "error": c.sh.errBody, "cancel": c.sh.cancel, "conflict": c.sh.conflict}
 }
+
+// PauseShapeForTest is the Shape the client decodes the answer of POST /v1/pause and POST /v1/resume with. It is not among ClientShapesForTest because no contract names the answer yet (there is no
+// recorded fixture before the pin), and that function's test requires every shape it lists to be carried by a contract.
+func PauseShapeForTest(c *Client) modclient.Shape { return c.sh.pause }

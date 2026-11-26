@@ -15,7 +15,8 @@
 # THE FAULT POINT of an instance comes from the variable H_JOBS_A_FAULT / H_JOBS_B_FAULT, which the stage sets only for the one command that creates the service (`up --force-recreate`): empty means no
 # fault is armed. `restart: "no"`: a container that was killed (or stopped) stays dead until the stage starts it again, which is what lets the stage read its exit status and its log.
 #
-# MODULE 1 IS `m1j`, not `m1`: the same build and environment as `m1` (docker-compose.yml) plus two things. Its resolver is the scope's fixture DNS (a resolv.conf the stage writes after jobsdns is up: a
+# MODULE 1 IS `m1j`, not `m1`: the same build and environment as `m1` (docker-compose.yml) plus three things (the third is the five switches of its vendor fallback, which stage J6 flips by re-creating it: off unless the
+# stage sets H_M1J_FALLBACK_MODE, H_M1J_DPA_CONFIRMED, H_M1J_DAILY_SPEND_CAP and H_M1J_VENDOR_KEY for the one command that creates it). Its resolver is the scope's fixture DNS (a resolv.conf the stage writes after jobsdns is up: a
 # name under .test answers NXDOMAIN, so module 1 says invalid/no_mx, a CHARGED answer; free.example.test has an MX, so module 1, wired to no SMTP node, says risky/plausible with the skip token
 # smtp_unwired, a FREE answer): without it the answers depend on what the runner's resolver says of names that do not exist, which can be nothing a charge rule prices, and the ledger half of every proof
 # would hold of an empty set. And a short lease margin: the drainer leases a batch of ten items and a STOP leaves them leased until the lease runs out (the outage proof stops this container in the middle of
@@ -53,7 +54,6 @@ services:
       PLATFORM_M1_URL: http://m1j:8080
       PLATFORM_M1_KEY_SECRET: ${H_JOBS_M1_KEY_SECRET:?}
       PLATFORM_M1_KEY_VERSION: "1"
-      PLATFORM_M1_VENDOR_REACHABLE: "false"
       PLATFORM_JWT_SECRET: ${H_JOBS_JWT_SECRET:?}
       PLATFORM_JWT_ISSUER: *jobs-issuer
       PLATFORM_JWT_AUDIENCE: authenticated
@@ -93,7 +93,6 @@ services:
       PLATFORM_M1_URL: http://m1j:8080
       PLATFORM_M1_KEY_SECRET: ${H_JOBS_M1_KEY_SECRET:?}
       PLATFORM_M1_KEY_VERSION: "1"
-      PLATFORM_M1_VENDOR_REACHABLE: "false"
       PLATFORM_JWT_SECRET: ${H_JOBS_JWT_SECRET:?}
       PLATFORM_JWT_ISSUER: *jobs-issuer
       PLATFORM_JWT_AUDIENCE: authenticated
@@ -123,6 +122,16 @@ services:
       TM_ENV: development
       TM_LISTEN_ADDR: ":8080"
       TM_QUEUE_LEASE_MARGIN_SECONDS: "5"
+      # THE VENDOR FALLBACK'S SWITCHES (stage J6, tests/harness/jobs/stage.sh jobs_m1j_vendor): module 1 says whether its vendor is reachable (describe, vendor_fallback.reachable) from exactly these four dials and
+      # the key variable, and the stage flips it by RE-CREATING this service with the variables below set for that one command. Unset (every other stage) is module 1 as it ships: off. Nothing on the
+      # platform's side is a switch (it reads module 1's answer). The key is a value minted per run (jobs_mint: random hex, masked, never printed) that module 1 only tests for PRESENCE; the harness network is
+      # internal and no stage here sends a verification to the vendor (the stage previews and confirms scheduled jobs and cancels them), so it is never sent anywhere. The vendor's base URL is left at its
+      # default (an https host module 1 would only dial for a residue verdict, which nothing here produces).
+      TM_FALLBACK_MODE: ${H_M1J_FALLBACK_MODE:-off}
+      TM_EXTERNAL_DPA_CONFIRMED: ${H_M1J_DPA_CONFIRMED:-false}
+      TM_EXTERNAL_DAILY_SPEND_CAP: ${H_M1J_DAILY_SPEND_CAP:-0}
+      TM_EXTERNAL_ZEROBOUNCE_KEY_ENV: M1J_VENDOR_KEY
+      M1J_VENDOR_KEY: ${H_M1J_VENDOR_KEY:-}
     volumes:
       - ${H_WORK:?}/jobs/resolv.conf:/etc/resolv.conf:ro
     healthcheck:

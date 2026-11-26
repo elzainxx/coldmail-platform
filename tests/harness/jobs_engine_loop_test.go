@@ -25,7 +25,7 @@ import (
 //	AModuleOutage...                      the module is down: the job does not move, nothing is invented, the stale event comes only after the limit, and the job completes once after recovery
 //	TwoEngines...                         only the leader's calls reach the module; a handover finishes the job; two leaders (the control) still settle once
 //	AStartDeadline...                     a module that never answers: the job expires at its deadline and the reserve goes back
-//	Cancelling...                         the in-flight item is charged once, the cancelled ones are free, the job ends cancelled; module 1 cannot be cancelled
+//	Cancelling...                         the in-flight item is charged once, the cancelled ones are free, the job ends cancelled; module 1 is cancelled the same way (platform_0016)
 //	AModuleComplete...                    a module that says complete with a result missing: not completed, flagged, stale after the limit, completed when the result arrives
 //	NotFinal / Repair / Refused           what the engine never invents, the repair pass, a module that refuses the job (the job fails only while the module holds none of its rows: Refusal...)
 
@@ -513,22 +513,29 @@ func TestJobEngineLoop_CancellingChargesTheItemInFlightOnceFreesTheCancelledOnes
 	e.requireSettledLikeTheModule(fake2, j2.ID)
 	e.requireBal("after the second cancel", u2, "m2", 999, 0)
 
-	// 3. module 1 has no cancel: the database refuses it, so the engine never sees a cancelling module 1 job and never asks that module to cancel
+	// 3. module 1 CAN be cancelled since platform_0016 (POST /v1/jobs/{id}/cancel): the user's cancel of a running module 1 job is the request, the engine asks module 1 to cancel, its unclaimed row
+	// comes back as the free `cancelled` result (M1-24) and the one in flight settles and is charged, and the job ends cancelled. (The full module 1 story is TestJobsPauseCancel_...Module1.)
 	u3 := e.newUser()
 	m1 := e.confirmN(u3, "m1", 2)
 	fake1 := &jobenginetest.FakeModule{Module: "m1"}
 	rig1 := e.newRig(fake1, jobengine.Config{SubmitBatchFor: map[string]int{"m1": 100}})
 	rig1.eng.Tick(ctx)
-	_, err = e.jobs.CancelBeforeStart(ctx, u3, m1.ID)
-	jeNotAllowed(t, "the cancel of a running module 1 job", err, "job_module_cannot_cancel")
-	if e.jobStatus(m1.ID) != jobs.StatusRunning {
-		t.Fatalf("the refused cancel left the job %s", e.jobStatus(m1.ID))
+	if e.jobStatus(m1.ID) != jobs.StatusRunning || fake1.ClaimInFlight(m1.ID, 1) != 1 {
+		t.Fatalf("the module 1 fixture: %s", e.jobStatus(m1.ID))
 	}
-	e.tickUntil(rig1.eng, m1.ID, jobs.StatusSucceeded, 5)
-	if fake1.Calls().Cancel != 0 {
-		t.Fatal("the engine asked module 1 to cancel")
+	cm1, err := e.jobs.Cancel(ctx, u3, m1.ID)
+	if err != nil || cm1.Status != jobs.StatusCancelling {
+		t.Fatalf("the cancel of a running module 1 job: %v, %v (it was refused before platform_0016)", cm1.Status, err)
 	}
-	e.requireEnded(m1.ID, jobs.StatusSucceeded, 0) // two rows, two charges at 1: nothing left to release
+	e.tickUntil(rig1.eng, m1.ID, jobs.StatusCancelled, 5)
+	if fake1.Calls().Cancel < 1 {
+		t.Fatal("the engine never asked module 1 to cancel")
+	}
+	e.requireSettledLikeTheModule(fake1, m1.ID)
+	e.requireEnded(m1.ID, jobs.StatusCancelled, 1) // two rows reserved at 1, one charged (in flight), one cancelled free and released
+	if e.transitionCount(m1.ID, jobs.StatusSucceeded) != 0 {
+		t.Fatal("a module 1 job whose cancel was accepted ended succeeded")
+	}
 }
 
 // jeDropper is a module that says it is complete while leaving one finished item out of its report: the engine must not complete the job over a result it does not have.

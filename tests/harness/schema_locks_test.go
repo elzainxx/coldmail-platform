@@ -857,7 +857,7 @@ func phase2CatalogCheck(ctx context.Context, q querier) ([]string, error) {
 		{"jobs_terminal_is_final", []string{"jobs_terminal_is_final", "'succeeded'", "'failed'", "'cancelled'", "'expired'", "IS DISTINCT FROM"}},
 		// platform_0011: the guard names every refusal it raises (the constraint names a writer and a test see), reads the lifecycle table and the module's capabilities, and a no-op body would keep the triggers
 		{"jobs_transition_guard", []string{"job_born_draft", "job_transition_illegal", "job_transition_needs_an_actor", "job_transition_actor_not_allowed", "job_transition_by_another_user", "job_module_cannot_pause",
-			"job_module_cannot_cancel", "job_resume_to_where_it_paused_from", "job_started_early", "job_expired_early", "job_cancelled_cannot_succeed", "job_cancelled_needs_a_cancel",
+			"job_module_cannot_cancel", "job_resume_to_where_it_paused_from", "job_unsubmitted_pause_never_cancelling", "job_unsubmitted_pause_never_completing", "job_submitted_pause_cancels_through_the_engine", "job_started_early", "job_expired_early", "job_cancelled_cannot_succeed", "job_cancelled_needs_a_cancel",
 			"platform.job_transitions", "platform.modules", "platform.actor_kind", "platform.actor_id", "platform.reason", "IS DISTINCT FROM"}},
 		{"jobs_record_transition", []string{"platform.job_events", "platform.actor_kind", "platform.actor_id", "platform.reason", "'transition'"}},
 		{"job_events_check_actor", []string{"require_active_admin", "job_event_actor_is_the_owner", "platform.jobs"}},

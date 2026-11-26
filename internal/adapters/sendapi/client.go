@@ -1,5 +1,5 @@
 // Package sendapi is the one body that serves both sender modules (module 2, send-managed; module 3, send-byo) on the routes they answer identically: POST /v1/quote, POST /v1/run,
-// GET /v1/report in its two forms (one job; a whole campaign, paged) and, since the Phase 3 close-out (C1), POST /v1/cancel. Phase 3, chunk B4 (module 2's adapter, internal/adapters/m2, is this
+// GET /v1/report in its two forms (one job; a whole campaign, paged), since the Phase 3 close-out (C1) POST /v1/cancel and, since Phase 4 (C1), POST /v1/pause and POST /v1/resume. Phase 3, chunk B4 (module 2's adapter, internal/adapters/m2, is this
 // package with module 2's Profile and nothing else); module 3's adapter is built on the same body.
 //
 // # WHAT IT IS
@@ -20,7 +20,8 @@
 //
 // # WHERE THE TWO MODULES DIFFER
 //
-// In Profile, as data: the vocabularies each emits, whether the single report always carries its optional keys, module 3's account detail and feasibility block, whether the module has a cancel route (both do), and whether a
+// In Profile, as data: the vocabularies each emits, whether the single report always carries its optional keys, module 3's account detail and feasibility block, whether the module has a cancel route (both do), what each
+// calls its pause capability (PauseCapability: module 2 campaign_pause_resume, module 3 pause_resume), and whether a
 // 409 on run means back-pressure (module 2: no details) or names its causes (module 3, since Phase 3 close-out C2: a *ConflictError, errors.Is on the four cause sentinels). There is no `if module == ...` in the client.
 package sendapi
 
@@ -54,6 +55,8 @@ const (
 	opReport       = "report"
 	opReportCamp   = "report.campaign"
 	opCancel       = "cancel"
+	opPause        = "pause"
+	opResume       = "resume"
 )
 
 // Options are the constructor dials of a Client (not process dials: nothing here is read from the environment).
@@ -446,4 +449,66 @@ func (c *Client) Cancel(ctx context.Context, campaignID string) (CancelPosition,
 	}
 	// MODULE-FORCED(SA-F12): cancel answers the campaign's position after the call (cancelled counts every cancelled job, earlier calls included) and its cancelled / in_flight split depends on timing while anything is claimed, so the adapter returns the position as it is and computes no delta.
 	return CancelPosition{CampaignID: campaignID, Cancelled: w.Cancelled, InFlight: w.InFlight, AlreadyTerminal: w.AlreadyTerminal}, nil
+}
+
+// ---- pause and resume ------------------------------------------------------------------------------------------------
+
+// Pause holds ONE campaign of the tenant (POST /v1/pause; module 2 send_managed_0031 and module 3 Phase 4 C1: the same path, body and the two keys of the answer this client reads). While a campaign
+// is held its UNCLAIMED items are not claimed (no item changes state), items already in flight finish and are reported once, and the pause is stored by the module (a restart leaves it paused).
+// It is idempotent (a repeat answers the same and writes nothing), tenant scoped (the tenant's id is in the body; a foreign, unknown or empty campaign answers Paused false and holds nothing),
+// not gated by the dispatch rung, and it does not cancel or un-cancel anything. The call is retried like a read.
+//
+// WHAT THE ANSWER IS FOR. Only `paused` is read (the campaign's stored pause AFTER the call) and the campaign id must echo the one asked. The `state` words of the two modules and module 2's `changed` are NOT
+// read: they are the module's own derived words, different in the two modules, and the platform decides from `paused` (here and in the campaign report) and from the capability flag alone.
+// A campaign with nothing left to hold (every item final, cancelled, or no items for this tenant) answers Paused false: the pause did not take, and the report says why in its own words.
+//
+// A profile with no pause capability (PauseCapability empty) is modclient.NotSupported with nothing sent. ON ANY ERROR THE RESULT IS THE ZERO VALUE; errors are classified exactly as Cancel's.
+func (c *Client) Pause(ctx context.Context, campaignID string) (PauseResult, error) {
+	return c.hold(ctx, opPause, "/v1/pause", campaignID)
+}
+
+// Resume releases a campaign Pause held (POST /v1/resume): the same body, the same answer (Paused false once released), the same idempotence and tenant scoping as Pause. A resume of a campaign that
+// is not paused is a no-op that answers Paused false. It never changes an item's state (it cannot un-cancel anything) and it never overrides the user's suspension on module 3 (a suspension and a
+// pause both block claiming, and neither lifts the other).
+func (c *Client) Resume(ctx context.Context, campaignID string) (PauseResult, error) {
+	return c.hold(ctx, opResume, "/v1/resume", campaignID)
+}
+
+// hold is Pause and Resume: the two routes differ only in their path.
+func (c *Client) hold(ctx context.Context, op, path, campaignID string) (PauseResult, error) {
+	if !c.p.hasPause() {
+		return PauseResult{}, &modclient.Error{Kind: modclient.NotSupported, Module: c.p.Module, Route: c.p.route(op), Message: "the module has no pause route"}
+	}
+	if err := c.id(op, "campaign id", campaignID); err != nil {
+		return PauseResult{}, err
+	}
+	body := struct {
+		CampaignID string `json:"campaign_id"`
+		UserID     string `json:"user_id"`
+	}{campaignID, c.user}
+	resp, err := c.call(ctx, op, http.MethodPost, path, nil, body)
+	if err != nil {
+		return PauseResult{}, err
+	}
+	var w struct {
+		CampaignID string `json:"campaign_id"`
+		Paused     bool   `json:"paused"`
+	}
+	if err := modclient.Decode(resp, &w, c.sh.pause); err != nil {
+		return PauseResult{}, err
+	}
+	if !strings.EqualFold(w.CampaignID, campaignID) {
+		return PauseResult{}, c.contract(resp, op, "campaign_id", "the answer is for another campaign than the one named")
+	}
+	return PauseResult{CampaignID: campaignID, Paused: w.Paused}, nil
+}
+
+// PauseSupported reads the module's describe and says whether it declares per-campaign pause and resume (Profile.CanPause): false for a module older than Phase 4 C1 (no such key), never an
+// error for that. A describe that cannot be read is the error of Describe.
+func (c *Client) PauseSupported(ctx context.Context) (bool, error) {
+	d, err := Describe(ctx, c.mc, c.p)
+	if err != nil {
+		return false, err
+	}
+	return c.p.CanPause(d), nil
 }

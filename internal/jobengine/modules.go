@@ -79,8 +79,9 @@ type Registry struct {
 	conc   int
 	log    *slog.Logger
 
-	provisioned sync.Map     // user id -> true: users whose module 1 caller row was ensured by this process (it is idempotent: this only spares the call)
-	unexpected  atomic.Int64 // module answers this platform did not understand (Contract, Internal, an error of no known kind)
+	provisioned  sync.Map     // user id -> true: users whose module 1 caller row was ensured by this process (it is idempotent: this only spares the call)
+	pauseCapable sync.Map     // module id -> time.Time: when a describe last declared the module's per-campaign pause capability (see sendapiModule.requirePauseCapability)
+	unexpected   atomic.Int64 // module answers this platform did not understand (Contract, Internal, an error of no known kind)
 }
 
 // NewRegistry builds the Registry.
@@ -205,6 +206,10 @@ func (w waitingModule) Observe(context.Context, jobs.EngineJob, func([]jobs.Resu
 
 func (w waitingModule) Cancel(context.Context, jobs.EngineJob) error { return Wait(w.reason) }
 
+func (w waitingModule) Pause(context.Context, jobs.EngineJob) error { return Wait(w.reason) }
+
+func (w waitingModule) Resume(context.Context, jobs.EngineJob) error { return Wait(w.reason) }
+
 // ---- the one error mapping ------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 // phase is what a Module was doing when a call failed: it decides whether a refusal is for good.
@@ -214,7 +219,15 @@ const (
 	phaseSubmit  phase = "submit"
 	phaseObserve phase = "observe"
 	phaseCancel  phase = "cancel"
+	phasePause   phase = "pause"
+	phaseResume  phase = "resume"
 )
+
+// declinesOperation says whether a phase is one in which a module can honestly say "I do not have that route": cancel, pause and resume are optional capabilities of a module (a module older than the
+// route answers 404 or 405, which modclient classes NotSupported); submit and observe are the module's whole purpose, so there NotSupported is only an answer the platform does not understand.
+func (p phase) declinesOperation() bool {
+	return p == phaseCancel || p == phasePause || p == phaseResume
+}
 
 // mapError is THE place a module's error becomes the engine's: ONE function, and its table (TestMapError_Table) is the contract. module is the module id ("m1", "m2", "m3").
 //
@@ -223,12 +236,14 @@ const (
 //	Contract, Internal ........................................................ ErrWait too, said to be an answer this platform does not understand (the caller counts it): a module that
 //	                                                                            speaks outside its contract never fails the job
 //	an error that is no *modclient.Error at all ................................ ErrWait, text scrubbed
-//	NotSupported ............................................................... ErrNotSupported at Cancel, ErrWait elsewhere
+//	NotSupported ............................................................... ErrNotSupported at Cancel, Pause and Resume (optional routes), ErrWait elsewhere
 //	Refused, Invalid, NotFound ................................................ at Submit: ErrRefused with the module's code word (never its text), EXCEPT
+//	                                                                              - job_item_cancelled (sendapi.ErrItemCancelled: the platform marked the item cancelled): ErrRefused
+//	                                                                                with that code word, never a wait: it is not a conflict and retrying it can never succeed
 //	                                                                              - a conflict (HTTP 409 or code conflict: module 2's back-pressure, module 3's named causes): ErrWait
 //	                                                                              - a 401 or 403 or code unauthenticated (our key, our configuration): ErrWait
 //	                                                                              - ErrIdempotencyKeyReused: the same key for another request can only be a platform bug: ErrRefused
-//	                                                                            at Observe and Cancel: ErrWait
+//	                                                                            at Observe, Cancel, Pause and Resume: ErrWait
 func mapError(module string, p phase, err error) error {
 	if err == nil {
 		return nil
@@ -246,12 +261,19 @@ func mapError(module string, p phase, err error) error {
 	case modclient.Contract, modclient.Internal:
 		return Wait(describe(module, p, e, err, "the module answered something this platform does not understand"))
 	case modclient.NotSupported:
-		if p == phaseCancel {
+		if p.declinesOperation() {
 			return fmt.Errorf("%w: %s", ErrNotSupported, describe(module, p, e, err, "the module has no such operation"))
 		}
 		return Wait(describe(module, p, e, err, "the module has no such operation"))
 	case modclient.Refused, modclient.Invalid, modclient.NotFound:
 		switch {
+		case errors.Is(err, sendapi.ErrItemCancelled):
+			// module 2 and 3 refuse a RUN of an item the platform marked cancelled (409 job_item_cancelled): a code of its own and not a cause of `conflict`, so it is NEVER a wait (retrying it unchanged
+			// can never succeed: the marker is permanent). At Submit it is a refusal for good with the module's code word, which the engine turns into a failure only while the module holds none of the job's
+			// rows; at any other phase there is no such answer and it is a wait like every answer this platform does not understand.
+			if p == phaseSubmit {
+				return RefusedWithCode(e.Code, describe(module, p, e, err, "the module refused a job item the platform marked cancelled"))
+			}
 		case errors.Is(err, m1.ErrIdempotencyKeyReused):
 			if p == phaseSubmit {
 				return RefusedWithCode(e.Code, describe(module, p, e, err, "the idempotency key of the job was already used for a different request (a platform bug)"))

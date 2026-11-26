@@ -53,6 +53,11 @@ type place struct{ name, path string }
 // (item_reason on module 3) is not listed. The 409 on run of a module that names its causes lists run_conflict_cause at error.details[].code. A profile with a cancel route (Profile.Cancel) also
 // lists its two cancel responses (the position, and the 400 of a missing or malformed id).
 //
+// NOT LISTED YET (Phase 4 D1): the answers of POST /v1/pause and POST /v1/resume, and the 409 `job_item_cancelled` of run, have no recorded fixture (the recordings of the two modules at their new
+// heads are made after the pin, and the names are the same for both modules), so no contract names them: a contract without a fixture would be red in every adapter's no-rot check, and a
+// fixture written by hand would be a recording nobody made. Their shapes exist (shapeSet.pause) and are tested with hand-written bodies (the HandWritten tests); the report's additive
+// `paused` is already in the page Shape (optional: every recorded page of an older module still decodes).
+//
 // Contracts returns nil for a profile that fails validation: a subject that is empty is red in every test that counts it.
 func Contracts(p Profile) []modclient.RouteContract {
 	if p.validate() != nil {

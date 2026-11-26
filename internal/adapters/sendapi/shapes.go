@@ -14,6 +14,8 @@ type shapeSet struct {
 	// cancel is the cancel position; conflict is the body of a 409 on run (the generic error body for a module that says nothing more, the one with its details for a module that names its causes).
 	cancel   modclient.Shape
 	conflict modclient.Shape
+	// pause is the answer of POST /v1/pause and POST /v1/resume (one shape for both): only campaign_id and paused are read; the rest of either module's body is tolerated and ignored.
+	pause modclient.Shape
 }
 
 // errorShape is the module error envelope the platform relies on (modclient parses it; the Shape is what the drift gate compares). It is the same for every route and every module.
@@ -79,6 +81,8 @@ func newShapes(p Profile) shapeSet {
 	page := []modclient.Field{
 		req("campaign_id", str),
 		req("dispatch_paused", modclient.Bool),
+		// ADDITIVE (Phase 4 C1): THIS campaign's own pause, not the operator's dispatch rung. Absent in a module older than C1 (and in every recorded fixture of the old modules): false.
+		opt("paused", modclient.Bool),
 		req("totals", modclient.Object(totals...)),
 		req("progress", modclient.Object(req("terminal", modclient.Int), req("fraction_complete", modclient.Num), req("is_complete", modclient.Bool))),
 		req("items", modclient.Object(
@@ -118,5 +122,8 @@ func newShapes(p Profile) shapeSet {
 		errBody:  errorShape,
 		cancel:   modclient.Object(req("campaign_id", str), req("cancelled", modclient.Int), req("in_flight", modclient.Int), req("already_terminal", modclient.Int)),
 		conflict: conflict,
+		// module 2 answers {campaign_id, paused, changed, state, queued, in_flight, terminal}, module 3 {campaign_id, state, paused}: the two required keys are the ones both carry and the only ones the
+		// adapter relies on (the `state` words and module 2's `changed` are never read), and the rest is an open bag so that the two bodies are one contract.
+		pause: modclient.Object(req("campaign_id", str), req("paused", modclient.Bool)).Open(),
 	}
 }

@@ -41,9 +41,13 @@ func (s *jlStack) m3Job(tn *m3aTenant, addrs []string, what string) jobs.Job {
 // THE CONTROL (the same job NOT cancelled): user C has the same shape (ten rows, one lane held for 60 s); while the lane holds, nine of the ten are still queued and nothing is cancelled; the lane is then released and the
 // job ends `succeeded` with EVERY row sent, ten messages at the sink, ten results free by M3-99. So the nine cancellations are the cancel's doing, and the sink check is shown to see messages.
 //
-// MODULE 1 CANNOT BE CANCELLED (the data says so: platform.modules.can_cancel is false for m1, true for m3): a running module 1 job's cancel is refused BY THE DATABASE (ErrNotAllowed, constraint
-// job_module_cannot_cancel, which the API words `cancel_not_supported`), typed with no raw database error; nothing moved (still running, no cancel request, no `cancelling` move); a pause is refused the same way
-// (job_module_cannot_pause); and the job goes on to `succeeded`, settled three ways like any other.
+// MODULE 1 HAS NO PER-JOB PAUSE (the data says so: platform.modules.can_pause is false for m1; can_cancel is TRUE for every module since platform_0016): a running module 1 job's pause is refused BY THE DATABASE
+// (ErrNotAllowed, constraint job_module_cannot_pause, which the API words `pause_not_supported`), typed with no raw database error; nothing moved (still running, no `paused` move); and the job goes on to
+// `succeeded`, settled three ways like any other.
+//
+// LIVE-REWRITE (for the agent that writes the live tests against the re-pinned modules): this test used to assert that module 1 cannot be cancelled. It no longer does, and it does NOT cancel the module 1 job
+// either: module 1's own cancel (POST /v1/jobs/{id}/cancel) exists only at the NEW module 1 head, so the live story of a cancelled module 1 job (unclaimed rows free by M1-24, in-flight probes charged,
+// ledger = results = report) is the later agent's, with the recorded module. What is left here is the part that still holds: no per-job pause, typed, nothing moved.
 func TestJobsLive_M3_CancelRunningJob(t *testing.T) {
 	ctx := jlCtx(t, 14*time.Minute)
 	e := newM3aEnv(t, ctx)
@@ -209,18 +213,16 @@ func TestJobsLive_M3_CancelRunningJob(t *testing.T) {
 	for _, cp := range []struct {
 		module string
 		want   bool
-	}{{jobs.ModuleVerify, false}, {jobs.ModuleSendBYO, true}} {
+	}{{jobs.ModuleVerify, true}, {jobs.ModuleSendBYO, true}} {
 		if got := s.str("read what the module can do", `SELECT can_cancel::text FROM platform.modules WHERE id = $1`, cp.module); got != fmt.Sprint(cp.want) {
-			t.Fatalf("platform.modules.can_cancel of %s is %s, want %v: the capability is data and the database refuses what the module cannot do", cp.module, got, cp.want)
+			t.Fatalf("platform.modules.can_cancel of %s is %s, want %v: the capability is data (every module can be cancelled since platform_0016)", cp.module, got, cp.want)
 		}
 	}
-	_, err = s.store.CancelBeforeStart(ctx, mu, mj.ID)
-	var na *jobs.NotAllowedError
-	if !errors.Is(err, jobs.ErrNotAllowed) || !errors.As(err, &na) || na.Reason != "job_module_cannot_cancel" {
-		t.Fatalf("the cancel of a running module 1 job answered %v, want ErrNotAllowed with the database's constraint job_module_cannot_cancel (the API words it cancel_not_supported)", err)
+	if got := s.str("read what module 1 can pause", `SELECT can_pause::text FROM platform.modules WHERE id = 'm1'`); got != "false" {
+		t.Fatalf("platform.modules.can_pause of m1 is %s, want false: module 1 has no per-job pause", got)
 	}
-	jeNoRawSQL(t, "the cancel of a running module 1 job", err)
-	_, err = s.store.PauseScheduled(ctx, mu, mj.ID)
+	var na *jobs.NotAllowedError
+	_, err = s.store.Pause(ctx, mu, mj.ID)
 	if !errors.Is(err, jobs.ErrNotAllowed) || !errors.As(err, &na) || na.Reason != "job_module_cannot_pause" {
 		t.Fatalf("the pause of a running module 1 job answered %v, want ErrNotAllowed with the database's constraint job_module_cannot_pause (the API words it pause_not_supported)", err)
 	}
@@ -238,7 +240,7 @@ func TestJobsLive_M3_CancelRunningJob(t *testing.T) {
 		t.Fatalf("the module 1 job's reserve is (%d, %d, %d, held %v), want the whole reserve accounted for", reserved, charged, released, ok)
 	}
 	s.requireBooks("after the module 1 job that could not be cancelled")
-	t.Logf("NOTE jl cancel m1: a running module 1 job's cancel was refused by the database (job_module_cannot_cancel) and its pause too (job_module_cannot_pause); nothing moved; the job went on and succeeded, settled three ways")
+	t.Logf("NOTE jl cancel m1: a running module 1 job's pause was refused by the database (job_module_cannot_pause); nothing moved; the job went on and succeeded, settled three ways (its cancel is the later live agent's: LIVE-REWRITE)")
 }
 
 // itemsOf makes the m3aItems of the pending rows (only their addresses are read: m3aView.of sums the sink's messages to them).

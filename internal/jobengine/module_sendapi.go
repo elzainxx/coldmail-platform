@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/coldmail-platform/platform/internal/adapters/sendapi"
 	"github.com/coldmail-platform/platform/internal/jobs"
@@ -27,7 +28,14 @@ import (
 // never handed over. A campaign the module does not know answers an empty page: nothing, not complete. A module that says complete beside a listing that does not hold as many terminal items as its
 // own progress block says is never believed.
 //
-// CANCEL. POST /v1/cancel for the campaign (idempotent: queued items become cancelled, an item in flight finishes), asked again at every tick of a cancelling job by the engine.
+// CANCEL. POST /v1/cancel for the campaign (idempotent: queued items become cancelled, an item in flight finishes), asked again at every tick of a cancelling job by the engine. A cancel of a campaign
+// the module holds PAUSED also ends the hold (module 2 deletes the pause; module 3's report says paused false), so the engine needs no Resume before it.
+//
+// PAUSE AND RESUME. POST /v1/pause and /v1/resume for the campaign (idempotent, tenant scoped, not gated by the dispatch rung). The engine asks for a pause until the module's REPORT says paused
+// (Observation.Paused: the campaign report's `paused`), and for a resume until it says it is not: the answers of the two calls carry a `paused` too, but the wrapper reads them for success alone, because
+// the state is what the report says and a call that answered is not a campaign that is held. The `state` words (module 2: paused, empty, complete, cancelled; module 3: running, paused, cancelled,
+// finished, unknown) and module 2's `changed` are never read. The capability is the module's describe (campaign_pause_resume on module 2, pause_resume on module 3): without it the wrapper is
+// ErrNotSupported and sends nothing.
 type sendapiModule struct {
 	reg    *Registry
 	module string // "m2" or "m3": the charge table's module column and the label of every error
@@ -152,9 +160,11 @@ func (m *sendapiModule) Observe(ctx context.Context, j jobs.EngineJob, fn func([
 	default:
 		return Observation{}, m.reg.failed(ctx, m.module, phaseObserve, err, false)
 	}
-	obs := Observation{Complete: last.Progress.IsComplete, Total: int(last.Totals.Total), Terminal: int(last.Progress.Terminal), Detail: map[string]any{
+	// Paused is the campaign report's own `paused` (the stored per-campaign pause), never dispatch_paused (the operator's module-wide rung, which says nothing about this job): the engine tells
+	// Pause from Resume by it alone.
+	obs := Observation{Complete: last.Progress.IsComplete, Total: int(last.Totals.Total), Terminal: int(last.Progress.Terminal), Paused: last.Paused, Detail: map[string]any{
 		"module": m.module, "total": last.Totals.Total, "sent": last.Totals.Sent, "bounced": last.Totals.Bounced, "failed": last.Totals.Failed, "cancelled": last.Totals.Cancelled,
-		"in_flight": last.Totals.InFlight, "pending": last.Totals.Pending, "waiting_for_capacity": last.Totals.WaitingForCapacity, "dispatch_paused": last.DispatchPaused,
+		"in_flight": last.Totals.InFlight, "pending": last.Totals.Pending, "waiting_for_capacity": last.Totals.WaitingForCapacity, "dispatch_paused": last.DispatchPaused, "paused": last.Paused,
 	}}
 	if fullWalk && last.Progress.IsComplete && int64(delivered) != last.Progress.Terminal {
 		m.reg.unexpected.Add(1)
@@ -184,4 +194,50 @@ func itemDetail(it sendapi.Item) map[string]any {
 		d["completed_at"] = it.CompletedAt.UTC().Format("2006-01-02T15:04:05Z")
 	}
 	return d
+}
+
+// Pause asks the module to HOLD the campaign (POST /v1/pause, idempotent): its unclaimed items are not claimed until Resume or Cancel, items already claimed finish and are reported once, no item
+// changes state. Only the module's REPORT says whether it holds the campaign (Observation.Paused, the report's `paused`): the answer of this call is read for nothing but its success, so the engine
+// never believes a pause the report has not shown. Before the first call the module's own describe must declare the capability (campaign_pause_resume on module 2, pause_resume on module 3; a
+// describe without the key means a module older than the route): a module that does not is ErrNotSupported with nothing sent, and a positive answer is remembered for pauseCapabilityTTL.
+func (m *sendapiModule) Pause(ctx context.Context, j jobs.EngineJob) error {
+	if err := m.requirePauseCapability(ctx); err != nil {
+		return err
+	}
+	if _, err := m.c.Pause(ctx, j.ID); err != nil {
+		return m.reg.failed(ctx, m.module, phasePause, err, false)
+	}
+	return nil
+}
+
+// Resume asks the module to let a held campaign go on (POST /v1/resume, idempotent: a campaign that is not held is a no-op). The same capability rule and the same reading of the answer as Pause.
+func (m *sendapiModule) Resume(ctx context.Context, j jobs.EngineJob) error {
+	if err := m.requirePauseCapability(ctx); err != nil {
+		return err
+	}
+	if _, err := m.c.Resume(ctx, j.ID); err != nil {
+		return m.reg.failed(ctx, m.module, phaseResume, err, false)
+	}
+	return nil
+}
+
+// pauseCapabilityTTL is how long a describe that declared the pause capability is believed (a module does not lose a route without a redeploy, and a redeploy is a restart of nothing of ours, so the
+// answer is re-read now and then: it costs one describe).
+const pauseCapabilityTTL = 10 * time.Minute
+
+// requirePauseCapability is the describe check of Pause and Resume: nil when the module declares the capability (remembered for pauseCapabilityTTL), ErrNotSupported when it does not, the mapped
+// error (usually a wait) when its describe cannot be read.
+func (m *sendapiModule) requirePauseCapability(ctx context.Context) error {
+	if at, ok := m.reg.pauseCapable.Load(m.module); ok && time.Since(at.(time.Time)) < pauseCapabilityTTL {
+		return nil
+	}
+	ok, err := m.c.PauseSupported(ctx)
+	if err != nil {
+		return m.reg.failed(ctx, m.module, phasePause, err, false)
+	}
+	if !ok {
+		return fmt.Errorf("%w: %s does not declare the per-campaign pause capability (%s) in its describe: nothing was sent", ErrNotSupported, m.module, m.c.Profile().PauseCapability)
+	}
+	m.reg.pauseCapable.Store(m.module, time.Now())
+	return nil
 }

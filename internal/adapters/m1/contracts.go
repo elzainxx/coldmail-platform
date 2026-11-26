@@ -48,7 +48,12 @@ var (
 
 	// jobShape: GET /v1/jobs/{id}, 200. totals (Phase 3 close-out) is read from the same snapshot as counts and complete: every key of it is required, and the four keys of by_status
 	// (the verdict statuses, zero included) too, so a module that stopped sending one cannot make a count read as zero.
-	jobShape = modclient.Object(
+	jobShape = modclient.Object(jobFields...)
+
+	// jobFields are the keys of a job-status body, once: GET /v1/jobs/{id} (jobShape) and the answer of POST /v1/jobs/{id}/cancel (cancelShape: the same body plus cancel_outcome) are
+	// decoded with the same list. counts.cancelled, totals.cancelled and cancel_requested are ADDITIVE (module 1 migration 0020, owner ruling C2): OPTIONAL here, so that the answer of a
+	// module without cancel (and every recorded fixture of it) still decodes, and read as 0 and false when absent; present with another type, or null, they are a Contract error.
+	jobFields = []modclient.Field{
 		modclient.Req("job_id", modclient.Str),
 		modclient.Req("status", modclient.Str),
 		modclient.Req("complete", modclient.Bool),
@@ -56,6 +61,7 @@ var (
 			modclient.Req("total", modclient.Int),
 			modclient.Req("settled", modclient.Int),
 			modclient.Req("pending", modclient.Int),
+			modclient.Opt("cancelled", modclient.Int),
 		)),
 		modclient.Req("totals", modclient.Object(
 			modclient.Req("submitted", modclient.Int),
@@ -63,6 +69,7 @@ var (
 			modclient.Req("pending", modclient.Int),
 			modclient.Req("duplicates", modclient.Int),
 			modclient.Req("malformed", modclient.Int),
+			modclient.Opt("cancelled", modclient.Int),
 			modclient.Req("by_status", modclient.Object(
 				modclient.Req("valid", modclient.Int),
 				modclient.Req("invalid", modclient.Int),
@@ -71,7 +78,12 @@ var (
 			)),
 		)),
 		modclient.Req("processing_paused", modclient.Bool),
-	)
+		modclient.Opt("cancel_requested", modclient.Bool),
+	}
+
+	// cancelShape: POST /v1/jobs/{id}/cancel, 200 (ADR-0023): the job-status body (jobFields) plus `cancel_outcome`, required, one of three words (checked by Cancel: a word outside them is
+	// a Contract error naming the key). The module's `caller_ref` and every other key it adds are tolerated.
+	cancelShape = modclient.Object(append(append([]modclient.Field(nil), jobFields...), modclient.Req("cancel_outcome", modclient.Str))...)
 
 	// describeShape: GET /v1/describe, 200. The family's keys as modclient demands them of a client built for module 1 (module, api_version, capabilities, vocabularies whose entries
 	// carry their values, error_codes; no pricing: TestDescribeShapeAgreesWithModclient holds the two together) plus the two keys the adapter reads itself, the route table and the
@@ -99,19 +111,29 @@ var (
 			modclient.Opt("scope", modclient.Str),
 			modclient.Opt("reused_with_other_request", modclient.Str),
 		)),
+		// vendor_fallback (module 1 migration 0020, owner ruling C3) is ADDITIVE and OPTIONAL here, so that the describe of a module that does not have it (and the recorded fixture of that module) still
+		// decodes and reads as "not said" (VendorReachable.Known false); present, it must have the shape of vendorFallbackShape or it is a Contract error naming the key.
+		modclient.Opt("vendor_fallback", vendorFallbackShape),
 	)
 
 	// rowShape: one element of the results listing: the verdict object plus the row's identity. item_id is required because the adapter always submits the `items` shape, so a result
 	// with none cannot be attributed to an input row; duplicate_of is absent on a first row and on every malformed row (and 0 is a real value).
+	//
+	// flags.from_cache is OPTIONAL in a row (and only in a row: the verify route's flagsShape keeps it required): a row cancelled before its check began (module 1 migration 0020) is
+	// served with `"flags": {}`, no verdict and so no cache signal. What it protects is kept by rowOf instead: a row whose status is a VERDICT word and that carries no from_cache is still a
+	// Contract error naming results[i].flags.from_cache, so a module that stopped sending the signal cannot make every cached answer read as a fresh one.
 	rowShape = modclient.Object(
 		modclient.Req("ordinal", modclient.Int),
 		modclient.Req("item_id", modclient.Str),
 		modclient.Opt("duplicate_of", modclient.Int),
 		modclient.Req("status", modclient.Str),
 		modclient.Req("reason", modclient.Str),
-		modclient.Req("flags", flagsShape),
+		modclient.Req("flags", rowFlagsShape),
 		modclient.Req("signals", signalsShape),
 	)
+
+	// rowFlagsShape is flagsShape with from_cache optional: see rowShape.
+	rowFlagsShape = modclient.Object(modclient.Opt("from_cache", modclient.Bool), modclient.Opt("is_disposable", modclient.Bool), modclient.Opt("is_free_provider", modclient.Bool), modclient.Opt("is_role", modclient.Bool), modclient.Opt("is_spam_trap", modclient.Bool)).Open()
 
 	// resultsShape: GET /v1/jobs/{id}/results, 200. results is always an array (empty is [], never null) and next_cursor always a string ("" when nothing follows as the listing stands).
 	resultsShape = modclient.Object(
@@ -138,12 +160,14 @@ const (
 	tplSubmit   = "POST /v1/verify/bulk"
 	tplStatus   = "GET /v1/jobs/{id}"
 	tplResults  = "GET /v1/jobs/{id}/results"
+	tplCancel   = "POST /v1/jobs/{id}/cancel"
 	tplDescribe = "GET /v1/describe"
 
 	routeVerify   = "m1.verify"
 	routeSubmit   = "m1.submit"
 	routeStatus   = "m1.status"
 	routeResults  = "m1.results"
+	routeCancel   = "m1.cancel"
 	routeDescribe = "m1.describe" // the label modclient gives its own describe call, so a Contract error of the adapter's checks and one of the decode name the same route
 )
 
@@ -151,7 +175,12 @@ const (
 // route is pinned". A test keeps this list and Contracts() exactly complementary over the routes the adapter calls.
 func UncoveredRoutes() map[string]string {
 	const why = "passed through modclient (Health, Ready), which decodes it with its own unexported shape; a copy here would be a second definition nothing decodes with"
-	return map[string]string{"GET /healthz": why, "GET /readyz": why}
+	return map[string]string{
+		"GET /healthz": why, "GET /readyz": why,
+		// the cancel route was added to the module AFTER the recordings in testdata/contract were made (Phase 4 close-out C2, migration 0020): there is no recorded body of it to pin, and a
+		// contract with a hand-written fixture would pin the platform's reading of the documentation, not the module. The lead records it after the pin and moves it into Contracts().
+		tplCancel: "added to the module after the recordings: no recorded answer yet (its tests use hand-written bodies written from api-contract.md, named HandWritten); promote it to a contract when it is recorded",
+	}
 }
 
 // errorCodeValues is the code of module 1's error envelope (api/errors.go: the ten `code*` constants, additive-only; `idempotency_key_reused` came with the idempotent create). The

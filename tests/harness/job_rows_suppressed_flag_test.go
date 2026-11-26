@@ -89,9 +89,6 @@ func TestJobRows_TheSuppressedFlag(t *testing.T) {
 		editable := map[string]bool{"draft": true, "previewed": true}
 		frozen := check("job_rows_frozen")
 		for _, s := range jobStates {
-			if s == "cancelling" { // module 1 cannot cancel a running job (job_module_cannot_cancel), so a module 1 job is never cancelling
-				continue
-			}
 			s := s
 			ledgerTrial(t, tx, func(sp pgx.Tx) {
 				job := next()

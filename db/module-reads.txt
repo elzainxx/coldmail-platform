@@ -33,7 +33,7 @@ public.job_items|rendered_subject|text|NOT NULL|no|m2,m3|copied into jobs.render
 public.job_items|rendered_body|text|NOT NULL|no|m2,m3|copied into jobs.rendered_body TEXT NOT NULL; written by J4.
 public.job_items|reply_to|text|NULL|no|m2,m3|copied into jobs.reply_to TEXT (nullable); J4 omits it, so it must stay nullable or defaulted.
 public.job_items|rendered_text|text|NULL|no|m2,m3|OPTIONAL plain-text alternative of rendered_body (Phase 3 close-out B3/C5): NULL, '' or white space only means no plain-text part and the message is the single HTML part it has always been; a real text makes the module build multipart/alternative (text/plain first). Read by J2 of both modules, copied into their own jobs.rendered_text (nullable, 1 MiB cap on the module side); module 3's J4 omits it, so it must stay nullable.
-public.job_items|status|text|NOT NULL|yes|m3|WRITTEN by J4 as the literal 'pending'; never read by any module (M2's tests insert it too). Must accept 'pending'; the platform owns the rest of the vocabulary.
+public.job_items|status|text|NOT NULL|yes|m2,m3|WRITTEN by J4 as the literal 'pending' and, since Phase 4 (close-out D9), READ by the run route of M2 and M3 (J1 and J2): an item whose status is 'cancelled' (the platform's terminal marker for an item it never submitted, set when its job expires, is cancelled or fails before submission) is refused with 409 job_item_cancelled; every other value, and NULL, runs as before. Must accept 'pending' and 'cancelled'; the platform owns the rest of the vocabulary.
 public.job_items|created_at|timestamp with time zone|NOT NULL|yes|platform|used by no module and no module test. Defaulted because J4 omits it.
 
 # ---- keys ----
@@ -46,3 +46,4 @@ fk-absent|public.job_items|campaign_id
 # ---- rows and values ----
 row|public.users|id|00000000-0000-0000-0000-000000000000|m2|module 2 hard-requires the all-zero system user (shared pools and accounts answer 409 system_user_not_provisioned without it); it has no auth account, is inactive, and is the only user without an auth link.
 accepts|public.job_items|status|pending|m3|the only value any module writes
+accepts|public.job_items|status|cancelled|m2,m3|the only value a module READS (the run route refuses it): the platform's terminal marker of a never-submitted item

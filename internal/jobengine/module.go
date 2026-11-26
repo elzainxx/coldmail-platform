@@ -39,8 +39,16 @@ type Module interface {
 	// returned. The job is the job as the store read it (jobs.EngineJob): a module that keeps its own handle for the job (module 1's job id) finds it in j.ModuleRef, which Start recorded from
 	// SubmitResult.ModuleRef, and reads no database and keeps no memory of its own; with no handle there it cannot say what the module holds and answers ErrWait.
 	Observe(ctx context.Context, j jobs.EngineJob, fn func([]jobs.ResultItem) error) (Observation, error)
-	// Cancel asks the module to cancel the job (idempotent; unclaimed items become cancelled, an item in flight finishes). A module that cannot returns ErrNotSupported.
+	// Cancel asks the module to cancel the job (idempotent; unclaimed items become cancelled, an item in flight finishes). Every module can since the close-out (module 1: POST /v1/jobs/{id}/cancel,
+	// whose unclaimed items arrive as `cancelled` results, free; modules 2 and 3: POST /v1/cancel); a module that cannot returns ErrNotSupported. A cancel of a job the module holds PAUSED also ends
+	// the hold (module 2 releases the pause, module 3's report says paused false).
 	Cancel(ctx context.Context, j jobs.EngineJob) error
+	// Pause asks the module to HOLD the job's campaign (idempotent): its unclaimed items are not claimed until Resume or Cancel, items it had already claimed finish and are reported once, nothing is
+	// invented and no item changes state. Modules 2 and 3 can (POST /v1/pause); module 1 has no per-job pause and answers ErrNotSupported (the database refuses a pause of a module 1 job long before
+	// the engine is asked). The answer is the call's only: whether the module HOLDS the job is read from the module's own report (Observation.Paused), never from the answer of this call.
+	Pause(ctx context.Context, j jobs.EngineJob) error
+	// Resume asks the module to let a held campaign go on (idempotent: a campaign that is not held is a no-op). The same rules as Pause: module 1 is ErrNotSupported, the answer is not the state.
+	Resume(ctx context.Context, j jobs.EngineJob) error
 }
 
 // Modules gives the engine the Module of a job's module id, for the job's user (module 1 needs the user's own caller key).
@@ -56,10 +64,13 @@ type SubmitResult struct {
 
 // Observation is what a module says about a job.
 type Observation struct {
-	Complete bool           // the module says every item it holds is final
-	Total    int            // the items the module holds
-	Terminal int            // the items it holds that are final
-	Detail   map[string]any // the module's own words, for the logs and the stale event (never a secret or an address)
+	Complete bool // the module says every item it holds is final
+	Total    int  // the items the module holds
+	Terminal int  // the items it holds that are final
+	// Paused is the MODULE'S OWN REPORT that it holds the job's campaign (modules 2 and 3: the campaign report's `paused`, the stored per-campaign pause, NOT the operator's dispatch_paused). The
+	// engine decides Pause and Resume from this alone, level-triggered: a call that answered is not the state. Module 1 has no pause: always false.
+	Paused bool
+	Detail map[string]any // the module's own words, for the logs and the stale event (never a secret or an address)
 }
 
 // The errors the engine understands. A module wraps one of them with %w and says why in the text (a word, never an address or a secret).

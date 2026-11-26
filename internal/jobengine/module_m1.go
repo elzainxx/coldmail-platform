@@ -79,11 +79,13 @@ func (m *m1Module) Observe(ctx context.Context, j jobs.EngineJob, fn func([]jobs
 	if err != nil {
 		return Observation{}, m.reg.failed(ctx, jobs.ModuleVerify, phaseObserve, err, false)
 	}
-	obs := Observation{Complete: st.Complete, Total: st.Totals.Submitted, Terminal: st.Totals.Settled, Detail: map[string]any{
-		"module": jobs.ModuleVerify, "status": st.Status, "submitted": st.Totals.Submitted, "settled": st.Totals.Settled, "pending": st.Totals.Pending,
-		"duplicates": st.Totals.Duplicates, "malformed": st.Totals.Malformed, "processing_paused": st.ProcessingPaused,
+	// a row is FINAL when it has a verdict (settled) or was cancelled before its check began (cancelled: no verdict, free, an item of the listing of its own): submitted = settled + cancelled + pending
+	final := st.Totals.Settled + st.Totals.Cancelled
+	obs := Observation{Complete: st.Complete, Total: st.Totals.Submitted, Terminal: final, Detail: map[string]any{
+		"module": jobs.ModuleVerify, "status": st.Status, "submitted": st.Totals.Submitted, "settled": st.Totals.Settled, "cancelled": st.Totals.Cancelled, "pending": st.Totals.Pending,
+		"duplicates": st.Totals.Duplicates, "malformed": st.Totals.Malformed, "processing_paused": st.ProcessingPaused, "cancel_requested": st.CancelRequested,
 	}}
-	if !st.Complete && st.Totals.Settled <= j.PendingResults {
+	if !st.Complete && final <= j.PendingResults {
 		return obs, nil // nothing the engine does not have: the status alone answers
 	}
 	delivered, skipped, err := m.walk(ctx, ref, fn)
@@ -97,19 +99,43 @@ func (m *m1Module) Observe(ctx context.Context, j jobs.EngineJob, fn func([]jobs
 	if skipped > 0 {
 		obs.Detail["skipped_duplicates"] = skipped
 	}
-	if st.Complete && (delivered != st.Totals.Settled || st.Totals.Settled != st.Totals.Submitted) {
-		// the module says complete and its own listing says otherwise: the job is NEVER believed complete on that (the rows that were read stay recorded)
+	if st.Complete && (delivered != final || final != st.Totals.Submitted) {
+		// the module says complete and its own listing says otherwise: the job is NEVER believed complete on that (the rows that were read stay recorded). The listing of a finished job holds
+		// settled + cancelled rows, which are all of the submitted ones.
 		m.reg.unexpected.Add(1)
 		m.reg.log.WarnContext(ctx, "module 1 says the job is complete but its results listing contradicts its totals; the job is not completed", "job", j.ID,
-			"read", delivered, "settled", st.Totals.Settled, "submitted", st.Totals.Submitted)
-		return Observation{}, Wait(fmt.Sprintf("m1 observe: the job is complete but %d row(s) were read and it says submitted %d, settled %d: the listing contradicts the totals", delivered, st.Totals.Submitted, st.Totals.Settled))
+			"read", delivered, "settled", st.Totals.Settled, "cancelled", st.Totals.Cancelled, "submitted", st.Totals.Submitted)
+		return Observation{}, Wait(fmt.Sprintf("m1 observe: the job is complete but %d row(s) were read and it says submitted %d, settled %d, cancelled %d: the listing contradicts the totals", delivered, st.Totals.Submitted, st.Totals.Settled, st.Totals.Cancelled))
 	}
 	return obs, nil
 }
 
-// Cancel: module 1 has no cancel (its surface has no route for it: Docs/phase-4-spec.md, Findings). The database refuses a cancel of a module 1 job before the engine is asked.
-func (m *m1Module) Cancel(context.Context, jobs.EngineJob) error {
-	return fmt.Errorf("%w: module 1 has no cancel", ErrNotSupported)
+// Cancel asks module 1 to cancel the job (POST /v1/jobs/{id}/cancel with the user's own key, idempotent): every row not yet claimed becomes `cancelled` (free, no verdict) and arrives at the next
+// Observe as a result of its own, every row already leased or in flight finishes and settles as a verdict, charged as the table says. The module's three answers (cancelled, already_cancelled,
+// already_complete) are all success: a repeat is never an error, and a cancel of a job that had nothing left to cancel changes nothing (the platform's job still ends cancelled, because the user's
+// request was accepted; every row it settled stays settled and charged). The job needs its module reference (Start recorded it): without it the cancel waits like Observe does.
+func (m *m1Module) Cancel(ctx context.Context, j jobs.EngineJob) error {
+	ref := strings.TrimSpace(j.ModuleRef)
+	if ref == "" {
+		return Wait("m1 cancel: the job carries no module 1 id (the engine records it when it starts the job): nothing is sent")
+	}
+	res, err := m.ad.Cancel(ctx, ref)
+	if err != nil {
+		return m.reg.failed(ctx, jobs.ModuleVerify, phaseCancel, err, false)
+	}
+	m.reg.log.DebugContext(ctx, "module 1 answered the cancel", "job", j.ID, "outcome", res.Outcome)
+	return nil
+}
+
+// Pause: module 1 has no per-job pause (its only "paused" is the operator's front-door kill switch, module-wide and not the caller's choice). The database refuses a pause of a module 1 job before the
+// engine is asked (platform.modules.can_pause is false for it), and pausing by cancel and resubmit is never done.
+func (m *m1Module) Pause(context.Context, jobs.EngineJob) error {
+	return fmt.Errorf("%w: module 1 has no per-job pause", ErrNotSupported)
+}
+
+// Resume: module 1 has no per-job pause, so there is nothing to resume.
+func (m *m1Module) Resume(context.Context, jobs.EngineJob) error {
+	return fmt.Errorf("%w: module 1 has no per-job pause", ErrNotSupported)
 }
 
 // fnFailure carries an error of the engine's own callback through the walk, so that it is returned to the engine as it came and never taken for an answer of the module.

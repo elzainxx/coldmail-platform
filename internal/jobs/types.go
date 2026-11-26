@@ -133,6 +133,11 @@ type Preview struct {
 	Available int64  `json:"available"`           // the user's available credits when the preview was made
 	Shortfall int64  `json:"shortfall"`           // max(0, Credits - Available)
 
+	// VendorReachableKnown is true when module 1 itself told the platform, for this preview, whether its vendor fallback is reachable (the flag the reserve rate was computed from is then module 1's
+	// current answer: RateUnit and UnitCost above). It is false when module 1 could not be read (it is down, or an older module 1 that does not say): the numbers are then computed from the flag the
+	// platform last stored, and nobody should read them as fresh. It is also false for every job that is not a module 1 job, where the question does not arise.
+	VendorReachableKnown bool `json:"vendor_reachable_known"`
+
 	Fingerprint string    `json:"fingerprint"`
 	ComputedAt  time.Time `json:"computed_at"` // the store's clock (WithClock); informational, never part of the fingerprint
 }

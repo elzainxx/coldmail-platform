@@ -70,7 +70,7 @@ case "$SCOPE" in gotrue) GT_ON=1;; esac
 case " ${FULL_INCLUDES:-} " in *" gotrue "*) [ "$SCOPE" = full ] && GT_ON=1;; esac
 [ "$GT_ON" = 1 ] && { GT_DC=(-f "$HERE/docker-compose.gotrue.yml" --profile gotrue); GT_EXPOSE="gotrue"; TEST_TAGS="$TEST_TAGS gotrue"; }
 # The job engine's crash, handover and outage proofs (tests/harness/jobs/stage.sh, docker-compose.jobs.yml, the scenario program tests/harness/jobscenario; Phase 4, chunk B17a) are DORMANT in the same way: the compose file (module 1 as
-# `m1j` with a fixture DNS, the two platform instances jobs-a and jobs-b with the job engine ON and the fault points armed by name, the scenario program's container), its two secrets, the stages J0-J4 and the build of the scenario program exist
+# `m1j` with a fixture DNS, the two platform instances jobs-a and jobs-b with the job engine ON and the fault points armed by name, the scenario program's container), its two secrets, the stages J0-J6 and the build of the scenario program exist
 # ONLY under H_SCOPE=jobs, or in the full run once `jobs` is named in FULL_INCLUDES. JOBS_ON is 1 exactly then. It adds no build tag and no test: the scenario program is a program, compiled by the stage.
 JOBS_ON=0; JOBS_DC=()
 case "$SCOPE" in jobs) JOBS_ON=1;; esac
@@ -266,7 +266,7 @@ grep -qi "admin already exists\|already exists" "$WORK/first-admin-2.log" || die
 echo "  first admin created as postgres on the real auth schema; a second run refused; platform.admins holds exactly one row"
 [ "$SCOPE" = m2worker ] && m2w_scope_run   # H_SCOPE=m2worker: module 2's Control, its worker (5c), the TestM2Worker tests and the exposure check, then the end of the run: it never returns
 [ "$SCOPE" = m1node ] && m1n_run_scope     # H_SCOPE=m1node (M1N_ON is 1): the fixtures, module 1's real node, a wired control plane and the TestM1Node tests (stages M1N-1 to M1N-5), then the end of the run: it never returns
-[ "$SCOPE" = jobs ] && jobs_scope_run      # H_SCOPE=jobs (JOBS_ON is 1): module 1 with its fixture DNS, two platform instances, the scenario program, stages J0-J4, the evidence, leak and exposure checks, then the end of the run: it never returns
+[ "$SCOPE" = jobs ] && jobs_scope_run      # H_SCOPE=jobs (JOBS_ON is 1): module 1 with its fixture DNS, two platform instances, the scenario program, stages J0-J6, the evidence, leak and exposure checks, then the end of the run: it never returns
 [ "$SCOPE" = gotrue ] && gotrue_scope_run  # H_SCOPE=gotrue (GT_ON is 1): GoTrue (5d), the TestGoTrue tests, the secret-leak and exposure checks, then the end of the run: it never returns
 
 # ── 5. services ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -351,7 +351,7 @@ grep -q '^--- PASS: TestM1Live_BulkJobSettlesItemByItem ' "$WORK/h-run.log" || d
 # Phase 4 B16: the eleven TestM1LiveProvision_* tests (module 1's caller key is registered through platform.provision_m1_caller) must all be among the tests that PASSED in the log the run itself produced; the floor counts the package, this names the family
 [ "$(grep -c '^--- PASS: TestM1LiveProvision_' "$WORK/h-run.log")" -ge 11 ] || die "fewer than 11 TestM1LiveProvision_* tests have a '--- PASS' line in the run log (found $(grep -c '^--- PASS: TestM1LiveProvision_' "$WORK/h-run.log")): the key-provisioning proofs did not all run, or did not all pass"
 # Phase 4 B8-B12: the TestJobsLive_* tests (the job engine, in the test process, against the REAL modules 1 and 3: six live tests and four comparison controls) must all be among the tests that PASSED in the log the run itself produced; each live test is named, so that a missing one is named
-for jl_t in TestJobsLive_M1_VerifyJobSettlesItemByItem TestJobsLive_M3_SendJobSettlesItemByItem TestJobsLive_M3_ConfirmChecksEntitlementAndFeasibilityAgainstTheModule TestJobsLive_M3_CancelRunningJob TestJobsLive_Chain_ExactlySelectedVerdictsMove TestJobsLive_M3_ScheduledStartsOnTime TestJobsLive_M3_NeverSubmittedItemsOfAnExpiredJobAreMarkedAndNeverRunAndTheMarkIsNotALock; do
+for jl_t in TestJobsLive_M1_VerifyJobSettlesItemByItem TestJobsLive_M3_SendJobSettlesItemByItem TestJobsLive_M3_ConfirmChecksEntitlementAndFeasibilityAgainstTheModule TestJobsLive_M3_CancelRunningJob TestJobsLive_Chain_ExactlySelectedVerdictsMove TestJobsLive_M3_ScheduledStartsOnTime TestJobsLive_M3_NeverSubmittedItemsOfAnExpiredJobAreMarkedAndCannotBeRun; do
   grep -q "^--- PASS: $jl_t " "$WORK/h-run.log" || die "$jl_t has no '--- PASS' line in the run log: it did not run, or did not pass"
 done
 [ "$(grep -c '^--- PASS: TestJobsLive_' "$WORK/h-run.log")" -ge 10 ] || die "fewer than 10 TestJobsLive_* tests have a '--- PASS' line in the run log (found $(grep -c '^--- PASS: TestJobsLive_' "$WORK/h-run.log")): the six live job tests and their four comparison controls did not all run, or did not all pass"
@@ -534,7 +534,7 @@ echo "  d. $LEAD ($LSVC) is back: /readyz 200, no pass run, no lock held; for 12
 STAGE=ledger; banner 10 "the balance invariant holds on the live database (rolled-back exercise through the ledger)"
 bash "$PLATFORM_DIR/scripts/check-balance-invariant.sh" --psql-cmd "docker compose --project-directory $HERE -f $HERE/docker-compose.yml --env-file $WORK/harness.env --profile probe --profile tests exec -T postgres psql -U supabase_admin -d postgres" --exercise || die "the balance invariant gate is red on the live database"
 
-[ "$JOBS_ON" = 1 ] && [ "$SCOPE" = full ] && jobs_run   # the job engine's proofs (stages J0-J4), only when `jobs` is named in FULL_INCLUDES: it stops the legacy platform containers and module 1 first (the leader lock and the queue are theirs otherwise); dormant otherwise
+[ "$JOBS_ON" = 1 ] && [ "$SCOPE" = full ] && jobs_run   # the job engine's proofs (stages J0-J6), only when `jobs` is named in FULL_INCLUDES: it stops the legacy platform containers and module 1 first (the leader lock and the queue are theirs otherwise); dormant otherwise
 [ "$M1N_ON" = 1 ] && [ "$SCOPE" = full ] && m1n_run   # the module-1 node stack, only when `m1node` is named in FULL_INCLUDES (stages M1N-1 to M1N-5, tests/harness/m1node/m1node.sh); dormant otherwise
 
 # ── result ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

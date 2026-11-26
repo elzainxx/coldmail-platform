@@ -432,6 +432,18 @@ func (m jlTracedModule) Cancel(ctx context.Context, j jobs.EngineJob) error {
 	return err
 }
 
+func (m jlTracedModule) Pause(ctx context.Context, j jobs.EngineJob) error {
+	err := m.inner.Pause(ctx, j)
+	m.tr.add("pause", j.ID, err)
+	return err
+}
+
+func (m jlTracedModule) Resume(ctx context.Context, j jobs.EngineJob) error {
+	err := m.inner.Resume(ctx, j)
+	m.tr.add("resume", j.ID, err)
+	return err
+}
+
 // ---- the stack with parameters ---------------------------------------------------------------------------------------------------------------------------------------------
 
 // jlOpts parameterise newJlStackWith.

@@ -12,7 +12,7 @@ import (
 	"github.com/coldmail-platform/platform/internal/jobs"
 )
 
-// The contract is held to itself here: the fake satisfies it for each module, and each of twelve deliberately broken modules (a mutant of the fake) is reported, by the check that exists for that
+// The contract is held to itself here: the fake satisfies it for each module, and each of twenty-one deliberately broken modules (a mutant of the fake) is reported, by the check that exists for that
 // property and for the reason it names. A contract that no broken module can fail would be one more green nobody can read.
 
 const contractJob = "0b000000-0000-4000-8000-000000000042"
@@ -32,7 +32,8 @@ func fakeSubject(t *testing.T, module string, n int) *Subject {
 				t.Fatalf("the fake does not hold the item %s, or it is already final", ref)
 			}
 		},
-		Down: f.SetDown,
+		Down:  f.SetDown,
+		Claim: func(ref string) bool { return f.Claim(contractJob, ref) },
 	}
 }
 
@@ -40,10 +41,10 @@ func TestContract_TheFakeSatisfiesItForEveryModule(t *testing.T) {
 	ModuleContract(t, []string{jobs.ModuleVerify, jobs.ModuleSendManaged, jobs.ModuleSendBYO}, fakeSubject)
 }
 
-func TestContract_TheContractRefusesAnEmptySubjectAndHasItsNineChecks(t *testing.T) {
+func TestContract_TheContractRefusesAnEmptySubjectAndHasItsElevenChecks(t *testing.T) {
 	// an instrument with no subject is red, never green: a contract with no module, no way to build a subject or a module that does not exist is not run
-	if len(Checks()) < 9 {
-		t.Fatalf("the contract has %d checks, it was written with 9", len(Checks()))
+	if len(Checks()) < 11 {
+		t.Fatalf("the contract has %d checks, it was written with 11 (nine, then the pause and the cancel of a held campaign)", len(Checks()))
 	}
 	seen := map[string]bool{}
 	for _, c := range Checks() {
@@ -74,6 +75,8 @@ type wrap struct {
 	submit  func(next jobengine.Module, ctx context.Context, j jobs.EngineJob, rows []jobs.EngineRow) (jobengine.SubmitResult, error)
 	observe func(next jobengine.Module, ctx context.Context, j jobs.EngineJob, fn func([]jobs.ResultItem) error) (jobengine.Observation, error)
 	cancel  func(next jobengine.Module, ctx context.Context, j jobs.EngineJob) error
+	pause   func(next jobengine.Module, ctx context.Context, j jobs.EngineJob) error
+	resume  func(next jobengine.Module, ctx context.Context, j jobs.EngineJob) error
 }
 
 func (w *wrap) Submit(ctx context.Context, j jobs.EngineJob, rows []jobs.EngineRow) (jobengine.SubmitResult, error) {
@@ -95,6 +98,20 @@ func (w *wrap) Cancel(ctx context.Context, j jobs.EngineJob) error {
 		return w.cancel(w.Module, ctx, j)
 	}
 	return w.Module.Cancel(ctx, j)
+}
+
+func (w *wrap) Pause(ctx context.Context, j jobs.EngineJob) error {
+	if w.pause != nil {
+		return w.pause(w.Module, ctx, j)
+	}
+	return w.Module.Pause(ctx, j)
+}
+
+func (w *wrap) Resume(ctx context.Context, j jobs.EngineJob) error {
+	if w.resume != nil {
+		return w.resume(w.Module, ctx, j)
+	}
+	return w.Module.Resume(ctx, j)
 }
 
 func TestContract_EveryBrokenModuleIsReportedForTheReasonItBreaks(t *testing.T) {
@@ -153,10 +170,97 @@ func TestContract_EveryBrokenModuleIsReportedForTheReasonItBreaks(t *testing.T) 
 					return n.Observe(ctx, j, func(items []jobs.ResultItem) error { _ = fn(items); return nil })
 				}}
 			}, "answered no error"},
-		{"module 1 that cancels", jobs.ModuleVerify, CheckCancel, 5,
+		{"module 1 that cannot cancel (its route is older than the platform's seed)", jobs.ModuleVerify, CheckCancel, 5,
 			func(s *Subject, f *FakeModule) {
-				s.Module = &wrap{Module: f, cancel: func(jobengine.Module, context.Context, jobs.EngineJob) error { return nil }}
-			}, "module 1 has no cancel"},
+				s.Module = &wrap{Module: f, cancel: func(jobengine.Module, context.Context, jobs.EngineJob) error { return jobengine.ErrNotSupported }}
+			}, "cancel failed"},
+		{"module 1 that words a cancelled row with no reason (the charge table's row M1-24 names cancelled_by_caller)", jobs.ModuleVerify, CheckCancel, 5,
+			func(s *Subject, f *FakeModule) {
+				s.Module = &wrap{Module: f, observe: func(n jobengine.Module, ctx context.Context, j jobs.EngineJob, fn func([]jobs.ResultItem) error) (jobengine.Observation, error) {
+					return n.Observe(ctx, j, func(items []jobs.ResultItem) error {
+						for i := range items {
+							if items[i].Outcome.State == "cancelled" {
+								items[i].Outcome.Reason = ""
+							}
+						}
+						return fn(items)
+					})
+				}}
+			}, "the module reported"},
+		{"a module whose worker claims while the campaign is held", jobs.ModuleSendManaged, CheckPauseResume, 5,
+			func(s *Subject, f *FakeModule) {
+				s.Claim = func(ref string) bool { // the worker ignores the hold: it lets go, claims and holds again
+					_ = f.Resume(context.Background(), s.Job)
+					ok := f.Claim(contractJob, ref)
+					_ = f.Pause(context.Background(), s.Job)
+					return ok
+				}
+			}, "claimed the queued item"},
+		{"a held module that invents an outcome for a row it never claimed", jobs.ModuleSendBYO, CheckPauseResume, 5,
+			func(s *Subject, f *FakeModule) {
+				s.Module = &wrap{Module: f, observe: func(n jobengine.Module, ctx context.Context, j jobs.EngineJob, fn func([]jobs.ResultItem) error) (jobengine.Observation, error) {
+					o, err := n.Observe(ctx, j, fn)
+					if err == nil && o.Paused {
+						_ = fn([]jobs.ResultItem{{ItemRef: s.Rows[3].ID, Outcome: charge.Outcome{Module: jobs.ModuleSendBYO, State: StateSent}}})
+					}
+					return o, err
+				}}
+			}, "an invented outcome"},
+		{"a module whose report never says paused", jobs.ModuleSendManaged, CheckPauseResume, 5,
+			func(s *Subject, f *FakeModule) {
+				s.Module = &wrap{Module: f, observe: func(n jobengine.Module, ctx context.Context, j jobs.EngineJob, fn func([]jobs.ResultItem) error) (jobengine.Observation, error) {
+					o, err := n.Observe(ctx, j, fn)
+					o.Paused = false
+					return o, err
+				}}
+			}, "does not say paused"},
+		{"a pause that is an error the second time", jobs.ModuleSendBYO, CheckPauseResume, 5,
+			func(s *Subject, f *FakeModule) {
+				calls := 0
+				s.Module = &wrap{Module: f, pause: func(n jobengine.Module, ctx context.Context, j jobs.EngineJob) error {
+					calls++
+					if calls > 1 {
+						return errors.New("already paused")
+					}
+					return n.Pause(ctx, j)
+				}}
+			}, "a second pause of a held campaign failed"},
+		{"a resume that cancels the campaign instead", jobs.ModuleSendManaged, CheckPauseResume, 5,
+			func(s *Subject, f *FakeModule) {
+				s.Module = &wrap{Module: f, resume: func(n jobengine.Module, ctx context.Context, j jobs.EngineJob) error { return n.Cancel(ctx, j) }}
+			}, "after the resume"},
+		{"a module 1 that supports pause", jobs.ModuleVerify, CheckPauseResume, 5,
+			func(s *Subject, f *FakeModule) {
+				s.Module = &wrap{Module: f, pause: func(jobengine.Module, context.Context, jobs.EngineJob) error { return nil }}
+			}, "module 1 has no per-job pause"},
+		{"a cancel that leaves the campaign held", jobs.ModuleSendManaged, CheckCancelWhileHeld, 5,
+			func(s *Subject, f *FakeModule) {
+				cancelled := false
+				s.Module = &wrap{Module: f,
+					cancel: func(n jobengine.Module, ctx context.Context, j jobs.EngineJob) error {
+						cancelled = true
+						return n.Cancel(ctx, j)
+					},
+					observe: func(n jobengine.Module, ctx context.Context, j jobs.EngineJob, fn func([]jobs.ResultItem) error) (jobengine.Observation, error) {
+						o, err := n.Observe(ctx, j, fn)
+						if cancelled {
+							o.Paused = true // the hold survives the cancel
+						}
+						return o, err
+					}}
+			}, "a cancel ends the hold"},
+		{"a pause under an outage that is a plain error", jobs.ModuleSendBYO, CheckOutage, 4,
+			func(s *Subject, f *FakeModule) {
+				down.Store(false)
+				plain := errors.New("connection refused")
+				s.Module = &wrap{Module: f, pause: func(n jobengine.Module, ctx context.Context, j jobs.EngineJob) error {
+					if down.Load() {
+						return plain
+					}
+					return n.Pause(ctx, j)
+				}}
+				s.Down = func(d bool) { down.Store(d); f.SetDown(d) }
+			}, "pause of a module that is down answered"},
 		{"an outage that is a plain error", jobs.ModuleSendBYO, CheckOutage, 4,
 			func(s *Subject, f *FakeModule) {
 				down.Store(false)
@@ -225,7 +329,8 @@ func TestContract_EveryBrokenModuleIsReportedForTheReasonItBreaks(t *testing.T) 
 			}
 			f := &FakeModule{Module: m.module, Manual: true}
 			s := &Subject{Module: f, Job: contractJobOf(m.module, m.rows), Rows: Rows(m.rows), Finals: FinalsOf(m.module), Down: f.SetDown,
-				Settle: func(ref string, o charge.Outcome) { f.Settle(contractJob, ref, o) }}
+				Settle: func(ref string, o charge.Outcome) { f.Settle(contractJob, ref, o) },
+				Claim:  func(ref string) bool { return f.Claim(contractJob, ref) }}
 			m.make(s, f)
 			problems := m.check(context.Background(), m.module, s)
 			if len(problems) == 0 {
@@ -236,7 +341,7 @@ func TestContract_EveryBrokenModuleIsReportedForTheReasonItBreaks(t *testing.T) 
 			}
 		})
 	}
-	if len(mutants) < 12 {
-		t.Fatalf("%d mutants: the contract was proved against 12", len(mutants))
+	if len(mutants) < 21 {
+		t.Fatalf("%d mutants: the contract was proved against 21", len(mutants))
 	}
 }

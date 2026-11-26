@@ -698,6 +698,11 @@ func TestJobsEngine_EngineWorkIsTheJobsTheEngineMustLookAtNowWithTheirCountsOlde
 	jobWalkTo(t, e.admin, pausedAhead.ID, jobs.StatusPaused)
 	pausedPast := "0e000000-0000-4000-8000-0000000000a1"
 	jobInsertAtWith(t, e.admin, pausedPast, user(), "m2", "paused", jobOpts{Deadline: jobDeadlinePast})
+	hu := user() // paused WHILE RUNNING (platform_0016): its module holds the campaign, so it is due like a running job (and, with a past deadline, it is never offered for expiry: TestJobsPauseCancel_EngineWork...)
+	heldRunning := e.running(hu, "m2", 1)
+	if _, err := e.jobs.Pause(ctx, hu, heldRunning.ID); err != nil {
+		t.Fatal(err)
+	}
 	done := e.running(user(), "m2", 1) // succeeded and released
 	e.record(done.ID, jeItem(e.rowIDs(done.ID, "pending")[0], jeM2Sent))
 	if _, err := e.jobs.Complete(ctx, done.ID); err != nil {
@@ -736,12 +741,12 @@ func TestJobsEngine_EngineWorkIsTheJobsTheEngineMustLookAtNowWithTheirCountsOlde
 	for i, w := range work {
 		got[i] = w.ID
 	}
-	wantSet := []string{a.ID, b.ID, c.ID, d.ID, due.ID, pausedPast, byHand.ID}
+	wantSet := []string{a.ID, b.ID, c.ID, d.ID, due.ID, pausedPast, heldRunning.ID, byHand.ID}
 	sorted := append([]string(nil), got...)
 	sort.Strings(sorted)
 	sort.Strings(wantSet)
 	if strings.Join(sorted, ",") != strings.Join(wantSet, ",") {
-		t.Fatalf("the work is %v, want exactly the confirmed, running, cancelling and completing jobs, the scheduled job whose time has come, the paused job past its deadline and the ended job with a remainder (%v); not-due %s, paused-ahead %s, released %s, draft %s, discarded %s",
+		t.Fatalf("the work is %v, want exactly the confirmed, running, cancelling and completing jobs, the job paused while running, the scheduled job whose time has come, the job paused before its start past its deadline and the ended job with a remainder (%v); not-due %s, paused-ahead %s, released %s, draft %s, discarded %s",
 			got, wantSet, notDue.ID, pausedAhead.ID, done.ID, draft.ID, dj.ID)
 	}
 	if got[0] != d.ID || got[1] != b.ID {

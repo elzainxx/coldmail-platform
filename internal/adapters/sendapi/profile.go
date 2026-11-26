@@ -93,6 +93,10 @@ type Profile struct {
 	Cancel bool
 	// RunConflict says what a 409 on run means.
 	RunConflict Conflict
+	// PauseCapability is the name of the key of describe's `capabilities` that says the module serves POST /v1/pause and POST /v1/resume and carries `paused` in its campaign report (Phase 4 C1):
+	// module 2 names it `campaign_pause_resume`, module 3 `pause_resume`. Non-empty means the profile HAS the two routes (Client.Pause and Client.Resume work); empty means it has none and
+	// both are modclient.NotSupported with nothing sent. A describe that does not carry the key (a module older than C1) says the module CANNOT pause: Profile.CanPause is false, never an error.
+	PauseCapability string
 }
 
 // The vocabulary names are describe's own (vocabularies.<name>), so the live drift gate compares like with like.
@@ -110,6 +114,25 @@ const (
 // strictVocabularies are the vocabularies a value outside which is a contract violation at run time (not merely an additive change): the item state decides what is final and what is
 // charged, and the cause of a run 409 decides whether the platform stops, waits or splits the campaign, so a new state or cause is never mapped by guesswork.
 var strictVocabularies = map[string]bool{vocabJobState: true, vocabRunConflictCause: true}
+
+// CodeItemCancelled is the error code of a run 409 for a job item the platform marked cancelled (Phase 4 D9, additive in both senders): a code of its own, NOT a cause of `conflict`.
+const CodeItemCancelled = "job_item_cancelled"
+
+// optionalErrorCodes are error codes the adapter maps that a module may or may not list in its describe `error_codes`: a module older than the change that added the code does not list it,
+// one that has it does. CompareVocabularies reports neither its absence (CodesMissing) nor its presence (CodesExtra) for them, so the same adapter accepts a describe of either generation.
+var optionalErrorCodes = []string{CodeItemCancelled}
+
+// OptionalErrorCodes is the list of error codes a describe may or may not carry (a copy).
+func OptionalErrorCodes() []string { return slices.Clone(optionalErrorCodes) }
+
+// CanPause says whether a module's describe declares per-campaign pause and resume: the profile names the capability and the describe's `capabilities` holds it, true. A describe without the key
+// (a module older than Phase 4 C1), a key that is false and a profile with no pause capability all say false; none is an error.
+func (p Profile) CanPause(d *modclient.Describe) bool {
+	return p.PauseCapability != "" && d != nil && d.Capabilities[p.PauseCapability]
+}
+
+// hasPause reports whether the profile has the pause and resume routes.
+func (p Profile) hasPause() bool { return p.PauseCapability != "" }
 
 // hasCancelled reports whether `cancelled` is a state of the module (and a key of its campaign totals).
 func (p Profile) hasCancelled() bool { return slices.Contains(p.JobStates, "cancelled") }
@@ -196,6 +219,9 @@ func (p Profile) validate() error {
 	}
 	if p.Cancel && !p.hasCancelled() {
 		return errors.New("the profile has a cancel route and no cancelled state for a cancelled item to land in")
+	}
+	if p.PauseCapability != "" && !safeName(p.PauseCapability) {
+		return errors.New("the profile's pause capability is not a lower-case word")
 	}
 	return nil
 }

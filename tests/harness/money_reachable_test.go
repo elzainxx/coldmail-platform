@@ -481,17 +481,17 @@ func TestMoneyReachable_SetUnitReachable(t *testing.T) {
 		t.Fatal("a call that changed nothing wrote a history row or moved a flag")
 	}
 
-	changed, err = e.store.SetUnitReachable(ctx, "m1_vendor", false, "  config: PLATFORM_M1_VENDOR_REACHABLE \t")
+	changed, err = e.store.SetUnitReachable(ctx, "m1_vendor", false, "  m1_describe \t")
 	if err != nil || !changed {
 		t.Fatalf("switching off a unit that is on returned changed=%v, %v; want true, nil", changed, err)
 	}
 	if hist() != h0+1 {
 		t.Fatalf("one change wrote %d history row(s), want 1", hist()-h0)
 	}
-	if got := e.rows("SELECT reachable, source FROM platform.unit_reachability_history WHERE unit = 'm1_vendor' ORDER BY id DESC LIMIT 1"); len(got) != 1 || got[0] != "false|config: PLATFORM_M1_VENDOR_REACHABLE" {
+	if got := e.rows("SELECT reachable, source FROM platform.unit_reachability_history WHERE unit = 'm1_vendor' ORDER BY id DESC LIMIT 1"); len(got) != 1 || got[0] != "false|m1_describe" {
 		t.Fatalf("the history row of the change is %v, want the flag and the TRIMMED source", got)
 	}
-	if got := e.rows("SELECT reachable, reachable_source, reachable_changed_at IS NOT NULL FROM platform.unit_costs WHERE unit = 'm1_vendor'"); len(got) != 1 || got[0] != "false|config: PLATFORM_M1_VENDOR_REACHABLE|true" {
+	if got := e.rows("SELECT reachable, reachable_source, reachable_changed_at IS NOT NULL FROM platform.unit_costs WHERE unit = 'm1_vendor'"); len(got) != 1 || got[0] != "false|m1_describe|true" {
 		t.Fatalf("the unit reads %v, want the flag, the source and a time", got)
 	}
 	if changed, err = e.store.SetUnitReachable(ctx, "m1_vendor", false, "test: the same again"); err != nil || changed || hist() != h0+1 {

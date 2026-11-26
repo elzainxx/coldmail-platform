@@ -68,8 +68,9 @@ func ExitCode(err error) int {
 // FIRST and waited for, then the entitlement loops (whose Run gives the leader lock and its connection back), then the pool closes: an engine step that is running when the loops stop would meet a
 // released lock and a closing pool. PLATFORM_JOB_ENGINE_ENABLED=false builds none.
 //
-// Beside them runs the reachability sync (reachability.go): from the moment the pool exists, in every instance, it writes PLATFORM_M1_VENDOR_REACHABLE into platform.unit_costs (at start, then every
-// minute; every 5 seconds until the first success). It is stopped and waited for by the same stop function, before the pool closes.
+// Beside them runs the reachability sync (reachability.go): from the moment the pool exists, in every instance, it reads module 1's describe (vendor_fallback.reachable) and writes the answer into
+// platform.unit_costs (at start, then every minute; every 5 seconds until the first success); a describe it cannot read writes nothing. It runs only where module 1 can be asked (PLATFORM_M1_URL and
+// PLATFORM_M1_KEY_SECRET set). It is stopped and waited for by the same stop function, before the pool closes.
 //
 // No returned error contains the database URL: parse and pool errors pass through dsnscrub, and a
 // configuration error names variables and reasons only.
@@ -81,6 +82,10 @@ func Run(ctx context.Context, getenv func(string) string, logw io.Writer) error 
 	log, err := logging.New(cfg.LogLevel, logw)
 	if err != nil {
 		return fmt.Errorf("build logger: %w", err)
+	}
+	// a variable that was removed and is still in the environment is ignored, and said so by name (never its value): a setting that looks live and is not must not pass in silence
+	for _, r := range config.SetRemoved(getenv) {
+		log.Warn("a removed configuration variable is set and is ignored", "variable", r.Name, "instead", r.Instead)
 	}
 
 	// The job API's authentication dials are validated here, before anything is opened: an invalid combination is a configuration error (exit status 2), and one log line says which sources are on.
@@ -148,14 +153,20 @@ func Run(ctx context.Context, getenv func(string) string, logw io.Writer) error 
 	sc := serverConfig(cfg)
 	sc.Ready = ready
 	// The reachability sync (Phase 4, chunk B3) is not a leader's loop: it runs in EVERY instance, from the start and whether or not the server is listening yet, and it stops with the others.
-	reach := newReachabilitySetter(pool, deps.Money, cfg)
+	var background []func(context.Context)
+	if deps.Vendor != nil {
+		reach := newReachabilitySetter(pool, deps.Money, cfg)
+		background = append(background, func(loopCtx context.Context) {
+			syncReachability(loopCtx, deps.Vendor, reach, log, sleepContext)
+		})
+	} else {
+		log.Info("the reachability sync is not started: module 1 cannot be asked in this process", "set", config.VarM1URL+" and "+config.VarM1KeySecret, "effect", "the price of a module 1 job follows the flag stored in the database")
+	}
 	var engine loopRunner // a nil *jobengine.Engine must not become a non-nil interface
 	if eng != nil {
 		engine = eng
 	}
-	stopLoops := runLoops(ctx, ent, engine, ready, func(loopCtx context.Context) {
-		syncReachability(loopCtx, reach, cfg.M1VendorReachable, log, sleepContext)
-	})
+	stopLoops := runLoops(ctx, ent, engine, ready, background...)
 
 	err = server.Run(ctx, sc, handler, draining.Store, log)
 	stopLoops()

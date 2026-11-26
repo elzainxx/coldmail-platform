@@ -214,6 +214,10 @@ func TestEveryMethodRefusesABadUserAndABadJobBeforeTheDatabase(t *testing.T) {
 		"CancelBeforeStart": func(u, j string) error { _, err := s.CancelBeforeStart(ctx, u, j); return err },
 		"PauseScheduled":    func(u, j string) error { _, err := s.PauseScheduled(ctx, u, j); return err },
 		"ResumeScheduled":   func(u, j string) error { _, err := s.ResumeScheduled(ctx, u, j); return err },
+		// the moves under their Phase 4 close-out names (the three above are thin callers of these): every request is judged before the database is asked
+		"Cancel": func(u, j string) error { _, err := s.Cancel(ctx, u, j); return err },
+		"Pause":  func(u, j string) error { _, err := s.Pause(ctx, u, j); return err },
+		"Resume": func(u, j string) error { _, err := s.Resume(ctx, u, j); return err },
 		"CreateDraft": func(u, j string) error {
 			_, err := s.CreateDraft(ctx, u, CreateReq{Module: ModuleVerify, Rows: []RowIn{{Email: "a@example.com"}}})
 			return err

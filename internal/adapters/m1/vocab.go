@@ -30,6 +30,51 @@ var (
 	submitStatusValues = []string{"accepted"}
 )
 
+// The two NON-VERDICT words (Phase 4 close-out C2, module 1 migration 0020): a row cancelled before its check began is served in the verdict object's shape with status `cancelled` and
+// reason `cancelled_by_caller`. They are words of module 1's own vocabularies `non_verdict_status` and `non_verdict_reason`, NOT members of `status` and `reason` (a verdict is never
+// cancelled), so they are kept apart from the seven sets above: the seven are what CheckVocabularies compares with the describe of the module, and these two are not (an older module has no
+// such sets; a describe that lists them shows as an additive extra, never a break). TestNonVerdictVocabListsAreTheSwitches holds each list equal to its switch, as for the seven.
+const (
+	// StatusCancelled is the status of a result row that was cancelled before its check began (free, no verdict).
+	StatusCancelled = "cancelled"
+	// ReasonCancelledByCaller is the only reason that status carries.
+	ReasonCancelledByCaller = "cancelled_by_caller"
+)
+
+var (
+	// nonVerdictStatusValues is the module's `non_verdict_status`: exactly one word.
+	nonVerdictStatusValues = []string{"cancelled"}
+	// nonVerdictReasonValues is the module's `non_verdict_reason`: exactly one word.
+	nonVerdictReasonValues = []string{"cancelled_by_caller"}
+)
+
+func knownNonVerdictStatus(s string) bool {
+	switch s {
+	case "cancelled":
+		return true
+	}
+	return false
+}
+
+func knownNonVerdictReason(s string) bool {
+	switch s {
+	case "cancelled_by_caller":
+		return true
+	}
+	return false
+}
+
+// cancelOutcomeValues is the `cancel_outcome` of POST /v1/jobs/{id}/cancel (ADR-0023): the three words, closed.
+var cancelOutcomeValues = []string{CancelOutcomeCancelled, CancelOutcomeAlreadyCancelled, CancelOutcomeAlreadyComplete}
+
+func knownCancelOutcome(s string) bool {
+	switch s {
+	case "cancelled", "already_cancelled", "already_complete":
+		return true
+	}
+	return false
+}
+
 func knownStatus(s string) bool {
 	switch s {
 	case "valid", "invalid", "risky", "unknown":

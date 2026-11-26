@@ -111,6 +111,8 @@ var chainRelations = map[string][]string{
 	"0014": {},
 	// platform_0015 adds no relation: three annotation columns of platform.jobs (next_poll_at, idle_polls, items_ensured_at), a CHECK, the trigger jobs_engine_schedule and the comment of public.job_items.status
 	"0015": {},
+	// platform_0016 adds no relation: the capability seeds of platform.modules (data), two rows of platform.job_transitions (data) and the amended text of platform.jobs_transition_guard
+	"0016": {},
 }
 
 // relationsThrough is the sorted union of what the listed versions add.
@@ -151,6 +153,10 @@ func downStepBefore(t *testing.T, c *pgx.Conn, v string) {
 	t.Helper()
 	when := "before down " + v
 	switch v {
+	case "0016":
+		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015", "0016"), when)
+		pauseCancelObjects(t, c, true, when)
+		engineScheduleObjects(t, c, true, when) // the migration below is whole
 	case "0015":
 		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015"), when)
 		engineScheduleObjects(t, c, true, when)
@@ -225,6 +231,14 @@ func downStepAfter(t *testing.T, c *pgx.Conn, v string) {
 	t.Helper()
 	when := "after down " + v
 	switch v {
+	case "0016":
+		// the capabilities are platform_0011's seeds again (no module pauses one job, only modules 2 and 3 cancel one), the two moves paused -> cancelling and paused -> completing are gone from the table, the guard is
+		// platform_0011's text (a job paused before its start is no longer judged by walls that only existed for the new moves) and everything of 0015 and below is untouched
+		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015"), when)
+		pauseCancelObjects(t, c, false, when)
+		engineScheduleObjects(t, c, true, when)
+		suppressedFlagObjects(t, c, true, when)
+		jobLifecycleObjects(t, c, true, when)
 	case "0015":
 		// the three columns, the CHECK, the trigger and its function are gone and the comment of public.job_items.status is the one of platform_0001 again; the suppressed flag of 0014 and everything below is untouched
 		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014"), when)
@@ -1078,7 +1092,7 @@ func TestRunnerLifecycle(t *testing.T) {
 
 	// The executable expectation of the migration chain. scripts/check-migrations.sh reads this literal and fails when the
 	// newest migration is not named in it, so a migration cannot be added without extending this test.
-	wantChain := []string{"0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015"}
+	wantChain := []string{"0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015", "0016"}
 
 	dir := repoMigrationsDir(t)
 	if onDisk := chainOnDisk(t, dir); !sameStrings(onDisk, wantChain) {

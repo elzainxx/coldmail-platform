@@ -76,7 +76,7 @@ func TestSetUnitReachable_RefusesWhatIsMalformedBeforeTheDatabaseIsAsked(t *test
 	}
 
 	// what is stored is the TRIMMED source; a blank one is never "fixed" into something else
-	if got, err := validateReachable("m1_vendor", "  config: PLATFORM_M1_VENDOR_REACHABLE \t"); err != nil || got != "config: PLATFORM_M1_VENDOR_REACHABLE" {
+	if got, err := validateReachable("m1_vendor", "  m1_describe \t"); err != nil || got != "m1_describe" {
 		t.Errorf("validateReachable trimmed to %q, %v", got, err)
 	}
 }
@@ -214,4 +214,45 @@ func (f *reachTx) sqls() []string {
 		out[i] = strings.Join(strings.Fields(s.sql), " ")
 	}
 	return out
+}
+
+// UnitReachability (the read the job store's reachability hook makes before it decides whether a flag needs writing): what is decided before the database is asked, and the meaning of the source.
+// What it reads from a real Postgres (the seed's source, the source of a change, its time) is proved by tests/harness (TestMoneyReachable_UnitReachabilityReadsTheFlagWithItsSource).
+func TestUnitReachability_RefusesAMalformedUnitBeforeTheDatabaseIsAsked(t *testing.T) {
+	st := deadStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	// control: a legal unit reaches the pool and fails on the connection, so the pool really is dead and the refusals below were decided before it
+	if u, err := st.UnitReachability(ctx, UnitM1Vendor); err == nil || errors.Is(err, ErrInvalid) || errors.Is(err, ErrUnknownUnit) || u != (UnitReachability{}) {
+		t.Fatalf("control: a legal unit on a dead pool returned %+v, %v; want a connection error and no value", u, err)
+	} else if !strings.HasPrefix(err.Error(), "money.unit_reachability: ") {
+		t.Errorf("the error does not name the operation: %v", err)
+	}
+	for name, unit := range map[string]string{"a blank unit": "", "a unit of spaces": "   ", "a unit of 65 bytes": strings.Repeat("u", 65), "a unit that is not UTF-8": "m1_\xffvendor", "a unit with a NUL": "m1\x00vendor"} {
+		var ie *InvalidError
+		if u, err := st.UnitReachability(ctx, unit); !errors.Is(err, ErrInvalid) || !errors.As(err, &ie) || ie.Field != "unit" || u != (UnitReachability{}) {
+			t.Errorf("%s: got %+v, %v; want an InvalidError on unit and no value", name, u, err)
+		}
+	}
+}
+
+func TestUnitReachability_OnlyModuleOnesOwnWordIsFromTheModule(t *testing.T) {
+	for _, c := range []struct {
+		source string
+		want   bool
+	}{
+		{ReachableSourceM1Describe, true},
+		{"m1_describe", true},
+		{"seed: the vendor fallback ships disabled", false},
+		{"config: PLATFORM_M1_" + "VENDOR_REACHABLE", false}, // what an earlier build wrote from its own configuration (spelled in two pieces: no file may name the removed variable)
+		{"test: set by hand", false},
+		{"", false},
+		{"M1_DESCRIBE", false},
+		{"m1_describe ", false}, // the store keeps the trimmed source: a padded one is not the word
+	} {
+		if got := (UnitReachability{Reachable: true, Source: c.source}).FromModule(); got != c.want {
+			t.Errorf("source %q: FromModule = %v, want %v", c.source, got, c.want)
+		}
+	}
 }

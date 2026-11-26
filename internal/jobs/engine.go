@@ -181,9 +181,11 @@ const (
 // (NotePoll), a job that made no progress is not due again until its backoff has passed, and a job that did (or is new, or was moved by somebody) goes to the back of the queue by the time it
 // became due, so a tick's limit cannot be spent for ever on the same hundred jobs whose module is down. The work is, by the DATABASE's clock:
 //   - every confirmed, running, cancelling and completing job that is DUE (next_poll_at is NULL or has passed);
+//   - every job PAUSED WHILE RUNNING that is due (paused_from = running: its module holds the campaign, so the engine tells it to pause, records what was in flight and, when the user resumes,
+//     resumes it; a job paused before its start has nothing to look at);
 //   - every scheduled job whose scheduled_start has come and that is due;
-//   - the jobs whose TIME has come, whatever their backoff: a confirmed or scheduled job past its start_deadline (the engine expires it on time) and a paused job past it (a job paused before its start
-//     that nobody resumed: the engine expires it and releases its reserve);
+//   - the jobs whose TIME has come, whatever their backoff: a confirmed or scheduled job past its start_deadline (the engine expires it on time) and a job paused BEFORE its start past it (nobody
+//     resumed it: the engine expires it and releases its reserve). A job paused while running has a start deadline long in its past and is NEVER expired: it is not in this set;
 //   - the REPAIR set, also whatever its backoff: every terminal job (succeeded, failed, cancelled, expired) whose reserve still holds a remainder (reserved - charged - released > 0): a crash window
 //     between the move and the release, or a job an administrator ended by hand.
 func (s *Store) EngineWork(ctx context.Context, limit int) ([]EngineJob, error) {
@@ -198,9 +200,11 @@ func (s *Store) EngineWork(ctx context.Context, limit int) ([]EngineJob, error) 
 			FROM platform.jobs j
 			LEFT JOIN platform.reserves rs ON rs.job_id = j.id
 			WHERE ((j.status IN ('confirmed', 'running', 'cancelling', 'completing')
+			        OR (j.status = 'paused' AND j.paused_from = 'running')
 			        OR (j.status = 'scheduled' AND j.scheduled_start IS NOT NULL AND j.scheduled_start <= now()))
 			       AND (j.next_poll_at IS NULL OR j.next_poll_at <= now()))
-			   OR (j.status IN ('confirmed', 'scheduled', 'paused') AND j.start_deadline IS NOT NULL AND j.start_deadline <= now())
+			   OR (j.status IN ('confirmed', 'scheduled') AND j.start_deadline IS NOT NULL AND j.start_deadline <= now())
+			   OR (j.status = 'paused' AND j.paused_from = 'scheduled' AND j.start_deadline IS NOT NULL AND j.start_deadline <= now())
 			   OR (j.status IN ('succeeded', 'failed', 'cancelled', 'expired') AND COALESCE(rs.reserved - rs.charged - rs.released, 0) > 0)
 			ORDER BY ord, j.id
 			LIMIT $1)
@@ -553,8 +557,9 @@ func (s *Store) markNeverSubmittedItems(ctx context.Context, tx pgx.Tx, jobID st
 	return int(tag.RowsAffected()), nil
 }
 
-// MarkSubmitted stamps submitted_at = now() on the named rows the module now holds, for a job that is confirmed, scheduled, running, cancelling or completing (a stamp for a job in any other status is
-// ErrNotAllowed, reason not_submittable: a draft's rows are nobody's to stamp). A row already stamped keeps its stamp (it is not an error and not a second write); a row that is not a pending row of
+// MarkSubmitted stamps submitted_at = now() on the named rows the module now holds, for a job that is confirmed, scheduled, running, cancelling or completing, or paused while it was running (a
+// submit that was in flight when the user paused, and that the module took, is recorded: the module holds those rows whatever the platform calls the job; a stamp for a job in any other status is
+// ErrNotAllowed, reason not_submittable: a draft's rows are nobody's to stamp, nor those of a job paused before its start). A row already stamped keeps its stamp (it is not an error and not a second write); a row that is not a pending row of
 // the job is left alone. Idempotent by construction: it is one statement, and a stamp is written once (the table refuses a second). ErrNotFound for an unknown job.
 func (s *Store) MarkSubmitted(ctx context.Context, jobID string, rowIDs []string) error {
 	if !isUUID(jobID) {
@@ -569,21 +574,22 @@ func (s *Store) MarkSubmitted(ctx context.Context, jobID string, rowIDs []string
 	}
 	tag, err := s.pool.Exec(ctx, `UPDATE platform.job_rows w SET submitted_at = now()
 		FROM platform.jobs j
-		WHERE j.id = w.job_id AND w.job_id = $1::uuid AND j.status IN ('confirmed', 'scheduled', 'running', 'cancelling', 'completing')
+		WHERE j.id = w.job_id AND w.job_id = $1::uuid
+		  AND (j.status IN ('confirmed', 'scheduled', 'running', 'cancelling', 'completing') OR (j.status = 'paused' AND j.paused_from = 'running'))
 		  AND w.state = 'pending' AND w.submitted_at IS NULL AND w.id = ANY($2::text[]::uuid[])`, jobID, ids)
 	if err != nil {
 		return opErr("mark submitted", s.fail(err))
 	}
 	if tag.RowsAffected() == 0 { // nothing newly stamped: they all were, or there is no such job, or the job is not in a state that holds rows: say which
-		var status string
-		if err := s.pool.QueryRow(ctx, `SELECT status FROM platform.jobs WHERE id = $1::uuid`, jobID).Scan(&status); err != nil {
+		var status, pausedFrom string
+		if err := s.pool.QueryRow(ctx, `SELECT status, COALESCE(paused_from, '') FROM platform.jobs WHERE id = $1::uuid`, jobID).Scan(&status, &pausedFrom); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return opErr("mark submitted", ErrNotFound)
 			}
 			return opErr("mark submitted", s.fail(err))
 		}
-		switch status {
-		case StatusConfirmed, StatusScheduled, StatusRunning, StatusCancelling, StatusCompleting:
+		switch {
+		case status == StatusConfirmed, status == StatusScheduled, status == StatusRunning, status == StatusCancelling, status == StatusCompleting, status == StatusPaused && pausedFrom == StatusRunning:
 		default:
 			return opErr("mark submitted", notAllowed(reasonNotSubmittable))
 		}
@@ -694,7 +700,7 @@ func decide(p preparedItem, ledgerUnit string, unpriced, metered bool) (resultDe
 // 'module', module_state = the outcome's state, decision/unit/rule from charge.Decide, the address and position read from the job's row in the same statement). The result of a charged item
 // carries the unit the LEDGER holds. An item decided unmapped (the charge table cannot classify it, or its unit is not part of the job's price snapshot) is recorded unmapped, never charged, and
 // raises one `flag` job event per rule naming it. NotFinal items are not recorded, and neither is an item that names no pending row of this job. Module 3 is not metered: no money call, every
-// item is free (M3-99, M3-01). The job must be running, cancelling or completing. After the commit the fault point settle.after_commit is hit (when something was recorded).
+// item is free (M3-99, M3-01). The job must be running, cancelling, completing or paused while it was running. After the commit the fault point settle.after_commit is hit (when something was recorded).
 //
 // Items are decided in one pass and settled in pages of money.MaxSettleItems; the call is idempotent: the same items again change nothing (RecordSummary.AlreadyRecorded says so).
 func (s *Store) RecordResults(ctx context.Context, jobID string, items []ResultItem) (RecordSummary, error) {
@@ -702,6 +708,12 @@ func (s *Store) RecordResults(ctx context.Context, jobID string, items []ResultI
 	_, err := s.engineTx(ctx, "record results", jobID, func(tx pgx.Tx, j Job, metered bool) error {
 		switch j.Status {
 		case StatusRunning, StatusCancelling, StatusCompleting:
+		case StatusPaused:
+			// a job paused WHILE RUNNING is held by its module, whose items in flight finish and are reported once: they are recorded and settled like any other. A job paused before its start
+			// submitted nothing and has nothing to record.
+			if j.PausedFrom != StatusRunning {
+				return notAllowed(reasonNotSettling)
+			}
 		default:
 			return notAllowed(reasonNotSettling)
 		}
@@ -896,15 +908,16 @@ func (s *Store) requireResults(ctx context.Context, tx pgx.Tx, jobID string) err
 	return nil
 }
 
-// Complete moves a running or cancelling job to completing as the engine, when and only when every pending row has a result: the CALLER (the engine) asserts that the module reported every item
-// final, this method refuses (ErrIncomplete, with the number of rows missing, nothing changed) while a pending row has no result, so that the platform can never end a job over an item it has no
-// outcome for. A job that is already completing is returned unchanged (a replay); any other status is refused by the lifecycle.
+// Complete moves a running, cancelling or paused job to completing as the engine, when and only when every pending row has a result: the CALLER (the engine) asserts that the module reported every
+// item final, this method refuses (ErrIncomplete, with the number of rows missing, nothing changed) while a pending row has no result, so that the platform can never end a job over an item it has no
+// outcome for. A job paused while running completes the normal way when everything the module held finished while it was held (paused -> completing, platform_0016); for a job paused before its start
+// the database refuses the move (job_unsubmitted_pause_never_completing). A job that is already completing is returned unchanged (a replay); any other status is refused by the lifecycle.
 func (s *Store) Complete(ctx context.Context, jobID string) (Job, error) {
 	return s.engineTx(ctx, "complete", jobID, func(tx pgx.Tx, j Job, _ bool) error {
 		if j.Status == StatusCompleting {
 			return nil
 		}
-		if j.Status == StatusRunning || j.Status == StatusCancelling {
+		if j.Status == StatusRunning || j.Status == StatusCancelling || j.Status == StatusPaused {
 			if err := s.requireResults(ctx, tx, j.ID); err != nil {
 				return err
 			}
@@ -1179,6 +1192,44 @@ func (s *Store) AlertStale(ctx context.Context, jobID string, after time.Duratio
 	// nothing written: an unknown job is an error, a job that is not active or was alerted lately is simply "did not write"
 	if err := s.whyNotWritten(ctx, jobID); err != nil && !errors.Is(err, ErrNotAllowed) {
 		return false, opErr("alert stale", err)
+	}
+	return false, nil
+}
+
+// The two words of a note that tells the module's hold of a job (NoteModuleHold): the module's own report says it holds the job's campaign (module_paused) or has let it go (module_resumed).
+const (
+	NoteModulePaused  = "module_paused"
+	NoteModuleResumed = "module_resumed"
+)
+
+// NoteModuleHold tells the job's history what the MODULE says about its hold of the job, so that the lag between the API's answer ("the job is paused" the moment the user asked) and the module's
+// acknowledgement (its report says the campaign is held, which the engine reads at its next look) is visible to the user and the operator. It writes ONE `note` job event (actor engine; reason
+// beginning module_paused or module_resumed; detail {"event", "paused", "module", "job_status"}) when, and only when, held differs from what the job's LAST such note said (a job starts as not held),
+// in one statement, and says whether it wrote: a replay, a restarted engine, a second engine and a module that keeps saying the same thing write nothing more. Only a job that holds credits or a module
+// (running, paused, cancelling, completing) is written for. It is a report, never a move: the job is not touched. ErrNotFound for an unknown job.
+func (s *Store) NoteModuleHold(ctx context.Context, jobID string, held bool) (bool, error) {
+	if !isUUID(jobID) {
+		return false, opErr("note module hold", ErrNotFound)
+	}
+	word, reason := NoteModuleResumed, "module_resumed: the module reports the job's campaign released; it claims the job's remaining items again"
+	if held {
+		word, reason = NoteModulePaused, "module_paused: the module reports the job's campaign held; it claims none of the job's remaining items until the job is resumed or cancelled (items it had already claimed finish)"
+	}
+	tag, err := s.pool.Exec(ctx, `INSERT INTO platform.job_events (job_id, kind, actor_kind, reason, detail)
+		SELECT j.id, 'note', 'engine', $2::text, jsonb_build_object('event', $3::text, 'paused', $4::boolean, 'module', j.module_id, 'job_status', j.status)
+		FROM platform.jobs j
+		WHERE j.id = $1::uuid AND j.status IN ('running', 'paused', 'cancelling', 'completing')
+		  AND COALESCE((SELECT (e.detail->>'paused')::boolean FROM platform.job_events e
+		                WHERE e.job_id = j.id AND e.kind = 'note' AND e.detail->>'event' IN ('module_paused', 'module_resumed')
+		                ORDER BY e.id DESC LIMIT 1), false) IS DISTINCT FROM $4::boolean`, jobID, reason, word, held)
+	if err != nil {
+		return false, opErr("note module hold", s.fail(err))
+	}
+	if tag.RowsAffected() == 1 {
+		return true, nil
+	}
+	if err := s.whyNotWritten(ctx, jobID); err != nil && !errors.Is(err, ErrNotAllowed) {
+		return false, opErr("note module hold", err)
 	}
 	return false, nil
 }

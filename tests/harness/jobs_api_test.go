@@ -596,19 +596,20 @@ func TestJobsAPI_TheMovesAreTypedWhereAModuleCannotAndFreeWhereNothingStarted(t 
 	e.requireBal("released", A, "m1", 100, 0)
 	e.requireBooks("after the cancel")
 
-	// a running module 1 job cannot be cancelled or paused: the database says so, the API says it in words
+	// a running module 1 job has no per-job PAUSE: the database says so, the API says it in words. It CAN be cancelled since platform_0016 (module 1's own cancel): the request is a 200 and the job is cancelling
 	id2 := e.create(A, "m1", "b1@example.test", "b2@example.test", "b3@example.test")
 	fp2, _ := e.previewJob(A, id2)
 	e.confirmJob(A, id2, fp2, e.key()).obj(t, 200)
 	jobWalkTo(t, e.admin, id2, "running")
 	before := e.writes()
-	if d := e.json(A, "POST", "/v1/jobs/"+id2+"/cancel", nil).refused(t, 409, "not_allowed"); d["reason"] != "cancel_not_supported" {
-		t.Errorf("cancelling a running module 1 job: %v", d)
-	}
 	if d := e.json(A, "POST", "/v1/jobs/"+id2+"/pause", nil).refused(t, 409, "not_allowed"); d["reason"] != "pause_not_supported" {
-		t.Errorf("pausing a running job: %v", d)
+		t.Errorf("pausing a running module 1 job: %v", d)
 	}
-	e.requireWrites("the refused moves of a running job", before)
+	e.requireWrites("the refused pause of a running module 1 job", before)
+	if got := e.json(A, "POST", "/v1/jobs/"+id2+"/cancel", nil).obj(t, 200); dig(got, "job", "status") != "cancelling" || dig(got, "job", "cancel_requested_at") == nil {
+		t.Fatalf("cancelling a running module 1 job answered %v", got["job"])
+	}
+	e.requireBal("a cancelling module 1 job holds its reserve", A, "m1", 97, 3)
 
 	// a confirmed job is not discarded (it holds credits): the store's word, not a constraint name
 	id3 := e.create(B, "m2", "c1@example.test", "c2@example.test")
@@ -653,6 +654,122 @@ func TestJobsAPI_TheMovesAreTypedWhereAModuleCannotAndFreeWhereNothingStarted(t 
 		t.Errorf("reopening a draft: %v", d)
 	}
 	e.requireBooks("after the moves")
+}
+
+// The three moves on RUNNING jobs, over HTTP, per module (platform_0016): a pause of a running module 2 or 3 job is a 200 and the job is paused from running at once (the module is told by the engine, not
+// by the request), a resume is a 200 that goes back to running, a cancel is a 200 that says cancelling (also for a job paused while running and for module 1), and module 1's pause is the typed 409
+// not_allowed / pause_not_supported. The control of every refusal is the capability row (cancel_not_supported is reserved: only a flipped row reaches it). No answer holds a constraint's name or an address.
+func TestJobsAPI_PauseResumeAndCancelOfARunningJobAnswerPerModuleAndTheCapabilityRowDecides(t *testing.T) {
+	e := newJapEnv(t)
+	A, B, C := mnyUserA, mnyUserB, mnyUserC
+	e.fund(A, "m2", 100)
+	e.fund(B, "m1", 100)
+	e.enableM3(C, false)
+	run := func(user, module string, n int) string {
+		t.Helper()
+		emails := make([]string, n)
+		for i := range emails {
+			emails[i] = fmt.Sprintf("%s-row%d@example.test", module, i+1)
+		}
+		id := e.create(user, module, emails...)
+		fp, _ := e.previewJob(user, id)
+		e.confirmJob(user, id, fp, e.key()).obj(t, 200)
+		jobWalkTo(t, e.admin, id, "running")
+		return id
+	}
+	clean := func(what string, r japResp) {
+		t.Helper()
+		if s := string(r.Body); strings.Contains(s, "job_module_") || strings.Contains(s, "job_submitted_") || strings.Contains(s, "job_unsubmitted_") {
+			t.Errorf("%s: the answer holds a constraint's name: %s", what, s)
+		}
+		if r.Status >= 400 && strings.Contains(string(r.Body), "@") {
+			t.Errorf("%s: a refusal holds an address: %s", what, r.Body)
+		}
+	}
+	path := func(id, move string) string { return "/v1/jobs/" + id + "/" + move }
+
+	// MODULE 2: pause, resume, pause, cancel
+	id2 := run(A, "m2", 3)
+	e.requireBal("a running module 2 job", A, "m2", 97, 3)
+	if got := e.json(B, "POST", path(id2, "pause"), nil).refused(t, 404, "not_found"); got != nil && len(got) != 0 {
+		t.Errorf("another user's pause: %v", got)
+	}
+	if e.jobStatus(id2) != "running" {
+		t.Fatalf("another user's pause moved the job to %s", e.jobStatus(id2))
+	}
+	r := e.json(A, "POST", path(id2, "pause"), nil)
+	clean("the pause of a running module 2 job", r)
+	got := r.obj(t, 200)
+	if dig(got, "job", "status") != "paused" || dig(got, "job", "paused_from") != "running" || dig(got, "job", "cancel_requested_at") != nil || len(got) != 1 {
+		t.Fatalf("the pause of a running module 2 job answered %v, want the job paused from running", got)
+	}
+	e.requireBal("a job paused while running holds its reserve", A, "m2", 97, 3)
+	r = e.json(A, "POST", path(id2, "resume"), nil)
+	clean("the resume", r)
+	if got := r.obj(t, 200); dig(got, "job", "status") != "running" || dig(got, "job", "paused_from") != nil {
+		t.Fatalf("the resume answered %v, want the job running again (not scheduled)", got["job"])
+	}
+	if d := e.json(A, "POST", path(id2, "resume"), nil).refused(t, 409, "not_allowed"); d["reason"] != "not_paused" {
+		t.Errorf("resuming a job that is not paused: %v", d)
+	}
+	e.json(A, "POST", path(id2, "pause"), nil).obj(t, 200)
+	r = e.json(A, "POST", path(id2, "cancel"), nil)
+	clean("the cancel of a job paused while running", r)
+	if got := r.obj(t, 200); dig(got, "job", "status") != "cancelling" || dig(got, "job", "paused_from") != nil || dig(got, "job", "cancel_requested_at") == nil {
+		t.Fatalf("the cancel of a job paused while running answered %v, want cancelling (never cancelled: the engine ends it)", got["job"])
+	}
+	e.requireBal("a cancelling job that was paused still holds its reserve", A, "m2", 97, 3)
+	before := e.writes()
+	r = e.json(A, "POST", path(id2, "pause"), nil)
+	clean("the pause of a cancelling job", r)
+	if d := r.refused(t, 409, "not_allowed"); d["reason"] != "not_allowed" {
+		t.Errorf("pausing a cancelling job: %v, want the generic not_allowed (the lifecycle has no such move)", d)
+	}
+	e.requireWrites("the refused pause of a cancelling job", before)
+
+	// MODULE 3 (no credits: an entitlement): the same pause and cancel
+	id3 := run(C, "m3", 2)
+	if got := e.json(C, "POST", path(id3, "pause"), nil).obj(t, 200); dig(got, "job", "status") != "paused" || dig(got, "job", "paused_from") != "running" {
+		t.Fatalf("the pause of a running module 3 job answered %v", got["job"])
+	}
+	if got := e.json(C, "POST", path(id3, "resume"), nil).obj(t, 200); dig(got, "job", "status") != "running" {
+		t.Fatalf("the resume of a module 3 job answered %v", got["job"])
+	}
+	if got := e.json(C, "POST", path(id3, "cancel"), nil).obj(t, 200); dig(got, "job", "status") != "cancelling" {
+		t.Fatalf("the cancel of a running module 3 job answered %v", got["job"])
+	}
+
+	// MODULE 1: no per-job pause (typed, nothing written), a cancel that is a 200
+	id1 := run(B, "m1", 3)
+	before = e.writes()
+	r = e.json(B, "POST", path(id1, "pause"), nil)
+	clean("the pause of a running module 1 job", r)
+	if d := r.refused(t, 409, "not_allowed"); d["reason"] != "pause_not_supported" {
+		t.Errorf("pausing a running module 1 job: %v", d)
+	}
+	e.requireWrites("the refused pause of a running module 1 job", before)
+	// THE CONTROL OF THE REFUSAL: it is the capability row's. The same job, the same request, once the row says module 1 can pause one job: a 200 (put back at once)
+	e.exec("UPDATE platform.modules SET can_pause = true WHERE id = 'm1'")
+	if got := e.json(B, "POST", path(id1, "pause"), nil).obj(t, 200); dig(got, "job", "status") != "paused" {
+		t.Fatalf("with can_pause true the pause of the module 1 job answered %v", got["job"])
+	}
+	e.exec("UPDATE platform.modules SET can_pause = false WHERE id = 'm1'")
+	e.json(B, "POST", path(id1, "resume"), nil).obj(t, 200)
+	// cancel_not_supported is RESERVED: no seed reaches it, a flipped row does, and the same request is a 200 once the row is back
+	e.exec("UPDATE platform.modules SET can_cancel = false WHERE id = 'm1'")
+	before = e.writes()
+	r = e.json(B, "POST", path(id1, "cancel"), nil)
+	clean("the cancel of a module 1 job whose module cannot", r)
+	if d := r.refused(t, 409, "not_allowed"); d["reason"] != "cancel_not_supported" {
+		t.Errorf("cancelling a running job of a module whose can_cancel is false: %v", d)
+	}
+	e.requireWrites("the refused cancel", before)
+	e.exec("UPDATE platform.modules SET can_cancel = true WHERE id = 'm1'")
+	if got := e.json(B, "POST", path(id1, "cancel"), nil).obj(t, 200); dig(got, "job", "status") != "cancelling" || dig(got, "job", "cancel_requested_at") == nil {
+		t.Fatalf("the cancel of a running module 1 job answered %v", got["job"])
+	}
+	e.requireBal("a cancelling module 1 job holds its reserve", B, "m1", 97, 3)
+	e.requireBooks("after the moves of the running jobs")
 }
 
 // ---- the results and the CSV ---------------------------------------------------------------------------------------

@@ -17,8 +17,7 @@ import (
 
 // jobChains is, for each target status, the chains of statuses a job passes through to reach it. A walk starts at the job's CURRENT status, takes the first chain of the target that contains it and
 // goes on from there, so a job can be walked to a state from draft, or from wherever an earlier step left it. A chain needs no start at draft (a failed job can come from any active state) and each
-// ends at the target. Statuses that are not reachable from the current one (succeeded from cancelling: a cancelled job never succeeds; cancelling for module 1: it has no cancel) have no chain and the
-// walk fails, saying so.
+// ends at the target. Statuses that are not reachable from the current one (succeeded from cancelling: a cancelled job never succeeds) have no chain and the walk fails, saying so. (Since platform_0016 every module can cancel a running job, module 1 included.)
 var jobChains = map[string][][]string{
 	"draft":     {{"previewed", "draft"}},
 	"previewed": {{"draft", "previewed"}},
@@ -29,7 +28,8 @@ var jobChains = map[string][][]string{
 		{"draft", "previewed", "scheduled", "running"},
 		{"paused", "scheduled", "running"},
 	},
-	// no module can pause a RUNNING job (platform.modules.can_pause is false for all of them), so a paused job is a job whose start was deferred
+	// a job in the "paused" chain is a job whose start was deferred: it is paused FROM SCHEDULED (nothing was submitted). A job paused WHILE RUNNING (modules 2 and 3 can pause one since platform_0016)
+	// has two possible futures a status-to-status chain cannot name (resume to running, cancel through the engine), so a test that wants one makes it with jobPauseWhileRunning.
 	"paused": {{"draft", "previewed", "scheduled", "paused"}},
 	"cancelling": {
 		{"draft", "previewed", "confirmed", "running", "cancelling"},
@@ -74,6 +74,7 @@ var jobUserHops = map[string]bool{
 	"scheduled>paused":    true, "scheduled>cancelled": true,
 	"paused>scheduled": true, "paused>running": true, "paused>cancelled": true,
 	"running>paused": true, "running>cancelling": true,
+	"paused>cancelling": true, // platform_0016: the cancel of a job that was paused while running goes through the engine (a user's or an admin's move; the engine's own move out of a pause is paused>completing)
 }
 
 // jobMoveSQL is the one sanctioned statement of a move (the store's, and the fixtures'): the job, the status it goes to, the kind of actor, the actor's id (NULL for the engine) and the reason.
@@ -176,6 +177,24 @@ func jobWalkToWith(t *testing.T, db ledgerDB, id, target string, o jobOpts) {
 	}
 	for _, to := range path {
 		jobHopWith(t, db, id, to, o)
+	}
+}
+
+// jobPauseWhileRunning makes the job a job PAUSED WHILE IT WAS RUNNING (paused_from = running): it is walked to running (whatever its status is now, on the hand-written chains) and then its user pauses it.
+// It needs a module that can pause one job (platform.modules.can_pause: modules 2 and 3 since platform_0016; module 1 has no per-job pause, and the hop fails the test saying what the database said). The
+// job is NOT the one of the 'paused' chain (draft, previewed, scheduled, paused), which paused from scheduled and submitted nothing.
+func jobPauseWhileRunning(t *testing.T, db ledgerDB, id string) {
+	t.Helper()
+	jobPauseWhileRunningWith(t, db, id, jobOpts{})
+}
+
+// jobPauseWhileRunningWith is jobPauseWhileRunning with the choices of jobOpts (the deadline the move into confirmed or scheduled carries).
+func jobPauseWhileRunningWith(t *testing.T, db ledgerDB, id string, o jobOpts) {
+	t.Helper()
+	jobWalkToWith(t, db, id, "running", o)
+	jobHopWith(t, db, id, "paused", o)
+	if from := ledgerString(t, db, "SELECT COALESCE(paused_from, '-') FROM platform.jobs WHERE id = $1", id); from != "running" {
+		t.Fatalf("fixture: job %s was paused from %q, want running", id, from)
 	}
 }
 

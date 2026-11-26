@@ -28,8 +28,13 @@ import (
 //	          (jobs.EngineJob.ModuleRef). The contract hands Observe exactly that, nothing more, and module 1 must read the handle from it: with none, or another, it is ErrWait and hands over nothing
 //	          (a module that remembers the handle itself would pass every other check and fail the first restart); a sender has no handle and does not need one
 //	callback  an error of the engine's callback ends the observation and comes back as it was (errors.Is), never taken for an answer of the module
-//	cancel    module 1 is ErrNotSupported; a sender takes its queued items back as `cancelled` (one result each, once), leaves what already settled alone and is idempotent
-//	outage    a module that cannot answer is ErrWait on every call, changes nothing, and what it reports after it is back is what it reported before
+//	cancel    every module takes its queued items back as `cancelled` (one result each, once; module 1 words it {m1, cancelled, cancelled_by_caller}, the one row of the charge table that names its cancel),
+//	          leaves what already settled alone and is idempotent
+//	pause     a sender HOLDS a campaign when asked (idempotent) and says so in its REPORT (Observation.Paused), never in the answer of the call: while held its worker claims no queued item, an item
+//	          claimed before the pause finishes while held and is handed over once with the module's own outcome, nothing is invented for the rest, and a resume lets the same campaign go on (idempotent)
+//	          until every row is handed over once; a cancel of a held campaign cancels its queued rows and ends the hold; module 1 has no per-job pause: ErrNotSupported and never held
+//	outage    a module that cannot answer is ErrWait on every call (module 1's Pause and Resume, which have no route to wait for, are ErrNotSupported or ErrWait), changes nothing, and what it reports
+//	          after it is back is what it reported before
 
 // Subject is one Module under the contract with the levers the contract needs on the module's own side.
 type Subject struct {
@@ -45,6 +50,10 @@ type Subject struct {
 	Settle func(ref string, o charge.Outcome)
 	// Down makes the module unreachable (true) or reachable again (false).
 	Down func(down bool)
+	// Claim is the module's WORKER trying to claim one queued item (by the row's id): true when it put it in flight, false when the module's own rules refuse (a held or cancelled campaign, an item
+	// that is not queued). It is how the contract sees whether a held campaign is really held: a report that says paused beside a worker that goes on claiming is a module that lies. Required for the
+	// senders (the pause checks fail without it: an instrument that cannot see the worker proves nothing); module 1 has no pause and needs none.
+	Claim func(ref string) bool
 }
 
 // NewSubject builds a Subject for module ("m1", "m2" or "m3") with n rows, fresh for one subtest.
@@ -142,6 +151,8 @@ func Checks() []Check {
 		{"observe: module 1 reads its handle from the job it is handed", 3, CheckObserveReference},
 		{"observe: the error of the callback comes back as it was", 3, CheckCallbackError},
 		{"cancel", 5, CheckCancel},
+		{"pause: a held campaign claims nothing, what was in flight finishes, and a resume lets it go on", 5, CheckPauseResume},
+		{"cancel of a held campaign ends the hold", 5, CheckCancelWhileHeld},
 		{"outage: ErrWait on every call and nothing changes", 4, CheckOutage},
 	}
 }
@@ -497,16 +508,19 @@ func CheckCallbackError(ctx context.Context, module string, s *Subject) []string
 	return p
 }
 
-// CheckCancel: module 1 cannot; a sender takes its queued items back, leaves what settled alone, and a repeat changes nothing.
+// cancelledOutcome is what a module reports for an item it took back before it was claimed: module 1 words it with its own reason (the row M1-24 of the charge table), the senders with none (module 2's
+// reason `cancelled` is set aside by withoutCancelReason).
+func cancelledOutcome(module string) charge.Outcome {
+	if module == jobs.ModuleVerify {
+		return charge.Outcome{Module: jobs.ModuleVerify, State: "cancelled", Reason: "cancelled_by_caller"}
+	}
+	return charge.Outcome{Module: module, State: "cancelled"}
+}
+
+// CheckCancel: every module takes its queued items back as cancelled (module 1 since POST /v1/jobs/{id}/cancel), leaves what settled alone, and a repeat changes nothing.
 func CheckCancel(ctx context.Context, module string, s *Subject) []string {
 	if p := submitAll(ctx, s); len(p) > 0 {
 		return p
-	}
-	if module == jobs.ModuleVerify {
-		if err := s.Module.Cancel(ctx, s.Job); !errors.Is(err, jobengine.ErrNotSupported) {
-			return []string{fmt.Sprintf("module 1 has no cancel and answered %v: want ErrNotSupported", err)}
-		}
-		return nil
 	}
 	want := settleFirst(s, 1)
 	var p []string
@@ -514,7 +528,7 @@ func CheckCancel(ctx context.Context, module string, s *Subject) []string {
 		return []string{"cancel failed: " + err.Error()}
 	}
 	for _, r := range s.Rows[1:] {
-		want[r.ID] = charge.Outcome{Module: module, State: "cancelled"}
+		want[r.ID] = cancelledOutcome(module)
 	}
 	h, err := observe(ctx, s, 0)
 	if err != nil {
@@ -551,7 +565,7 @@ func withoutCancelReason(in map[string]charge.Outcome) map[string]charge.Outcome
 	return out
 }
 
-// CheckOutage: a module that cannot answer is ErrWait on submit, observe and (for a sender) cancel; it changes nothing, and what it says when it is back is what it said before.
+// CheckOutage: a module that cannot answer is ErrWait on submit, observe, cancel, pause and resume (module 1's pause and resume: ErrNotSupported or ErrWait); it changes nothing, and what it says when it is back is what it said before.
 func CheckOutage(ctx context.Context, module string, s *Subject) []string {
 	if p := submitAll(ctx, s); len(p) > 0 {
 		return p
@@ -569,9 +583,16 @@ func CheckOutage(ctx context.Context, module string, s *Subject) []string {
 	if h, err := observe(ctx, s, 0); !errors.Is(err, jobengine.ErrWait) || len(h.items) != 0 {
 		p = append(p, fmt.Sprintf("observe of a module that is down answered %v and handed over %d item(s): want ErrWait and nothing", err, len(h.items)))
 	}
-	if module != jobs.ModuleVerify {
-		if err := s.Module.Cancel(ctx, s.Job); !errors.Is(err, jobengine.ErrWait) {
-			p = append(p, fmt.Sprintf("cancel of a module that is down answered %v: want ErrWait", err))
+	if err := s.Module.Cancel(ctx, s.Job); !errors.Is(err, jobengine.ErrWait) {
+		p = append(p, fmt.Sprintf("cancel of a module that is down answered %v: want ErrWait", err))
+	}
+	for name, call := range map[string]func(context.Context, jobs.EngineJob) error{"pause": s.Module.Pause, "resume": s.Module.Resume} {
+		err := call(ctx, s.Job)
+		switch {
+		case module == jobs.ModuleVerify && (errors.Is(err, jobengine.ErrNotSupported) || errors.Is(err, jobengine.ErrWait)): // no route to wait for: either says "nothing happened"
+		case module != jobs.ModuleVerify && errors.Is(err, jobengine.ErrWait):
+		default:
+			p = append(p, fmt.Sprintf("%s of a module that is down answered %v: want ErrWait (module 1, which has no pause, ErrNotSupported or ErrWait)", name, err))
 		}
 	}
 	s.Down(false)
@@ -582,8 +603,212 @@ func CheckOutage(ctx context.Context, module string, s *Subject) []string {
 	for _, d := range diffOutcomes(after.items, want) {
 		p = append(p, "after the outage: "+d)
 	}
-	if after.obs.Terminal != before.obs.Terminal || after.obs.Total != before.obs.Total || after.obs.Complete != before.obs.Complete {
-		p = append(p, fmt.Sprintf("the outage changed what the module says: %+v before, %+v after", before.obs, after.obs))
+	if after.obs.Terminal != before.obs.Terminal || after.obs.Total != before.obs.Total || after.obs.Complete != before.obs.Complete || after.obs.Paused != before.obs.Paused {
+		p = append(p, fmt.Sprintf("the outage changed what the module says: %+v before, %+v after (a pause or a resume or a cancel that was refused for the outage must have changed nothing)", before.obs, after.obs))
+	}
+	return p
+}
+
+// prefixed puts a label in front of each problem.
+func prefixed(label string, problems []string) []string {
+	out := make([]string, len(problems))
+	for i, p := range problems {
+		out[i] = label + p
+	}
+	return out
+}
+
+// CheckPauseResume: a sender HOLDS a campaign when asked and says so in its report; while it is held its worker claims nothing, an item claimed before the pause finishes while held and is handed over once
+// with the module's own outcome, and nothing is invented for the rest; a resume lets the same campaign go on until every row is handed over once. Both calls are idempotent. Module 1 has no per-job pause:
+// ErrNotSupported for both, and its report is never held.
+func CheckPauseResume(ctx context.Context, module string, s *Subject) []string {
+	if p := submitAll(ctx, s); len(p) > 0 {
+		return p
+	}
+	var p []string
+	if module == jobs.ModuleVerify {
+		for _, c := range []struct {
+			name string
+			call func(context.Context, jobs.EngineJob) error
+		}{{"pause", s.Module.Pause}, {"resume", s.Module.Resume}} {
+			if err := c.call(ctx, s.Job); !errors.Is(err, jobengine.ErrNotSupported) {
+				p = append(p, fmt.Sprintf("module 1 has no per-job pause and its %s answered %v: want ErrNotSupported", c.name, err))
+			}
+		}
+		h, err := observe(ctx, s, 0)
+		if err != nil {
+			return append(p, "observe failed: "+err.Error())
+		}
+		if h.obs.Paused {
+			p = append(p, "module 1 reports a held campaign although it has no pause")
+		}
+		return p
+	}
+	if s.Claim == nil {
+		return []string{"the subject has no Claim lever: the contract cannot see whether a held campaign claims anything, and a pause that cannot be seen to hold proves nothing"}
+	}
+	id := func(i int) string { return s.Rows[i].ID }
+	if !s.Claim(id(1)) {
+		return []string{"a queued item of a campaign that is not held could not be claimed: the worker is not working, so the pause cannot be told from a module that never claims"}
+	}
+	want := settleFirst(s, 1) // row 0 final, row 1 in flight (claimed before the pause), the rest queued
+
+	if err := s.Module.Pause(ctx, s.Job); err != nil {
+		return append(p, "pause failed: "+err.Error())
+	}
+	h, err := observe(ctx, s, 0)
+	if err != nil {
+		return append(p, "observe after the pause failed: "+err.Error())
+	}
+	if !h.obs.Paused {
+		p = append(p, "after the pause the module's report does not say paused (the report, not the answer of the call, is what says a campaign is held)")
+	}
+	if h.obs.Complete {
+		p = append(p, "a held campaign with queued items is called complete")
+	}
+	p = append(p, prefixed("while held: ", diffOutcomes(h.items, want))...)
+	if h.obs.Terminal != 1 || h.obs.Total != len(s.Rows) {
+		p = append(p, fmt.Sprintf("while held the observation says total %d, terminal %d, want %d and 1: the item in flight is not final and nothing is invented for the queued ones", h.obs.Total, h.obs.Terminal, len(s.Rows)))
+	}
+	// idempotent
+	if err := s.Module.Pause(ctx, s.Job); err != nil {
+		p = append(p, "a second pause of a held campaign failed: "+err.Error()+" (a repeat is never an error)")
+	}
+	if again, err := observe(ctx, s, 0); err != nil {
+		p = append(p, "observe after the second pause failed: "+err.Error())
+	} else if !again.obs.Paused || again.obs.Terminal != h.obs.Terminal || again.obs.Total != h.obs.Total {
+		p = append(p, fmt.Sprintf("a second pause changed what the module says: %+v, then %+v", h.obs, again.obs))
+	}
+	// the worker claims nothing while the campaign is held
+	for _, i := range []int{2, 3} {
+		if s.Claim(id(i)) {
+			p = append(p, "the module's worker claimed the queued item "+id(i)+" of a campaign it reports held")
+		}
+	}
+	// the item claimed BEFORE the pause finishes while held, and is reported once
+	o := s.Finals[1%len(s.Finals)]
+	s.Settle(id(1), o)
+	want[id(1)] = o
+	fin, err := observe(ctx, s, 0)
+	if err != nil {
+		return append(p, "observe after the item in flight finished failed: "+err.Error())
+	}
+	p = append(p, prefixed("the item in flight finished while held: ", diffOutcomes(fin.items, want))...)
+	if len(fin.dups) > 0 {
+		p = append(p, fmt.Sprintf("an item was handed over twice in one observation: %v", fin.dups))
+	}
+	if !fin.obs.Paused || fin.obs.Complete || fin.obs.Terminal != 2 {
+		p = append(p, fmt.Sprintf("after the item in flight finished the held campaign says %+v, want paused, not complete, terminal 2", fin.obs))
+	}
+
+	// resume: idempotent, the report lets go, the worker works again
+	if err := s.Module.Resume(ctx, s.Job); err != nil {
+		return append(p, "resume failed: "+err.Error())
+	}
+	rel, err := observe(ctx, s, 0)
+	if err != nil {
+		return append(p, "observe after the resume failed: "+err.Error())
+	}
+	if rel.obs.Paused {
+		p = append(p, "after the resume the module's report still says paused")
+	}
+	p = append(p, prefixed("after the resume: ", diffOutcomes(rel.items, want))...) // nothing was un-done, nothing invented
+	if err := s.Module.Resume(ctx, s.Job); err != nil {
+		p = append(p, "a second resume failed: "+err.Error()+" (a campaign that is not held is a no-op, never an error)")
+	}
+	if !s.Claim(id(2)) {
+		p = append(p, "after the resume the module's worker still cannot claim a queued item: the campaign was not let go (or the resume cancelled it)")
+	}
+	// everything finishes: every row handed over once, equal to what the module reported
+	for i := 2; i < len(s.Rows); i++ {
+		o := s.Finals[i%len(s.Finals)]
+		s.Settle(id(i), o)
+		want[id(i)] = o
+	}
+	done, err := observe(ctx, s, 0)
+	if err != nil {
+		return append(p, "observe after everything finished failed: "+err.Error())
+	}
+	p = append(p, prefixed("after the resume the rest finished: ", diffOutcomes(done.items, want))...)
+	if len(done.dups) > 0 {
+		p = append(p, fmt.Sprintf("an item was handed over twice in one observation: %v", done.dups))
+	}
+	if !done.obs.Complete || done.obs.Terminal != len(s.Rows) || done.obs.Paused {
+		p = append(p, fmt.Sprintf("every row finished and the module says %+v, want complete, terminal %d and not held", done.obs, len(s.Rows)))
+	}
+	return p
+}
+
+// CheckCancelWhileHeld: a cancel of a held campaign takes its queued rows back as cancelled (once each), lets the item in flight finish, ENDS the hold (the report says not paused), and neither a repeat
+// of the cancel nor a resume afterwards changes anything or un-cancels a row.
+func CheckCancelWhileHeld(ctx context.Context, module string, s *Subject) []string {
+	if module == jobs.ModuleVerify {
+		return nil // no pause to hold a campaign with
+	}
+	if p := submitAll(ctx, s); len(p) > 0 {
+		return p
+	}
+	if s.Claim == nil {
+		return []string{"the subject has no Claim lever: the contract cannot put an item in flight before the pause"}
+	}
+	id := func(i int) string { return s.Rows[i].ID }
+	if !s.Claim(id(1)) {
+		return []string{"a queued item of a campaign that is not held could not be claimed"}
+	}
+	want := settleFirst(s, 1)
+	var p []string
+	if err := s.Module.Pause(ctx, s.Job); err != nil {
+		return []string{"pause failed: " + err.Error()}
+	}
+	if h, err := observe(ctx, s, 0); err != nil || !h.obs.Paused {
+		return []string{fmt.Sprintf("the campaign is not held before the cancel (%v, %+v): the check has nothing to prove", err, h.obs)}
+	}
+	if err := s.Module.Cancel(ctx, s.Job); err != nil {
+		return []string{"cancel of a held campaign failed: " + err.Error()}
+	}
+	for i := 2; i < len(s.Rows); i++ {
+		want[id(i)] = cancelledOutcome(module)
+	}
+	h, err := observe(ctx, s, 0)
+	if err != nil {
+		return []string{"observe after the cancel failed: " + err.Error()}
+	}
+	if h.obs.Paused {
+		p = append(p, "after the cancel the module's report still says paused: a cancel ends the hold")
+	}
+	p = append(p, prefixed("after the cancel of a held campaign: ", diffOutcomes(withoutCancelReason(h.items), want))...)
+	if len(h.dups) > 0 {
+		p = append(p, fmt.Sprintf("an item was handed over twice in one observation: %v", h.dups))
+	}
+	if h.obs.Complete || h.obs.Terminal != len(s.Rows)-1 {
+		p = append(p, fmt.Sprintf("the item in flight has not finished and the module says %+v, want not complete, terminal %d", h.obs, len(s.Rows)-1))
+	}
+	// the item in flight finishes
+	o := s.Finals[1%len(s.Finals)]
+	s.Settle(id(1), o)
+	want[id(1)] = o
+	done, err := observe(ctx, s, 0)
+	if err != nil {
+		return append(p, "observe after the item in flight finished failed: "+err.Error())
+	}
+	p = append(p, prefixed("after the item in flight finished: ", diffOutcomes(withoutCancelReason(done.items), want))...)
+	if !done.obs.Complete || done.obs.Terminal != len(s.Rows) {
+		p = append(p, fmt.Sprintf("every row is final and the module says %+v, want complete, terminal %d", done.obs, len(s.Rows)))
+	}
+	// a repeat of the cancel and a resume change nothing and un-cancel nothing
+	if err := s.Module.Cancel(ctx, s.Job); err != nil {
+		p = append(p, "a second cancel failed: "+err.Error())
+	}
+	if err := s.Module.Resume(ctx, s.Job); err != nil {
+		p = append(p, "a resume after the cancel failed: "+err.Error()+" (a cancelled campaign is a no-op for a resume)")
+	}
+	after, err := observe(ctx, s, 0)
+	if err != nil {
+		return append(p, "observe after the repeat and the resume failed: "+err.Error())
+	}
+	p = append(p, prefixed("after a second cancel and a resume: ", diffOutcomes(withoutCancelReason(after.items), want))...)
+	if after.obs.Paused || !after.obs.Complete {
+		p = append(p, fmt.Sprintf("after a second cancel and a resume the module says %+v, want complete and not held", after.obs))
 	}
 	return p
 }

@@ -31,6 +31,10 @@ import (
 // keyset paging) with the one thing those do not have, STATE: an item the module holds changes state when the test settles it, so that Submit, Observe and Cancel can be driven in turn.
 // Module 1 has no such kit (its adapter's tests keep their stand-in to themselves), so its stand-in is written here from the shapes of the adapter's recorded fixtures. NONE of this is in the
 // harness, where the real modules are run and never mocked.
+//
+// HAND-WRITTEN (Phase 4 close-out D1). The routes the modules gained after the recordings (module 2 and 3's POST /v1/pause and /v1/resume and the campaign report's `paused`, module 1's POST
+// /v1/jobs/{id}/cancel with `cancelled` and `cancel_requested` in its status and `cancelled` rows in its listing) are written here BY HAND from the modules' Docs/api-contract.md at their new heads;
+// they are not recordings, and the harness's live tests replace them with the real modules after the pin. Everything that depends on them is named HandWritten.
 
 const (
 	rigUser     = "2f6d1c1e-7a4b-4c55-9f0e-5b7a3c9d8e21"
@@ -92,11 +96,30 @@ type senderRig struct {
 	conflict []string      // the causes module 3 names in its 409 (module 2's 409 has no details)
 	// dropListing makes the campaign report's item list omit its last n items while its totals still count them (a listing that contradicts the module's own totals)
 	dropListing atomic.Int64
+
+	// pause and resume (HAND-WRITTEN from the modules' contracts)
+	onHold       bool         // the module's stored pause of the campaign (under mu)
+	noPause      atomic.Bool  // the describe does NOT carry the capability key: a module older than the pause routes
+	describe     []byte       // the recorded describe of the module, whose capabilities the stand-in edits
+	describes    atomic.Int64 // GET /v1/describe calls that reached the stand-in
+	pauses       atomic.Int64 // POST /v1/pause calls that reached the stand-in
+	resumes      atomic.Int64 // POST /v1/resume calls that reached the stand-in
+	pauseAnswers atomic.Int64 // when above 0: the next n pause calls answer 500 (a module that fails the call)
+	// dispatchPaused is the report's dispatch_paused (the operator's rung), which says nothing about one campaign: the engine must not read it as the campaign's pause
+	dispatchPaused atomic.Bool
+	// cancelledItems are the job items the platform marked cancelled (public.job_items.status = 'cancelled'): a RUN of one the module does not hold is refused 409 job_item_cancelled (HAND-WRITTEN
+	// from the modules' contracts); a replay of one it holds still answers the existing job (the replay wins)
+	cancelledItems map[string]bool
 }
 
 func newSenderRig(t *testing.T, module string) *senderRig {
 	t.Helper()
 	r := &senderRig{t: t, module: module, items: map[string]*senderItem{}, conflict: []string{"campaign_active"}}
+	dir := "../adapters/m3/testdata/contract"
+	if module == jobs.ModuleSendManaged {
+		dir = "../adapters/m2/testdata/contract"
+	}
+	r.describe = sendapitest.Read(t, dir, "describe.ok.json") // the module's recorded describe: it carries no pause capability (it was recorded before the routes), the stand-in adds it
 	r.stub = sendapitest.NewStub(t, r.handle)
 	r.token = sendapitest.Token(t)
 	return r
@@ -156,8 +179,12 @@ func (r *senderRig) header(total int, items []map[string]any) map[string]any {
 		return n
 	}
 	terminal := count("sent", "bounced", "failed", "cancelled")
+	r.mu.Lock()
+	held := r.onHold
+	r.mu.Unlock()
 	h := map[string]any{
-		"dispatch_paused": false,
+		"dispatch_paused": r.dispatchPaused.Load(), // the OPERATOR's module-wide rung: not this campaign's pause
+		"paused":          held,                    // THIS campaign's stored pause (hand-written: the additive key of both modules' campaign reports), never dispatch_paused
 		"totals": map[string]any{"total": total, "sent": count("sent"), "bounced": count("bounced"), "failed": count("failed"), "in_flight": count("assigned", "sending"),
 			"pending": count("queued"), "waiting_for_capacity": 0, "cancelled": count("cancelled")},
 		"progress": map[string]any{"terminal": terminal, "fraction_complete": 0, "is_complete": total > 0 && terminal == total},
@@ -178,6 +205,12 @@ func (r *senderRig) handle(w http.ResponseWriter, req *http.Request, n int) {
 		r.run(w, r.stub.Requests()[n-1].Body)
 	case req.Method == http.MethodPost && req.URL.Path == "/v1/cancel":
 		r.cancel(w, r.stub.Requests()[n-1].Body)
+	case req.Method == http.MethodPost && req.URL.Path == "/v1/pause":
+		r.hold(w, r.stub.Requests()[n-1].Body, true)
+	case req.Method == http.MethodPost && req.URL.Path == "/v1/resume":
+		r.hold(w, r.stub.Requests()[n-1].Body, false)
+	case req.Method == http.MethodGet && req.URL.Path == "/v1/describe":
+		r.describeBody(w)
 	case req.Method == http.MethodGet && req.URL.Path == "/v1/report":
 		r.mu.Lock()
 		items := make([]map[string]any, 0, len(r.order))
@@ -249,6 +282,11 @@ func (r *senderRig) run(w http.ResponseWriter, b []byte) {
 	}
 	r.mu.Lock()
 	it, held := r.items[body.JobItemID]
+	if !held && r.cancelledItems[body.JobItemID] {
+		r.mu.Unlock()
+		sendapitest.JSON(w, 409, sendapitest.Envelope("job_item_cancelled"))
+		return
+	}
 	if c := r.capacity.Load(); !held && c > 0 && int64(len(r.order)) >= c {
 		r.mu.Unlock()
 		if r.module == jobs.ModuleSendBYO {
@@ -297,8 +335,128 @@ func (r *senderRig) cancel(w http.ResponseWriter, b []byte) {
 			done++
 		}
 	}
+	r.onHold = false // a cancel ENDS a pause: module 2 deletes it, module 3's report says paused false (a cancelled campaign is never held)
 	r.mu.Unlock()
 	sendapitest.JSON(w, 200, fmt.Sprintf(`{"campaign_id":%q,"cancelled":%d,"in_flight":%d,"already_terminal":%d}`, body.CampaignID, cancelled, inFlight, done))
+}
+
+// markCancelled is the platform writing its terminal marker on a job item that was never submitted.
+func (r *senderRig) markCancelled(ref string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.cancelledItems == nil {
+		r.cancelledItems = map[string]bool{}
+	}
+	r.cancelledItems[ref] = true
+}
+
+// capName is the name of the pause capability in this module's describe (module 2 campaign_pause_resume, module 3 pause_resume).
+func (r *senderRig) capName() string {
+	if r.module == jobs.ModuleSendManaged {
+		return "campaign_pause_resume"
+	}
+	return "pause_resume"
+}
+
+// describeBody answers GET /v1/describe with the module's recorded describe and, unless noPause is set, the capability key (HAND-WRITTEN: the recordings predate the routes).
+func (r *senderRig) describeBody(w http.ResponseWriter) {
+	r.describes.Add(1)
+	var doc map[string]any
+	if err := json.Unmarshal(r.describe, &doc); err != nil {
+		r.t.Errorf("the recorded describe is not JSON: %v", err)
+		return
+	}
+	caps, _ := doc["capabilities"].(map[string]any)
+	if caps == nil {
+		caps = map[string]any{}
+		doc["capabilities"] = caps
+	}
+	if !r.noPause.Load() {
+		caps[r.capName()] = true
+	}
+	out, _ := json.Marshal(doc)
+	sendapitest.JSON(w, 200, string(out))
+}
+
+// hold is POST /v1/pause (pause true) and POST /v1/resume (false), HAND-WRITTEN from the two contracts: a pause stores the campaign's hold only when the tenant's campaign has live work (queued, assigned
+// or sending); a resume deletes it; a foreign, unknown or empty campaign answers the same 200 with paused false and nothing is stored; both are idempotent. Module 2 answers {campaign_id, paused,
+// changed, state, queued, in_flight, terminal}, module 3 {campaign_id, state, paused}, each with the module's own state words (which no caller reads).
+func (r *senderRig) hold(w http.ResponseWriter, b []byte, pause bool) {
+	if pause {
+		r.pauses.Add(1)
+		if n := r.pauseAnswers.Load(); n > 0 && r.pauseAnswers.Add(-1) >= 0 {
+			sendapitest.JSON(w, 500, sendapitest.Envelope("internal_error"))
+			return
+		}
+	} else {
+		r.resumes.Add(1)
+	}
+	var body struct {
+		CampaignID string `json:"campaign_id"`
+		UserID     string `json:"user_id"`
+	}
+	_ = json.Unmarshal(b, &body)
+	r.mu.Lock()
+	known := body.UserID == rigUser && body.CampaignID == rigCampaign && len(r.order) > 0
+	var queued, inFlight, terminal, cancelled int
+	for _, id := range r.order {
+		switch it := r.items[id]; it.state {
+		case "queued":
+			queued++
+		case "assigned", "sending":
+			inFlight++
+		case "cancelled":
+			terminal++
+			cancelled++
+		default:
+			terminal++
+		}
+	}
+	changed := false
+	if known {
+		switch {
+		case pause && !r.onHold && queued+inFlight > 0:
+			r.onHold, changed = true, true
+		case !pause && r.onHold:
+			r.onHold, changed = false, true
+		}
+	}
+	paused := known && r.onHold
+	r.mu.Unlock()
+	live := queued + inFlight
+	state := "running"
+	switch {
+	case !known && r.module == jobs.ModuleSendManaged:
+		state = "empty"
+	case !known:
+		state = "unknown"
+	case paused:
+		state = "paused"
+	case live == 0 && cancelled > 0:
+		state = "cancelled"
+	case live == 0 && r.module == jobs.ModuleSendManaged:
+		state = "complete"
+	case live == 0:
+		state = "finished"
+	}
+	if r.module == jobs.ModuleSendManaged {
+		sendapitest.JSON(w, 200, fmt.Sprintf(`{"campaign_id":%q,"paused":%t,"changed":%t,"state":%q,"queued":%d,"in_flight":%d,"terminal":%d}`, body.CampaignID, paused, changed, state, queued, inFlight, terminal))
+		return
+	}
+	sendapitest.JSON(w, 200, fmt.Sprintf(`{"campaign_id":%q,"state":%q,"paused":%t}`, body.CampaignID, state, paused))
+}
+
+// claim is the module's worker trying to claim one queued item: refused while the campaign is held (the claiming statement skips a held campaign) and for an item that is not queued; otherwise the
+// item is in flight (sending), which a held campaign lets finish.
+func (r *senderRig) claim(ref string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	it := r.items[ref]
+	if r.onHold || it == nil || it.state != "queued" {
+		return false
+	}
+	it.state = "sending"
+	return true
 }
 
 // settle is the module's worker finishing one item.
@@ -343,13 +501,15 @@ func (r *senderRig) held() []string {
 type m1Item struct {
 	ref, addr string
 	settled   bool
+	cancelled bool // taken back before its check began (module 1's cancel): no verdict, free
 	out       charge.Outcome
 }
 
 type m1Job struct {
-	id    string
-	body  string
-	items []*m1Item
+	id              string
+	body            string
+	items           []*m1Item
+	cancelRequested bool
 }
 
 // m1Rig is a stateful stand-in of module 1's three job routes: the idempotent bulk submit (a replay of the same key and body answers the same job with the replay header, the same key with
@@ -399,6 +559,8 @@ func (r *m1Rig) handle(w http.ResponseWriter, req *http.Request, n int) {
 	switch {
 	case req.Method == http.MethodPost && path == "/v1/verify/bulk":
 		r.submit(w, req, r.stub.Requests()[n-1].Body)
+	case req.Method == http.MethodPost && strings.HasPrefix(path, "/v1/jobs/") && strings.HasSuffix(path, "/cancel"):
+		r.cancel(w, strings.TrimSuffix(strings.TrimPrefix(path, "/v1/jobs/"), "/cancel"))
 	case req.Method == http.MethodGet && strings.HasPrefix(path, "/v1/jobs/") && strings.HasSuffix(path, "/results"):
 		r.results(w, req, strings.TrimSuffix(strings.TrimPrefix(path, "/v1/jobs/"), "/results"))
 	case req.Method == http.MethodGet && strings.HasPrefix(path, "/v1/jobs/"):
@@ -461,6 +623,35 @@ func (r *m1Rig) accepted(j *m1Job) string {
 	return fmt.Sprintf(`{"job_id":%q,"status":"accepted","counts":{"total":%d,"enqueued":%d,"duplicate":%d,"malformed":0},"processing_paused":false}`, j.id, len(j.items)+extra, len(j.items)-dup+extra, dup)
 }
 
+// statusBody is the job-status body of GET /v1/jobs/{id} and, with outcome set, of POST /v1/jobs/{id}/cancel (HAND-WRITTEN from module 1's contract: counts and totals gain cancelled, the job
+// gains cancel_requested, the identities are submitted = settled + cancelled + pending and a job is complete when every row is final, cancelled included). The caller holds r.mu.
+func (r *m1Rig) statusBody(j *m1Job, outcome string) string {
+	by := map[string]int{"valid": 0, "invalid": 0, "risky": 0, "unknown": 0}
+	settled, cancelled := 0, 0
+	for _, it := range j.items {
+		switch {
+		case it.cancelled:
+			cancelled++
+		case it.settled:
+			settled++
+			by[it.out.State]++
+		}
+	}
+	total := len(j.items)
+	pending := total - settled - cancelled
+	complete := pending == 0
+	st := "running"
+	if complete {
+		st = "complete"
+	}
+	extra := ""
+	if outcome != "" {
+		extra = fmt.Sprintf(`,"cancel_outcome":%q`, outcome)
+	}
+	return fmt.Sprintf(`{"job_id":%q,"status":%q,"complete":%t,"counts":{"total":%d,"settled":%d,"pending":%d,"cancelled":%d},"totals":{"submitted":%d,"settled":%d,"pending":%d,"duplicates":0,"malformed":0,"cancelled":%d,"by_status":{"valid":%d,"invalid":%d,"risky":%d,"unknown":%d}},"processing_paused":false,"cancel_requested":%t%s}`,
+		j.id, st, complete, total, settled, pending, cancelled, total, settled, pending, cancelled, by["valid"], by["invalid"], by["risky"], by["unknown"], j.cancelRequested, extra)
+}
+
 func (r *m1Rig) status(w http.ResponseWriter, id string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -469,22 +660,7 @@ func (r *m1Rig) status(w http.ResponseWriter, id string) {
 		sendapitest.JSON(w, 404, sendapitest.Envelope("not_found", [2]string{"id", "not_found"}))
 		return
 	}
-	by := map[string]int{"valid": 0, "invalid": 0, "risky": 0, "unknown": 0}
-	settled := 0
-	for _, it := range j.items {
-		if it.settled {
-			settled++
-			by[it.out.State]++
-		}
-	}
-	total := len(j.items)
-	complete := settled == total
-	st := "running"
-	if complete {
-		st = "complete"
-	}
-	sendapitest.JSON(w, 200, fmt.Sprintf(`{"job_id":%q,"status":%q,"complete":%t,"counts":{"total":%d,"settled":%d,"pending":%d},"totals":{"submitted":%d,"settled":%d,"pending":%d,"duplicates":0,"malformed":0,"by_status":{"valid":%d,"invalid":%d,"risky":%d,"unknown":%d}},"processing_paused":false}`,
-		id, st, complete, total, settled, total-settled, total, settled, total-settled, by["valid"], by["invalid"], by["risky"], by["unknown"]))
+	sendapitest.JSON(w, 200, r.statusBody(j, ""))
 }
 
 func (r *m1Rig) results(w http.ResponseWriter, req *http.Request, id string) {
@@ -511,7 +687,11 @@ func (r *m1Rig) results(w http.ResponseWriter, req *http.Request, id string) {
 	}
 	var rows []map[string]any
 	for ord, it := range j.items {
-		if !it.settled || ord < start {
+		if !(it.settled || it.cancelled) || ord < start {
+			continue
+		}
+		if it.cancelled { // HAND-WRITTEN from module 1's contract: a cancelled row has no verdict, an empty flags and signals, and the two non-verdict words
+			rows = append(rows, map[string]any{"ordinal": ord, "item_id": it.ref, "status": "cancelled", "reason": "cancelled_by_caller", "flags": map[string]any{}, "signals": map[string]any{}})
 			continue
 		}
 		signals := map[string]any{}
@@ -551,6 +731,9 @@ func (r *m1Rig) settle(ref string, o charge.Outcome) {
 	for _, j := range r.jobs {
 		for _, it := range j.items {
 			if it.ref == ref {
+				if it.cancelled {
+					r.t.Errorf("the stand-in was told to settle the row %s, which it cancelled", ref)
+				}
 				it.settled, it.out = true, o
 				return
 			}
@@ -566,6 +749,9 @@ func (r *m1Rig) settleAll(finals []charge.Outcome) {
 	n := 0
 	for _, j := range r.jobs {
 		for _, it := range j.items {
+			if it.cancelled {
+				continue
+			}
 			it.settled, it.out = true, finals[n%len(finals)]
 			n++
 		}
@@ -586,6 +772,39 @@ func (r *m1Rig) clearDuplicates() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.dupOf = nil
+}
+
+// cancel is POST /v1/jobs/{id}/cancel, HAND-WRITTEN from module 1's contract: every row not yet settled becomes cancelled (the stand-in has no row in flight: a row is final when the test settles it),
+// the answer is the job status plus cancel_outcome (cancelled; already_cancelled for a repeat; already_complete, without marking the job cancelled, when every row was final before).
+func (r *m1Rig) cancel(w http.ResponseWriter, id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	j := r.jobs[id]
+	if j == nil {
+		sendapitest.JSON(w, 404, sendapitest.Envelope("not_found", [2]string{"id", "not_found"}))
+		return
+	}
+	final := 0
+	for _, it := range j.items {
+		if it.settled || it.cancelled {
+			final++
+		}
+	}
+	outcome := "cancelled"
+	switch {
+	case j.cancelRequested:
+		outcome = "already_cancelled"
+	case final == len(j.items):
+		outcome = "already_complete"
+	default:
+		j.cancelRequested = true
+		for _, it := range j.items {
+			if !it.settled && !it.cancelled {
+				it.cancelled = true
+			}
+		}
+	}
+	sendapitest.JSON(w, 200, r.statusBody(j, outcome))
 }
 
 func (r *m1Rig) jobCount() int {
@@ -616,7 +835,7 @@ func realSubject(t *testing.T, module string, n int) *jobenginetest.Subject {
 	default:
 		rig := newSenderRig(t, module)
 		reg = rig.registry(t, 3)
-		s.Settle, s.Down = rig.settle, rig.down.Store
+		s.Settle, s.Down, s.Claim = rig.settle, rig.down.Store, rig.claim
 	}
 	mod, err := reg.For(ctx, rigUser, module)
 	if err != nil {

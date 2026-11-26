@@ -146,6 +146,7 @@ type store interface {
 	NotePoll(ctx context.Context, jobID, status string, progressed bool, base, ceiling time.Duration) (bool, error)
 	AlertStale(ctx context.Context, jobID string, after time.Duration, detail map[string]any) (bool, error)
 	Flag(ctx context.Context, jobID string, detail map[string]any) error
+	NoteModuleHold(ctx context.Context, jobID string, held bool) (bool, error)
 }
 
 var _ store = (*jobs.Store)(nil)
@@ -182,8 +183,9 @@ type Engine struct {
 
 	mu       sync.Mutex
 	lastObs  map[string]observed  // job id -> what the last observation said (memory only)
-	flagged  map[string]time.Time // job id -> when the engine last raised a flag for it (memory only)
+	flagged  map[string]time.Time // job id -> when the engine last raised a flag for it (memory only; a key may carry a prefix for a flag of its own kind)
 	refusals map[string]time.Time // job id -> when the engine last flagged a refusal of a job whose rows the module holds (memory only)
+	holds    map[string]holdMemo  // job id -> what the module last said about holding the job's campaign, and when the engine told the store (memory only: it only spares a statement)
 
 	ticks, standby, steps, waits, conflicts, unexpected, panics, refused atomic.Int64
 }
@@ -193,6 +195,14 @@ type observed struct {
 	at       time.Time
 	terminal int
 	complete bool
+	paused   bool   // the module's report said it holds the job's campaign: the job is looked at again at every look, so that the engine sees the hold end at once
+	status   string // the job's status when it was observed: a job that has since MOVED (resumed, cancelled) is observed at once
+}
+
+// holdMemo is what the engine last told the store about the module's hold of a job.
+type holdMemo struct {
+	held bool
+	at   time.Time
 }
 
 // New builds an engine. It refuses a missing store, modules or gate (an engine with no gate would lead everywhere) and a Config with a negative dial.
@@ -219,7 +229,7 @@ func newEngine(st store, mods Modules, gate Gate, log *slog.Logger, now func() t
 	if now == nil {
 		now = time.Now
 	}
-	return &Engine{st: st, mods: mods, gate: gate, log: log, now: now, cfg: cfg, lastObs: map[string]observed{}, flagged: map[string]time.Time{}, refusals: map[string]time.Time{}}, nil
+	return &Engine{st: st, mods: mods, gate: gate, log: log, now: now, cfg: cfg, lastObs: map[string]observed{}, flagged: map[string]time.Time{}, refusals: map[string]time.Time{}, holds: map[string]holdMemo{}}, nil
 }
 
 // Stats returns the counters.
@@ -360,6 +370,11 @@ func (e *Engine) prune(work []jobs.EngineJob) {
 			}
 		}
 	}
+	for id, h := range e.holds {
+		if !live[id] && h.at.Before(horizon) {
+			delete(e.holds, id)
+		}
+	}
 }
 
 // step is the next step of one job, by the status the work read. It says whether the step made PROGRESS (a row handed to the module, a result recorded, the job moved or ended): what the engine
@@ -369,7 +384,11 @@ func (e *Engine) step(ctx context.Context, j jobs.EngineJob) (progressed bool, e
 	case jobs.StatusConfirmed, jobs.StatusScheduled:
 		return e.starting(ctx, j)
 	case jobs.StatusPaused:
-		if j.DeadlinePassed {
+		if j.PausedFrom == jobs.StatusRunning {
+			// paused WHILE RUNNING: the module holds the campaign. Never expired (a job that was running has no start to miss: the database refuses it and EngineWork does not offer it for it)
+			return e.pausedRunning(ctx, j)
+		}
+		if j.DeadlinePassed { // paused BEFORE its start: nothing was submitted, and a job nobody resumed expires at its start deadline
 			return e.expire(ctx, j)
 		}
 		return false, nil
@@ -539,7 +558,8 @@ func cutReason(s string) string {
 
 // running is the step of a running job: submit the rows the module does not hold yet (in batches, until the module takes fewer than it was offered), observe what it reports (at most every
 // SettleEvery unless it showed unrecorded terminal items) and record every page, note progress when anything was submitted or recorded, and, when the module says it is complete and every pending
-// row has a result, complete and finish the job in this same step. A submit that fails does not keep the engine from observing: a module that refuses new rows still reports the old ones (a refusal for good, which fails the job only when the module holds none of its rows, is the one that ends the step: see refusal).
+// row has a result, complete and finish the job in this same step. When the module's report says it still HOLDS the campaign (Observation.Paused: the user resumed the job, or the engine died between
+// the move and the call) the step asks the module to resume (Module.Resume, idempotent) and the next look's report is what says it has. A submit that fails does not keep the engine from observing: a module that refuses new rows still reports the old ones (a refusal for good, which fails the job only when the module holds none of its rows, is the one that ends the step: see refusal).
 func (e *Engine) running(ctx context.Context, j jobs.EngineJob) (bool, error) {
 	mod, err := e.mods.For(ctx, j.UserID, j.Module)
 	if err != nil {
@@ -568,6 +588,16 @@ func (e *Engine) running(ctx context.Context, j jobs.EngineJob) (bool, error) {
 			firstErr = err
 		}
 	}
+	if observed && obs.Paused {
+		// THE MODULE STILL HOLDS A JOB THE PLATFORM CALLS RUNNING: the user resumed it, or the engine died between the move to running and this call. Level-triggered: whatever brought it here, the module's own
+		// report says it is held, so ask it to let go (idempotent: a campaign that is not held is a no-op). The call's answer is not the state: the next look's report is, and it writes the `module_resumed` note.
+		if err := mod.Resume(ctx, j); err != nil {
+			e.flagIfNotSupported(ctx, j, "resume", err)
+			if firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
 	if progressed {
 		if err := e.st.NoteProgress(ctx, j.ID); err != nil && firstErr == nil {
 			firstErr = err
@@ -586,6 +616,108 @@ func (e *Engine) running(ctx context.Context, j jobs.EngineJob) (bool, error) {
 		e.checkStale(ctx, j)
 	}
 	return progressed, firstErr
+}
+
+// ---- paused while running -------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+// pausedRunning is the step of a job the user PAUSED WHILE IT WAS RUNNING (status paused, paused_from running). The platform's answer was immediate (the job is paused the moment the API answered); the
+// MODULE is told here, at the engine's next look, so the module stops claiming at most one engine tick after that (a wake-up of the job: a change of status clears its backoff) and the items it had
+// already claimed finish. LEVEL-TRIGGERED, every call idempotent, nothing remembered that matters (a restart, a second instance or a crash between the move and the call finds the same action):
+//
+//  1. OBSERVE, always (not throttled): record every item that became final since the last look (the items that were in flight when the pause came finish and are reported once; they are settled and
+//     charged exactly as for a running job, because the store records results of a job paused while running). The observation is also the only witness of whether the module HOLDS the campaign
+//     (Observation.Paused: the campaign report's own `paused`). A module that cannot answer leaves the job as it is (ErrWait): nothing is invented.
+//  2. HOLD: when the report says the campaign is neither held nor complete, call Module.Pause (idempotent) and observe again at once, so a module that held it at the first call is seen holding it
+//     in this very step. It is repeated at every look until the report says paused. A call that answers is not a campaign that is held; only the report is.
+//  3. NEVER SUBMIT: no row is offered to the module while the job is paused (jobs.Store.PendingRows has none for a paused job, and this step never calls Submit): the rows not yet handed over wait for
+//     the resume. A submit that was in flight when the user paused and that the module took is stamped by MarkSubmitted (it holds those rows), never offered again.
+//  4. NO STALENESS ALERT and no start-deadline expiry: nothing is expected to progress while a job is held, so a quiet job is not a stale one (checkStale is not called, and the store's AlertStale
+//     writes nothing for a paused job), and a job that was running never expires. The guard resets the staleness clock when the job resumes.
+//  5. COMPLETE THE NORMAL WAY: when the module reports every item it holds final (everything had been claimed before the pause and has now finished) and every pending row has a result, the job
+//     completes (paused -> completing, then completing -> succeeded: the database allows the first pair only for a job that paused from running), as a running job would. When rows are still to be
+//     handed over (the pause came before the engine had submitted them all) it stays paused: the rest is the resume's.
+//
+// The lag between the API's answer and the module's acknowledgement is visible as the `module_paused` note the engine writes when the report first says paused (and `module_resumed` when it stops
+// saying so); the job's own `paused` transition event is the API's answer. The reserve and the slot stay held for as long as the job is paused, and nothing ends a pause but the user (resume, cancel)
+// or an administrator: there is no automatic expiry.
+func (e *Engine) pausedRunning(ctx context.Context, j jobs.EngineJob) (bool, error) {
+	mod, err := e.mods.For(ctx, j.UserID, j.Module)
+	if err != nil {
+		return false, err
+	}
+	var firstErr error
+	progressed := false
+	keep := func(err error) {
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+
+	recorded, obs, err := e.observe(ctx, j, mod)
+	progressed = recorded > 0
+	if err != nil {
+		if progressed {
+			keep(e.st.NoteProgress(ctx, j.ID))
+		}
+		return progressed, err
+	}
+	if !obs.Paused && !obs.Complete {
+		if perr := mod.Pause(ctx, j); perr != nil {
+			e.flagIfNotSupported(ctx, j, "pause", perr)
+			keep(perr)
+		} else {
+			r2, o2, oerr := e.observe(ctx, j, mod)
+			recorded += r2
+			progressed = progressed || r2 > 0
+			if oerr != nil {
+				keep(oerr)
+			} else {
+				obs = o2
+			}
+		}
+	}
+	if progressed {
+		keep(e.st.NoteProgress(ctx, j.ID))
+	}
+	if obs.Complete && firstErr == nil {
+		finished, err := e.settleCompletion(ctx, j, false)
+		keep(err)
+		if finished {
+			return true, firstErr
+		}
+	}
+	return progressed, firstErr
+}
+
+// flagIfNotSupported raises ONE `flag` event per staleness interval when the module answered ErrNotSupported to a pause or a resume: the database lets the platform pause a job of a module that, by its own
+// describe or its routes, cannot (a module older than the route), so the job is held HERE while the module may still be sending. The engine invents nothing and keeps looking; an administrator decides.
+// The event names the operation and the module, never the module's text.
+func (e *Engine) flagIfNotSupported(ctx context.Context, j jobs.EngineJob, op string, err error) {
+	if !errors.Is(err, ErrNotSupported) {
+		return
+	}
+	key := op + ":" + j.ID
+	e.mu.Lock()
+	last, seen := e.flagged[key]
+	due := !seen || e.now().Sub(last) >= e.cfg.staleAfter(j.Module)
+	if due {
+		e.flagged[key] = e.now()
+	}
+	e.mu.Unlock()
+	e.log.ErrorContext(ctx, "a module that does not support the per-job "+op+" has a job the platform paused or resumed; nothing was sent to it", "job", j.ID, "module", j.Module)
+	if !due {
+		return
+	}
+	if ferr := e.st.Flag(ctx, j.ID, map[string]any{
+		"reason": "the module cannot " + op + " this job (it does not declare the per-campaign pause capability): the job is " + map[string]string{"pause": "paused", "resume": "running"}[op] +
+			" in the platform while the module is not told; nothing is invented and an administrator decides",
+		"operation": op, "module": j.Module,
+	}); ferr != nil {
+		e.mu.Lock()
+		delete(e.flagged, key) // not written: the next look tries again
+		e.mu.Unlock()
+		e.log.WarnContext(ctx, "the engine could not write its flag", "job", j.ID, "why", ferr.Error())
+	}
 }
 
 // submitRest hands the job's remaining rows to the module in batches and returns how many it took in all.
@@ -622,7 +754,8 @@ func (e *Engine) shouldObserve(j jobs.EngineJob) bool {
 	o, ok := e.lastObs[j.ID]
 	e.mu.Unlock()
 	switch {
-	case !ok, o.complete, o.terminal > j.PendingResults, e.cfg.SettleEvery < 0:
+	// the job has MOVED since it was last looked at (the user resumed it: the module may still hold it), or the module said it holds the campaign (the engine must see the hold end at once)
+	case !ok, o.complete, o.paused, o.status != j.Status, o.terminal > j.PendingResults, e.cfg.SettleEvery < 0:
 		return true
 	}
 	return e.now().Sub(o.at) >= e.cfg.SettleEvery
@@ -650,9 +783,29 @@ func (e *Engine) observe(ctx context.Context, j jobs.EngineJob, mod Module) (int
 		return recorded, Observation{}, err
 	}
 	e.mu.Lock()
-	e.lastObs[j.ID] = observed{at: e.now(), terminal: obs.Terminal, complete: obs.Complete}
+	e.lastObs[j.ID] = observed{at: e.now(), terminal: obs.Terminal, complete: obs.Complete, paused: obs.Paused, status: j.Status}
 	e.mu.Unlock()
+	e.noteHold(ctx, j, obs.Paused)
 	return recorded, obs, nil
+}
+
+// noteHold tells the job's history what the module's report says about holding the campaign, when that is NEW to this engine (the first look of a job it has no memory of, or a change): the store
+// writes the `module_paused` / `module_resumed` note only when the module's state differs from the last one the history holds, so a restart, a second instance and a repeated look write nothing more.
+// A failed write is logged and forgotten here, so the next look tries again; it never fails the step (the note is a report, not a move).
+func (e *Engine) noteHold(ctx context.Context, j jobs.EngineJob, held bool) {
+	e.mu.Lock()
+	prev, known := e.holds[j.ID]
+	e.holds[j.ID] = holdMemo{held: held, at: e.now()}
+	e.mu.Unlock()
+	if known && prev.held == held {
+		return
+	}
+	if _, err := e.st.NoteModuleHold(ctx, j.ID, held); err != nil {
+		e.mu.Lock()
+		delete(e.holds, j.ID)
+		e.mu.Unlock()
+		e.log.WarnContext(ctx, "the engine could not note the module's hold of a job; it tries again at the next look", "job", j.ID, "module", j.Module, "why", err.Error())
+	}
 }
 
 // settleCompletion is what a job does when its module says it is complete: re-read the counts the recording just changed; when every pending row has a result, complete and finish the job (finished

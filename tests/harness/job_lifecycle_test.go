@@ -53,6 +53,10 @@ var jobLegal = []jobMove{
 	{"paused", "cancelled", []string{"user", "admin"}},
 	{"paused", "expired", []string{"engine"}},
 	{"paused", "failed", []string{"admin", "engine"}},
+	// platform_0016: a job paused WHILE RUNNING is held by its module, so its cancel goes through the engine (paused -> cancelling) and, when the module reports every item final while it is held, it ends the
+	// normal way (paused -> completing). The database allows both only for a job that paused from running; a job that paused from scheduled submitted nothing and is cancelled directly (paused -> cancelled).
+	{"paused", "cancelling", []string{"user", "admin"}},
+	{"paused", "completing", []string{"engine"}},
 	{"running", "paused", []string{"user", "admin"}},
 	{"running", "cancelling", []string{"user", "admin"}},
 	{"running", "completing", []string{"engine"}},
@@ -167,7 +171,7 @@ func TestJobLifecycle_FixturePathsAreLegalMoves(t *testing.T) {
 			t.Fatalf("no chain leads to %s: a test could not make a job of that status", s)
 		}
 	}
-	if len(jobChains) != len(jobStates) || len(jobLegal) != 29 {
+	if len(jobChains) != len(jobStates) || len(jobLegal) != 31 {
 		t.Fatalf("%d targets for %d statuses and %d legal moves: the instrument looks at the wrong lists", len(jobChains), len(jobStates), len(jobLegal))
 	}
 
@@ -289,7 +293,7 @@ func jobDrift(want, got []jobMove) []string {
 	return d
 }
 
-// TestJobLifecycle_TheExpectedListIsTheTable: the 29 legal moves written out by hand in this file and the rows of platform.job_transitions are the same set with the same actors, in both directions. The
+// TestJobLifecycle_TheExpectedListIsTheTable: the 31 legal moves written out by hand in this file and the rows of platform.job_transitions are the same set with the same actors, in both directions. The
 // control is the comparison itself: against a list with a move missing, a list with a move too many and a list with other actors it reports each, and against a TABLE that gains a row or loses one (a
 // savepoint that is rolled back; the superuser may insert, and deletes only with the append-only trigger switched off) it reports that too, so it reads the table and not a copy of the list.
 // It fails if a migration changes a legal move without this list changing on purpose.
@@ -383,10 +387,8 @@ func jobFlavorsOf(status string) []jobFlavor {
 		return []jobFlavor{
 			{"paused from scheduled", func(t *testing.T, sp pgx.Tx, id string, o jobOpts) { jobWalkToWith(t, sp, id, "paused", o) }},
 			{"paused from running", func(t *testing.T, sp pgx.Tx, id string, o jobOpts) {
-				// no module can pause a running job today (platform.modules.can_pause is false for all of them): the flavor is made by giving module 2 the capability, in the savepoint of the cell
-				ledgerMust(t, sp, "UPDATE platform.modules SET can_pause = true WHERE id = 'm2'")
-				jobWalkToWith(t, sp, id, "running", o)
-				jobHop(t, sp, id, "paused")
+				// module 2 can pause a running job since platform_0016 (platform.modules.can_pause is its seed): no flip is needed
+				jobPauseWhileRunningWith(t, sp, id, o)
 			}},
 		}
 	case "completing":
@@ -404,15 +406,19 @@ func jobFlavorsOf(status string) []jobFlavor {
 
 // jobFlavorRefusals are the moves that are rows of the lifecycle and that a job in a status still cannot take in SOME flavor, and the constraint that says why.
 var jobFlavorRefusals = map[string][]string{
-	"paused>scheduled":     {"job_resume_to_where_it_paused_from"},
-	"paused>running":       {"job_resume_to_where_it_paused_from"},
-	"paused>expired":       {"job_transition_illegal"},
+	"paused>scheduled": {"job_resume_to_where_it_paused_from"},
+	"paused>running":   {"job_resume_to_where_it_paused_from"},
+	"paused>expired":   {"job_transition_illegal"},
+	// platform_0016: what a job that paused from scheduled (it submitted nothing) cannot do, and what one that paused from running (its module holds items) cannot do
+	"paused>cancelling":    {"job_unsubmitted_pause_never_cancelling"},
+	"paused>completing":    {"job_unsubmitted_pause_never_completing"},
+	"paused>cancelled":     {"job_submitted_pause_cancels_through_the_engine"},
 	"completing>succeeded": {"job_cancelled_cannot_succeed"},
 	"completing>cancelled": {"job_cancelled_needs_a_cancel"},
 }
 
 // TestJobLifecycle_Matrix: for EVERY ordered pair of the twelve statuses (132 pairs) and each of the three kinds of actor (396 cells), a move is accepted exactly when the pair is in the hand-written expected list AND
-// the actor is one the list allows for it (49 cells). The job of each cell is a fresh draft job walked to the starting status (jobWalkTo) inside a savepoint that is rolled back; for a pair of the list what the move
+// the actor is one the list allows for it (52 cells). The job of each cell is a fresh draft job walked to the starting status (jobWalkTo) inside a savepoint that is rolled back; for a pair of the list what the move
 // needs is made true first (a start time that has passed, a deadline that has, a module that can pause), so that the legal twin of every refusal is in the same matrix. A refused cell is refused for ITS reason:
 // from a terminal status jobs_terminal_is_final; a pair that is not in the list job_transition_illegal; a pair in the list taken by the wrong actor job_transition_actor_not_allowed; the moves that depend on how
 // the job got where it is (a pause remembers where it paused from, a cancel decides how a job ends) are tried in each flavor and are accepted in at least one and refused in the others for the one named reason.
@@ -455,9 +461,6 @@ func TestJobLifecycle_Matrix(t *testing.T) {
 						}
 						if legal {
 							jobPrepareHop(t, sp, id, from, to)
-							if from == "running" && to == "paused" {
-								ledgerMust(t, sp, "UPDATE platform.modules SET can_pause = true WHERE id = 'm2'")
-							}
 						}
 						sql, args := jobMoveStmt(from, to, id, kind, jobActorFor(kind), "the matrix", o)
 						outcomes = append(outcomes, jobTry(t, sp, sql, args...))
@@ -506,8 +509,8 @@ func TestJobLifecycle_Matrix(t *testing.T) {
 	if want := len(jobStates) * (len(jobStates) - 1) * len(kinds); cells != want {
 		t.Fatalf("the matrix tried %d cells, want %d (12 x 11 x 3)", cells, want)
 	}
-	if accepted != wantAccepted || accepted != 49 {
-		t.Fatalf("the matrix accepted %d cells, want %d (one for each actor of each of the 29 legal moves; the expected list says %d)", accepted, 49, wantAccepted)
+	if accepted != wantAccepted || accepted != 52 {
+		t.Fatalf("the matrix accepted %d cells, want %d (one for each actor of each of the 31 legal moves; the expected list says %d)", accepted, 52, wantAccepted)
 	}
 
 	t.Run("a status written back to itself is no move: accepted, and it writes no event", func(t *testing.T) {
@@ -545,8 +548,8 @@ func TestJobLifecycle_Matrix(t *testing.T) {
 // other status, a NULL one left to NOT NULL, and the role the service runs as meets it too); a move names its kind and its reason (job_transition_needs_an_actor: none, an empty one, a blank one; the
 // settings of one move do not authorise the next); an actor of a kind the pair does not allow is refused (job_transition_actor_not_allowed); a user acts on their own job only (job_transition_by_another_user:
 // another user or an admin's id; a user or an admin that names no id, and an engine that carries one, are job_transition_needs_an_actor); what the module can do to one running
-// job is data (running -> paused is refused for modules 1, 2 and 3 with job_module_cannot_pause and accepted once the module can; running -> cancelling is refused for module 1 with job_module_cannot_cancel and
-// accepted for modules 2 and 3, and the data is what decides); a pause resumes only where it paused from (job_resume_to_where_it_paused_from) and the writer cannot choose where that is; a scheduled job
+// job is data (running -> paused is refused for module 1 with job_module_cannot_pause and accepted for modules 2 and 3 since platform_0016; running -> cancelling is accepted for all three; a flipped row
+// changes the answer in both directions, and the cancel capability also judges paused -> cancelling of a job that paused from running with job_module_cannot_cancel); a pause resumes only where it paused from (job_resume_to_where_it_paused_from) and the writer cannot choose where that is; a scheduled job
 // does not start before its time (job_started_early) nor anything expire before its deadline (job_expired_early: a microsecond early is early, exactly on time is not, a missing deadline is early, and a paused job
 // expires only if it paused from scheduled); a job whose cancel was accepted never succeeds and one whose cancel was not never ends cancelled (job_cancelled_cannot_succeed, job_cancelled_needs_a_cancel); a
 // terminal status never moves (jobs_terminal_is_final) for each of the four.
@@ -659,43 +662,75 @@ func TestJobLifecycle_TheGuardRefusals(t *testing.T) {
 	})
 
 	t.Run("what the module can do to one running job is data", func(t *testing.T) {
-		if got := ledgerRows(t, tx, "SELECT id, can_pause::text, can_cancel::text FROM platform.modules ORDER BY id"); strings.Join(got, ",") != "m1|false|false,m2|false|true,m3|false|true" {
-			t.Fatalf("the capabilities of the modules are %v, want m1 can do neither, m2 and m3 can cancel and none can pause (Docs/phase-4-spec.md, Findings)", got)
+		// platform_0016 seeds what the modules gained at the close-out: modules 2 and 3 pause one campaign (POST /v1/pause), every module cancels one job (module 1: POST /v1/jobs/{id}/cancel); module 1 has
+		// no per-job pause. (platform_0011 had seeded m1|false|false, m2|false|true, m3|false|true.)
+		if got := ledgerRows(t, tx, "SELECT id, can_pause::text, can_cancel::text FROM platform.modules ORDER BY id"); strings.Join(got, ",") != "m1|false|true,m2|true|true,m3|true|true" {
+			t.Fatalf("the capabilities of the modules are %v, want m1 can cancel but not pause, m2 and m3 can do both (platform_0016)", got)
 		}
 		ledgerExpectRefused(t, tx, "a module with a NULL can_pause", "23502", ledgerWhy{Column: "can_pause"},
 			"INSERT INTO platform.modules (id, name, schema_name, metered, can_pause) VALUES ('m7', 'seventh', 'seventh_schema', true, NULL)")
 		ledgerExpectRefused(t, tx, "a module with a NULL can_cancel", "23502", ledgerWhy{Column: "can_cancel"},
 			"INSERT INTO platform.modules (id, name, schema_name, metered, can_cancel) VALUES ('m7', 'seventh', 'seventh_schema', true, NULL)")
-		wantCancel := map[string]bool{"m1": false, "m2": true, "m3": true}
+		wantPause := map[string]bool{"m1": false, "m2": true, "m3": true}
 		for _, m := range []string{"m1", "m2", "m3"} {
 			m := m
 			ledgerTrial(t, tx, func(sp pgx.Tx) {
 				id := at(sp, m, "running")
+				// the pause: refused for module 1 (no per-job pause), accepted for modules 2 and 3 by the user and by an admin, and then the job says it paused from running
 				for _, kind := range []string{"user", "admin"} {
-					ledgerExpectRefused(t, sp, fmt.Sprintf("running -> paused for module %s by %s", m, kind), "23001", why("job_module_cannot_pause"), jobMoveSQL, id, "paused", kind, jobActorFor(kind), "why")
+					if wantPause[m] {
+						ledgerTrial(t, sp, func(sp2 pgx.Tx) {
+							ledgerExpectOK(t, sp2, fmt.Sprintf("control: running -> paused for module %s by %s", m, kind), jobMoveSQL, id, "paused", kind, jobActorFor(kind), "why")
+							if got := ledgerString(t, sp2, "SELECT paused_from FROM platform.jobs WHERE id = $1", id); got != "running" {
+								t.Fatalf("a job paused from running says it paused from %q", got)
+							}
+						})
+					} else {
+						ledgerExpectRefused(t, sp, fmt.Sprintf("running -> paused for module %s by %s", m, kind), "23001", why("job_module_cannot_pause"), jobMoveSQL, id, "paused", kind, jobActorFor(kind), "why")
+					}
 				}
-				if wantCancel[m] {
-					ledgerTrial(t, sp, func(sp2 pgx.Tx) {
-						ledgerExpectOK(t, sp2, "control: running -> cancelling for module "+m, jobMoveSQL, id, "cancelling", "user", a, "why")
-					})
-				} else {
-					ledgerExpectRefused(t, sp, "running -> cancelling for module "+m, "23001", why("job_module_cannot_cancel"), jobMoveSQL, id, "cancelling", "user", a, "why")
-				}
-				// it is the data that decides: give the module the capability it lacks (or take away the one it has) and the same move changes its answer
+				// the cancel: every module can since platform_0016
 				ledgerTrial(t, sp, func(sp2 pgx.Tx) {
-					ledgerMust(t, sp2, "UPDATE platform.modules SET can_pause = true WHERE id = $1", m)
-					ledgerExpectOK(t, sp2, "running -> paused once module "+m+" can pause", jobMoveSQL, id, "paused", "user", a, "why")
-					if got := ledgerString(t, sp2, "SELECT paused_from FROM platform.jobs WHERE id = $1", id); got != "running" {
-						t.Fatalf("a job paused from running says it paused from %q", got)
+					ledgerExpectOK(t, sp2, "control: running -> cancelling for module "+m, jobMoveSQL, id, "cancelling", "user", a, "why")
+				})
+				// it is the data that decides, in both directions and for both capabilities: flip the row the seed holds and the same move changes its answer
+				ledgerTrial(t, sp, func(sp2 pgx.Tx) {
+					ledgerMust(t, sp2, "UPDATE platform.modules SET can_pause = $2 WHERE id = $1", m, !wantPause[m])
+					if wantPause[m] {
+						ledgerExpectRefused(t, sp2, "running -> paused once module "+m+" can no longer pause", "23001", why("job_module_cannot_pause"), jobMoveSQL, id, "paused", "user", a, "why")
+					} else {
+						ledgerExpectOK(t, sp2, "running -> paused once module "+m+" can pause", jobMoveSQL, id, "paused", "user", a, "why")
+						if got := ledgerString(t, sp2, "SELECT paused_from FROM platform.jobs WHERE id = $1", id); got != "running" {
+							t.Fatalf("a job paused from running says it paused from %q", got)
+						}
 					}
 				})
 				ledgerTrial(t, sp, func(sp2 pgx.Tx) {
-					ledgerMust(t, sp2, "UPDATE platform.modules SET can_cancel = $2 WHERE id = $1", m, !wantCancel[m])
-					if wantCancel[m] {
-						ledgerExpectRefused(t, sp2, "running -> cancelling once module "+m+" can no longer cancel", "23001", why("job_module_cannot_cancel"), jobMoveSQL, id, "cancelling", "user", a, "why")
-					} else {
-						ledgerExpectOK(t, sp2, "running -> cancelling once module "+m+" can cancel", jobMoveSQL, id, "cancelling", "user", a, "why")
+					ledgerMust(t, sp2, "UPDATE platform.modules SET can_cancel = false WHERE id = $1", m)
+					ledgerExpectRefused(t, sp2, "running -> cancelling once module "+m+" can no longer cancel", "23001", why("job_module_cannot_cancel"), jobMoveSQL, id, "cancelling", "user", a, "why")
+				})
+				// the same capability widened by platform_0016: a job that was paused WHILE RUNNING is a running job for what its module can do to it, so its cancel (paused -> cancelling) needs can_cancel too.
+				// Module 1 has no per-job pause, so it is given one in the scratch savepoint to make the job.
+				ledgerTrial(t, sp, func(sp2 pgx.Tx) {
+					ledgerMust(t, sp2, "UPDATE platform.modules SET can_pause = true WHERE id = $1", m)
+					jobHop(t, sp2, id, "paused")
+					if got := ledgerString(t, sp2, "SELECT paused_from FROM platform.jobs WHERE id = $1", id); got != "running" {
+						t.Fatalf("the fixture paused from %q, want running", got)
 					}
+					for _, kind := range []string{"user", "admin"} {
+						kind := kind
+						ledgerTrial(t, sp2, func(sp3 pgx.Tx) {
+							ledgerExpectOK(t, sp3, fmt.Sprintf("control: paused -> cancelling of a job of module %s that can cancel, by %s", m, kind), jobMoveSQL, id, "cancelling", kind, jobActorFor(kind), "why")
+						})
+					}
+					ledgerTrial(t, sp2, func(sp3 pgx.Tx) {
+						ledgerMust(t, sp3, "UPDATE platform.modules SET can_cancel = false WHERE id = $1", m)
+						for _, kind := range []string{"user", "admin"} {
+							ledgerExpectRefused(t, sp3, fmt.Sprintf("paused -> cancelling of a job of module %s once it can no longer cancel, by %s", m, kind), "23001", why("job_module_cannot_cancel"), jobMoveSQL, id, "cancelling", kind, jobActorFor(kind), "why")
+						}
+						// what is not a cancel is not judged by can_cancel: the engine still ends a held job whose module reported everything final, and the resume is still legal
+						ledgerExpectOK(t, sp3, "control: paused -> completing does not need can_cancel", jobMoveSQL, id, "completing", "engine", nil, "why")
+					})
 				})
 			})
 		}
@@ -715,9 +750,8 @@ func TestJobLifecycle_TheGuardRefusals(t *testing.T) {
 			}
 		})
 		ledgerTrial(t, tx, func(sp pgx.Tx) {
-			ledgerMust(t, sp, "UPDATE platform.modules SET can_pause = true WHERE id = 'm2'") // a module that can pause: today's none
-			id := at(sp, "m2", "running")
-			jobHop(t, sp, id, "paused")
+			id := at(sp, "m2", "running") // module 2 can pause a running job: its seed since platform_0016
+			jobPauseWhileRunning(t, sp, id)
 			ledgerExpectRefused(t, sp, "a job paused from running resumed to scheduled", "23001", resume, jobMoveSQL, id, "scheduled", "user", a, "why")
 			ledgerExpectOK(t, sp, "control: resumed to running", jobMoveSQL, id, "running", "user", a, "why")
 		})
@@ -735,10 +769,9 @@ func TestJobLifecycle_TheGuardRefusals(t *testing.T) {
 			ledgerExpectOK(t, sp, "control: a job paused from scheduled expires after its deadline", jobMoveSQL, id, "expired", "engine", nil, "why")
 		})
 		ledgerTrial(t, tx, func(sp pgx.Tx) {
-			ledgerMust(t, sp, "UPDATE platform.modules SET can_pause = true WHERE id = 'm2'")
 			id := next()
 			jobInsertAtWith(t, sp, id, a, "m2", "running", jobOpts{Deadline: jobDeadlinePast}) // its deadline has passed too: it is the running that decides
-			jobHop(t, sp, id, "paused")
+			jobPauseWhileRunning(t, sp, id)
 			ledgerExpectRefused(t, sp, "a job paused from running expires", "23001", why("job_transition_illegal"), jobMoveSQL, id, "expired", "engine", nil, "why")
 			ledgerExpectOK(t, sp, "control: it can still be failed", jobMoveSQL, id, "failed", "engine", nil, "why")
 		})
@@ -1577,8 +1610,8 @@ func TestJobLifecycle_ThePrivilegesOfTheLifecycle(t *testing.T) {
 	})
 }
 
-// TestJobLifecycle_TheSlotThroughALife: one job is walked through five lives (it runs and succeeds; it is cancelled while it runs; it is scheduled, paused, resumed and fails; it is confirmed and expires; it is
-// previewed, sent back to draft, previewed again and cancelled) and at every step a SECOND job of the same user and module that is previewed (and holds nothing) is tried at the door of the slot: refused
+// TestJobLifecycle_TheSlotThroughALife: one job is walked through eight lives (it runs and succeeds; it is cancelled while it runs; it is scheduled, paused, resumed and fails; it is paused WHILE RUNNING and then
+// cancelled through the engine, or completed by its module, or resumed and failed (platform_0016); it is confirmed and expires; it is previewed, sent back to draft, previewed again and cancelled) and at every step a SECOND job of the same user and module that is previewed (and holds nothing) is tried at the door of the slot: refused
 // 23505 jobs_one_active_per_user_module while the first is confirmed, scheduled, running, paused, cancelling or completing, and accepted while it is draft, previewed or ended. The probe is moved in a savepoint
 // that is rolled back, so the first job's slot is judged at each step and the probe never takes it.
 // It fails if the slot is held by a state it should not be or released too early or too late.
@@ -1588,6 +1621,7 @@ func TestJobLifecycle_TheSlotThroughALife(t *testing.T) {
 	ledgerSeed(t, tx)
 	next := jobIDs("9e")
 	u := ledgerAdminB
+	const pausedWhileRunning = "paused while running" // the step that is jobPauseWhileRunning: the job is paused, from running
 	type step struct {
 		to   string
 		held bool
@@ -1617,6 +1651,11 @@ func TestJobLifecycle_TheSlotThroughALife(t *testing.T) {
 		{"a job that runs and succeeds", []step{{"previewed", false}, {"confirmed", true}, {"running", true}, {"completing", true}, {"succeeded", false}}, jobOpts{}},
 		{"a job that is cancelled while it runs (module 2 can cancel)", []step{{"previewed", false}, {"confirmed", true}, {"running", true}, {"cancelling", true}, {"completing", true}, {"cancelled", false}}, jobOpts{}},
 		{"a scheduled job that is paused, resumed and fails", []step{{"previewed", false}, {"scheduled", true}, {"paused", true}, {"scheduled", true}, {"running", true}, {"failed", false}}, jobOpts{}},
+		// platform_0016: a job paused WHILE RUNNING holds the slot as long as it is paused, cancelling and completing, whichever way it ends (the step named pausedWhileRunning is jobPauseWhileRunning; a move out of a
+		// pause that was taken while running is one hop, because the chains of jobs_helpers_test.go name only the pause that was taken before the start)
+		{"a job that is paused while it runs and cancelled through the engine", []step{{"previewed", false}, {"confirmed", true}, {"running", true}, {pausedWhileRunning, true}, {"cancelling", true}, {"completing", true}, {"cancelled", false}}, jobOpts{}},
+		{"a job that is paused while it runs and whose module finishes everything", []step{{"previewed", false}, {"confirmed", true}, {"running", true}, {pausedWhileRunning, true}, {"completing", true}, {"succeeded", false}}, jobOpts{}},
+		{"a job that is paused while it runs, resumed and fails", []step{{"previewed", false}, {"confirmed", true}, {"running", true}, {pausedWhileRunning, true}, {"running", true}, {"failed", false}}, jobOpts{}},
 		{name: "a confirmed job that nothing could start", steps: []step{{"previewed", false}, {"confirmed", true}, {"expired", false}}, opts: jobOpts{Deadline: jobDeadlinePast}},
 		{"a job discarded before it was confirmed", []step{{"previewed", false}, {"draft", false}, {"previewed", false}, {"cancelled", false}}, jobOpts{}},
 	} {
@@ -1630,7 +1669,14 @@ func TestJobLifecycle_TheSlotThroughALife(t *testing.T) {
 				}
 				probes++
 				for _, s := range life.steps {
-					jobWalkToWith(t, sp, first, s.to, life.opts)
+					switch {
+					case s.to == pausedWhileRunning:
+						jobPauseWhileRunningWith(t, sp, first, life.opts)
+					case jobStatus(t, sp, first) == "paused" && ledgerString(t, sp, "SELECT COALESCE(paused_from, '-') FROM platform.jobs WHERE id = $1", first) == "running":
+						jobHopWith(t, sp, first, s.to, life.opts) // the way out of a pause taken while running is a hop of its own
+					default:
+						jobWalkToWith(t, sp, first, s.to, life.opts)
+					}
 					probes++
 					if got := held(sp); got != s.held {
 						t.Fatalf("while the first job is %s the slot is held = %v, want %v", s.to, got, s.held)

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/coldmail-platform/platform/internal/adapters/m1"
+	"github.com/coldmail-platform/platform/internal/adapters/sendapi"
 	"github.com/coldmail-platform/platform/internal/modclient"
 )
 
@@ -41,7 +42,7 @@ func (c errClass) String() string {
 func TestMapError_KindByPhaseTable(t *testing.T) {
 	kinds := []modclient.Kind{modclient.Unavailable, modclient.Timeout, modclient.Paused, modclient.RateLimited, modclient.Canceled, modclient.Contract, modclient.Internal,
 		modclient.Refused, modclient.Invalid, modclient.NotFound, modclient.NotSupported}
-	phases := []phase{phaseSubmit, phaseObserve, phaseCancel}
+	phases := []phase{phaseSubmit, phaseObserve, phaseCancel, phasePause, phaseResume}
 	want := func(k modclient.Kind, p phase) errClass {
 		switch k {
 		case modclient.Refused, modclient.Invalid, modclient.NotFound:
@@ -49,7 +50,7 @@ func TestMapError_KindByPhaseTable(t *testing.T) {
 				return classRefused
 			}
 		case modclient.NotSupported:
-			if p == phaseCancel {
+			if p == phaseCancel || p == phasePause || p == phaseResume { // the three optional routes of a module: one it does not have is NotSupported; anywhere else it is an answer the platform does not understand
 				return classNotSupported
 			}
 		}
@@ -67,8 +68,8 @@ func TestMapError_KindByPhaseTable(t *testing.T) {
 			}
 		}
 	}
-	if n != 3*11*3 {
-		t.Fatalf("the table ran %d cases, want 99: the instrument looked at the wrong thing", n)
+	if n != 3*11*5 {
+		t.Fatalf("the table ran %d cases, want 165: the instrument looked at the wrong thing", n)
 	}
 	// the control: nil stays nil, and a kind outside the known ones is a wait too (the platform never fails a job for what it does not understand)
 	if mapError("m2", phaseSubmit, nil) != nil {
@@ -105,6 +106,17 @@ func TestMapError_TheExceptionsToARefusalAndWhatEachSays(t *testing.T) {
 		{"an error of no known kind waits", "m1", phaseObserve, errors.New("something broke"), classWait, []string{"no known kind", "something broke"}},
 		{"the context ending waits", "m3", phaseObserve, context.Canceled, classWait, nil},
 		{"a cancel the module does not have", "m1", phaseCancel, &modclient.Error{Kind: modclient.NotSupported}, classNotSupported, []string{"no such operation"}},
+		{"a pause the module does not have", "m2", phasePause, &modclient.Error{Kind: modclient.NotSupported}, classNotSupported, []string{"no such operation", "m2 pause"}},
+		{"a resume the module does not have", "m3", phaseResume, &modclient.Error{Kind: modclient.NotSupported}, classNotSupported, []string{"no such operation", "m3 resume"}},
+		{"the control: an operation that is not optional answering NotSupported is not understood, it waits", "m2", phaseObserve, &modclient.Error{Kind: modclient.NotSupported}, classWait, []string{"no such operation"}},
+		{"a pause the module cannot be told because it is down waits", "m2", phasePause, &modclient.Error{Kind: modclient.Unavailable, Status: 503}, classWait, []string{"unavailable"}},
+		{"a pause refused for a bad key waits (the platform's own configuration)", "m3", phasePause, &modclient.Error{Kind: modclient.Refused, Status: 401, Code: "unauthenticated"}, classWait, []string{"credential"}},
+		{"a pause the module refuses as invalid waits too (only a submit is refused for good)", "m2", phasePause, &modclient.Error{Kind: modclient.Invalid, Status: 400, Code: "validation_failed"}, classWait, []string{"refused this request"}},
+		// a run of an item the platform marked cancelled: its own code, never a conflict and never a wait at submit
+		{"a run of an item the platform marked cancelled is refused for good, with the module's code word", "m2", phaseSubmit, fmt.Errorf("%w: %w", sendapi.ErrItemCancelled, &modclient.Error{Kind: modclient.Refused, Status: 409, Code: "job_item_cancelled"}), classRefused, []string{"job_item_cancelled", "marked cancelled", "HTTP 409"}},
+		{"the same for module 3", "m3", phaseSubmit, fmt.Errorf("%w: %w", sendapi.ErrItemCancelled, &modclient.Error{Kind: modclient.Refused, Status: 409, Code: "job_item_cancelled"}), classRefused, []string{"job_item_cancelled"}},
+		{"the control: the same status and another code is still the conflict it was, and waits", "m2", phaseSubmit, &modclient.Error{Kind: modclient.Refused, Status: 409, Code: "conflict"}, classWait, []string{"HTTP 409", "conflicting request"}},
+		{"the control: the same code at another phase has no refusal to be (it waits)", "m2", phaseObserve, fmt.Errorf("%w: %w", sendapi.ErrItemCancelled, &modclient.Error{Kind: modclient.Refused, Status: 409, Code: "job_item_cancelled"}), classWait, []string{"refused this request"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -133,7 +145,7 @@ func TestMapError_NoAddressNoSecretAndNoModuleTextReachesAReason(t *testing.T) {
 		"an error of no known kind with a named secret":      errors.New("GET /x?token=" + cred + "&a=1 failed"),
 		"an error of no known kind with URL credentials":     errors.New("Post https://user:" + cred + "@host.example/v1: refused"),
 	} {
-		for _, p := range []phase{phaseSubmit, phaseObserve, phaseCancel} {
+		for _, p := range []phase{phaseSubmit, phaseObserve, phaseCancel, phasePause, phaseResume} {
 			text := mapError("m2", p, err).Error()
 			for _, bad := range []string{addr, "jane.doe", cred, "leak-check"} {
 				if strings.Contains(text, bad) {

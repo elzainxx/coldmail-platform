@@ -855,10 +855,12 @@ func TestJobEngineItems_EveryEndOfAJobBeforeItsSubmissionMarksItsNeverSubmittedI
 
 // ---- D9: what the modules can do with such an item ----------------------------------------------------------------------------------------------------------------------------------------
 
-// No statement of module 2 or module 3 reads public.job_items.status: the marker is the platform's record that an item will never be submitted, not a lock a module honours. The statements are the ones the
-// drift gate (scripts/check-module-reads.sh) pins to the module code; this test pins what they say. When a module starts reading the status (and would honour a 'cancelled'), this test is red and
-// Docs/install.md ("What a module can do with an item that was never submitted") is the document to change with it.
-func TestJobItemsMarker_NoModuleStatementReadsAnItemsStatusSoTheMarkerIsARecordAndNotALock(t *testing.T) {
+// Since the Phase 4 close-out (D9) the marker IS a lock in the modules: the run route of module 2 and module 3 (statements J1, the read, and J2, the INSERT ... SELECT that freezes the item into the module's own job)
+// refuses an item whose status is 'cancelled' (409 job_item_cancelled), in the SAME statement that reads or freezes it. db/module-statements.txt holds the exact texts the modules issue (the drift gate
+// check-module-reads proves them against the pinned module code), so this test reads them: every statement of module 2 or 3 that touches public.job_items is one of the five known (J1 and J2 of each module, and
+// module 3's test-send INSERT J4, which writes 'pending'), J1 reads the status and J2 excludes 'cancelled' in its WHERE, and a new statement (a scanner, a requeue) must be read for what it does with a
+// marked item before this list is changed.
+func TestJobItemsMarker_EveryModuleStatementThatTurnsAnItemIntoWorkRefusesAMarkedItem(t *testing.T) {
 	root := requireEnv(t, envRepoRoot)
 	raw, err := os.ReadFile(filepath.Join(root, "db", "module-statements.txt"))
 	if err != nil {
@@ -877,39 +879,49 @@ func TestJobItemsMarker_NoModuleStatementReadsAnItemsStatusSoTheMarkerIsARecordA
 		}
 		all = append(all, stmt{p[0], p[1], p[2], p[3], p[4]})
 	}
-	readsStatus := func(sql string) bool { return strings.Contains(strings.ToLower(sql), "status") }
+	refusesMarked := func(label, sql string) bool {
+		l := strings.ToLower(sql)
+		switch label {
+		case "J1": // the read: the module learns in the same statement whether the item is marked
+			return strings.Contains(l, "status is not distinct from 'cancelled'")
+		case "J2": // the freeze: the exclusion is in the WHERE of the statement that creates the module's job
+			return strings.Contains(l, "ji.status is distinct from 'cancelled'")
+		}
+		return false
+	}
 	var touching []string
 	for _, s := range all {
 		if s.role == "ref" || !strings.Contains(strings.ToLower(s.sql), "public.job_items") {
 			continue
 		}
 		touching = append(touching, s.module+":"+s.label)
-		lower := strings.ToLower(s.sql)
-		if s.label == "J4" { // module 3's test-send INSERT: it WRITES 'pending', and the control of the check below
-			if !readsStatus(s.sql) || !strings.HasPrefix(lower, "insert into public.job_items") {
+		switch s.label {
+		case "J1", "J2":
+			if !refusesMarked(s.label, s.sql) {
+				t.Errorf("%s:%s (%s) does not refuse an item marked cancelled: a module can act on a never-submitted item again. Statement: %.200s", s.module, s.label, s.file, s.sql)
+			}
+		case "J4": // module 3's test-send: it WRITES a new item with status 'pending' and reads nothing
+			if !strings.HasPrefix(strings.ToLower(s.sql), "insert into public.job_items") || !strings.Contains(strings.ToLower(s.sql), "status") {
 				t.Errorf("%s:%s is not the test-send INSERT of status 'pending' this test expects: %.100s", s.module, s.label, s.sql)
 			}
-			continue
-		}
-		if readsStatus(s.sql) {
-			t.Errorf("%s:%s (%s) mentions status: a module reads an item's status now, so the marker may be a lock: update Docs/install.md and this test. Statement: %.160s", s.module, s.label, s.file, s.sql)
-		}
-		if !strings.Contains(lower, "id = $1") || strings.Contains(lower, " update ") || strings.Contains(lower, "delete") || strings.HasPrefix(lower, "update") {
-			t.Errorf("%s:%s is not a read of ONE item by its id: %.160s", s.module, s.label, s.sql)
+		default:
+			t.Errorf("%s:%s (%s) touches public.job_items and this test does not know it: read what it does with an item that was never submitted, then add it here: %.160s", s.module, s.label, s.file, s.sql)
 		}
 	}
 	sort.Strings(touching)
 	if want := []string{"m2:J1", "m2:J2", "m3:J1", "m3:J2", "m3:J4"}; strings.Join(touching, ",") != strings.Join(want, ",") {
-		t.Errorf("the module statements that touch public.job_items are %v, want exactly %v: a new one (a scanner, a requeue) must be read for what it does with an item that was never submitted", touching, want)
+		t.Errorf("the module statements that touch public.job_items are %v, want exactly %v", touching, want)
 	}
-	// the control: the check can fail: the same statement with a status test added is read as reading it
-	if !readsStatus("SELECT campaign_id FROM public.job_items WHERE id = $1 AND user_id = $2 AND status <> 'cancelled'") || readsStatus("SELECT campaign_id FROM public.job_items WHERE id = $1 AND user_id = $2") {
-		t.Error("the control: the predicate does not tell a statement that reads the status from one that does not")
+	// the control: the check can fail: the OLD statements (before the guard) are read as NOT refusing a marked item
+	if refusesMarked("J1", "SELECT campaign_id FROM public.job_items WHERE id = $1 AND user_id = $2") ||
+		refusesMarked("J2", "INSERT INTO x SELECT ji.id FROM public.job_items ji WHERE ji.id = $1 AND ji.user_id = $2 RETURNING id") ||
+		!refusesMarked("J1", "SELECT campaign_id, status IS NOT DISTINCT FROM 'cancelled' FROM public.job_items WHERE id = $1 AND user_id = $2") {
+		t.Error("the control: the predicate does not tell a statement that refuses a marked item from one that does not")
 	}
 	if len(all) < 8 {
 		t.Fatalf("db/module-statements.txt has %d statements: the instrument matched too little", len(all))
 	}
-	t.Logf("NOTE job items marker: %d module statements read, %d touch public.job_items (%s); none reads status", len(all), len(touching), strings.Join(touching, " "))
+	t.Logf("NOTE job items marker: %d module statements read, %d touch public.job_items (%s); the run statements of both senders refuse a cancelled item", len(all), len(touching), strings.Join(touching, " "))
 }
 
 // ---- the lifecycle of the migration -------------------------------------------------------------------------------------------------------------------------------------------------------------

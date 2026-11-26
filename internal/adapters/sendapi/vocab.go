@@ -119,7 +119,8 @@ func CompareVocabularies(d *modclient.Describe, p Profile) VocabReport {
 		}
 	}
 	for code := range have {
-		if !slices.Contains(want[vocabErrorCodes], code) {
+		// an OPTIONAL code (see optionalErrorCodes) is neither missing nor extra: a describe of a module older than the change that added it and one that has it are both accepted
+		if !slices.Contains(want[vocabErrorCodes], code) && !slices.Contains(optionalErrorCodes, code) {
 			r.CodesExtra = append(r.CodesExtra, code)
 		}
 	}

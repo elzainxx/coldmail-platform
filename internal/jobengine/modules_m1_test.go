@@ -254,7 +254,8 @@ func TestM1_ARepeatOfAnAddressIsNeverHandedOverAndAListingThatContradictsTheTota
 	}
 }
 
-func TestM1_TheCallbacksErrorComesBackAsItWasAndCancelIsNotSupported(t *testing.T) {
+// Module 1 CAN be cancelled since the close-out (TestM1Cancel_*), so the test that said it could not is now about the callback's error and about what module 1 really has no route for: a pause and a resume.
+func TestM1_TheCallbacksErrorComesBackAsItWas_AndPauseAndResumeAreNotSupported(t *testing.T) {
 	rig, _, mod := m1Module(t)
 	rows := jobenginetestRows(2)
 	res, err := mod.Submit(ctxT(t), jobOf(jobs.ModuleVerify, 2), rows)
@@ -270,10 +271,12 @@ func TestM1_TheCallbacksErrorComesBackAsItWasAndCancelIsNotSupported(t *testing.
 		t.Errorf("the callback's error came back as %v (%T), want the same error value", err, err)
 	}
 	before := rig.stub.Count()
-	if err := mod.Cancel(context.Background(), jobOf(jobs.ModuleVerify, 2)); !errors.Is(err, jobengine.ErrNotSupported) || errors.Is(err, jobengine.ErrWait) {
-		t.Errorf("cancel = %v, want ErrNotSupported", err)
+	for name, call := range map[string]func(context.Context, jobs.EngineJob) error{"pause": mod.Pause, "resume": mod.Resume} {
+		if err := call(context.Background(), j2); !errors.Is(err, jobengine.ErrNotSupported) || errors.Is(err, jobengine.ErrWait) {
+			t.Errorf("%s = %v, want ErrNotSupported (module 1 has no per-job pause)", name, err)
+		}
 	}
 	if rig.stub.Count() != before {
-		t.Errorf("a cancel that cannot be made sent a request")
+		t.Errorf("a pause or a resume that cannot be made sent a request")
 	}
 }

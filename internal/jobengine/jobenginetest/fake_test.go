@@ -152,6 +152,12 @@ func TestFake_DownAnswersErrWaitToEveryMethodAndChangesNothing(t *testing.T) {
 	if err := f.Cancel(context.Background(), job("j1")); !errors.Is(err, jobengine.ErrWait) {
 		t.Errorf("cancel while down: %v", err)
 	}
+	if err := f.Pause(context.Background(), job("j1")); !errors.Is(err, jobengine.ErrWait) {
+		t.Errorf("pause while down: %v", err)
+	}
+	if err := f.Resume(context.Background(), job("j1")); !errors.Is(err, jobengine.ErrWait) {
+		t.Errorf("resume while down: %v", err)
+	}
 	after := f.Items("j1")
 	if len(after) != len(before) || after[0].State != StateQueued || after[1].State != StateQueued {
 		t.Errorf("a module that is down changed its items: %+v -> %+v", before, after)
@@ -263,10 +269,10 @@ func TestFake_CancelTakesBackQueuedItemsAndLetsTheOnesInFlightFinish(t *testing.
 	if _, err := f.Submit(context.Background(), job("j1"), rowsOf(6)); !errors.Is(err, jobengine.ErrRefused) {
 		t.Errorf("a submit after the cancel: %v, want ErrRefused", err)
 	}
-	// the control: module 1 cannot cancel
+	// the control: module 1 CAN cancel since the close-out (POST /v1/jobs/{id}/cancel); it was ErrNotSupported before, and TestFake_ACancelOfAHeldCampaignEndsTheHold_ModuleOneCancelsToo holds its words
 	m1 := &FakeModule{Module: jobs.ModuleVerify}
-	if err := m1.Cancel(context.Background(), job("j1")); !errors.Is(err, jobengine.ErrNotSupported) {
-		t.Errorf("module 1 cancel: %v, want ErrNotSupported", err)
+	if err := m1.Cancel(context.Background(), job("j1")); err != nil {
+		t.Errorf("module 1 cancel: %v, want nil", err)
 	}
 }
 

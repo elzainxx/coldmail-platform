@@ -93,8 +93,11 @@ type AccountTotals struct {
 type CampaignPage struct {
 	CampaignID     string
 	DispatchPaused bool
-	Totals         Totals
-	Progress       Progress
+	// Paused is THIS campaign's own pause (the report's additive `paused`, Phase 4 C1: set by POST /v1/pause, cleared by POST /v1/resume or a cancel). It is NOT DispatchPaused, the operator's
+	// module-wide dispatch rung: either can be true without the other. False when the module's report carries no such key (a module older than C1, or a campaign it does not know).
+	Paused   bool
+	Totals   Totals
+	Progress Progress
 	// ByAccount is module 3's totals_by_account (nil for module 2).
 	ByAccount []AccountTotals
 	Items     []Item
@@ -108,6 +111,8 @@ type CampaignPage struct {
 type CampaignReport struct {
 	CampaignID     string
 	DispatchPaused bool
+	// Paused is the campaign's own pause as the LAST page said it (see CampaignPage.Paused).
+	Paused bool
 	// Totals, Progress and ByAccount are those of the LAST page read, the freshest the module said (the totals are re-read with every page and are not a snapshot with the items).
 	Totals    Totals
 	Progress  Progress
@@ -158,6 +163,15 @@ type Classified struct {
 	Settle   []money.SettleItem
 	NotYet   []Pending
 	Unmapped []Unmapped
+}
+
+// PauseResult is a module's answer to POST /v1/pause or POST /v1/resume: the campaign's stored pause AFTER the call. It is all the adapter relies on: module 2's `changed` and the `state` words of
+// both modules are never read (a module that is paused answers Paused true to a pause and to a repeat of it; a campaign that is unknown, empty, finished or cancelled answers Paused false to both,
+// so a pause that held nothing reads Paused false and the caller learns the campaign's real state from its report).
+type PauseResult struct {
+	CampaignID string
+	// Paused is true when the campaign is held after the call: a pause answers true for a campaign it holds, a resume answers false once it was released.
+	Paused bool
 }
 
 // CancelPosition is a module's answer to a cancel: the campaign's position AFTER the call, not a delta (module 2, and module 3 since Phase 3 close-out C1).

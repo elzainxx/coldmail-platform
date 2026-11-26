@@ -59,9 +59,6 @@ const (
 	VarM1KeySecret = "PLATFORM_M1_KEY_SECRET"
 	// The version of the keys the platform presents to module 1 (internal/tenant, Phase 3 close-out A4): the number in the derivation text, raised to rotate the secret.
 	VarM1KeyVersion = "PLATFORM_M1_KEY_VERSION"
-	// Whether module 1's vendor fallback is switched on (internal/app syncReachability -> internal/money SetUnitReachable, Phase 4 B3): the platform's mirror of module 1's own TM_EXTERNAL_* switches,
-	// which decides what a module 1 job reserves (1 credit per row with it off, 2 with it on).
-	VarM1VendorReachable = "PLATFORM_M1_VENDOR_REACHABLE"
 
 	// Where the three modules are and the credentials of the platform's own calls to them (the adapters internal/adapters/m1, m2 and m3, Phase 3 B3 to B5). All four are optional: an adapter
 	// whose dial is empty refuses with a typed error, the service still starts. Module 1 has no service token: it is called with each user's derived caller key (VarM1KeySecret).
@@ -235,10 +232,8 @@ func Vars() []Var {
 			Doc: fmt.Sprintf("The secret each user's module 1 caller key is derived from: the key is the unpadded base64url of the HMAC-SHA256, under this secret, of the text m1-caller, v and the key version (PLATFORM_M1_KEY_VERSION) and the user's id, each part set off by a vertical bar; module 1 keeps only the SHA-256 of each key. At least %d bytes (64 random hexadecimal characters are plenty). The default (unset) means no module 1 key can be derived and no tenant scope built; the service still starts. Changing it changes every user's key: rotate it with a new key version (see PLATFORM_M1_KEY_VERSION). Never printed or logged.", MinM1KeySecretBytes)},
 		{Name: VarM1KeyVersion, Default: "1",
 			Doc: fmt.Sprintf("The version of the module 1 caller keys the platform derives and presents: the key of a user is the HMAC-SHA256, under PLATFORM_M1_KEY_SECRET, of the text m1-caller, v and this number, and the user's id, each part set off by a vertical bar. Integer, %d to %d. Raise it (with a new PLATFORM_M1_KEY_SECRET) to rotate: provision the new version's rows first (the old keys keep working beside them), switch this dial and the secret, then retire the old version; the steps are in Docs/config-reference.md. Changing it without provisioning the new rows makes every module 1 call answer 401.", MinM1KeyVersion, MaxM1KeyVersion)},
-		{Name: VarM1VendorReachable, Default: "false",
-			Doc: "Whether module 1's vendor fallback (ZeroBounce) is switched on, as the platform is told: `true` or `false` and nothing else (any other value stops the process at start-up with exit status 2). It is the platform's mirror of module 1's own `TM_EXTERNAL_*` fallback switches: module 1 decides whether it calls the vendor, the platform decides what a module 1 job reserves, and the owner switches BOTH together (the pair is listed in OWNER-ACTIONS.md of the parent repository). With it off (the default) a module 1 job reserves 1 credit per row, and a vendor answer that arrives all the same is never charged: it is flagged and its credits stay in the reserve until the release. With it on, a module 1 job reserves 2 credits per row (the dearest unit, `m1_vendor`). Switching it never changes the reserve of a job already confirmed: a job's prices are frozen at its reserve. Every platform instance runs a loop that writes the value into `platform.unit_costs.reachable` when it starts and every 60 seconds after (every 5 seconds until the first success), so all instances must be given the same value. Consumed by `internal/app` (`syncReachability`, through `internal/money.Store.SetUnitReachable`)."},
 		{Name: VarM1URL, Default: unsetMarker,
-			Doc: "Base URL of module 1's control plane (http or https, with a host and no credentials, query or fragment), for example http://m1:8080. Module 1 is called with each user's derived caller key (see PLATFORM_M1_KEY_SECRET), not with a service token. The default (unset) means no module 1 call can be made and its adapter refuses with a typed error; the service still starts. Consumed by `internal/adapters/m1.FromConfig`."},
+			Doc: "Base URL of module 1's control plane (http or https, with a host and no credentials, query or fragment), for example http://m1:8080. Module 1 is called with each user's derived caller key (see PLATFORM_M1_KEY_SECRET), not with a service token. The default (unset) means no module 1 call can be made and its adapter refuses with a typed error; the service still starts. With it set (and `PLATFORM_M1_KEY_SECRET`), the platform also reads module 1's `GET /v1/describe` for `vendor_fallback.reachable` at every module 1 preview and confirm and every 60 seconds in each instance, with the key of a service caller of its own, derived from the same secret (see \"Module 1's vendor fallback\" below). Consumed by `internal/adapters/m1.FromConfig` and `internal/app`."},
 		{Name: VarM2URL, Default: unsetMarker,
 			Doc: "Base URL of module 2's platform API (http or https, with a host and no credentials, query or fragment), for example http://m2:8080. The default (unset) means no module 2 call can be made and its adapter refuses with a typed error; the service still starts. Consumed by `internal/adapters/m2.FromConfig`."},
 		{Name: VarM2ServiceToken, Default: unsetMarker, Secret: true,
@@ -312,8 +307,6 @@ type Config struct {
 
 	M1KeyVersion int    // the version of the module 1 keys derived and presented (internal/tenant WithM1KeyVersion, Scope, ProvisionM1Caller)
 	M1KeySecret  Secret // the secret every user's module 1 caller key is derived from; "" means not configured (internal/tenant NewResolver, DeriveM1Key)
-
-	M1VendorReachable bool // whether module 1's vendor fallback is on: what internal/app writes into platform.unit_costs.reachable for m1_vendor (syncReachability); false means a module 1 job reserves 1 credit per row
 
 	M1URL          string // base URL of module 1's control plane; "" means not configured (internal/adapters/m1 FromConfig)
 	M2URL          string // base URL of module 2's platform API; "" means not configured (internal/adapters/m2 FromConfig)
@@ -481,15 +474,6 @@ func Load(getenv func(string) string) (Config, error) {
 					continue
 				}
 				c.M1KeySecret = Secret(raw)
-			}
-		case VarM1VendorReachable:
-			switch raw { // exactly these two spellings: "TRUE", "1", "yes" and "on" are refused, because a switch that silently reads as off is a customer reserved at the wrong rate
-			case "true":
-				c.M1VendorReachable = true
-			case "false":
-				c.M1VendorReachable = false
-			default:
-				fail(v.Name, "must be true or false")
 			}
 		case VarM1URL:
 			if raw != v.Default { // the default stands for "not configured", which leaves the field empty (see unsetMarker)
@@ -742,7 +726,6 @@ func (c Config) attrs() []slog.Attr {
 		slog.Duration("module_retry_backoff", c.ModuleRetryBackoff),
 		slog.String("m1_key_secret", secretState(c.M1KeySecret)),
 		slog.Int("m1_key_version", c.M1KeyVersion),
-		slog.Bool("m1_vendor_reachable", c.M1VendorReachable),
 		slog.String("m1_url", urlState(c.M1URL)),
 		slog.String("m2_url", urlState(c.M2URL)),
 		slog.String("m2_service_token", secretState(c.M2ServiceToken)),

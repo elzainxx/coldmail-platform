@@ -33,6 +33,7 @@ func (c *Client) ReportCampaignPage(ctx context.Context, campaignID, cursor stri
 	var w struct {
 		CampaignID     string `json:"campaign_id"`
 		DispatchPaused bool   `json:"dispatch_paused"`
+		Paused         bool   `json:"paused"` // additive (Phase 4 C1), absent in an older module: false (the shape declares it optional and a present value must be a boolean)
 		Totals         struct {
 			Total              int64 `json:"total"`
 			Sent               int64 `json:"sent"`
@@ -95,7 +96,7 @@ func (c *Client) ReportCampaignPage(ctx context.Context, campaignID, cursor stri
 		next = *w.Items.NextCursor
 	}
 	page := CampaignPage{
-		CampaignID: campaignID, DispatchPaused: w.DispatchPaused, NextCursor: next, PageSize: int(w.Items.PageSize),
+		CampaignID: campaignID, DispatchPaused: w.DispatchPaused, Paused: w.Paused, NextCursor: next, PageSize: int(w.Items.PageSize),
 		Totals: Totals{
 			Total: t.Total, Sent: t.Sent, Bounced: t.Bounced, Failed: t.Failed, InFlight: t.InFlight, Pending: t.Pending,
 			WaitingForCapacity: t.WaitingForCapacity, Cancelled: t.Cancelled,
@@ -170,7 +171,7 @@ func (c *Client) Walk(ctx context.Context, campaignID string, fn func(CampaignPa
 func (c *Client) ReportCampaign(ctx context.Context, campaignID string) (CampaignReport, error) {
 	var rep CampaignReport
 	_, err := c.Walk(ctx, campaignID, func(p CampaignPage) error {
-		rep.CampaignID, rep.DispatchPaused = p.CampaignID, p.DispatchPaused
+		rep.CampaignID, rep.DispatchPaused, rep.Paused = p.CampaignID, p.DispatchPaused, p.Paused
 		// MODULE-FORCED(SA-F9): the totals and the item list are separate queries of the module, not a snapshot, so the report carries the totals of the last page read and the caller checks ItemsMatchTotal instead of the adapter asserting that the two agree.
 		rep.Totals, rep.Progress, rep.ByAccount = p.Totals, p.Progress, p.ByAccount
 		rep.Items = append(rep.Items, p.Items...)

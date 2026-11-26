@@ -44,7 +44,7 @@ var (
 	ErrNoEntitlement = errors.New("the user has no enabled module 3 entitlement")
 	// ErrSuspended: the platform has observed module 3 holding the user suspended (platform.m3_sync), so a job could not run.
 	ErrSuspended = errors.New("module 3 is observed holding the user suspended")
-	// ErrModuleUnavailable: module 3 could not be asked whether the campaign is feasible, and an immediate confirm will not hold anything for a job that cannot start. A scheduled confirm is not refused for it.
+	// ErrModuleUnavailable: module 3 could not be asked whether the campaign is feasible (or module 1 could not be asked whether its vendor fallback is reachable, so the job cannot be priced: internal/jobs/vendor.go), and an immediate confirm will not hold anything for a job that cannot start. A scheduled confirm is not refused for it.
 	ErrModuleUnavailable = errors.New("the module is unavailable")
 	// ErrIncomplete is wrapped by every *IncompleteError: the engine asked to complete or finish a job while some pending rows still have no result. Nothing was changed.
 	ErrIncomplete = errors.New("the job still has rows without a result")
