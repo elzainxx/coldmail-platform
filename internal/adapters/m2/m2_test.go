@@ -90,7 +90,7 @@ func isZero(v any) bool { return v == nil || reflect.ValueOf(v).IsZero() }
 // ---- the profile and the construction -----------------------------------------------------------------------------------
 
 // Module 2's profile is what the research documents (research m2 section 4.3, describe, handlers): the seven states in enum order, the six error classes, the twelve reasons in the
-// module's contract order, the seven Domain A error codes, and the conventions that make it module 2 (the single report always carries its optional keys, no account detail, a
+// module's contract order, the eight Domain A error codes (job_item_cancelled, the 409 for an item the platform marked cancelled, among them since the pin that lists it in describe), and the conventions that make it module 2 (the single report always carries its optional keys, no account detail, a
 // quote that is arithmetic, a 409 that is back-pressure). The control changes one field and the comparison fails.
 func TestProfileIsTheDocumentedOne(t *testing.T) {
 	want := sendapi.Profile{
@@ -99,7 +99,7 @@ func TestProfileIsTheDocumentedOne(t *testing.T) {
 		ErrorClasses: []string{"bounce_permanent", "transport_4xx", "auth_failure", "throttle", "timeout", "unknown"},
 		ItemReasons: []string{"pool_exhausted", "attempts_exhausted", "bounce_permanent", "cancelled", "transport_4xx", "auth_failure", "throttle", "timeout", "unknown",
 			"no_eligible_account", "waiting_for_capacity", "dispatch_paused"},
-		ErrorCodes:    []string{"validation_failed", "unauthenticated", "not_found", "method_not_allowed", "conflict", "internal_error", "paused"},
+		ErrorCodes:    []string{"validation_failed", "unauthenticated", "not_found", "method_not_allowed", "conflict", "job_item_cancelled", "internal_error", "paused"},
 		AlwaysPresent: true, LinearCost: true, Cancel: true, RunConflict: sendapi.ConflictBackpressure,
 		PauseCapability: "campaign_pause_resume",
 	}

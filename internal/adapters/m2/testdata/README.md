@@ -64,3 +64,11 @@ A contract added to `m2.Contracts()` before a run reaches it is hand-written unt
 ## One file's provenance
 
 `contract/report.campaign.empty.json` was, until the close-out, a response module 2 gave to an unknown campaign (no items, totals zero) that had been installed under this name by hand because the matcher then filed that answer under another contract name. Run 44395876225 recorded this contract natively (the page of a campaign whose items were cancelled), the file is that recording byte for byte, and the old installation is gone. The name stays a shape family, not a promise about the content.
+
+## Phase 4 D1: three recordings are pending (nothing here is written for them)
+
+The answers of module 2 to POST /v1/pause and POST /v1/resume ({campaign_id, paused, changed, state, queued, in_flight, terminal}) and its 409 `job_item_cancelled` on POST /v1/run are contracts that
+m2.PauseContracts DECLARES and m2.Contracts LISTS only once the switch `recordedPauseFixtures` (sendapi/contracts.go) is true. Their files are pause.ok.json, resume.ok.json and
+run.error.job_item_cancelled.json; they are not in this directory yet, and none is written by hand: the drift session in record mode (zz_m2_worker_contract_drift_test.go, CONTRACT_RECORD=1) prints them
+and cmd/contract-fixtures installs them. Each contract has ONE file (the first pause, the first resume and the 409 are the recorded answers; a repeat of either has the same shape and `changed` false).
+When they are installed and the switch is flipped, name them under RECORDED with the record run's id and delete this section (TestReadmeNamesTheRecordedAndHandWrittenFixtures is red until then).

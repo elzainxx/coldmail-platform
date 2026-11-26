@@ -21,5 +21,13 @@ var m3DriftNotElicited = map[string]string{
 	"m3|POST /v1/run|error internal_error":          "module 3 answers run with 500 internal_error only when one of its own database statements fails (the job insert, the config read that does not fail open, the advisory lock) inside a request; the harness has one shared Postgres and no way to fail a statement of module 3 alone without taking the whole stack down, and module 3 is never modified (CLAUDE.md rule 5)",
 }
 
-// TestM3Adapter_ZContractDrift is the gate itself.
-func TestM3Adapter_ZContractDrift(t *testing.T) { m3Drift.Finish(t) }
+// TestM3Adapter_ZContractDrift is the gate itself, and, before the verdict, the Phase 4 D1 steps of the pending contracts (contract_pause_m3adapter_test.go: pause, resume and a run of a job item the
+// platform marked cancelled, against the real module 3). The contracts of those answers are declared by the adapter (m3.PauseContracts) and listed only once their recordings are installed and
+// the switch (sendapi.RecordedPauseFixtures) is flipped: until then the step prints them in record mode (CONTRACT_RECORD=1) and in compare mode compares each with its fixture only when the file is
+// installed, SKIPPING the whole step with a printed note (and the count at the end) when none is. The step runs in a subtest of its own, so that a failure of it can never hide the verdict of the
+// session below, and its calls never reach the session (m3Drift): a call no listed contract declares would be an undeclared dependency there.
+func TestM3Adapter_ZContractDrift(t *testing.T) {
+	t.Run("pending_contracts_pause_resume_cancelled_item", m3PauseCases)
+	m3Drift.Finish(t)
+	m3cp.finish(t)
+}

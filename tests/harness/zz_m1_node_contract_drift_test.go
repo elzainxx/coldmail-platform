@@ -28,5 +28,14 @@ var m1DriftNotElicited = map[string]string{
 
 func init() { m1bObserve = m1Drift.Observer() }
 
-// TestM1Node_ZContractDrift is the gate itself (the last test of the binary).
-func TestM1Node_ZContractDrift(t *testing.T) { m1Drift.Finish(t) }
+// TestM1Node_ZContractDrift is the gate itself (the last test of the binary), and, before the verdict, the Phase 4 D1 steps of the pending contracts (contract_cancel_m1node_test.go: the cancel of a
+// running job, its repeats, a results page that holds a cancelled row and the cancel of an unknown job, against the real module 1). The contracts of those answers are declared by the adapter
+// (m1.CancelContracts) and listed only once their recordings are installed and the switch (m1.recordedPauseFixtures) is flipped: until then the step prints them in record mode
+// (CONTRACT_RECORD=1) and in compare mode compares each with its fixture only when the file is installed, SKIPPING the whole step with a printed note (and the count at the end) when none is. The
+// step runs in a subtest of its own, so that a failure of it can never hide the verdict of the session below, and its calls never reach the session (m1Drift): a call no listed contract declares
+// would be an undeclared dependency there.
+func TestM1Node_ZContractDrift(t *testing.T) {
+	t.Run("pending_contracts_cancel", m1CancelCases)
+	m1Drift.Finish(t)
+	m1cp.finish(t)
+}

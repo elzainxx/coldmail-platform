@@ -114,7 +114,8 @@ func CompareVocabularies(d *modclient.Describe, p Profile) VocabReport {
 		have[ec.Code] = true
 	}
 	for _, code := range want[vocabErrorCodes] {
-		if !have[code] {
+		// an OPTIONAL code (see optionalErrorCodes) is neither missing nor extra, even for a profile that lists it; a REQUIRED one (job_item_cancelled since the pin that lists it) is missing when gone
+		if !have[code] && !slices.Contains(optionalErrorCodes, code) {
 			r.CodesMissing = append(r.CodesMissing, code)
 		}
 	}

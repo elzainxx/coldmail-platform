@@ -115,14 +115,18 @@ const (
 // charged, and the cause of a run 409 decides whether the platform stops, waits or splits the campaign, so a new state or cause is never mapped by guesswork.
 var strictVocabularies = map[string]bool{vocabJobState: true, vocabRunConflictCause: true}
 
-// CodeItemCancelled is the error code of a run 409 for a job item the platform marked cancelled (Phase 4 D9, additive in both senders): a code of its own, NOT a cause of `conflict`.
+// CodeItemCancelled is the error code of a run 409 for a job item the platform marked cancelled (Phase 4 D9, additive in both senders): a code of its own, NOT a cause of `conflict`. Both modules
+// at the pinned heads list it in their describe `error_codes`, so it is a REQUIRED code of the profiles of module 2 and module 3 (a describe that no longer lists it is a break, like any other
+// code the adapter maps); it was optional (OptionalErrorCodes) for as long as a module older than D9 had to be tolerated.
 const CodeItemCancelled = "job_item_cancelled"
 
 // optionalErrorCodes are error codes the adapter maps that a module may or may not list in its describe `error_codes`: a module older than the change that added the code does not list it,
-// one that has it does. CompareVocabularies reports neither its absence (CodesMissing) nor its presence (CodesExtra) for them, so the same adapter accepts a describe of either generation.
-var optionalErrorCodes = []string{CodeItemCancelled}
+// one that has it does. CompareVocabularies reports neither its absence (CodesMissing, for a code the profile lists) nor its presence (CodesExtra) for them, so the same adapter accepts a
+// describe of either generation. EMPTY since the modules pinned list job_item_cancelled and the profiles require it; the mechanism stays for the next additive code (the tests of it set a code
+// of their own through SetOptionalErrorCodesForTest).
+var optionalErrorCodes = []string{}
 
-// OptionalErrorCodes is the list of error codes a describe may or may not carry (a copy).
+// OptionalErrorCodes is the list of error codes a describe may or may not carry (a copy): empty at present.
 func OptionalErrorCodes() []string { return slices.Clone(optionalErrorCodes) }
 
 // CanPause says whether a module's describe declares per-campaign pause and resume: the profile names the capability and the describe's `capabilities` holds it, true. A describe without the key

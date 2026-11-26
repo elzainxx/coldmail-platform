@@ -20,3 +20,11 @@ read by this package's tests too: its cancel files are the same two shapes. None
 ## Phase 4 A1
 
 `contract/report.campaign.error.cursor_forged.json` (a 500 for a cursor that decodes but is not a timestamp and an id) and its contract were removed: no module answers a forged cursor with a 500 any more, so a forged cursor is the 400 of `report.campaign.error.cursor_malformed.json` and a 500 is never read as a bad cursor. The package now holds 19 files.
+
+## Phase 4 D1: three recordings are pending (nothing here is written for them)
+
+The answers of POST /v1/pause and POST /v1/resume and the 409 `job_item_cancelled` of POST /v1/run are contracts that sendapi.PauseContracts DECLARES and sendapi.Contracts LISTS only once the
+switch `recordedPauseFixtures` (contracts.go) is true. Their files are pause.ok.json, resume.ok.json and run.error.job_item_cancelled.json (sendapi.PauseFixtureNames); they are not in this directory
+or in module 2's or module 3's yet, and none is written by hand: the drift sessions of the harness print them in record mode (CONTRACT_RECORD=1) and cmd/contract-fixtures installs them. This
+directory holds a module-3-SHAPED set, so the lead installs here a copy of module 3's recording of each. TestPauseFixturesAreInstalledWhenTheSwitchIsOn and TestPauseFixturesDoNotExistWhileTheSwitchIsOff
+keep the switch and the files together; delete this section when the switch is flipped.

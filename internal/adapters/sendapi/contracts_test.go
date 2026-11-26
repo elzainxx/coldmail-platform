@@ -246,7 +246,13 @@ func m3Cases() map[string]sendapitest.Case {
 // key it names (a required key removed, a key's type changed, a state outside the vocabulary, a value that cannot be read). The recorded body with no mutation is the control of the
 // mutations: it passes through the same server and the same call.
 func TestContractsOfTheSharedBody(t *testing.T) {
-	sendapitest.Suite{Dir: fixtures, Contracts: sendapi.Contracts(m3like()), Cases: m3Cases()}.Run(t)
+	cases := m3Cases()
+	if sendapi.RecordedPauseFixtures() { // the contracts of the Phase 4 D1 recordings are listed only once the switch is on, and so are their cases (pauseCases, pause_contracts_test.go)
+		for k, c := range pauseCases() {
+			cases[k] = c
+		}
+	}
+	sendapitest.Suite{Dir: fixtures, Contracts: sendapi.Contracts(m3like()), Cases: cases}.Run(t)
 }
 
 // The paired control of the suite: with one mutation turned into an acceptable change the suite's assertion fails, so a mutation that is not refused cannot pass unseen. Here a lax
@@ -372,6 +378,8 @@ func TestContractShapesAreTheClientsShapes(t *testing.T) {
 			return "conflict"
 		case c.Status >= 400:
 			return "error"
+		case c.Route == sendapi.RoutePause || c.Route == sendapi.RouteResume:
+			return "pause"
 		case c.Route == sendapi.RouteCancel:
 			return "cancel"
 		case c.Route == sendapi.RouteQuote:

@@ -61,6 +61,11 @@ func firstDetail(t testing.TB, name string) string {
 	return f
 }
 
+// describesCode says whether a describe lists the error code with the HTTP status.
+func describesCode(d *modclient.Describe, code string, status int) bool {
+	return slices.ContainsFunc(d.ErrorCodes, func(e modclient.ErrorCode) bool { return e.Code == code && e.HTTPStatus == status })
+}
+
 func del(path, key string) sendapitest.Mutation {
 	return sendapitest.Mutation{Path: path, Op: sendapitest.Delete, WantKey: key}
 }
@@ -235,7 +240,7 @@ func cases() map[string]sendapitest.Case {
 				return d, nil
 			},
 			Check: func(t testing.TB, v any, err error) {
-				if d := v.(*modclient.Describe); d.Module != "send_managed" || len(d.ErrorCodes) != 7 || d.Pricing.UnitPriceCredits != 1 || d.Pricing.CostFieldsInert {
+				if d := v.(*modclient.Describe); d.Module != "send_managed" || len(d.ErrorCodes) != 8 || !describesCode(d, sendapi.CodeItemCancelled, 409) || d.Pricing.UnitPriceCredits != 1 || d.Pricing.CostFieldsInert {
 					t.Fatalf("describe = %+v", d)
 				}
 			},
@@ -263,7 +268,13 @@ func cases() map[string]sendapitest.Case {
 // describe, the cancel); each recorded body conforms to the Shape its contract names; and every mutation (a required key removed, a key's type changed, a state outside the
 // vocabulary, an unreadable timestamp, another campaign's answer) is refused with the key it names. The unmutated body is the control of the mutations, through the same server and call.
 func TestContractsOfModule2(t *testing.T) {
-	sendapitest.Suite{Dir: fixtures, Contracts: m2.Contracts(), Cases: cases()}.Run(t)
+	table := cases()
+	if m2.RecordedPauseFixtures() { // the Phase 4 D1 contracts are listed only once the switch is on, and so are their cases (pauseCases, pause_contracts_test.go)
+		for k, c := range pauseCases() {
+			table[k] = c
+		}
+	}
+	sendapitest.Suite{Dir: fixtures, Contracts: m2.Contracts(), Cases: table}.Run(t)
 }
 
 // No rot: the files of testdata/contract and the contracts name each other exactly once. The controls: a stray file, a missing file and a doubly named file are each caught.
@@ -272,8 +283,12 @@ func TestContractFixturesDoNotRot(t *testing.T) {
 	if problems := sendapitest.CheckNoRot(fixtures, cs); len(problems) != 0 {
 		t.Fatalf("the fixtures have rotted: %v", problems)
 	}
-	if len(cs) != len(sendapi.Contracts(m2.Profile())) || len(cs) != 19 {
-		t.Fatalf("%d contracts: the shared ones (which include the cancel's two since module 3 has the route too, and not the forged-cursor 500 that Phase 4 A1 removed), 19 of them", len(cs))
+	want := 19
+	if m2.RecordedPauseFixtures() {
+		want += len(m2.PauseContracts()) // pause, resume and the 409 of a cancelled item: listed once the switch is on
+	}
+	if len(cs) != len(sendapi.Contracts(m2.Profile())) || len(cs) != want {
+		t.Fatalf("%d contracts: the shared ones (which include the cancel's two since module 3 has the route too, and not the forged-cursor 500 that Phase 4 A1 removed), %d of them", len(cs), want)
 	}
 	copyDir := func(t *testing.T) string {
 		dir := t.TempDir()
@@ -393,6 +408,7 @@ func TestCheckVocabulariesAgainstModule2sDescribe(t *testing.T) {
 		"the reason vocabulary goes": {mut("vocabularies.item_reason", sendapitest.Delete, nil), "vocabularies.item_reason", "no longer advertises"},
 		"an error class is gone":     {mut("vocabularies.error_class.values[2]", sendapitest.Delete, nil), "vocabularies.error_class", "auth_failure"},
 		"an error code is gone":      {mut("error_codes[4]", sendapitest.Delete, nil), "error_codes", "conflict"},
+		"the cancelled item's code":  {mut("error_codes[5]", sendapitest.Delete, nil), "error_codes", "job_item_cancelled"}, // a required code since the pin that lists it: its absence is a break, not an older module
 		"module 3's describe":        {sendapitest.Read(t, "../sendapi/testdata/contract", "describe.ok.json"), "module", "wired"},
 	} {
 		t.Run(name, func(t *testing.T) {

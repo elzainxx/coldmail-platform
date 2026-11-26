@@ -139,6 +139,17 @@ func contractKey(route, c string) string { return route + " | " + c }
 
 // contractTable is what every entry of Contracts() is exercised with. A contract with no entry here, and an entry with no contract, are both red (TestContracts_EveryFixtureDecodes...).
 func contractTable() map[string]contractExpect {
+	table := baseContractTable()
+	if recordedPauseFixtures { // module 1's cancel recordings are listed only once the switch is on, and so are their entries (cancelContractTable, cancel_contracts_test.go)
+		for k, e := range cancelContractTable() {
+			table[k] = e
+		}
+	}
+	return table
+}
+
+// baseContractTable is the table of the contracts that are always listed.
+func baseContractTable() map[string]contractExpect {
 	return map[string]contractExpect{
 		contractKey(tplVerify, "ok"):                     {run: runVerify, summarize: verifySummary},
 		contractKey(tplSubmit, "accepted"):               {run: runSubmitRaw, summarize: submitSummary},
@@ -592,6 +603,9 @@ func TestContracts_AMutatedFixtureIsRefusedNamingTheKey(t *testing.T) {
 			remove("idempotency"), remove("idempotency.header"), retype("idempotency.header", 3), remove("idempotency.replay_response_header"), retype("idempotency", []any{}),
 		},
 	}
+	if recordedPauseFixtures { // the mutations of the cancel's 200, listed once the switch is on (cancel_contracts_test.go)
+		static[contractKey(tplCancel, "ok")] = cancelOkMutations()
+	}
 	total, populated, empty := 0, 0, 0
 	for _, c := range Contracts() {
 		key := contractKey(c.Route, c.Case)
@@ -603,7 +617,9 @@ func TestContracts_AMutatedFixtureIsRefusedNamingTheKey(t *testing.T) {
 			t.Fatalf("%q is a contract with no entry in the table", key)
 		}
 		ms, hasStatic := static[key]
-		if c.Route == tplResults {
+		if c.Route == tplResults && c.Case == "page_cancelled" {
+			ms = cancelledPageMutations(t, c.Fixture) // the page that holds a cancelled row: its own mutations (cancel_contracts_test.go)
+		} else if c.Route == tplResults {
 			if n := len(recordedRows(t, c.Fixture)); n > 0 {
 				ms, populated = rowMutations(t, c.Fixture), populated+1
 			} else {

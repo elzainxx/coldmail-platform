@@ -128,6 +128,7 @@ func TestContractVocabulariesAreTheProfilesSets(t *testing.T) {
 			for _, c := range cs {
 				for k, v := range c.Vocab {
 					exp, ok := want[k]
+					exp = withCancelledItemCode(c, k, exp)
 					if !ok || !slices.Equal(v, exp) {
 						t.Fatalf("%s / %s: vocabulary %q is %v, the profile's is %v", c.Route, c.Case, k, v, exp)
 					}
@@ -383,4 +384,13 @@ func TestDescribeShapeAgreesWithModclient(t *testing.T) {
 	if nRejected != len(rejected) {
 		t.Fatal("not every rejection was exercised")
 	}
+}
+
+// withCancelledItemCode is the set a contract's vocabulary is expected to be: the profile's, except that the contract of the 409 `job_item_cancelled` lists that code in the set of error codes whatever
+// the profile says (the contract is about it; the profiles of module 2 and module 3 list it since the pin that lists it in describe, the copies of this package's tests do not).
+func withCancelledItemCode(c modclient.RouteContract, name string, set []string) []string {
+	if name == "error_codes" && c.Route == sendapi.RouteRun && c.Case == "error job_item_cancelled" && !slices.Contains(set, sendapi.CodeItemCancelled) {
+		return append(slices.Clone(set), sendapi.CodeItemCancelled)
+	}
+	return set
 }

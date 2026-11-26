@@ -10,15 +10,18 @@ import (
 
 // The vendor fallback in module 1's describe (vendor.go; module 1 migration 0020, owner ruling C3).
 //
-// THE BODIES BELOW ARE HAND-WRITTEN. The recorded fixture of the describe (testdata/contract/describe-ok.json) is a recording of module 1 BEFORE it carried `vendor_fallback`, and is re-recorded
-// after the pin moves to the module's new head; until then the only describe that has the field is one built here, from that recording plus the one key the module's code (control-plane/internal/api/
-// describe.go, describeBody) adds: `"vendor_fallback": {"reachable": <bool>}`. So every test here names its body "hand-written", and the control of each is the unchanged recording, which must read as
-// "not said" (the parser accepts BOTH: the old describe and the new one).
+// WHAT IS RECORDED AND WHAT IS WRITTEN HERE. The recorded fixture of the describe (testdata/contract/describe-ok.json) is a recording of module 1 AFTER migration 0020: it carries
+// `"vendor_fallback": {"reachable": false}` (the node stack's own answer: no vendor is reachable from the harness), and the test below reads that recording as it is. Every other body is
+// HAND-WRITTEN from it: the same document with the one key the module's code (control-plane/internal/api/describe.go, describeBody) adds changed (`"vendor_fallback": {"reachable": <bool>}`, true,
+// or a wrong type) or REMOVED (what a module BEFORE 0020 answers, which the parser must still accept and read as "not said"). Those tests name their bodies "hand-written".
 
-// withVendorFallback is the HAND-WRITTEN edit that gives the recorded describe the key the new module adds; v is what goes under it.
+// withVendorFallback is the HAND-WRITTEN edit that sets the key the new module adds to v (the recording already carries it, as false).
 func withVendorFallback(v any) func(doc map[string]any) {
 	return func(doc map[string]any) { doc["vendor_fallback"] = v }
 }
+
+// withoutVendorFallback is the HAND-WRITTEN edit that removes the key: the describe of a module before migration 0020 (and of every recording made before it).
+func withoutVendorFallback(doc map[string]any) { delete(doc, "vendor_fallback") }
 
 func vendorOf(t *testing.T, body string) (VendorReachable, error, *fakeM1) {
 	t.Helper()
@@ -28,19 +31,29 @@ func vendorOf(t *testing.T, body string) (VendorReachable, error, *fakeM1) {
 }
 
 func TestVendorReachable_ReadsTheFieldAndSaysWhenTheDescribeHasNone(t *testing.T) {
-	// HAND-WRITTEN: the recorded describe plus vendor_fallback true / false
-	on, err, f := vendorOf(t, editDescribe(t, withVendorFallback(map[string]any{"reachable": true})))
+	// the RECORDING carries the key, as false (so the reading below is of what the module said, and the test fails if a re-recording drops the key)
+	rec, ok := obj(t, decodeDoc(t, fixture(t, "describe-ok.json")))["vendor_fallback"].(map[string]any)
+	if !ok || rec["reachable"] != false {
+		t.Fatalf("the recorded describe's vendor_fallback is %v, want an object with reachable=false", rec)
+	}
+	// RECORDED: a describe that says reachable=false reads as {Known: true, Reachable: false}: a false that was SAID is not a false that was not said
+	off, err, f := vendorOf(t, fixture(t, "describe-ok.json"))
+	if err != nil || off != (VendorReachable{Known: true, Reachable: false}) {
+		t.Fatalf("the recorded describe (vendor_fallback.reachable=false) read as %+v, %v; want {Known: true, Reachable: false}", off, err)
+	}
+	// HAND-WRITTEN: the recording with reachable=true (the same reading of a false said by hand as by the module), and the recording with the key REMOVED (a module before the field)
+	on, err, _ := vendorOf(t, editDescribe(t, withVendorFallback(map[string]any{"reachable": true})))
 	if err != nil || on != (VendorReachable{Known: true, Reachable: true}) {
 		t.Fatalf("a describe that says reachable=true read as %+v, %v; want {Known: true, Reachable: true}", on, err)
 	}
-	off, err, _ := vendorOf(t, editDescribe(t, withVendorFallback(map[string]any{"reachable": false})))
-	if err != nil || off != (VendorReachable{Known: true, Reachable: false}) {
-		t.Fatalf("a describe that says reachable=false read as %+v, %v; want {Known: true, Reachable: false}: a false that was SAID is not a false that was not said", off, err)
+	offByHand, err, _ := vendorOf(t, editDescribe(t, withVendorFallback(map[string]any{"reachable": false})))
+	if err != nil || offByHand != off {
+		t.Fatalf("a hand-written reachable=false read as %+v, %v; want what the recording reads as, %+v", offByHand, err, off)
 	}
-	// the control of both: the RECORDING (module 1 before the field) is accepted and is "not said", never a silent false
-	old, err, _ := vendorOf(t, fixture(t, "describe-ok.json"))
+	// the control of all three: the describe with NO vendor_fallback (module 1 before the field) is accepted and is "not said", never a silent false
+	old, err, _ := vendorOf(t, editDescribe(t, withoutVendorFallback))
 	if err != nil || old != (VendorReachable{}) || old.Known {
-		t.Fatalf("the recorded describe (no vendor_fallback) read as %+v, %v; want {Known: false} and no error", old, err)
+		t.Fatalf("a describe without vendor_fallback read as %+v, %v; want {Known: false} and no error", old, err)
 	}
 	if on == off || off == old || on == old {
 		t.Error("the three answers (reachable, not reachable, not said) are not three different values")
@@ -152,9 +165,12 @@ func TestVendorReachable_TheDescribeShapeAcceptsBothTheOldAndTheNewModule(t *tes
 	decode := func(body string) error {
 		return modclient.Decode(&modclient.Response{Status: 200, Body: []byte(body)}, nil, shape)
 	}
-	// HAND-WRITTEN bodies from the recording
+	// the recording (module 1 after the field: it carries vendor_fallback) and, HAND-WRITTEN from it, the describe of a module before the field (the key removed) are both accepted
 	if err := decode(fixture(t, "describe-ok.json")); err != nil {
-		t.Fatalf("the recording (module 1 before the field) is refused by the contract's shape: %v", err)
+		t.Fatalf("the recording (module 1 with the field) is refused by the contract's shape: %v", err)
+	}
+	if err := decode(editDescribe(t, withoutVendorFallback)); err != nil {
+		t.Fatalf("the describe of a module before the field (the recording with vendor_fallback removed) is refused by the contract's shape: %v", err)
 	}
 	for _, v := range []bool{true, false} {
 		if err := decode(editDescribe(t, withVendorFallback(map[string]any{"reachable": v}))); err != nil {
@@ -166,7 +182,7 @@ func TestVendorReachable_TheDescribeShapeAcceptsBothTheOldAndTheNewModule(t *tes
 	if e := asModclient(err); e == nil || e.Kind != modclient.Contract || e.Key != "vendor_fallback.reachable" {
 		t.Errorf("a retyped flag was judged %v, want a Contract error naming vendor_fallback.reachable", err)
 	}
-	// the key is OPTIONAL: it is the only key of the shape that the recording lacks and the shape accepts the lack of
+	// the key is OPTIONAL: the shape accepts the lack of it (the describe of a module before the field, decoded above), though the recording carries it
 	found := false
 	for _, f := range shape.Fields() {
 		if f.Name == "vendor_fallback" {

@@ -22,5 +22,13 @@ var m2Drift = contractcheck.NewSession(m2ad.Contracts(), m2ad.ContractFixtures()
 // because no module answers a forged cursor with a 500 any more (module 3 answers the 400 too), so every contract of module 2 is elicited and none needs a reason.
 var m2DriftNotElicited = map[string]string{}
 
-// TestM2Worker_ZContractDrift is the gate itself.
-func TestM2Worker_ZContractDrift(t *testing.T) { m2Drift.Finish(t) }
+// TestM2Worker_ZContractDrift is the gate itself, and, before the verdict, the Phase 4 D1 steps of the pending contracts (contract_pause_m2worker_test.go: pause, resume and a run of a job item the
+// platform marked cancelled, against the real module 2). The contracts of those answers are declared by the adapter (m2.PauseContracts) and listed only once their recordings are installed and
+// the switch (sendapi.RecordedPauseFixtures) is flipped: until then the step prints them in record mode (CONTRACT_RECORD=1) and in compare mode compares each with its fixture only when the file is
+// installed, SKIPPING the whole step with a printed note (and the count at the end) when none is. The step runs in a subtest of its own, so that a failure of it can never hide the verdict of the
+// session below, and its calls never reach the session (m2Drift): a call no listed contract declares would be an undeclared dependency there.
+func TestM2Worker_ZContractDrift(t *testing.T) {
+	t.Run("pending_contracts_pause_resume_cancelled_item", m2PauseCases)
+	m2Drift.Finish(t)
+	m2cp.finish(t)
+}

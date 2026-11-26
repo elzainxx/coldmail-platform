@@ -21,7 +21,7 @@ import (
 
 // ---- the profile ------------------------------------------------------------------------------------------------------
 
-// Module 3's profile is what the research documents and the module's code says (checked at the pinned commit: send_byo.job_state in enum order, send_byo.error_class, the nine codes of
+// Module 3's profile is what the research documents and the module's code says (checked at the pinned commit: send_byo.job_state in enum order, send_byo.error_class, the ten codes of
 // describeErrorCodes in status order, no `reason` key, a single report that omits its optional keys until set, account detail, a feasibility quote with an inert price, and a 409 on run
 // with four causes). The control changes one field and the comparison fails.
 func TestProfileIsTheDocumentedOne(t *testing.T) {
@@ -29,7 +29,7 @@ func TestProfileIsTheDocumentedOne(t *testing.T) {
 		Module: modclient.M3, DescribeModule: "send_byo",
 		JobStates:        []string{"queued", "assigned", "sending", "sent", "failed", "bounced", "cancelled"},
 		ErrorClasses:     []string{"bounce_permanent", "transport_4xx", "auth_failure", "throttle", "timeout", "unknown"},
-		ErrorCodes:       []string{"validation_failed", "unauthenticated", "not_found", "method_not_allowed", "conflict", "unprocessable", "rate_limited", "internal_error", "paused"},
+		ErrorCodes:       []string{"validation_failed", "unauthenticated", "not_found", "method_not_allowed", "conflict", "job_item_cancelled", "unprocessable", "rate_limited", "internal_error", "paused"},
 		AccountDetail:    true,
 		QuoteFeasibility: true,
 		Cancel:           true,
@@ -457,7 +457,8 @@ func TestCheckVocabulariesAgainstModule3sDescribe(t *testing.T) {
 		"a new cause":                   {mut("vocabularies.run_conflict_cause.values", sendapitest.Set, []string{"suspended", "campaign_active", "campaign_cap", "queue_cap", "full_moon"}), "vocabularies.run_conflict_cause", "does not handle"},
 		"the causes are gone":           {mut("vocabularies.run_conflict_cause", sendapitest.Delete, nil), "vocabularies.run_conflict_cause", "no longer advertises"},
 		"an error class gone":           {mut("vocabularies.error_class.values[2]", sendapitest.Delete, nil), "vocabularies.error_class", "auth_failure"},
-		"an error code gone":            {mut("error_codes[5]", sendapitest.Delete, nil), "error_codes", "unprocessable"},
+		"an error code gone":            {mut("error_codes[6]", sendapitest.Delete, nil), "error_codes", "unprocessable"},
+		"the cancelled item's code":     {mut("error_codes[5]", sendapitest.Delete, nil), "error_codes", "job_item_cancelled"}, // required since the pin that lists it: its absence is a break, not an older module
 		"module 2's describe":           {mut("module", sendapitest.Set, "send_managed"), "module", "wired"},
 		"another api version":           {mut("api_version", sendapitest.Set, "v2"), "api_version", "version"},
 		"the vocabulary is gone":        {mut("vocabularies.error_class", sendapitest.Delete, nil), "vocabularies.error_class", "no longer advertises"},

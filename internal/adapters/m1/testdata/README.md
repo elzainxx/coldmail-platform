@@ -113,3 +113,13 @@ control that changes one value and must be reported. Cases the recordings do not
 a row on the same page, a malformed row) are inline bodies in the tests, written from the module's code.
 
 `/healthz` and `/readyz` have no fixture here: the adapter passes them through `modclient`, which owns their shapes (see `UncoveredRoutes`).
+
+## Phase 4 D1: three recordings are pending (nothing here is written for them)
+
+Module 1's cancel is a contract that CancelContracts DECLARES and Contracts LISTS only once the switch `recordedPauseFixtures` (contracts.go) is true: cancel-ok.json (POST /v1/jobs/{id}/cancel, 200:
+ONE shape for the outcomes `cancelled`, `already_cancelled` and `already_complete`, so one file, recorded from the first answer, the outcome `cancelled` of a running job), cancel-error-not-found.json (the 404
+of a job that does not exist) and results-page-cancelled.json (a results page that holds a row cancelled before its check began: status `cancelled`, reason `cancelled_by_caller`, an empty `flags`). The
+status of a cancelled job is the body of any job's status (counts.cancelled, totals.cancelled and cancel_requested are keys of job-running.json and job-complete.json) and has no file of its own. None of the
+three files is in this directory yet and none is written by hand: the drift session in record mode (zz_m1_node_contract_drift_test.go, CONTRACT_RECORD=1) prints them and cmd/contract-fixtures installs
+them. TestCancelFixturesAreInstalledWhenTheSwitchIsOn and TestCancelFixturesDoNotExistWhileTheSwitchIsOff keep the switch and the files together; when the switch is flipped, move these three into the
+tables above (recorded) and delete this section.

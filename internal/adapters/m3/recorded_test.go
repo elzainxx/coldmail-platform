@@ -712,7 +712,11 @@ func TestReadmeNamesWhichFixturesAreRecorded(t *testing.T) {
 		}
 		return p
 	}
-	if len(wantRec) != 46 || len(wantHand) != 2 {
+	wantRecorded := 46
+	if m3.RecordedPauseFixtures() {
+		wantRecorded += len(sendapi.PauseFixtureNames()) // pause, resume and the 409 of a cancelled item: recordings once the switch is on
+	}
+	if len(wantRec) != wantRecorded || len(wantHand) != 2 {
 		t.Fatalf("%d recorded and %d hand-written: the subject changed", len(wantRec), len(wantHand))
 	}
 	for _, f := range recordedFixtures {
@@ -751,4 +755,12 @@ func testMatches(t testing.TB, r m3.TestResult, d any) {
 	samePtr(t, "from_alignment.message", r.Alignment.Message, optStr(d, "from_alignment.message"))
 	e := optStr(d, "from_alignment.error")
 	same(t, "not stored", r.Alignment.NotStored, e != nil && *e != "")
+}
+
+// The Phase 4 D1 recordings (pause, resume, the 409 of a cancelled item) are recordings like the rest once the switch (sendapi.RecordedPauseFixtures) is on and the lead has installed them: they join
+// the list then, and TestReadmeNamesWhichFixturesAreRecorded is red until testdata/README.md lists them under "## Recorded".
+func init() {
+	if m3.RecordedPauseFixtures() {
+		recordedFixtures = append(recordedFixtures, sendapi.PauseFixtureNames()...)
+	}
 }

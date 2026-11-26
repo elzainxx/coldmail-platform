@@ -1,7 +1,9 @@
 {
   "caller_ref": "",
+  "cancel_requested": false,
   "complete": true,
   "counts": {
+    "cancelled": 0,
     "pending": 0,
     "settled": 2,
     "total": 2
@@ -16,6 +18,7 @@
       "unknown": 0,
       "valid": 0
     },
+    "cancelled": 0,
     "duplicates": 0,
     "malformed": 0,
     "pending": 0,

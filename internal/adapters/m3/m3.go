@@ -57,7 +57,7 @@ var (
 )
 
 // Profile is module 3's profile of the shared sender body (research m3 sections 4, 5 and 11.2, checked against the module at the pinned commit: the job states are send_byo.job_state in enum
-// order, the error classes send_byo.error_class, the error codes the nine of describeErrorCodes in status order).
+// order, the error classes send_byo.error_class, the error codes the ten of describeErrorCodes in status order: job_item_cancelled, the 409 for an item the platform marked cancelled, follows conflict).
 //
 // What differs from module 2, as data: no `reason` key (so no ItemReasons and no charge reasons), a single report that omits its optional keys until they are set (AlwaysPresent false),
 // per-account detail on items and totals_by_account on the campaign report (AccountDetail), a feasibility quote with an inert price (QuoteFeasibility, not LinearCost), and a 409 on run
@@ -68,7 +68,7 @@ func Profile() sendapi.Profile {
 		DescribeModule: "send_byo",
 		JobStates:      []string{"queued", "assigned", "sending", "sent", "failed", "bounced", "cancelled"},
 		ErrorClasses:   []string{"bounce_permanent", "transport_4xx", "auth_failure", "throttle", "timeout", "unknown"},
-		ErrorCodes:     []string{"validation_failed", "unauthenticated", "not_found", "method_not_allowed", "conflict", "unprocessable", "rate_limited", "internal_error", "paused"},
+		ErrorCodes:     []string{"validation_failed", "unauthenticated", "not_found", "method_not_allowed", "conflict", "job_item_cancelled", "unprocessable", "rate_limited", "internal_error", "paused"},
 		ItemReasons:    nil,
 		AlwaysPresent:  false,
 		AccountDetail:  true,

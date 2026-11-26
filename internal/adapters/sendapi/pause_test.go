@@ -556,36 +556,101 @@ func TestARunOfACancelledItemIsATypedRefusalHandWritten(t *testing.T) {
 	})
 }
 
-// A describe that lists the error code job_item_cancelled and one that does not are both accepted: neither its absence (a module older than D9) is a missing code nor its presence an extra one, so
-// the comparison is neither Breaking nor Additive for it. The controls: an ordinary code the adapter does not know is still reported (Additive), and one it maps that is gone is still Breaking.
-func TestADescribeMayOrMayNotListTheCancelledItemCodeHandWritten(t *testing.T) {
-	p := m3like()
+// job_item_cancelled is a REQUIRED code of the profile that lists it (module 2 and module 3 since the pin that lists it in describe): a describe that carries it matches exactly, a describe that
+// does not is a Contract error naming error_codes and the code (a module that stopped answering the refusal must be looked at, not tolerated), and the same describe read against a profile that does
+// not list it (the older copies of this package's tests) reports the code as an additive extra, never as a break. The controls: an ordinary code the adapter does not know is still reported (Additive)
+// beside it, and a code the profile maps that is gone is still a break. OptionalErrorCodes is empty: nothing is optional until a module adds a code the platform has yet to require.
+func TestTheCancelledItemCodeIsARequiredCodeHandWritten(t *testing.T) {
+	older := m3like() // does not list the code (the hand-written describe of this package does not carry it either)
+	required := m3like()
+	required.ErrorCodes = append(slices.Clone(required.ErrorCodes), sendapi.CodeItemCancelled)
 	good := sendapitest.Read(t, fixtures, "describe.ok.json")
-	check := func(body []byte) (sendapi.VocabReport, error) {
-		e := newEnv(t, p, userA, serve(200, body), modclient.Options{}, sendapi.Options{})
-		return sendapi.CheckVocabularies(ctxT(t), e.c.Module(), p)
-	}
 	withCode := editJSON(t, good, func(m map[string]any) {
 		m["error_codes"] = append(m["error_codes"].([]any), map[string]any{"code": sendapi.CodeItemCancelled, "http_status": 409})
 	})
-	for name, body := range map[string][]byte{"a describe without the code (older module)": good, "a describe with the code": withCode} {
-		rep, err := check(body)
+	check := func(p sendapi.Profile, body []byte) (sendapi.VocabReport, error) {
+		e := newEnv(t, p, userA, serve(200, body), modclient.Options{}, sendapi.Options{})
+		return sendapi.CheckVocabularies(ctxT(t), e.c.Module(), p)
+	}
+
+	rep, err := check(required, withCode)
+	if err != nil || rep.Breaking() || rep.Additive() || len(rep.CodesMissing) != 0 || len(rep.CodesExtra) != 0 {
+		t.Fatalf("a describe with the code, against the profile that requires it: %v %+v", err, rep)
+	}
+	_, err = check(required, good)
+	ce := wantKind(t, err, modclient.Contract)
+	if ce.Key != "error_codes" || !strings.Contains(ce.Message, sendapi.CodeItemCancelled) {
+		t.Fatalf("a describe without the code, against the profile that requires it: key %q message %q, want error_codes naming %s", ce.Key, ce.Message, sendapi.CodeItemCancelled)
+	}
+	// the same describe, read by the profile that does not list the code, is clean; with the code it is an additive extra (the code is the module's, the profile has not learned it)
+	if rep, err := check(older, good); err != nil || rep.Breaking() || rep.Additive() || len(rep.CodesMissing) != 0 || len(rep.CodesExtra) != 0 {
+		t.Fatalf("the control (a profile that does not list the code, a describe that does not either): %v %+v", err, rep)
+	}
+	if rep, err := check(older, withCode); err != nil || rep.Breaking() || !rep.Additive() || !slices.Equal(rep.CodesExtra, []string{sendapi.CodeItemCancelled}) {
+		t.Fatalf("the control (a profile that does not list the code, a describe that does): %v %+v", err, rep)
+	}
+	if rep, err := check(required, appendCode(t, withCode, "teapot")); err != nil || rep.Breaking() || !rep.Additive() || !slices.Equal(rep.CodesExtra, []string{"teapot"}) {
+		t.Fatalf("the control (an unknown code beside it): %v %+v", err, rep)
+	}
+	if _, err := check(required, mutated(t, withCode, "error_codes[8]", sendapitest.Delete, nil)); modclient.KindOf(err) != modclient.Contract {
+		t.Fatalf("the control (another mapped code is gone): %v", err)
+	}
+	if got := sendapi.OptionalErrorCodes(); len(got) != 0 {
+		t.Fatalf("the optional codes are %v, want none: job_item_cancelled is required now", got)
+	}
+}
+
+// The mechanism of an OPTIONAL error code stays for the next additive code, and is tested with a code of its own (SetOptionalErrorCodesForTest): a describe that lists the code and one that does
+// not are both accepted, neither its absence is a missing code (even for a profile that lists it) nor its presence an extra one, so the comparison is neither Breaking nor Additive for it. The
+// controls: the same describes with the code NOT optional (the real list, empty) are a break and an additive extra; an ordinary code the adapter does not know is still reported (Additive) and one
+// the profile maps that is gone is still Breaking; and OptionalErrorCodes hands out a copy.
+func TestAnOptionalErrorCodeIsNeitherMissingNorExtraHandWritten(t *testing.T) {
+	const optional = "teapot_optional"
+	listing := m3like()
+	listing.ErrorCodes = append(slices.Clone(listing.ErrorCodes), optional) // a profile that maps the code
+	plain := m3like()                                                       // a profile that does not
+	good := sendapitest.Read(t, fixtures, "describe.ok.json")
+	withCode := appendCode(t, good, optional)
+	check := func(p sendapi.Profile, body []byte) (sendapi.VocabReport, error) {
+		e := newEnv(t, p, userA, serve(200, body), modclient.Options{}, sendapi.Options{})
+		return sendapi.CheckVocabularies(ctxT(t), e.c.Module(), p)
+	}
+
+	// the controls first, with the real (empty) list: the code is required by the profile that maps it and an extra for the one that does not
+	if _, err := check(listing, good); modclient.KindOf(err) != modclient.Contract {
+		t.Fatalf("the control (not optional, listed by the profile, absent from the describe): %v", err)
+	}
+	if rep, err := check(plain, withCode); err != nil || rep.Breaking() || !rep.Additive() || !slices.Equal(rep.CodesExtra, []string{optional}) {
+		t.Fatalf("the control (not optional, unknown to the profile, present in the describe): %v %+v", err, rep)
+	}
+
+	sendapi.SetOptionalErrorCodesForTest(t, optional)
+	for name, tc := range map[string]struct {
+		p    sendapi.Profile
+		body []byte
+	}{
+		"a profile that maps it, a describe without it": {listing, good},
+		"a profile that maps it, a describe with it":    {listing, withCode},
+		"a profile that does not, a describe without":   {plain, good},
+		"a profile that does not, a describe with it":   {plain, withCode},
+	} {
+		rep, err := check(tc.p, tc.body)
 		if err != nil || rep.Breaking() || rep.Additive() || len(rep.CodesMissing) != 0 || len(rep.CodesExtra) != 0 {
 			t.Fatalf("%s: %v %+v", name, err, rep)
 		}
 	}
-	if rep, err := check(appendCode(t, withCode, "teapot")); err != nil || rep.Breaking() || !rep.Additive() || !slices.Equal(rep.CodesExtra, []string{"teapot"}) {
+	if rep, err := check(plain, appendCode(t, withCode, "teapot")); err != nil || rep.Breaking() || !rep.Additive() || !slices.Equal(rep.CodesExtra, []string{"teapot"}) {
 		t.Fatalf("the control (an unknown code beside it): %v %+v", err, rep)
 	}
-	if _, err := check(mutated(t, withCode, "error_codes[8]", sendapitest.Delete, nil)); modclient.KindOf(err) != modclient.Contract {
+	if _, err := check(plain, mutated(t, withCode, "error_codes[8]", sendapitest.Delete, nil)); modclient.KindOf(err) != modclient.Contract {
 		t.Fatalf("the control (a mapped code is gone): %v", err)
 	}
 	got := sendapi.OptionalErrorCodes()
-	if !slices.Equal(got, []string{"job_item_cancelled"}) {
+	if !slices.Equal(got, []string{optional}) {
 		t.Fatalf("the optional codes are %v", got)
 	}
 	got[0] = "tampered"
-	if sendapi.OptionalErrorCodes()[0] != "job_item_cancelled" {
+	if sendapi.OptionalErrorCodes()[0] != optional {
 		t.Fatal("OptionalErrorCodes shares its slice")
 	}
 }

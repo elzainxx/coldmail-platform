@@ -720,7 +720,13 @@ func cases(t testing.TB) map[string]sendapitest.Case {
 // vocabulary, an unreadable timestamp, another tenant's account, a contradictory verdict) is refused with the key it names. The unmutated body is the control of the mutations, through the
 // same server and call.
 func TestContractsOfModule3(t *testing.T) {
-	sendapitest.Suite{Dir: fixtures, Contracts: m3.Contracts(), Cases: cases(t)}.Run(t)
+	table := cases(t)
+	if m3.RecordedPauseFixtures() { // the Phase 4 D1 contracts are listed only once the switch is on, and so are their cases (pauseCases, pause_contracts_test.go)
+		for k, c := range pauseCases() {
+			table[k] = c
+		}
+	}
+	sendapitest.Suite{Dir: fixtures, Contracts: m3.Contracts(), Cases: table}.Run(t)
 }
 
 // No rot: the files of testdata/contract and the contracts name each other exactly once, and the contracts are the shared ones plus module 3's own. The controls: a stray file, a missing file
@@ -800,7 +806,7 @@ func TestContractsNameModule3AndItsShapes(t *testing.T) {
 			t.Fatalf("no contract for %s", r)
 		}
 	}
-	// the error contracts all name the nine codes, the same set the profile does
+	// the error contracts all name the ten codes, the same set the profile does
 	for _, c := range cs {
 		if strings.Contains(c.Case, "error") {
 			if !slices.Equal(c.Vocab["error_codes"], m3.Profile().ErrorCodes) {

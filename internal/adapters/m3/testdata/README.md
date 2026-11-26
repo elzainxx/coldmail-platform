@@ -119,3 +119,11 @@ and cursors are the normalised forms too (a run of `a`): contractcheck's no-rot 
 
 - `run.error.internal_error.json`
 - `accounts.events.page.json`
+
+## Phase 4 D1: three recordings are pending (nothing here is written for them)
+
+The answers of module 3 to POST /v1/pause and POST /v1/resume ({campaign_id, state, paused}: a pause and its repeat are the same bytes) and its 409 `job_item_cancelled` on POST /v1/run are contracts that
+m3.PauseContracts DECLARES and m3.Contracts LISTS only once the switch `recordedPauseFixtures` (sendapi/contracts.go) is true. Their files are pause.ok.json, resume.ok.json and
+run.error.job_item_cancelled.json; they are not in this directory yet, and none is written by hand: the drift session in record mode (zz_m3_adapter_contract_drift_test.go, CONTRACT_RECORD=1) prints them
+and cmd/contract-fixtures installs them. When they are installed and the switch is flipped, list them under "Recorded" with the record run's id and delete this section
+(TestReadmeNamesWhichFixturesAreRecorded is red until then).

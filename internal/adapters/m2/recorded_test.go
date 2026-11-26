@@ -505,3 +505,11 @@ func TestReadmeNamesTheRecordedAndHandWrittenFixtures(t *testing.T) {
 		t.Fatalf("a stray file was not caught: %v", p)
 	}
 }
+
+// The Phase 4 D1 recordings (pause, resume, the 409 of a cancelled item) are recordings like the rest once the switch (sendapi.RecordedPauseFixtures) is on and the lead has installed them: they join
+// the list then, and TestReadmeNamesTheRecordedAndHandWrittenFixtures is red until testdata/README.md names them under RECORDED.
+func init() {
+	if m2.RecordedPauseFixtures() {
+		recordedFixtures = append(recordedFixtures, sendapi.PauseFixtureNames()...)
+	}
+}

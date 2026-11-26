@@ -53,8 +53,8 @@ func Profile() sendapi.Profile {
 			"pool_exhausted", "attempts_exhausted", "bounce_permanent", "cancelled", "transport_4xx", "auth_failure", "throttle", "timeout", "unknown",
 			"no_eligible_account", "waiting_for_capacity", "dispatch_paused",
 		},
-		// Domain A's closed set (platformapi/errors.go): module 3 adds unprocessable and rate_limited.
-		ErrorCodes:       []string{"validation_failed", "unauthenticated", "not_found", "method_not_allowed", "conflict", "internal_error", "paused"},
+		// Domain A's closed set (platformapi/errors.go), in describe's order (status order; job_item_cancelled, the 409 for an item the platform marked cancelled, follows conflict): module 3 adds unprocessable and rate_limited.
+		ErrorCodes:       []string{"validation_failed", "unauthenticated", "not_found", "method_not_allowed", "conflict", "job_item_cancelled", "internal_error", "paused"},
 		AlwaysPresent:    true,  // the single report carries reason and error_class as keys, null when there is nothing to say
 		AccountDetail:    false, // operator-owned pools: no user accounts
 		QuoteFeasibility: false, // quote is arithmetic and nothing else

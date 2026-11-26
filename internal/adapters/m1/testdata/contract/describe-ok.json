@@ -3,6 +3,7 @@
   "capabilities": {
     "bulk_verify": true,
     "idempotent_bulk_create": true,
+    "job_cancel": true,
     "job_totals": true,
     "quote": false,
     "report": false,
@@ -89,11 +90,19 @@
     },
     {
       "auth": "per_caller_key",
-      "description": "One result per input row that has an outcome, in ordinal order, cursor-paged. Stable once the job is complete.",
+      "description": "One result per input row that has an outcome, in ordinal order, cursor-paged. A row cancelled before its check began is served with status cancelled and no verdict. Stable once the job is complete.",
       "id": "aaaaaaaaaaaaaaaaaaa",
       "method": "GET",
       "path": "/v1/jobs/{id}/results",
       "response_schema_ref": "#/schemas/job_results_response"
+    },
+    {
+      "auth": "per_caller_key",
+      "description": "Cancel a job: every row not yet claimed becomes cancelled (free, no verdict); rows already leased or in flight finish and settle. Idempotent: a repeat, and a cancel of a job that already finished, are 200 no-ops that say so (cancel_outcome). The answer is the job status.",
+      "id": "aaaaaaaaaaaaaaaaaa",
+      "method": "POST",
+      "path": "/v1/jobs/{id}/cancel",
+      "response_schema_ref": "#/schemas/job_cancel_response"
     },
     {
       "auth": "per_caller_key",
@@ -282,6 +291,123 @@
       ],
       "type": "object"
     },
+    "job_cancel_response": {
+      "properties": {
+        "caller_ref": {
+          "type": "string"
+        },
+        "cancel_outcome": {
+          "type": "string",
+          "vocabulary": "cancel_outcome"
+        },
+        "cancel_requested": {
+          "type": "boolean"
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "counts": {
+          "properties": {
+            "cancelled": {
+              "type": "integer"
+            },
+            "pending": {
+              "type": "integer"
+            },
+            "settled": {
+              "type": "integer"
+            },
+            "total": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "total",
+            "settled",
+            "pending",
+            "cancelled"
+          ],
+          "type": "object"
+        },
+        "job_id": {
+          "type": "string"
+        },
+        "processing_paused": {
+          "type": "boolean"
+        },
+        "status": {
+          "type": "string",
+          "vocabulary": "job_status"
+        },
+        "totals": {
+          "properties": {
+            "by_status": {
+              "properties": {
+                "invalid": {
+                  "type": "integer"
+                },
+                "risky": {
+                  "type": "integer"
+                },
+                "unknown": {
+                  "type": "integer"
+                },
+                "valid": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "valid",
+                "invalid",
+                "risky",
+                "unknown"
+              ],
+              "type": "object"
+            },
+            "cancelled": {
+              "type": "integer"
+            },
+            "duplicates": {
+              "type": "integer"
+            },
+            "malformed": {
+              "type": "integer"
+            },
+            "pending": {
+              "type": "integer"
+            },
+            "settled": {
+              "type": "integer"
+            },
+            "submitted": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "submitted",
+            "settled",
+            "pending",
+            "duplicates",
+            "malformed",
+            "cancelled",
+            "by_status"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "job_id",
+        "status",
+        "complete",
+        "caller_ref",
+        "counts",
+        "totals",
+        "processing_paused",
+        "cancel_requested",
+        "cancel_outcome"
+      ],
+      "type": "object"
+    },
     "job_results_response": {
       "properties": {
         "job_id": {
@@ -324,6 +450,7 @@
                 "type": "null"
               },
               "reason": {
+                "or_vocabulary": "non_verdict_reason",
                 "type": "string",
                 "vocabulary": "reason"
               },
@@ -335,6 +462,7 @@
                 "type": "object"
               },
               "status": {
+                "or_vocabulary": "non_verdict_status",
                 "type": "string",
                 "vocabulary": "status"
               }
@@ -370,11 +498,17 @@
         "caller_ref": {
           "type": "string"
         },
+        "cancel_requested": {
+          "type": "boolean"
+        },
         "complete": {
           "type": "boolean"
         },
         "counts": {
           "properties": {
+            "cancelled": {
+              "type": "integer"
+            },
             "pending": {
               "type": "integer"
             },
@@ -388,7 +522,8 @@
           "required": [
             "total",
             "settled",
-            "pending"
+            "pending",
+            "cancelled"
           ],
           "type": "object"
         },
@@ -427,6 +562,9 @@
               ],
               "type": "object"
             },
+            "cancelled": {
+              "type": "integer"
+            },
             "duplicates": {
               "type": "integer"
             },
@@ -449,6 +587,7 @@
             "pending",
             "duplicates",
             "malformed",
+            "cancelled",
             "by_status"
           ],
           "type": "object"
@@ -461,7 +600,8 @@
         "caller_ref",
         "counts",
         "totals",
-        "processing_paused"
+        "processing_paused",
+        "cancel_requested"
       ],
       "type": "object"
     },
@@ -575,7 +715,21 @@
       "type": "object"
     }
   },
+  "vendor_fallback": {
+    "reachable": false
+  },
   "vocabularies": {
+    "cancel_outcome": {
+      "fields": [
+        "job.cancel.cancel_outcome"
+      ],
+      "source": "module_constant",
+      "values": [
+        "cancelled",
+        "already_cancelled",
+        "already_complete"
+      ]
+    },
     "detail_issue": {
       "fields": [
         "error.details[].issue"
@@ -612,6 +766,24 @@
         "running",
         "complete",
         "complete_with_unknowns"
+      ]
+    },
+    "non_verdict_reason": {
+      "fields": [
+        "job.results[].reason (only on a row cancelled before its check began)"
+      ],
+      "source": "module_constant",
+      "values": [
+        "cancelled_by_caller"
+      ]
+    },
+    "non_verdict_status": {
+      "fields": [
+        "job.results[].status (only on a row cancelled before its check began)"
+      ],
+      "source": "module_constant",
+      "values": [
+        "cancelled"
       ]
     },
     "reason": {

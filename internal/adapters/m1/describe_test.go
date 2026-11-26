@@ -259,10 +259,33 @@ func TestDescribeShapeAgreesWithModclient(t *testing.T) {
 	t.Logf("%d bodies refused by both, %d by the adapter's reading only, %d accepted by both", len(both), len(adapterOnly), len(accepted))
 }
 
+// additiveVocabularies are the vocabularies module 1's describe publishes that the adapter does not COMPARE (they are not among the seven of vocabOrder): `detail_issue` (the issue words of a
+// validation error) and, since module 1 migration 0020 (the cancel of a bulk job), `cancel_outcome`, `non_verdict_status` and `non_verdict_reason`. Sorted, as CheckVocabularies reports them. They are
+// ADDITIVE, never breaking; the last three are held to the words the adapter handles by describedWordsProblems.
+var additiveVocabularies = []string{"cancel_outcome", "detail_issue", "non_verdict_reason", "non_verdict_status"}
+
+// describedWordsProblems compares the three additive vocabularies that carry a word the adapter handles with those words (cancelOutcomeValues, nonVerdictStatusValues, nonVerdictReasonValues,
+// each held equal to its switch by the vocab tests): a word added, changed or removed in the module's describe is a problem here, though it is not a break of the report.
+func describedWordsProblems(d *modclient.Describe) []string {
+	var p []string
+	for name, want := range map[string][]string{"cancel_outcome": cancelOutcomeValues, "non_verdict_status": nonVerdictStatusValues, "non_verdict_reason": nonVerdictReasonValues} {
+		got, w := append([]string(nil), d.Vocabularies[name]...), append([]string(nil), want...)
+		sort.Strings(got)
+		sort.Strings(w)
+		if !reflect.DeepEqual(got, w) {
+			p = append(p, name+": the module publishes "+strings.Join(got, ",")+", the adapter handles "+strings.Join(w, ","))
+		}
+	}
+	sort.Strings(p)
+	return p
+}
+
 // TestCheckVocabularies_TheRecordedDescribeIsExactlyWhatTheAdapterHandles: the recording's seven vocabularies are the adapter's own sets and its ten error codes are errorCodeValues,
-// so CheckVocabularies returns a clean report: every Diff exact, no error code missing or extra, not Breaking; the one thing it notes is the vocabulary the adapter does not handle
-// (detail_issue), which is Additive. CompareVocabularies, the pure function behind it, says the same of the same body. Control: with detail_issue removed the report is neither Breaking
-// nor Additive, which shows that the vocabulary was the whole of the note.
+// so CheckVocabularies returns a clean report: every Diff exact, no error code missing or extra, not Breaking; the things it notes are the four vocabularies the adapter does not compare
+// (additiveVocabularies: detail_issue, cancel_outcome, non_verdict_status, non_verdict_reason), which are Additive, and the three of them that name a word the adapter handles say exactly the
+// adapter's words. CompareVocabularies, the pure function behind it, says the same of the same body. Controls: with detail_issue removed the report still notes the other three; with all four
+// removed it is neither Breaking nor Additive, which shows that the four were the whole of the note; and a describe whose cancel_outcome lost a word is found by the words comparison, which a
+// report that only lists names would pass.
 func TestCheckVocabularies_TheRecordedDescribeIsExactlyWhatTheAdapterHandles(t *testing.T) {
 	a, f := describeAdapter(t, fixture(t, "describe-ok.json"))
 	r, err := a.CheckVocabularies(testCtx(t))
@@ -272,8 +295,8 @@ func TestCheckVocabularies_TheRecordedDescribeIsExactlyWhatTheAdapterHandles(t *
 	if f.count() != 1 {
 		t.Fatalf("%d request(s), want one describe", f.count())
 	}
-	if r.Breaking() || len(r.Diffs) != 7 || len(r.CodesMissing) != 0 || len(r.CodesExtra) != 0 || !reflect.DeepEqual(r.VocabulariesExtra, []string{"detail_issue"}) || !r.Additive() {
-		t.Fatalf("the recording's report is %+v", r)
+	if r.Breaking() || len(r.Diffs) != 7 || len(r.CodesMissing) != 0 || len(r.CodesExtra) != 0 || !reflect.DeepEqual(r.VocabulariesExtra, additiveVocabularies) || !r.Additive() {
+		t.Fatalf("the recording's report is %+v, want seven exact vocabularies, no code missing or extra and exactly %v as the additive vocabularies", r, additiveVocabularies)
 	}
 	var names []string
 	for _, d := range r.Diffs {
@@ -292,10 +315,47 @@ func TestCheckVocabularies_TheRecordedDescribeIsExactlyWhatTheAdapterHandles(t *
 	if !reflect.DeepEqual(CompareVocabularies(d), r) {
 		t.Fatal("CompareVocabularies and CheckVocabularies disagree on the same body")
 	}
+	// the three additive vocabularies that name a word the adapter handles say exactly the adapter's words
+	if p := describedWordsProblems(d); len(p) != 0 {
+		t.Fatalf("the recording's additive vocabularies differ from the words the adapter handles: %v", p)
+	}
 
+	// control: with detail_issue removed, the other three are still noted (Additive, not Breaking)
 	g, _ := describeAdapter(t, editDescribe(t, func(doc map[string]any) { delete(obj(t, doc["vocabularies"]), "detail_issue") }))
-	if r, err := g.CheckVocabularies(testCtx(t)); err != nil || r.Breaking() || r.Additive() || len(r.VocabulariesExtra) != 0 {
-		t.Fatalf("control: with detail_issue removed got %+v %v, want a report with nothing to note", r, err)
+	if r, err := g.CheckVocabularies(testCtx(t)); err != nil || r.Breaking() || !r.Additive() || !reflect.DeepEqual(r.VocabulariesExtra, []string{"cancel_outcome", "non_verdict_reason", "non_verdict_status"}) {
+		t.Fatalf("control: with detail_issue removed got %+v %v, want the three cancel vocabularies noted as additive and nothing else", r, err)
+	}
+	// control: with all four removed, nothing is left to note
+	h, _ := describeAdapter(t, editDescribe(t, func(doc map[string]any) {
+		for _, name := range additiveVocabularies {
+			delete(obj(t, doc["vocabularies"]), name)
+		}
+	}))
+	if r, err := h.CheckVocabularies(testCtx(t)); err != nil || r.Breaking() || r.Additive() || len(r.VocabulariesExtra) != 0 {
+		t.Fatalf("control: with the four additive vocabularies removed got %+v %v, want a report with nothing to note", r, err)
+	}
+	// control: a word that changes in one of the three is not a break of the report (the vocabulary is additive) and IS found by the words comparison
+	for name, edit := range map[string]func(vs map[string]any){
+		"cancel_outcome lost a word": func(vs map[string]any) {
+			vs["cancel_outcome"].(map[string]any)["values"] = []any{"cancelled", "already_cancelled"}
+		},
+		"non_verdict_status renamed": func(vs map[string]any) { vs["non_verdict_status"].(map[string]any)["values"] = []any{"withdrawn"} },
+		"non_verdict_reason gained": func(vs map[string]any) {
+			vs["non_verdict_reason"].(map[string]any)["values"] = []any{"cancelled_by_caller", "expired"}
+		},
+	} {
+		k, _ := describeAdapter(t, editDescribe(t, func(doc map[string]any) { edit(obj(t, doc["vocabularies"])) }))
+		kr, err := k.CheckVocabularies(testCtx(t))
+		if err != nil || kr.Breaking() {
+			t.Fatalf("%s: got %+v %v, want an additive report (these vocabularies are never compared by CheckVocabularies)", name, kr, err)
+		}
+		kd, err := k.c.Describe(testCtx(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p := describedWordsProblems(kd); len(p) != 1 {
+			t.Errorf("%s: the words comparison found %v, want exactly the one vocabulary that changed", name, p)
+		}
 	}
 }
 
@@ -446,8 +506,8 @@ func TestCheckVocabularies_AnErrorCodeThatIsGoneIsABreakAndAnExtraOneIsNot(t *te
 	})
 	a, _ := describeAdapter(t, extra)
 	r, err := a.CheckVocabularies(testCtx(t))
-	if err != nil || r.Breaking() || !r.Additive() || !reflect.DeepEqual(r.CodesExtra, []string{"some_new_code"}) || !reflect.DeepEqual(r.VocabulariesExtra, []string{"detail_issue", "future_set"}) || len(r.CodesMissing) != 0 {
-		t.Fatalf("an extra code and an extra vocabulary: got %+v %v, want an additive report that names them and is not Breaking", r, err)
+	if err != nil || r.Breaking() || !r.Additive() || !reflect.DeepEqual(r.CodesExtra, []string{"some_new_code"}) || !reflect.DeepEqual(r.VocabulariesExtra, []string{"cancel_outcome", "detail_issue", "future_set", "non_verdict_reason", "non_verdict_status"}) || len(r.CodesMissing) != 0 {
+		t.Fatalf("an extra code and an extra vocabulary: got %+v %v, want an additive report that names them (the four additive vocabularies of the recording and future_set) and is not Breaking", r, err)
 	}
 	for _, d := range r.Diffs {
 		if !d.Exact() {
@@ -456,7 +516,9 @@ func TestCheckVocabularies_AnErrorCodeThatIsGoneIsABreakAndAnExtraOneIsNot(t *te
 	}
 	onlyCode := editDescribe(t, func(doc map[string]any) {
 		doc["error_codes"] = append(errorCodeList(t, doc), map[string]any{"code": "some_new_code", "http_status": 418})
-		delete(obj(t, doc["vocabularies"]), "detail_issue")
+		for _, name := range additiveVocabularies { // the four additive vocabularies of the recording: with them gone the code is the only thing to note
+			delete(obj(t, doc["vocabularies"]), name)
+		}
 	})
 	b, _ := describeAdapter(t, onlyCode)
 	if r, err := b.CheckVocabularies(testCtx(t)); err != nil || r.Breaking() || !r.Additive() || len(r.VocabulariesExtra) != 0 || len(r.CodesExtra) != 1 {

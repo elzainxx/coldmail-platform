@@ -31,7 +31,7 @@ const handPage = `{"job_id":"` + testJob + `","results":[
 func recordedResultsPages(t *testing.T) (populated, empty []string) {
 	t.Helper()
 	for _, c := range Contracts() {
-		if c.Route != tplResults || c.Status != 200 {
+		if c.Route != tplResults || c.Status != 200 || c.Case == "page_cancelled" { // the page that holds a cancelled row has tests of its own (cancel_contracts_test.go)
 			continue
 		}
 		if len(recordedRows(t, c.Fixture)) > 0 {

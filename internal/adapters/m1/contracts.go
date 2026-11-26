@@ -175,12 +175,63 @@ const (
 // route is pinned". A test keeps this list and Contracts() exactly complementary over the routes the adapter calls.
 func UncoveredRoutes() map[string]string {
 	const why = "passed through modclient (Health, Ready), which decodes it with its own unexported shape; a copy here would be a second definition nothing decodes with"
-	return map[string]string{
-		"GET /healthz": why, "GET /readyz": why,
+	out := map[string]string{"GET /healthz": why, "GET /readyz": why}
+	if !recordedPauseFixtures {
 		// the cancel route was added to the module AFTER the recordings in testdata/contract were made (Phase 4 close-out C2, migration 0020): there is no recorded body of it to pin, and a
-		// contract with a hand-written fixture would pin the platform's reading of the documentation, not the module. The lead records it after the pin and moves it into Contracts().
-		tplCancel: "added to the module after the recordings: no recorded answer yet (its tests use hand-written bodies written from api-contract.md, named HandWritten); promote it to a contract when it is recorded",
+		// contract with a hand-written fixture would pin the platform's reading of the documentation, not the module. The lead records it after the pin and moves it into Contracts() by flipping
+		// recordedPauseFixtures (below), once the recordings are installed.
+		out[tplCancel] = "added to the module after the recordings: no recorded answer yet (its tests use hand-written bodies written from api-contract.md, named HandWritten); promote it to a contract by installing the recordings and flipping recordedPauseFixtures"
 	}
+	return out
+}
+
+// recordedPauseFixtures is THE SWITCH of the Phase 4 D1 recordings of module 1 (its name is the one the module 2 and module 3 switch has, sendapi's recordedPauseFixtures; this one is about module 1's
+// CANCEL). The answers of POST /v1/jobs/{id}/cancel and the results page that holds a cancelled row are contracts (CancelContracts), and the contract drift session of the harness records them in
+// record mode and compares them in compare mode; but until the lead has installed the three recordings (CancelFixtureNames) a contract without a fixture would be red in the no-rot check, and a
+// fixture written by hand would be a recording nobody made. So while this is false the contracts are DECLARED but not LISTED: Contracts leaves them out and UncoveredRoutes names the cancel route. The lead
+// flips it, as the ONLY edit of the switch, after installing the files: TestCancelFixturesAreInstalledWhenTheSwitchIsOn is red when it is true and a file is missing, and
+// TestCancelFixturesDoNotExistWhileTheSwitchIsOff is red when it is false and one of them is there, so neither half of the change can be made without the other.
+const recordedPauseFixtures = false
+
+// RecordedPauseFixtures says whether module 1's cancel recordings are installed and their contracts listed (the value of the switch).
+func RecordedPauseFixtures() bool { return recordedPauseFixtures }
+
+// CancelFixtureNames are the three files the switch is about (under testdata/contract): the 200 of a cancel (ONE shape for the three outcomes `cancelled`, `already_cancelled` and
+// `already_complete`: the job-status body plus the outcome word, so one contract and one file; which outcome the recorder kept is in the file), the 404 of a cancel of a job that does not exist, and
+// a results page that holds a row cancelled before its check began (status `cancelled`, reason `cancelled_by_caller`, an empty `flags`).
+func CancelFixtureNames() []string {
+	return []string{"cancel-ok.json", "cancel-error-not-found.json", "results-page-cancelled.json"}
+}
+
+// CancelContracts are the contracts of module 1's cancel recordings, DECLARED whether or not they are listed (Contracts lists them when recordedPauseFixtures is true; the harness resolves the contracts
+// of its steps here so that record mode can print a recording under the right name before the files exist):
+//
+//   - POST /v1/jobs/{id}/cancel `ok`: the 200, decoded with cancelShape; its `status` is a word of the job_status vocabulary like any job's. One contract for the three outcomes (they differ in no key
+//     or type, and a vocabulary of the outcome words would have to be published under a name of its own).
+//   - POST /v1/jobs/{id}/cancel `not_found`: the 404 envelope of a job that does not exist (or is another caller's).
+//   - GET /v1/jobs/{id}/results `page_cancelled`: a page that holds a cancelled row. It lists NO status or reason vocabulary: the page mixes verdict rows (words of the adapter's sets) with cancelled
+//     rows (the non-verdict words `cancelled` and `cancelled_by_caller`, which are no member of those sets), and the sets Contracts publishes are exactly the adapter's switches; the two
+//     non-verdict words are held by the adapter's own decoding, by TestNonVerdictVocabListsAreTheSwitches and by the comparison with the module's describe.
+//
+// The status of a job after a cancel is the same body as before (counts.cancelled, totals.cancelled and cancel_requested are keys of the recorded `running` and `complete` fixtures), so it needs no
+// contract of its own.
+func CancelContracts() []modclient.RouteContract {
+	m1 := modclient.M1
+	ok := modclient.RouteContract{Module: m1, Route: tplCancel, Case: "ok", Fixture: "cancel-ok.json", Status: http.StatusOK, Shape: cancelShape,
+		Vocab: map[string][]string{"job_status": vocabSets()["job_status"]}, VocabAt: map[string]string{"job_status": "status"}}
+	notFound := modclient.RouteContract{Module: m1, Route: tplCancel, Case: "not_found", Fixture: "cancel-error-not-found.json", Status: http.StatusNotFound, Shape: errorShape,
+		Vocab: map[string][]string{"error_code": append([]string(nil), errorCodeValues...)}, VocabAt: map[string]string{"error_code": "error.code"}}
+	page := modclient.RouteContract{Module: m1, Route: tplResults, Case: "page_cancelled", Fixture: "results-page-cancelled.json", Status: http.StatusOK, Shape: resultsShape}
+	return []modclient.RouteContract{ok, notFound, page}
+}
+
+// PendingContracts are the contracts that are declared (CancelContracts) and not listed yet: all of them while recordedPauseFixtures is false, none once it is true. The harness's drift session
+// compares these with a fixture only when its file exists, and prints them in record mode.
+func PendingContracts() []modclient.RouteContract {
+	if recordedPauseFixtures {
+		return nil
+	}
+	return CancelContracts()
 }
 
 // errorCodeValues is the code of module 1's error envelope (api/errors.go: the ten `code*` constants, additive-only; `idempotency_key_reused` came with the idempotent create). The
@@ -223,7 +274,7 @@ func Contracts() []modclient.RouteContract {
 	errAt := func(rc modclient.RouteContract) modclient.RouteContract { return with(rc, "error_code", "error.code") }
 	described := func(name string) string { return "vocabularies." + name + ".values[]" } // where the describe body holds the values of one vocabulary
 	m1 := modclient.M1
-	return []modclient.RouteContract{
+	cs := []modclient.RouteContract{
 		with(modclient.RouteContract{Module: m1, Route: tplVerify, Case: "ok", Fixture: "verify-ok.json", Status: http.StatusOK, Shape: verifyShape},
 			"status", "status", "reason", "reason", "recommendation", "recommendation"),
 
@@ -255,4 +306,8 @@ func Contracts() []modclient.RouteContract {
 			"error_code", "error_codes[].code"),
 		errAt(modclient.RouteContract{Module: m1, Route: tplDescribe, Case: "unauthenticated", Fixture: "describe-error-unauthenticated.json", Status: http.StatusUnauthorized, Shape: errorShape}),
 	}
+	if recordedPauseFixtures { // module 1's cancel recordings (CancelContracts): listed once they are installed
+		cs = append(cs, CancelContracts()...)
+	}
+	return cs
 }

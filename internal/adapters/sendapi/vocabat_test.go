@@ -177,6 +177,10 @@ func TestVocabAtPlacesEachVocabularyWhereItsBodyHoldsIt(t *testing.T) {
 			if p.RunConflict == sendapi.ConflictCauses { // module 3 names the causes of its run 409: the closed set constrains the code of each detail
 				expected["POST /v1/run | error conflict"] = map[string]string{"error_codes": code, "run_conflict_cause": sendapi.PathConflictCause}
 			}
+			if sendapi.RecordedPauseFixtures() { // the Phase 4 D1 contracts, listed once the switch is on: the two answers list no vocabulary (no string position), the 409 lists the error codes
+				expected["POST /v1/pause | ok"], expected["POST /v1/resume | ok"] = map[string]string{}, map[string]string{}
+				expected["POST /v1/run | error job_item_cancelled"] = map[string]string{"error_codes": code}
+			}
 			if len(cs) != len(expected) {
 				t.Fatalf("%d contracts, the table has %d", len(cs), len(expected))
 			}
@@ -197,7 +201,7 @@ func TestVocabAtPlacesEachVocabularyWhereItsBodyHoldsIt(t *testing.T) {
 					t.Fatalf("%s: Vocab names %v and VocabAt names %v differ", k, names, slices.Sorted(maps.Keys(c.VocabAt)))
 				}
 				for n, set := range c.Vocab {
-					if !slices.Equal(set, p.Vocabularies()[n]) {
+					if !slices.Equal(set, withCancelledItemCode(c, n, p.Vocabularies()[n])) {
 						t.Fatalf("%s: the set %q is not the profile's", k, n)
 					}
 				}
