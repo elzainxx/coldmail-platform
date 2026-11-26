@@ -470,7 +470,7 @@ func (m *jlM2Env) requireBooksOfJob(s *jlStack, user, job string, pv jobs.Previe
 	if got := s.chargeRows(job); got != int64(len(v.Ledger)) {
 		t.Fatalf("the job's charge rows read %d, the view holds %d", got, len(v.Ledger))
 	}
-	s.requireBooks("after the module 2 job")
+	s.requireBooksScoped("after the module 2 job", job)
 	return want
 }
 

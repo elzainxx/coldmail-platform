@@ -282,6 +282,7 @@ func TestJobEngineLoop_AModuleOutageHaltsTheJobInventsNothingRaisesStaleOnlyAfte
 	}
 
 	// the limit passes by the engine's clock: ONE stale event, and the job is still running (staleness never fails or invents anything)
+	e.ageProgress(j.ID, 2*time.Hour)
 	rig.clock.Advance(2 * time.Hour)
 	rig.eng.Tick(ctx)
 	rig.eng.Tick(ctx)
@@ -583,6 +584,7 @@ func TestJobEngineLoop_AModuleCompleteWithAResultMissingIsNotCompletedFlaggedSta
 		t.Fatalf("%d flags and %d stale events after four ticks inside the limit; want 1 and 0 (flagged once, not at every tick)", e.eventCount(j.ID, "flag"), e.eventCount(j.ID, "stale"))
 	}
 	// the staleness limit passes: the stale event is raised, the flag is renewed, the job is still running
+	e.ageProgress(j.ID, 2*time.Hour)
 	clock.Advance(2 * time.Hour)
 	eng.Tick(ctx)
 	if e.eventCount(j.ID, "stale") != 1 || e.eventCount(j.ID, "flag") != 2 || e.jobStatus(j.ID) != jobs.StatusRunning {
@@ -751,6 +753,7 @@ func TestJobEngineLoop_RefusalAfterRowsAreHeldDoesNotFailTheJob(t *testing.T) {
 		t.Fatalf("three more refusals: %d flags, status %s, %d results; want 1, running, 2", e.eventCount(j.ID, "flag"), e.jobStatus(j.ID), e.resultCount(j.ID))
 	}
 	// the staleness limit passes: the job that cannot go on says so (stale event, the flag renewed), and is still not failed
+	e.ageProgress(j.ID, 2*time.Hour)
 	clock.Advance(2 * time.Hour)
 	eng.Tick(ctx)
 	if e.eventCount(j.ID, "stale") != 1 || e.eventCount(j.ID, "flag") != 2 || e.jobStatus(j.ID) != jobs.StatusRunning {

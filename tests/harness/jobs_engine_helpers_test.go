@@ -493,3 +493,11 @@ func (e *jeEnv) requireBlockedOnTheLock(user, module string, call func(ctx conte
 	}
 	return nil
 }
+
+// ageProgress moves the job's last_progress_at into the past BY THE DATABASE'S CLOCK: the engine judges how long a job has been silent against the database's now() and the database's last_progress_at (EngineJob.DBNow), so a test that wants the staleness limit to pass advances the stamp, not only the engine's injected clock (which still throttles how often a flag is renewed).
+func (e *jeEnv) ageProgress(job string, by time.Duration) {
+	e.t.Helper()
+	if _, err := e.admin.Exec(testCtx(e.t), "UPDATE platform.jobs SET last_progress_at = now() - make_interval(secs => $2::float8) WHERE id = $1::uuid", job, by.Seconds()); err != nil {
+		e.t.Fatalf("could not age the progress stamp of job %s: %v", job, err)
+	}
+}

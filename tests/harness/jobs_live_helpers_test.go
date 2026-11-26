@@ -819,3 +819,17 @@ func jlAddrs(local string, n, domains int) []string {
 func jlContent(what string) *jobs.Content {
 	return &jobs.Content{Subject: "[jobs live] " + what, HTML: "<p>jobs live: " + what + "</p>", Text: "jobs live: " + what}
 }
+
+// requireBooksScoped is requireBooks for a test that shares the live database with OLDER tests that settle through the money store directly (module 2's worker tests of Phase 3 charge hand-made jobs that have no job_results, so the settlement proof is not empty database-wide): the balance and reserve invariants stay global, the settlement proof is the test's own job.
+func (s *jlStack) requireBooksScoped(when, job string) {
+	s.t.Helper()
+	if d := mnyRows(s.t, s.admin, `SELECT user_id::text, module_id, stored_available, ledger_available, stored_reserved, ledger_reserved FROM platform.balance_drift ORDER BY 1, 2`); len(d) != 0 {
+		s.t.Fatalf("%s: platform.balance_drift is not empty (user|module|stored available|ledger available|stored reserved|ledger reserved): %v", when, d)
+	}
+	if o := mnyRows(s.t, s.admin, `SELECT reserve_id, user_id::text, module_id, job_id::text, reserved_amount, settled_amount FROM platform.reserve_overdrawn ORDER BY 1`); len(o) != 0 {
+		s.t.Fatalf("%s: platform.reserve_overdrawn is not empty (reserve|user|module|job|reserved|settled): %v", when, o)
+	}
+	if d := mnyRows(s.t, s.admin, `SELECT job_id::text, COALESCE(item_ref, '-'), problem FROM platform.job_settlement_drift WHERE job_id = $1::uuid ORDER BY 1, 2, 3`, job); len(d) != 0 {
+		s.t.Fatalf("%s: platform.job_settlement_drift is not empty for job %s (job|item|problem): %v", when, job, d)
+	}
+}

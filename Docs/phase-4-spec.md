@@ -2,7 +2,7 @@
 
 Roadmap and locked decisions: [`coldmail-platform-build-plan.md`](coldmail-platform-build-plan.md) (Jobs, Money, P4; not reopened here: a contradiction with module code is **flagged**, not fixed). Previous: [`phase-3-closeout-spec.md`](phase-3-closeout-spec.md) (every row CLOSED; platform code `2bc21c4`, docs `f10d215` / tag `phase-3c`; M1 `fad942e`, M2 `dc2b532`, M3 `8855a52`; parent `7b2fc0b`), whose E3 "not checked" list this phase takes its crash and outage lines from. Money rules this phase builds on: `phase-1-spec.md` Locked 1–12, `phase-2-spec.md` amendments and Locked 13–20. False-green classes every gate below must avoid: [`../deferrals-and-false-greens.md`](../deferrals-and-false-greens.md). **Do not start Phase 5.**
 
-**Status: IN PROGRESS.** Evidence rule (unchanged): only a GitHub-runner run on the exact head counts; a head is "verified" only per `check-verified-heads` (harness, db-tests, supabase, go, gates, gitleaks, web, platform-check green on that SHA; a documentation-only head is proven by a `phase-*` tag; a module head by its main CI plus gitleaks). No assertion is weakened. Module API changes are additive only. The repositories are public: nothing real in a commit, test secrets generated at run time, no log prints a secret. No history rewrites and **no GitHub deletions** (so this phase makes no scratch branches except the one named below, which stays for the owner to delete). **One commit is pushed to one ref at a time** (rule 25).
+**Status: IN PROGRESS (the owner has NOT accepted the interim report of ce88cfa; Parts C, D and G below are the close-out).** Evidence rule (unchanged): only a GitHub-runner run on the exact head counts; a head is "verified" only per `check-verified-heads` (harness, db-tests, supabase, go, gates, gitleaks, web, platform-check green on that SHA; a documentation-only head is proven by a `phase-*` tag; a module head by its main CI plus gitleaks). No assertion is weakened. Module API changes are additive only. The repositories are public: nothing real in a commit, test secrets generated at run time, no log prints a secret. No history rewrites and **no GitHub deletions** (so this phase makes no scratch branches except the one named below, which stays for the owner to delete). **One commit is pushed to one ref at a time** (rule 25).
 
 ## How the phase is run
 
@@ -106,6 +106,46 @@ Each is enforced by the database, the store layer or a named gate, never by conv
 | B16 | **Provisioning of module 1's caller key** at first job, idempotent, by the privileged function | harness: the first M1 job of a new user works with no manual step; twice is a no-op | OPEN | — |
 | B17 | **The crash stage**: a bash-driven harness stage that restarts the platform with a faultpoint, drives a job through the API, lets the process SIGKILL itself, restarts, and asserts the invariants (no item lost, duplicated or double-charged; the drift gate at zero; `job_settlement_drift` empty); **two instances** (only the leader runs loops, killing the leader hands over with no double submit or settle) | harness: each of the five injected points × the modules it applies to; the two-instance test | OPEN | — |
 | B18 | **Docs and close**: `Docs/jobs-api.md`, `config-reference.md`, `install.md`, `OWNER-ACTIONS.md`, the build plan (P4 done), amendments to the Locked section recorded below, `p4b` fault dispatch, parent re-pin, `phase-4` tag run | every workflow green on the head; `check-verified-heads` OK | OPEN | — |
+
+### Phase 4 close-out — the owner's rulings on the interim report (added after the report on `ce88cfa`; Phase 5 is not started)
+
+Order of work: **modules first** (each module's CI green on its head, then pinned), **then the platform**, then close. Every row below is closed only with a runner run on the head that holds it; a row that is not CLOSED names its repository, commit and run in its Evidence cell.
+
+#### Part C — Module additions (owner rulings; additive only)
+
+| # | Item | Exit check | Status | Evidence |
+|---|---|---|---|---|
+| C1m2 | **Per-campaign pause and resume in module 2**: additive `POST /v1/pause` and `POST /v1/resume` (per campaign, idempotent, tenant-scoped); a paused campaign's unclaimed items are not claimed, in-flight items finish and are reported once, resume continues where it stopped; stored (survives a restart); every transition writes an event row; the report says whether the campaign is paused | module 2's CI green on its head: against the real worker and sink nothing new is sent while paused (observed for longer than the dispatch tick), after resume every item is sent exactly once, a paired control without the pause, a restart while paused stays paused | OPEN | — |
+| C1m3 | **The same in module 3**, and its interaction with the user's suspension: either blocks claiming and a resume never overrides a suspension | as C1m2 on module 3's CI, plus the suspension interaction both ways | OPEN | — |
+| C2 | **Cancel in module 1**: additive `POST` cancel for a bulk job; unclaimed items become `cancelled` (a new additive terminal status, free), in-flight probes finish and settle; idempotent, tenant-scoped | module 1's CI green: after a cancel no new probe starts (proven at the SMTP fixture), the totals add up, a second cancel is a no-op | OPEN | — |
+| C3 | **Vendor reachability in module 1's `describe`** (OD-7): an additive field says whether the vendor fallback is reachable now (enabled, key present, kill switch off); the platform reads it at preview and confirm and its dial `PLATFORM_M1_VENDOR_REACHABLE` is removed (one source of truth) | module 1's CI green; platform harness: flipping module 1's vendor configuration changes the next confirm's reserve (1 and 2) | OPEN | — |
+| C-end | **Modules pinned**: `tools/modules.lock`, the parent's submodules, contracts re-recorded where `describe` or a route changed | `check-modules-lock` OK; compare-mode harness green | OPEN | — |
+
+#### Part D — Platform: rulings and fixes
+
+| # | Item | Exit check | Status | Evidence |
+|---|---|---|---|---|
+| D1 | **Wire the new module routes**: pause and resume of a RUNNING module 2 or 3 job (platform state `paused`, `paused_from = running`, transitions in the trigger table, capabilities seeded from the modules), cancel of a RUNNING module 1 job (free, remainder released); adapters, engine, store, API | live tests per module through the job engine | OPEN | — |
+| D2 | **Suppression scope** (OD-3): applied to SEND jobs only; in a verify job suppressed rows are verified and charged normally and FLAGGED `suppressed` in the results; chaining verify to send still excludes them at the send | tests for both job types with paired controls | OPEN | — |
+| D3 | **The `unknown` choice when chaining** (OD-4): a source with any `unknown` row requires an explicit include or exclude at confirm; a missing choice is refused with a clear error; with none, no choice is needed | store and API tests with paired controls | OPEN | — |
+| D4 | **Chain with real verdicts**: the module 1 node stack with its recipe fixtures produces real valid, risky, invalid and unknown verdicts that flow into a real module 2 send (worker and sink) | exactly the selected verdicts reach the sink, item by item; invalid never; unknown follows the choice both ways | OPEN | — |
+| D5 | **Crash points for the senders**: the SIGKILL matrix for module 2 and module 3 jobs (confirm, submit before and after the module call, settle, release, pause, cancel) | no item lost, no message twice (counted at the sink), no double charge, drift zero | OPEN | — |
+| D6 | **Real outages for modules 2 and 3**: a container stop and restart mid-job through the engine, besides the cut link | the job completes exactly once after recovery | OPEN | — |
+| D7 | **GoTrue and the key error**: the real-token test runs; expired, forged and wrong-audience tokens are refused; `ErrKey` is split (a bad token is 401, a JWKS or signing-key outage is 503, never a 401 that blames the user) | each tested | OPEN | — |
+| D8 | **Fair engine work order**: oldest-due-first by next-poll time, backoff for jobs making no progress | 150 stuck jobs plus one new job: the new job is served within one tick budget | OPEN | — |
+| D9 | **Leftover `public.job_items`**: `EnsureModuleItems` once per job; rows of a job that expires or is cancelled before submission get a terminal marker (no DELETE: the roles cannot); no module can act on such rows | from module code and a live test | OPEN | — |
+| D10 | **Accepted defaults**: rendering as given until Phase 5 (OD-5); the 100,000-row cap as a dial (OD-6); the engine dials 1.5 s, 10 s, 30 and 15 minutes (OD-8) | recorded | OPEN | owner ruling of this session; CLOSED at the verified head with the dials and the cap cited |
+
+#### Part G — Close
+
+| # | Item | Exit check | Status | Evidence |
+|---|---|---|---|---|
+| G1 | `tests/floors-harness.txt` raised to the real counts | the floor gate | OPEN | — |
+| G2 | Fault-proof dispatches: `p4a`, `p4b`, and new legs for C and D, one dispatch per part | each leg red for the named reason | OPEN | — |
+| G3 | Docs never stale: `config-reference.md` (automatic key provisioning, the new dials, the removed vendor dial), `install.md`, the module docs for pause, resume and cancel, the build plan's status row, `OWNER-ACTIONS.md` | `platform-check`, `check-install-doc` | OPEN | — |
+| G4 | Merge `p4-platform` into `main`, verify the exact head (all eight workflows), tag `phase-4`, re-pin the parent | `check-verified-heads` OK | OPEN | — |
+| G5 | Delete only the scratch branches this phase created (listed, each shown to hold no commit missing from `main`); keep anything unclear and report it | the list | OPEN | — |
+| G6 | The not-checked list reprinted: every line names a later phase or an owner action | the list | OPEN | — |
 
 ### Exit criteria (runner) — each row is closed with a run URL
 
