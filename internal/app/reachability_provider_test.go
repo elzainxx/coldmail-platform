@@ -49,6 +49,8 @@ func describeWith(t *testing.T, vendor map[string]any) string {
 	doc := recordedDescribe(t)
 	if vendor != nil {
 		doc["vendor_fallback"] = vendor
+	} else {
+		delete(doc, "vendor_fallback") // the recording is of a module that HAS the field (module 1 at the close-out): an older module is the recording with the key taken away
 	}
 	b, err := json.Marshal(doc)
 	if err != nil {
