@@ -221,6 +221,19 @@ n="$(psql_ "select count(*) from pg_namespace where nspname in ('platform','send
 [ "$(psql_ "select to_regclass('verify.api_callers') is not null")" = t ] || die "module 1's verify.api_callers does not exist after its migrations"
 psql_ "INSERT INTO verify.api_callers (caller_id, key_sha256, not_before, user_id) VALUES ('harness-caller', decode('$M1_KEY_SHA','hex'), now() - interval '1 hour', '00000000-0000-0000-0000-0000000000a1')" >/dev/null || die "could not seed module 1's per-caller key"
 echo "  schemas: platform, send_managed, send_byo, verify present; module 1 applied $m1_got of $m1_want files and a second run was a no-op; one module-1 caller key seeded"
+# the install step AFTER module 1's migrations (db/install/postmodule1.sql, Docs/install.md step 3b; Phase 4 chunk B16), run as the non-superuser migrating role exactly as an install runs it, TWICE: the second run must succeed and leave the function and
+# the schema's privileges byte for byte as the first left them. The effect is read back from the server, as the same role (the tests then prove who may call it and what it writes: TestM1LiveProvision_*).
+echo "  -- postmodule1 (db/install/postmodule1.sql, the install step after module 1's migrations: platform.provision_m1_caller)"
+pm1_state() { psql_ "select md5(pg_get_functiondef(p.oid) || coalesce(p.proacl::text, '') || pg_get_userbyid(p.proowner)) || '|' || coalesce((select nspacl::text from pg_namespace where nspname = 'platform'), '') from pg_proc p where p.oid = 'platform.provision_m1_caller(uuid, bytea)'::regprocedure"; }
+for pass in 1 2; do
+  DC exec -T postgres psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres < "$PLATFORM_DIR/db/install/postmodule1.sql" > "$WORK/postmodule1-$pass.log" 2>&1 || { sed 's/^/     | /' "$WORK/postmodule1-$pass.log" | tail -25; die "the post-module-1 install step (db/install/postmodule1.sql) failed on pass $pass"; }
+  [ "$pass" = 1 ] && pm1_first="$(pm1_state)"
+done
+pm1_second="$(pm1_state)"
+[ -n "$pm1_first" ] && [ "$pm1_first" = "$pm1_second" ] || die "the second run of db/install/postmodule1.sql changed the function or the schema's privileges (first: '$pm1_first', second: '$pm1_second')"
+case "$pm1_second" in *verify_admin*) die "schema platform's privileges still name verify_admin after db/install/postmodule1.sql: the temporary USAGE and CREATE were not taken back: $pm1_second";; esac
+[ "$(psql_ "select pg_get_userbyid(proowner) || '|' || prosecdef || '|' || has_function_privilege('platform_app', oid, 'EXECUTE') from pg_proc where oid = 'platform.provision_m1_caller(uuid, bytea)'::regprocedure")" = "verify_admin|true|true" ] || die "platform.provision_m1_caller is not owned by verify_admin, SECURITY DEFINER and executable by platform_app after db/install/postmodule1.sql"
+echo "  postmodule1: platform.provision_m1_caller exists (owner verify_admin, SECURITY DEFINER, executable by platform_app), the step ran twice as postgres and the second run changed nothing, schema platform names verify_admin nowhere"
 # schema public may hold only the platform's own tables (tests/public-allowlist.txt): module 1 must have left it, and no module may have put anything there
 DC exec -T postgres psql -X -At -F '|' -v ON_ERROR_STOP=1 -U postgres -d postgres < "$PLATFORM_DIR/scripts/public-schema-listing.sql" > "$WORK/public-listing.txt" || die "the public-schema listing query failed"
 bash "$PLATFORM_DIR/scripts/check-public-schema.sh" --allowlist "$PLATFORM_DIR/tests/public-allowlist.txt" --listing "$WORK/public-listing.txt" || die "schema public holds something that is not allowlisted"
@@ -322,6 +335,8 @@ printf "$t\n" >> "$WORK/h-run.log"; printf "ok  \t$GO_PKG\t0.000s\n" >> "$WORK/h
 [ "$trc" = 0 ] || die "the integration tests failed (exit $trc)"
 # the live module-1 test must be among the tests that PASSED in the log the run itself produced (a binary built without it, or a -run that skipped it, would leave the rest green)
 grep -q '^--- PASS: TestM1Live_BulkJobSettlesItemByItem ' "$WORK/h-run.log" || die "TestM1Live_BulkJobSettlesItemByItem (a real module-1 bulk job settled item by item, compared with the module's own report) has no '--- PASS' line in the run log: it did not run, or did not pass"
+# Phase 4 B16: the eleven TestM1LiveProvision_* tests (module 1's caller key is registered through platform.provision_m1_caller) must all be among the tests that PASSED in the log the run itself produced; the floor counts the package, this names the family
+[ "$(grep -c '^--- PASS: TestM1LiveProvision_' "$WORK/h-run.log")" -ge 11 ] || die "fewer than 11 TestM1LiveProvision_* tests have a '--- PASS' line in the run log (found $(grep -c '^--- PASS: TestM1LiveProvision_' "$WORK/h-run.log")): the key-provisioning proofs did not all run, or did not all pass"
 [ "$M2W_ON" = 1 ] && m2w_outage   # (only when module 2's real worker is on) B12: module 2's API stopped in the middle of a campaign and started again, three phases (tests/harness/m2worker/stage.sh; proven in scope m2worker, run 44206820889); it puts module 2 and its worker back before the stages that follow
 [ "$M2W_ON" = 1 ] && m2w_require_pass "$WORK/h-run.log"   # (only when module 2's real worker is on) every TestM2Worker_* test has a '--- PASS' line (module 2 really sent, bounced, exhausted and cancelled)
 [ "$GT_ON" = 1 ] && gotrue_require_pass "$WORK/h-run.log"   # (only when GoTrue is on) every TestGoTrue_* test has a '--- PASS' line (the platform's token verification was shown against tokens the real GoTrue issued)
