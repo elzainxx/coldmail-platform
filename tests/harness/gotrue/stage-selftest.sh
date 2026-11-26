@@ -11,7 +11,7 @@
 #   gotrue_require_pass  green when every TestGoTrue_* test has a column-0 `--- PASS` line; red, naming the test, when ANY ONE of them is missing (one case per listed test), FAILED or only indented
 #   gotrue_secret_leak   green on clean logs and on a string that merely starts like a token; red, naming the log and never printing it, when the secret, the password or anything shaped like a JWT is in the
 #                        log of GoTrue or in the run's own log; red when a log is missing or empty or when the secrets are empty (a scan with nothing to look for)
-#   consistency          GT_TESTS is exactly the set of TestGoTrue_ functions of tests/harness/gotrue_test.go and every one of them names a control; the compose file pins the image by digest, publishes no port and
+#   consistency          GT_TESTS is exactly the set of TestGoTrue_ functions of tests/harness/gotrue_test.go and gotrue_api_test.go and every one of them names a control; the compose file pins the image by digest, publishes no port and
 #                        needs only variables somebody writes; the test container gets every variable the Go file reads; run.sh allows the scope, sources the stage and calls every gotrue_ function only under its guard;
 #                        the stage is DORMANT in `full` until FULL_INCLUDES names it (the guard block of run.sh is evaluated for four settings); the workflows offer the scope and run this selftest
 # NOT covered here (they need a Linux host with Docker): the real docker compose, wget, psql and the GoTrue image itself.
@@ -252,19 +252,19 @@ verdict "gotrue_scope_run: ... the exposure check lists postgres and gotrue" 0 "
 verdict "gotrue_scope_run: ends the run" 0 "exit 0" "$wire" 0
 
 # ── consistency of the files of the stage ──
-GOF="$HARNESS/gotrue_test.go"; COMPOSE="$HARNESS/docker-compose.gotrue.yml"; RUNSH="$HARNESS/run.sh"
+GOF="$HARNESS/gotrue_test.go"; GOF2="$HARNESS/gotrue_api_test.go"; COMPOSE="$HARNESS/docker-compose.gotrue.yml"; RUNSH="$HARNESS/run.sh"
 listed="$( . "$HERE/stage.sh"; printf '%s\n' "${GT_TESTS[@]}" | sort )"
-declared="$(grep -o '^func TestGoTrue_[A-Za-z0-9_]*(' "$GOF" | sed 's/^func //; s/($//' | sort)"
-verdict "consistency: GT_TESTS is exactly the set of TestGoTrue_ functions of gotrue_test.go (a test added without the list, or a listed test that does not exist, is red)" 0 "same" "$([ -n "$declared" ] && [ "$listed" = "$declared" ] && echo same || printf 'listed: %s\ndeclared: %s' "$(printf '%s' "$listed" | tr '\n' ' ')" "$(printf '%s' "$declared" | tr '\n' ' ')")" 0
+declared="$(grep -ho '^func TestGoTrue_[A-Za-z0-9_]*(' "$GOF" "$GOF2" | sed 's/^func //; s/($//' | sort)"
+verdict "consistency: GT_TESTS is exactly the set of TestGoTrue_ functions of gotrue_test.go and gotrue_api_test.go (a test added without the list, or a listed test that does not exist, is red)" 0 "same" "$([ -n "$declared" ] && [ "$listed" = "$declared" ] && echo same || printf 'listed: %s\ndeclared: %s' "$(printf '%s' "$listed" | tr '\n' ' ')" "$(printf '%s' "$declared" | tr '\n' ' ')")" 0
 verdict "consistency: GT_TESTS has no name twice" 0 "unique" "$([ -z "$(printf '%s\n' "$listed" | uniq -d)" ] && echo unique || echo duplicated)" 0
-verdict "consistency: the Go file carries the build tag harness && gotrue on its first line" 0 "tagged" "$([ "$(head -1 "$GOF")" = '//go:build harness && gotrue' ] && echo tagged || echo "first line: $(head -1 "$GOF")")" 0
+verdict "consistency: the Go file carries the build tag harness && gotrue on its first line" 0 "tagged" "$([ "$(head -1 "$GOF")" = '//go:build harness && gotrue' ] && [ "$(head -1 "$GOF2")" = '//go:build harness && gotrue' ] && echo tagged || echo "first lines: $(head -1 "$GOF") | $(head -1 "$GOF2")")" 0
 nocontrol=""
 for name in $declared; do
-  body="$(awk -v n="func $name(" 'index($0, n)==1 {p=1} p{print} p && $0=="}" {p=0}' "$GOF")"
+  body="$(awk -v n="func $name(" 'index($0, n)==1 {p=1} p{print} p && $0=="}" {p=0}' "$GOF" "$GOF2")"
   printf '%s\n' "$body" | grep -qi 'control' || nocontrol="$nocontrol $name"
 done
 verdict "consistency: every TestGoTrue_ test names a control in its body (a paired control is a rule, not a hope)" 0 "controls-ok" "$([ -z "$nocontrol" ] && echo controls-ok || echo "NO-CONTROL-FAIL in:$nocontrol")" 0
-verdict "consistency: the test file reads no secret from the source: no JWT-shaped literal" 0 "none" "$(grep -cE 'eyJ[A-Za-z0-9_-]{5,}\.eyJ' "$GOF" | grep -qx 0 && echo none || echo present)" 0
+verdict "consistency: the test file reads no secret from the source: no JWT-shaped literal" 0 "none" "$(cat "$GOF" "$GOF2" | grep -cE 'eyJ[A-Za-z0-9_-]{5,}\.eyJ' | grep -qx 0 && echo none || echo present)" 0
 verdict "consistency: the compose image is pinned name:tag@sha256:<64 hex>" 0 "pin-ok" "$(grep -qE '^    image: supabase/gotrue:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}$' "$COMPOSE" && echo pin-ok || echo "PIN-FAIL")" 0
 verdict "consistency: the compose file publishes no port" 0 "none" "$(grep -qE '^[[:space:]]*ports:' "$COMPOSE" && echo "a ports: key" || echo none)" 0
 verdict "consistency: the service is no-new-privileges, read-only and on the private network" 0 "hardened" "$(grep -q 'no-new-privileges:true' "$COMPOSE" && grep -q 'read_only: true' "$COMPOSE" && grep -q 'networks: \[private\]' "$COMPOSE" && echo hardened || echo missing)" 0

@@ -325,7 +325,7 @@ STAGE=tests; banner 6 "integration tests, compiled on the runner and run inside 
 ( cd "$PLATFORM_DIR" && CGO_ENABLED=0 GOTOOLCHAIN=local go test -tags "$TEST_TAGS" -c -o "$WORK/out/harness.test" ./tests/harness && CGO_ENABLED=0 GOTOOLCHAIN=local go build -o "$WORK/out/platform-migrate" ./cmd/platform-migrate ) || die "the harness test binary (or platform-migrate) did not compile"
 DC run --rm -T harness-tests -test.list '.*' > "$WORK/h-list.log" 2>&1; lrc=$?
 [ "$lrc" = 0 ] || { cat "$WORK/h-list.log"; die "listing the declared integration tests failed ($lrc)"; }
-DC run --rm -T harness-tests -test.v -test.count=1 -test.timeout=40m > "$WORK/h-run.log" 2>&1; trc=$?
+DC run --rm -T harness-tests -test.v -test.count=1 -test.timeout=60m > "$WORK/h-run.log" 2>&1; trc=$?
 sed 's/^/  | /' "$WORK/h-run.log" | tail -60
 # the live module-3 proof logs its numbers (sink counts, bounds, timestamps): print them whole, they are the evidence the tail above can cut off
 echo "  ---- the live module-3 proof: the test's own log lines ----"; grep -E " m3_(live|hostile)(_helpers)?_test.go:[0-9]+: " "$WORK/h-run.log" | sed 's/^/  | /' | head -160

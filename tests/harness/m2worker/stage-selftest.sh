@@ -13,7 +13,7 @@
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 T="$(mktemp -d)" || exit 2; trap 'rm -rf "$T"' EXIT
-MIN=55; cases=0; ok=0; bad=0
+MIN=63; cases=0; ok=0; bad=0
 verdict() { # label want-rc want-substring out rc [forbidden-substring]
   local label="$1" want="$2" sub="$3" out="$4" rc="$5" forbid="${6:-}" n f=0
   cases=$((cases+1))
@@ -290,6 +290,18 @@ wire="$( WORK="$T"; . "$T/env.sh"; . "$HERE/stage.sh"; declare -f m2w_scope_run 
 verdict "m2w_scope_run: the ordinary run leaves the outage phases out" 0 '-test.skip "$skip"' "$wire" 0
 verdict "m2w_scope_run: the sub-stage runs after the ordinary tests passed and its PASS lines join the run log" 0 "m2w_outage" "$wire" 0
 verdict "m2w_scope_run: the outage PASS lines are appended to the log the floor reads" 0 "OutagePhase" "$wire" 0
+# the names of the list are test functions of the harness package, and the scope's own -test.run pattern runs every one of them (a name the pattern misses would die in the scope after a build: "is not among the declared tests"; a name
+# that is no function, the same). The three TestJobsLive_*M2* tests live in m2_worker_jobs_test.go and are not named TestM2Worker_*, so the pattern has to name them.
+HARNESS_DIR="$(cd "$HERE/.." && pwd)"
+declared_in() { # name... -> the names that are no `func Name(` of a harness test file
+  local n out=""; for n in "$@"; do grep -qE "^func $n\(" "$HARNESS_DIR"/*_test.go || out="$out $n"; done; [ -z "$out" ] && echo all-declared || echo "NOT-DECLARED:$out"
+}
+listed_names="$( . "$HERE/stage.sh"; printf '%s\n' "${M2W_TESTS[@]}" )"
+verdict "consistency: every name in M2W_TESTS is a test function of the harness package" 0 "all-declared" "$(declared_in $listed_names)" 0
+verdict "consistency: ... and the check can fail (a name that is no test function is reported by name)" 0 "NOT-DECLARED: TestM2Worker_NoSuchTest" "$(declared_in $listed_names TestM2Worker_NoSuchTest)" 0
+re="$(printf '%s\n' "$wire" | sed -n "s/.*local re='\([^']*\)'.*/\1/p" | head -1)"
+unmatched=""; for n in $listed_names; do printf '%s\n' "$n" | grep -qE "$re" || unmatched="$unmatched $n"; done
+verdict "consistency: the scope's -test.run pattern matches every name in M2W_TESTS" 0 "all-matched" "$([ -n "$re" ] && [ -z "$unmatched" ] && echo all-matched || echo "NOT-MATCHED:$unmatched (pattern '$re')")" 0
 
 # ── the control: the verdict function itself fails when the substring is wrong (a selftest that cannot fail proves nothing) ──
 before_bad=$bad; before_ok=$ok; before_cases=$cases

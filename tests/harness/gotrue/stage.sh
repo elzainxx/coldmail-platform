@@ -33,6 +33,7 @@ GT_TESTS=(
   TestGoTrue_ThePlatformIdentityChain
   TestGoTrue_InactiveUserIsRefusedByTheResolverNotByTheToken
   TestGoTrue_DeletedLoginIsRefusedByGoTrueButItsOldTokenStillVerifies
+  TestGoTrue_API_ARealTokenIsAcceptedATamperedOneRefusedAndUsersAreIsolated
 )
 
 gt_psql_su() { DC exec -T postgres psql -X -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -tAc "$1"; }
@@ -123,7 +124,7 @@ gotrue_stage() {
 # ── stage 6 helpers ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 gotrue_evidence() {
   echo "  ---- GoTrue: the tests' own log lines (every NOTE says what a test saw; no token, password or secret is ever printed) ----"
-  grep -E " gotrue_test.go:[0-9]+: |^--- (PASS|FAIL|SKIP): TestGoTrue_" "$1" | sed 's/^/  | /' | head -200
+  grep -E " gotrue(_api)?_test.go:[0-9]+: |^--- (PASS|FAIL|SKIP): TestGoTrue_" "$1" | sed 's/^/  | /' | head -200
 }
 
 gotrue_require_pass() {

@@ -34,6 +34,9 @@ M2W_TESTS=(
   TestM2Worker_OutagePhase1Start
   TestM2Worker_OutagePhase2Down
   TestM2Worker_OutagePhase3Resume
+  TestJobsLive_M2_SendJobSettlesItemByItem
+  TestJobsLive_M2_CancelRunningJob
+  TestJobsLive_Outage_M2_HaltsCleanlyAndCompletesOnce
 )
 # The three phases of the outage proof (B12; tests/harness/m2_worker_outage_test.go). They are in M2W_TESTS (the PASS-line list and the stage's floor count them) but they are NOT part of the ordinary run of
 # m2w_scope_run: each is its own `go test -test.run '^Name$'` of the same binary, with module 2's container stopped and started between them (m2w_outage). The order here IS the order they run in.
@@ -113,7 +116,7 @@ m2w_stage_5c() {
 # ── stage 6 helpers ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 m2w_evidence() {
   echo "  ---- module 2's real worker: the test's own log lines (the sink's per-recipient counts, timings, snapshots) ----"
-  grep -E " m2_worker(_e2e|_outage|_contract_edge)?(_helpers)?_test.go:[0-9]+: |^--- (PASS|FAIL|SKIP): TestM2Worker_" "$1" | sed 's/^/  | /' | head -700
+  grep -E " m2_worker(_e2e|_outage|_contract_edge|_jobs)?(_helpers)?_test.go:[0-9]+: |^--- (PASS|FAIL|SKIP): Test(M2Worker_|JobsLive_M2_|JobsLive_Outage_M2_)" "$1" | sed 's/^/  | /' | head -700
 }
 
 m2w_require_pass() {
@@ -292,7 +295,7 @@ m2w_scope_run() {
   m2w_stage_5c
 
   STAGE=tests; banner 6 "scope m2worker: the TestM2Worker_* tests, compiled on the runner and run inside the network"
-  local re='^TestM2Worker_' skip='^TestM2Worker_OutagePhase' trc lrc t
+  local re='^(TestM2Worker_|TestJobsLive_M2_|TestJobsLive_Outage_M2_)' skip='^TestM2Worker_OutagePhase' trc lrc t
   ( cd "$PLATFORM_DIR" && CGO_ENABLED=0 GOTOOLCHAIN=local go test -tags "$TEST_TAGS" -c -o "$WORK/out/harness.test" ./tests/harness ) || die "the harness test binary (tags: $TEST_TAGS) did not compile"
   DC run --rm -T harness-tests -test.list "$re" > "$WORK/h-list.log" 2>&1; lrc=$?
   [ "$lrc" = 0 ] || { cat "$WORK/h-list.log"; die "listing the TestM2Worker tests failed ($lrc)"; }

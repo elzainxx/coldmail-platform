@@ -12,7 +12,7 @@
 # Needs psql, go, openssl. It creates a database `platform_live_<random>` (the "live" database the tests expect, migrated by the real binary, with a platform_app password) and drops it at the end.
 set -u -o pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; ROOT="$(cd "$HERE/../.." && pwd)"
-RUN="${1:-.}"; ADMIN="${H_PG_ADMIN_DSN:-postgres://supabase_admin:ci@localhost:5432/postgres}"; MIG="${H_PG_MIGRATOR_DSN:-postgres://postgres:ci@localhost:5432/postgres}"; SKIP="${H_SKIP-TestLive_StackCoexists|TestModulesLive|TestM3Live|TestM1Live|TestM3Adapter|TestJobsLive_(M1|M3|Chain)_}"
+RUN="${1:-.}"; ADMIN="${H_PG_ADMIN_DSN:-postgres://supabase_admin:ci@localhost:5432/postgres}"; MIG="${H_PG_MIGRATOR_DSN:-postgres://postgres:ci@localhost:5432/postgres}"; SKIP="${H_SKIP-TestLive_StackCoexists|TestModulesLive|TestM3Live|TestM1Live|TestM3Adapter|TestJobsLive_(M1|M3|M2|Chain|Outage|Expiry)_}"
 WORK="$(mktemp -d)"; DB="platform_live_$(openssl rand -hex 4)"
 case "$ADMIN" in postgres://*/postgres|postgresql://*/postgres) ;; *) echo "run-db-tests: H_PG_ADMIN_DSN must be a postgres:// URL ending in /postgres (got a different shape)"; exit 2;; esac
 case "$MIG" in postgres://*/postgres|postgresql://*/postgres) ;; *) echo "run-db-tests: H_PG_MIGRATOR_DSN must be a postgres:// URL ending in /postgres (got a different shape)"; exit 2;; esac
