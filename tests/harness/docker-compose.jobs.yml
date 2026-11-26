@@ -57,6 +57,8 @@ services:
       PLATFORM_JWT_ISSUER: *jobs-issuer
       PLATFORM_JWT_AUDIENCE: authenticated
       PLATFORM_FAULTPOINT: ${H_JOBS_A_FAULT:-}
+    # a docker init (tini) is PID 1 and the platform is its child: a process that is PID 1 of its container ignores the SIGKILL it sends itself (the kernel protects init from signals of its own namespace), and the armed fault point would then hang the process instead of killing it (found by the first runner run of this scope)
+    init: true
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/readyz || exit 1"]
       interval: 3s
@@ -94,6 +96,8 @@ services:
       PLATFORM_JWT_ISSUER: *jobs-issuer
       PLATFORM_JWT_AUDIENCE: authenticated
       PLATFORM_FAULTPOINT: ${H_JOBS_B_FAULT:-}
+    # a docker init (tini) is PID 1 and the platform is its child: a process that is PID 1 of its container ignores the SIGKILL it sends itself (the kernel protects init from signals of its own namespace), and the armed fault point would then hang the process instead of killing it (found by the first runner run of this scope)
+    init: true
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/readyz || exit 1"]
       interval: 3s
