@@ -807,3 +807,43 @@ func TestLeader_NoProductionPathChangesTheWiring(t *testing.T) {
 		t.Errorf("control failed: a source using WithWorkers was not flagged: %v", got)
 	}
 }
+
+// The engine and the loops share one Leader and the engine stops first: an Ensure that waits behind another one (a hung connect) must give up the moment ITS context ends, or a shutdown takes as long
+// as the other call's own bounded wait (found by internal/app's TestRun_TheDatabaseURLAndTheReadyzTimeoutAreConsumed: 9.7 s).
+func TestLeader_AnEnsureWaitingBehindAnotherGivesUpWhenItsContextEnds(t *testing.T) {
+	g := &gateTaker{entered: make(chan struct{}, 1), gate: make(chan struct{})}
+	l := newLeader(g, "me", nil, nil)
+	first := make(chan bool, 1)
+	go func() { first <- l.Ensure(context.Background()) }()
+	select {
+	case <-g.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the first Ensure never reached the lock taker")
+	}
+	// Control: an Ensure with a context that does not end waits (it is behind the first), exactly as before.
+	waiting := make(chan bool, 1)
+	go func() { waiting <- l.Ensure(context.Background()) }()
+	select {
+	case <-waiting:
+		t.Fatal("control failed: a second Ensure did not wait for the one in flight")
+	case <-time.After(100 * time.Millisecond):
+	}
+	// The property: one whose context ends while it waits answers false at once, without the first having finished.
+	ctx, cancel := context.WithCancel(context.Background())
+	gaveUp := make(chan bool, 1)
+	go func() { gaveUp <- l.Ensure(ctx) }()
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	select {
+	case got := <-gaveUp:
+		if got {
+			t.Error("an Ensure whose context ended answered true")
+		}
+	case <-time.After(2 * time.Second):
+		close(g.gate)
+		t.Fatal("an Ensure whose context ended kept waiting for the one in flight")
+	}
+	close(g.gate)
+	<-first
+	<-waiting
+}

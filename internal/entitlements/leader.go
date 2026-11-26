@@ -228,7 +228,7 @@ type Leader struct {
 	now      func() time.Time
 	instance string
 
-	op sync.Mutex // serialises Ensure and Release: the taker holds one session and is not safe for concurrent use
+	op ctxLock // serialises Ensure and Release: the taker holds one session and is not safe for concurrent use. An Ensure whose context ends while it waits for the lock gives up (see ctxLock)
 	// owned by op:
 	failClass     string // the failure class last warned about, "" while the lock can be tried; the same class again is quiet
 	standbyLogged bool   // "another instance leads" has been written for this stretch of standby
@@ -238,6 +238,36 @@ type Leader struct {
 	since   time.Time
 	decided bool // Ensure has answered at least once
 }
+
+// ctxLock is a mutex whose waiter can give up when its context ends. The two loops of the entitlement service and the job engine (Phase 4) share ONE Leader, and the engine is stopped before the loops:
+// with a plain mutex the engine's last Ensure would wait for a loop's Ensure that is still in a database call (a hung connect costs its bounded wait, ten seconds) and that call's own context is
+// not cancelled until the engine has stopped. The zero value is ready to use.
+type ctxLock struct {
+	once sync.Once
+	ch   chan struct{}
+}
+
+func (c *ctxLock) init() { c.once.Do(func() { c.ch = make(chan struct{}, 1) }) }
+
+// Lock waits for the lock without limit.
+func (c *ctxLock) Lock() {
+	c.init()
+	c.ch <- struct{}{}
+}
+
+// LockCtx waits for the lock until ctx ends; it reports whether it holds the lock.
+func (c *ctxLock) LockCtx(ctx context.Context) bool {
+	c.init()
+	select {
+	case c.ch <- struct{}{}:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// Unlock releases the lock.
+func (c *ctxLock) Unlock() { <-c.ch }
 
 // LeaderStatus is a snapshot of an election.
 type LeaderStatus struct {
@@ -307,7 +337,9 @@ func (l *Leader) publish(leading bool) {
 // A failure never panics and never ends a loop: a leader whose session fails drops the leadership (once, at warn) and answers false; the next tick tries again as a standby would. A
 // ctx that is cancelled answers false and logs nothing, since a shutdown is not a failure.
 func (l *Leader) Ensure(ctx context.Context) bool {
-	l.op.Lock()
+	if !l.op.LockCtx(ctx) { // another Ensure is in a database call and this caller's shutdown has begun: a hung connect of the other must not hold this one up
+		return false
+	}
 	defer l.op.Unlock()
 	if ctx.Err() != nil {
 		return false

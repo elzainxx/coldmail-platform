@@ -17,7 +17,7 @@ go|github.com/coldmail-platform/platform/internal/config|52
 go|github.com/coldmail-platform/platform/internal/contractcheck|254
 go|github.com/coldmail-platform/platform/internal/dsnscrub|8
 go|github.com/coldmail-platform/platform/internal/csvsafe|4
-go|github.com/coldmail-platform/platform/internal/entitlements|61
+go|github.com/coldmail-platform/platform/internal/entitlements|62
 go|github.com/coldmail-platform/platform/internal/faultpoint|1
 go|github.com/coldmail-platform/platform/internal/httpapi|20
 go|github.com/coldmail-platform/platform/internal/jobengine|65
