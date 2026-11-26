@@ -1,9 +1,7 @@
-diff --git a/internal/faultpoint/names.txt b/internal/faultpoint/names.txt
-index a1ffb07..b94d8d4 100644
 --- a/internal/faultpoint/names.txt
 +++ b/internal/faultpoint/names.txt
-@@ -6,3 +6,4 @@ submit.after_module    # internal/jobengine/engine.go, Engine.submit: right afte
- start.before_running   # internal/jobs/engine.go, Store.Start: after the module reference is written and the move to running is made, just before that transaction commits
- settle.after_commit    # internal/jobs/engine.go, Store.RecordResults: after the settlement transaction committed, once at least one result was recorded (the next observation must find it already settled)
- release.mid_tx         # internal/jobs/engine.go, Store.Release: after the job's move to its end status, before the reserve is released, inside the one transaction
+@@ -9,3 +9,4 @@
+ submit.before_module   # internal/jobengine/engine.go, Engine.submit: after the module-facing rows of a send job are ensured, just before a module's Submit is called (the module holds nothing of this batch yet)
+ pause.after_module     # internal/jobengine/engine.go, Engine.pausedRunning: right after a module's Pause returned success, before the observation that writes the module_paused note
+ cancel.after_module    # internal/jobengine/engine.go, Engine.cancelling: right after a module's Cancel returned (at every tick of a cancelling job), before the engine observes or records anything
 +zz.never_hit  # FAULT: a registered name that no Hit uses

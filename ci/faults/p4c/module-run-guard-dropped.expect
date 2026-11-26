@@ -1,0 +1,7 @@
+# Phase 4 close-out, D9: a module must not turn an item the platform marked `cancelled` into work, so the statement that freezes the item into the module's own jobs table carries the status test (`ji.status IS DISTINCT FROM 'cancelled'`) and db/module-statements.txt holds that exact text. The fault removes the test from module 2's J2: the statement drift gate must name J2 as gone or changed, so the platform notices when a pinned module stops refusing a marked item (the module's own real-infrastructure suite 15 proves the refusal itself).
+GATE=module-run-guard-dropped
+TARGET=module:coldmail-send-managed
+SETUP=
+STEP=check-module-reads against the (patched) module 2 source
+CMD=bash "$FAULT_PLATFORM/scripts/check-module-reads.sh" --modules "$FAULT_MODULES" --statements "$FAULT_PLATFORM/db/module-statements.txt"
+MESSAGE=DRIFT: J2 no longer appears in services/control/internal/platformapi/store.go (module m2)
