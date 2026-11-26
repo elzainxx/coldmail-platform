@@ -36,6 +36,8 @@ M2W_TESTS=(
   TestM2Worker_OutagePhase3Resume
   TestJobsLive_M2_SendJobSettlesItemByItem
   TestJobsLive_M2_CancelRunningJob
+  TestJobsLive_M2_PauseAndResumeARunningJob
+  TestJobsLive_M2_CancelAPausedRunningJob
   TestJobsLive_Outage_M2_HaltsCleanlyAndCompletesOnce
 )
 # The three phases of the outage proof (B12; tests/harness/m2_worker_outage_test.go). They are in M2W_TESTS (the PASS-line list and the stage's floor count them) but they are NOT part of the ordinary run of

@@ -349,13 +349,17 @@ func shapeExecUsers(ctx context.Context, sp pgx.Tx, m shapeModule, s shapeStmt, 
 // shapeExecRead: J1 returns the campaign_id of the item, scoped to the calling tenant (another user's id finds nothing).
 func shapeExecRead(ctx context.Context, sp pgx.Tx, m shapeModule, s shapeStmt, f shapeLiveFixture) error {
 	var campaign string
-	if err := sp.QueryRow(ctx, s.SQL, f.ItemID, f.UserID).Scan(&campaign); err != nil {
+	var marked bool // since the Phase 4 close-out the read also says whether the platform marked the item cancelled (the run route then refuses it)
+	if err := sp.QueryRow(ctx, s.SQL, f.ItemID, f.UserID).Scan(&campaign, &marked); err != nil {
 		return fmt.Errorf("%s for the owner: %w", s.Label, err)
 	}
 	if campaign != f.CampaignID {
 		return fmt.Errorf("%s returned campaign_id %s, want %s", s.Label, campaign, f.CampaignID)
 	}
-	if err := sp.QueryRow(ctx, s.SQL, f.ItemID, f.RandomID).Scan(&campaign); !errors.Is(err, pgx.ErrNoRows) {
+	if marked {
+		return fmt.Errorf("%s says the freshly seeded item is marked cancelled: the seed is pending", s.Label)
+	}
+	if err := sp.QueryRow(ctx, s.SQL, f.ItemID, f.RandomID).Scan(&campaign, &marked); !errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("%s for another tenant: %v, want no rows (tenant scoping)", s.Label, err)
 	}
 	return nil
@@ -726,6 +730,75 @@ func TestModulesLive_RoleSwitchBites(t *testing.T) {
 			}
 			if err := tx.QueryRow(ctx, q).Scan(&n); err != nil || n < 1 {
 				t.Fatalf("after RESET ROLE the superuser cannot read platform.schema_migrations again (n=%d, err=%v)", n, err)
+			}
+		})
+	}
+}
+
+// TestModulesLive_TheRunStatementsRefuseAMarkedItem (Phase 4 close-out D9): the platform marks a job's never-submitted items `cancelled` when the job ends before submission, and modules 2 and 3 must not turn such an item into work. The two statements of the run route (J1, the read; J2, the INSERT ... SELECT that freezes the item into the module's own jobs table) are executed as each module's role against the real tables: with the item PENDING the read says not marked and the freeze inserts a job (the control); with the item marked by the platform (superuser, as internal/jobs does) the read says marked and the freeze inserts NOTHING (no row: the status test is in the same statement as the insert).
+func TestModulesLive_TheRunStatementsRefuseAMarkedItem(t *testing.T) {
+	shapeModulesRoot(t)
+	stm := shapeLoadStatements(t)
+	for _, m := range shapeModules {
+		m := m
+		t.Run(m.ID, func(t *testing.T) {
+			ctx, tx, f := shapeLiveBegin(t)
+			var j1, j2 string
+			for _, st := range stm.SQL(m.ID) {
+				switch st.Label {
+				case "J1":
+					j1 = st.SQL
+				case "J2":
+					j2 = st.SQL
+				}
+			}
+			if j1 == "" || j2 == "" {
+				t.Fatalf("%s declares no J1 or no J2 for module %s: the instrument matched nothing", shapeStatementsRel, m.ID)
+			}
+			freeze := func(label string) (string, error) {
+				sp, err := tx.Begin(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer func() { _ = sp.Rollback(ctx) }()
+				var id string
+				err = sp.QueryRow(ctx, j2, f.ItemID, f.UserID).Scan(&id)
+				return id, err
+			}
+			read := func() (campaign string, marked bool, err error) {
+				sp, e := tx.Begin(ctx)
+				if e != nil {
+					t.Fatal(e)
+				}
+				defer func() { _ = sp.Rollback(ctx) }()
+				err = sp.QueryRow(ctx, j1, f.ItemID, f.UserID).Scan(&campaign, &marked)
+				return
+			}
+			// the CONTROL: the item is pending, as the platform seeds it
+			if err := shapeSwitchRole(ctx, tx, m.Role); err != nil {
+				t.Fatal(err)
+			}
+			if c, marked, err := read(); err != nil || marked || c != f.CampaignID {
+				t.Fatalf("control: module %s J1 on a pending item answered campaign %q marked %v (error %v), want %s and false", m.ID, c, marked, err, f.CampaignID)
+			}
+			if id, err := freeze("J2"); err != nil || id == "" {
+				t.Fatalf("control: module %s J2 on a pending item inserted nothing (id %q, error %v): the control job must be created", m.ID, id, err)
+			}
+			// the platform marks the item (superuser: the module roles cannot update the table)
+			if _, err := tx.Exec(ctx, "RESET ROLE"); err != nil {
+				t.Fatal(err)
+			}
+			if tag, err := tx.Exec(ctx, "UPDATE public.job_items SET status = 'cancelled' WHERE id = $1", f.ItemID); err != nil || tag.RowsAffected() != 1 {
+				t.Fatalf("mark the seeded item cancelled: %v (rows %d)", err, tag.RowsAffected())
+			}
+			if err := shapeSwitchRole(ctx, tx, m.Role); err != nil {
+				t.Fatal(err)
+			}
+			if c, marked, err := read(); err != nil || !marked || c != f.CampaignID {
+				t.Fatalf("module %s J1 on a marked item answered campaign %q marked %v (error %v), want %s and true", m.ID, c, marked, err, f.CampaignID)
+			}
+			if id, err := freeze("J2"); !errors.Is(err, pgx.ErrNoRows) {
+				t.Fatalf("module %s J2 on a MARKED item answered id %q error %v, want no row: a module started a job for an item the platform marked cancelled", m.ID, id, err)
 			}
 		})
 	}

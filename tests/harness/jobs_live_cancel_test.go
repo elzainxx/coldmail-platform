@@ -45,9 +45,11 @@ func (s *jlStack) m3Job(tn *m3aTenant, addrs []string, what string) jobs.Job {
 // (ErrNotAllowed, constraint job_module_cannot_pause, which the API words `pause_not_supported`), typed with no raw database error; nothing moved (still running, no `paused` move); and the job goes on to
 // `succeeded`, settled three ways like any other.
 //
-// LIVE-REWRITE (for the agent that writes the live tests against the re-pinned modules): this test used to assert that module 1 cannot be cancelled. It no longer does, and it does NOT cancel the module 1 job
-// either: module 1's own cancel (POST /v1/jobs/{id}/cancel) exists only at the NEW module 1 head, so the live story of a cancelled module 1 job (unclaimed rows free by M1-24, in-flight probes charged,
-// ledger = results = report) is the later agent's, with the recorded module. What is left here is the part that still holds: no per-job pause, typed, nothing moved.
+// THE MODULE 1 PART WAS REWRITTEN (Phase 4 close-out D1): this test used to assert that a running module 1 job's CANCEL is refused (cancel_not_supported). That stopped being true with platform_0016 (module 1 has
+// a cancel since its head c516f28), so the module 1 part keeps what still holds, the refusal of its PAUSE, and the cancel proof moved to TestJobsLive_M1_CancelARunningJob (jobs_live_m1cancel_test.go: a
+// running module 1 job is cancelled by its user, its unclaimed rows arrive as free `cancelled` results, the in-flight rows settle, the reserve remainder is released once). THE PAIRED CONTROL of the pause refusal is
+// the same store call on a running module 3 job: TestJobsLive_M3_PauseAndResumeARunningJob (jobs_live_pause_m3_test.go) pauses one and the database accepts it, so the refusal here is the capability row's and not a
+// general refusal of a running job's pause.
 func TestJobsLive_M3_CancelRunningJob(t *testing.T) {
 	ctx := jlCtx(t, 14*time.Minute)
 	e := newM3aEnv(t, ctx)
@@ -239,8 +241,8 @@ func TestJobsLive_M3_CancelRunningJob(t *testing.T) {
 	if reserved, charged, released, ok := s.reserveOf(mj.ID); !ok || reserved-charged-released != 0 {
 		t.Fatalf("the module 1 job's reserve is (%d, %d, %d, held %v), want the whole reserve accounted for", reserved, charged, released, ok)
 	}
-	s.requireBooks("after the module 1 job that could not be cancelled")
-	t.Logf("NOTE jl cancel m1: a running module 1 job's pause was refused by the database (job_module_cannot_pause); nothing moved; the job went on and succeeded, settled three ways (its cancel is the later live agent's: LIVE-REWRITE)")
+	s.requireBooksScoped("after the module 1 job whose pause was refused", mj.ID)
+	t.Logf("NOTE jl cancel m1: a running module 1 job's pause was refused by the database (job_module_cannot_pause); nothing moved; the job went on and succeeded, settled three ways (its cancel is proved in TestJobsLive_M1_CancelARunningJob)")
 }
 
 // itemsOf makes the m3aItems of the pending rows (only their addresses are read: m3aView.of sums the sink's messages to them).
