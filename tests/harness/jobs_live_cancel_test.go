@@ -183,6 +183,15 @@ func TestJobsLive_M3_CancelRunningJob(t *testing.T) {
 		got := jlSinkCount(e.sinkView(t), c.Prefix)
 		return got >= 1, fmt.Sprintf("the sink holds %d message(s) to C", got)
 	})
+	// the engine hands the rows over in as many ticks as the module takes them in (a module that answers a run with a wait is simply asked again at the next tick): the control asks for all n to be at module 3
+	// while the lane is still held, never for the first tick to have handed them all (that was a timing assumption: the first full run after the engine's fair work order saw 4 of 10 at this instant)
+	s.tickUntil("module 3 holds all of the control job's items while its lane is held", 60*time.Second, 300*time.Millisecond, diagC, func() (bool, string) {
+		r, err := c.C.ReportCampaign(ctx, cjob.ID)
+		if err != nil {
+			return false, err.Error()
+		}
+		return r.Totals.Total == n, m3aTotalsLine(r.Totals)
+	})
 	mid, err := c.C.ReportCampaign(ctx, cjob.ID)
 	if err != nil || mid.Totals.Total != n || mid.Totals.Cancelled != 0 || mid.Totals.Sent >= n || s.status(cjob.ID) != jobs.StatusRunning {
 		t.Fatalf("while C's lane is held the report is (%s) (error %v) and the job %s: want %d items, none cancelled, fewer than %d sent (the rest queued behind the lane) and the job running", m3aTotalsLine(mid.Totals), err, s.status(cjob.ID), n, n)

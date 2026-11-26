@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": "job_item_cancelled",
+    "message": "This job item has been cancelled and cannot be run.",
+    "request_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+}

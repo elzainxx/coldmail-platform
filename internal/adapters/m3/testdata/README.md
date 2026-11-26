@@ -73,6 +73,9 @@ campaign, a stranger's quote, an injected provider text or acknowledgment instan
 - `report.campaign.error.cursor_malformed.json`
 - `cancel.ok.json`
 - `cancel.error.validation_failed.json`
+- `pause.ok.json`
+- `resume.ok.json`
+- `run.error.job_item_cancelled.json`
 - `describe.ok.json`
 - `quote.ok.json`
 - `quote.feasible.json`

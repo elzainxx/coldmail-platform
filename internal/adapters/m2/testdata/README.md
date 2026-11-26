@@ -46,6 +46,9 @@ The tests read what each file says (an id, a count, a state, a cursor) from the 
 - `describe.ok.json`: the module's self-description (`send_managed`, `v1`, seven job states, twelve item reasons, seven error codes, `capabilities.plain_text_alternative` true).
 - `cancel.ok.json`: the module's answer to a cancel: four cancelled, none in flight, one already terminal.
 - `cancel.error.validation_failed.json`: 400, details `campaign_id` `required`.
+- `pause.ok.json`: the module's answer to a pause (Phase 4 close-out C1, recorded from module 2 at `send-managed@d023fdb`): `{campaign_id, paused, changed, state, queued, in_flight, terminal}`; one shape for the pause and its repeat (the session records the first answer and compares the repeat with it).
+- `resume.ok.json`: the answer to a resume (same recording, same shape).
+- `run.error.job_item_cancelled.json`: 409, the code `job_item_cancelled`, for the run of an item the platform marked `cancelled` (Phase 4 D9).
 
 Three things the recordings do not hold, and what the tests do about each (none of it is presented as a recording):
 

@@ -25,7 +25,7 @@ const (
 // made. So while this is false the three are DECLARED but not LISTED: Contracts leaves them out and UncoveredRoutes names the two routes, with the reason. The lead flips it, as the ONLY edit of the
 // switch, after installing the files: TestPauseFixturesAreInstalledWhenTheSwitchIsOn is red when it is true and a file is missing, and TestPauseFixturesDoNotExistWhileTheSwitchIsOff is red when it is
 // false and one of them is there, so neither half of the change can be made without the other. The same switch exists for module 1's cancel (m1.recordedPauseFixtures).
-const recordedPauseFixtures = false
+const recordedPauseFixtures = true
 
 // RecordedPauseFixtures says whether the Phase 4 D1 recordings are installed and their contracts listed (the value of the switch).
 func RecordedPauseFixtures() bool { return recordedPauseFixtures }

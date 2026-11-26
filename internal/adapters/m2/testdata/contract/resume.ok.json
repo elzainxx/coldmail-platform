@@ -1,0 +1,9 @@
+{
+  "campaign_id": "00000000-0000-4000-8000-000000000001",
+  "paused": false,
+  "changed": true,
+  "state": "running",
+  "queued": 3,
+  "in_flight": 0,
+  "terminal": 0
+}
