@@ -30,3 +30,4 @@ verifier-node/truemail-rack/spec/requests/wrapper_spec.rb|93.184.216.34|the publ
 verifier-node/truemail-rack/spec/support/schemas/controllers/validator/show.json|*|the vendored upstream response schema fixture: example resolver addresses
 verifier-node/truemail-rack/spec/truemail_server/wrapper/probe_guard_spec.rb|*|the guard spec probes each blocked range with its edge addresses and a few public addresses that must pass
 verifier-node/truemail-rack/spec/truemail_server/wrapper/resolver_hygiene_spec.rb|1.1.1.1|Cloudflare's public resolver as the input of a resolv.conf parsing test (a documented public service)
+control-plane/internal/api/cancel_test.go|s:\ncancelled|the end of the printf label "settled  : %s" followed by an escaped newline and the next label "cancelled" in a Go test message (Phase 4 close-out C2): not a drive path

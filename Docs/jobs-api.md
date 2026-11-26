@@ -261,7 +261,7 @@ no SQL is ever in it.
 | 409 | `job_slot_taken` | the user already has an active job on this module; nothing was held | none |
 | 409 | `idempotency_key_reused` | the key already confirmed another job of the user | none |
 | 409 | `not_previewed` | the job is not previewed (or was confirmed with another key) | none |
-| 409 | `infeasible` | module 3 says the campaign cannot run | `causes`: the module's words |
+| 409 | `infeasible` | module 3 says the campaign cannot run (asked BEFORE the confirm's transaction: a user who already has an active module 3 campaign gets `campaign_active` here and not `job_slot_taken`; nothing was held) | `causes`: the module's words |
 | 409 | `not_allowed` | the job's lifecycle does not allow the move | `reason`: `pause_not_supported`, `cancel_not_supported`, `not_a_draft`, `already_a_draft`, `not_confirmed`, `not_paused`, `start_deadline_passed`, `submitted_job_ends_through_the_engine`, `job_status_has_no_preview` or `not_allowed` |
 | 402 | `insufficient_credits` | the balance does not cover the whole list | `available`, `needed`, `shortfall` |
 | 403 | `no_entitlement` | module 3 is not enabled (or has expired) for the user | none |

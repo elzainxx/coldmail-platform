@@ -99,6 +99,8 @@ func (s *jlStack) requireNothingStarted(e *m3aEnv, tn *m3aTenant, job string, m1
 //	the sink check  can fail: the including chain's delivery is judged by the DEFAULT selection and must be refused (the addresses of a class the default excludes DID reach the sink)
 //	the source      is not changed by any of this: its results (a digest of every column), its status and its ledger charges are the same after the chains as before them, and the chains held no credits
 //
+// (Since the Phase 4 close-out the verdict classes are ALSO shown with a real verifier node: stage M1N-4c of the full run, tests/harness/m1_node_chain_real_test.go, chains a node-verified source into a real module 2 send. This test covers module 3 with the main stack's module 1.)
+//
 // WHAT THE REAL MODULE 1 CAN SAY HERE, honestly: the harness's main module 1 has no verifier node and no fixture DNS (the m1node stack has both, in its own control plane, and no module 3): a good address at a domain
 // of ours gets whatever the private network's resolver answers, `unknown/dns_error` in every environment this harness has run in, so `valid`, `risky` and `invalid` cannot be produced HERE and the DEFAULT selection of this
 // source is EMPTY (nothing is sent: ErrNothingToDo, and the sink must stay empty), while the choice for `unknown` is the whole of what the sink can be shown to move. The test is written over the verdicts the source

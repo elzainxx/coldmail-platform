@@ -95,6 +95,7 @@ jobs:
         run: |
           go vet ./...
           go vet -tags harness ./...
+          go vet -tags "harness m1node m2worker" ./tests/harness/    # the exact combination stage M1N-4c compiles its chain test with
           go vet -tags "harness m1node m2worker gotrue" ./tests/harness/...  # the scoped stages' tests (dormant in the full harness, tests/harness/run.sh FULL_INCLUDES) and the programs under tests/harness (the jobs scope's scenario program) must keep compiling
           go vet -tags faultpoints ./internal/... ./cmd/...                  # vet only: nothing here builds or runs a tagged binary (scripts/check-faultpoints.sh allows the tag on this one kind of line)
 
