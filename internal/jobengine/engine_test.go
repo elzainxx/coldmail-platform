@@ -1210,3 +1210,32 @@ func TestCutReason(t *testing.T) {
 		t.Errorf("cutReason kept %d bytes, want 300", len(got))
 	}
 }
+
+// The staleness of a job is the database's clock against the database's last_progress_at: a host whose own clock is wrong neither hides a stale job nor raises a false alarm.
+func TestStale_IsJudgedByTheDatabasesClockNotTheHosts(t *testing.T) {
+	last := time.Date(2030, 1, 1, 12, 0, 0, 0, time.UTC)
+	cfg := Config{SettleEvery: -1, StaleAfter: map[string]time.Duration{"m2": 15 * time.Minute}}
+	for _, c := range []struct {
+		name    string
+		host    time.Time // the engine's own clock
+		dbNow   time.Time // the database's clock when the job was read
+		wantAlt bool
+	}{
+		{"the host is hours behind and the job is stale by the database's clock", last.Add(-3 * time.Hour), last.Add(16 * time.Minute), true},
+		{"the host is hours ahead and the job is fresh by the database's clock", last.Add(5 * time.Hour), last.Add(5 * time.Minute), false},
+		{"both agree and the job is stale (the control: the alert exists at all)", last.Add(16 * time.Minute), last.Add(16 * time.Minute), true},
+	} {
+		j := ej(jobA, "m2", jobs.StatusRunning)
+		j.LastProgressAt = &last
+		j.DBNow = c.dbNow
+		r := newRig(t, cfg, j)
+		*r.now = c.host
+		r.mod.observe = func(context.Context, func([]jobs.ResultItem) error) (Observation, error) {
+			return Observation{Total: 2}, nil
+		}
+		r.e.Tick(context.Background())
+		if got := r.st.log.count("AlertStale") > 0; got != c.wantAlt {
+			t.Errorf("%s: alert raised %v, want %v (calls %v)", c.name, got, c.wantAlt, r.st.log.list())
+		}
+	}
+}

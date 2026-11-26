@@ -662,7 +662,11 @@ func (e *Engine) checkStale(ctx context.Context, j jobs.EngineJob) {
 		last = j.ConfirmedAt
 	}
 	limit := e.cfg.staleAfter(j.Module)
-	if last == nil || e.now().Sub(*last) < limit {
+	now := j.DBNow // both ends of the subtraction are the database's: a host whose clock is skewed neither hides a stale job nor raises a false alarm
+	if now.IsZero() {
+		now = e.now()
+	}
+	if last == nil || now.Sub(*last) < limit {
 		return
 	}
 	wrote, err := e.st.AlertStale(ctx, j.ID, limit, map[string]any{

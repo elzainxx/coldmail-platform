@@ -20,7 +20,7 @@ go|github.com/coldmail-platform/platform/internal/csvsafe|4
 go|github.com/coldmail-platform/platform/internal/entitlements|62
 go|github.com/coldmail-platform/platform/internal/faultpoint|1
 go|github.com/coldmail-platform/platform/internal/httpapi|20
-go|github.com/coldmail-platform/platform/internal/jobengine|65
+go|github.com/coldmail-platform/platform/internal/jobengine|66
 go|github.com/coldmail-platform/platform/internal/jobengine/jobenginetest|15
 go|github.com/coldmail-platform/platform/internal/jobs|54
 go|github.com/coldmail-platform/platform/internal/logging|6

@@ -87,6 +87,8 @@ type EngineJob struct {
 	Unsubmitted    int // pending rows with no stamp and no result: still to be handed to the module
 
 	ReserveRemainder int64 // reserved - charged - released of the job's reserve; 0 when it holds none
+
+	DBNow time.Time // the DATABASE's clock when the job was read: the engine measures how long a job has made no progress against it (last_progress_at is the database's too), never against its own host's clock
 }
 
 // Unresolved is the number of pending rows that still have no result: a job cannot complete while it is above zero.
@@ -127,7 +129,7 @@ type RecordSummary struct {
 var engineJobColumns = strings.Replace(jobColumns, "j.frozen_settings", "(j.frozen_settings - 'content')", 1) + `,
 	j.last_progress_at, j.stale_alerted_at, m.metered, (j.start_deadline IS NOT NULL AND j.start_deadline <= now()),
 	c.n_rows, c.n_pending, c.n_submitted, c.n_results, c.n_pending_results, c.n_unsubmitted,
-	COALESCE(rs.reserved - rs.charged - rs.released, 0)::bigint, COALESCE(j.module_job_ref, '')`
+	COALESCE(rs.reserved - rs.charged - rs.released, 0)::bigint, COALESCE(j.module_job_ref, ''), now()`
 
 // engineJobFrom joins what the counts need: the module, the reserve (one per job at most) and the rows with their results.
 const engineJobFrom = `
@@ -148,12 +150,13 @@ const engineJobFrom = `
 func scanEngineJob(row pgx.Row) (EngineJob, error) {
 	var e EngineJob
 	var rows, pending, submitted, results, pendingResults, unsubmitted int64
-	j, err := scanJobWith(row, &e.LastProgressAt, &e.StaleAlertedAt, &e.Metered, &e.DeadlinePassed, &rows, &pending, &submitted, &results, &pendingResults, &unsubmitted, &e.ReserveRemainder, &e.ModuleRef)
+	j, err := scanJobWith(row, &e.LastProgressAt, &e.StaleAlertedAt, &e.Metered, &e.DeadlinePassed, &rows, &pending, &submitted, &results, &pendingResults, &unsubmitted, &e.ReserveRemainder, &e.ModuleRef, &e.DBNow)
 	if err != nil {
 		return EngineJob{}, err
 	}
 	e.Job = j
 	e.LastProgressAt, e.StaleAlertedAt = utc(e.LastProgressAt), utc(e.StaleAlertedAt)
+	e.DBNow = e.DBNow.UTC()
 	e.Rows, e.Pending, e.Submitted, e.Results, e.PendingResults, e.Unsubmitted = int(rows), int(pending), int(submitted), int(results), int(pendingResults), int(unsubmitted)
 	return e, nil
 }

@@ -339,19 +339,19 @@ func topLevelColumns(list string) int {
 	return n
 }
 
-// engineJobColumns is jobColumns with the campaign taken out and twelve columns after it; scanEngineJob scans them by position. A change to jobColumns that breaks either is caught here, not as a
+// engineJobColumns is jobColumns with the campaign taken out and thirteen columns after it; scanEngineJob scans them by position. A change to jobColumns that breaks either is caught here, not as a
 // scan error on a database nobody has at hand.
 func TestEngineJobColumns_DropTheCampaignAndKeepTheOrder(t *testing.T) {
 	base := topLevelColumns(jobColumns)
 	if base != 19 {
 		t.Fatalf("jobColumns has %d columns, scanJobWith scans 19: update both together", base)
 	}
-	if got := topLevelColumns(engineJobColumns); got != base+12 {
-		t.Errorf("engineJobColumns has %d columns, want %d (jobColumns plus the twelve the engine adds)", got, base+12)
+	if got := topLevelColumns(engineJobColumns); got != base+13 {
+		t.Errorf("engineJobColumns has %d columns, want %d (jobColumns plus the thirteen the engine adds)", got, base+13)
 	}
-	// the module's own handle of the job is read with the job (COALESCEd: a job with none has "" and not a NULL the scan cannot take), and it is the LAST column scanEngineJob scans
-	if !strings.HasSuffix(strings.TrimSpace(engineJobColumns), "COALESCE(j.module_job_ref, '')") {
-		t.Errorf("engineJobColumns does not end with the module reference: %s", engineJobColumns)
+	// the module's own handle of the job is read with the job (COALESCEd: a job with none has "" and not a NULL the scan cannot take), and the database's own clock follows it as the LAST column scanEngineJob scans (the engine measures staleness against it)
+	if !strings.HasSuffix(strings.TrimSpace(engineJobColumns), "COALESCE(j.module_job_ref, ''), now()") {
+		t.Errorf("engineJobColumns does not end with the module reference and the database's clock: %s", engineJobColumns)
 	}
 	if !strings.Contains(engineJobColumns, "(j.frozen_settings - 'content')") || strings.Contains(engineJobColumns, "j.frozen_settings,") {
 		t.Errorf("engineJobColumns must select the frozen settings without the campaign: %s", engineJobColumns)
