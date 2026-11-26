@@ -252,3 +252,28 @@ What a failure usually means:
 - **`... a 400 must store nothing`**: module 1 stored a job although it answered 400 (the validation order changed).
 - **`the details [...] do not name items: required`** (or another pair): module 1 answered the right status and code but names other fields: the fixture and the adapter's reading of the details need a look.
 - **a difference from the drift gate under `POST /v1/verify`**: read it as the first comparison of the hand-written fixture with a real body; refresh the fixture from a record run (`CONTRACT_RECORD=1`), do not loosen the gate.
+
+## D4, a chain from the node's real verdicts into a real module 2 send (`m1_node_chain_*_test.go`, stage M1N-4c): what to look for
+
+Phase 4 close-out, D4. **A test of the full run only**: it needs module 2's Control, its real worker and the controllable sink, which scope `m1node` does not have. `m1n_chain` runs when `M2W_ON=1` (the full run with `m2worker` in `FULL_INCLUDES`) and otherwise prints `M1N-4c NOT RUN: module 2 is not part of this run` and returns 0, so scope `m1node` never claims it. Its two tests (`TestM1Node_ChainRealVerdictsIntoModule2`, `TestM1Node_ChainChecksBite`) carry the tags `m1node` AND `m2worker`, are compiled into a binary of their own (`harness-m1node-chain.test`, tags `harness m1node m2worker`) and counted by `m1n_floor` only when the stage ran; stage M1N-4's binary, built without `m2worker`, never contains them. The stage runs after M1N-4b (the control plane is back and the node promoted itself again), proves module 2's Control, the sink and the worker are in service over the private network (and starts them when an earlier stage left them down), stops any engine of the jobs stages that is still running, lists, runs, scans the log for this run's credentials before it prints a line of it, and requires the PASS lines.
+
+What the live test does: a verify job of eight addresses (two of each class: valid, risky, invalid, unknown, taken from the recipe table of `m1_node_test.go`) goes through the platform's engine against `m1n` and succeeds; three sends chained on it go through the same engine against module 2: the same source with the unknown verdicts excluded and then included, and a second source of three addresses with no unknown one (no choice needed). Nothing here is a first-run observation yet.
+
+| Look for | Meaning | First run |
+|---|---|---|
+| `NOTE d4 source 1: a verify job of 8 address(es) ran through the engine against the node-wired module 1 and succeeded; the fixture saw 10 RCPT(s), all from the node` and eight `NOTE d4 source 1 \| <recipe> class=<class> result=<class> module 1: <status>/<reason> origin=... (reaches the node: true\|false)` lines | the verdicts are the node's: five addresses reached it (a target RCPT and an `nx-` probe each), three never did (a list, no MX, SERVFAIL); each result's class is the one written by hand in `rchSourceSpecs` | **NOT YET RUN** |
+| `NOTE d4 chain A (exclude): choice "exclude"; 4 of 8 source rows selected and sent (valid mailbox_full catch_all disposable), 4 excluded with free P-EXC results and never at module 2; the sink gained one message and one accepted RCPT TO for each selected address and nothing, not even a RCPT TO, for any other` | exactly the valid and risky addresses moved; the two invalid and the two unknown never reached the sink or module 2 (its report, its job table and `public.job_items` hold four rows) | **NOT YET RUN** |
+| `NOTE d4 chain B (include): choice "include"; 6 of 8 ...` | the same source again: the selected plus the two unknown addresses, never an invalid one | **NOT YET RUN** |
+| `NOTE d4 chain C (no choice needed): choice ""; 2 of 3 ...` | a source with no unknown row confirms with no choice and sends its valid and risky address; the stage requires this line (the last of the test) | **NOT YET RUN** |
+| `NOTE d4 verdict: the first source's real verdicts (invalid=2 risky=2 unknown=2 valid=2) moved exactly as the owner's rule says ...; the first source's results are unchanged (digest ...)` | the end: cumulative sink and module 2 table counts per address, the invalid addresses absent, the source untouched | **NOT YET RUN** |
+| `floor: 24 TestM1Node tests declared, run and passed (19 in the ordinary run, 3 outage phases, 2 chain tests)` | `m1n_floor` counted the chain tests (22 without them) | **NOT YET RUN** |
+
+What a failure usually means:
+
+- **`the node's row is status=... want active, green, true`**: the node is not promoted (see M1N-3 and M1N-4b); every verdict would be `risky/plausible` with `no_eligible_node`.
+- **`the recipe X: module 1's own report says ..., the recipe table says ...`**: a verdict differs from the table: read the `RAW` of M1N-2 and the control families of M1N-4 for that recipe.
+- **`the sink already holds ... message(s) ... for addresses of this run's prefix`**: the prefix is not unique (it is `d4` and six hex digits).
+- **`required environment variable HARNESS_M2_...  is not set`**: the compose twin did not pass module 2's variables through (`docker-compose.m1node.yml`); the selftest checks the six names.
+- **`module 2's worker ... heartbeat`** (from `requireWorker`): the worker is not connected; the stage waits for a heartbeat before it runs, so this means it stopped in between.
+- **`the confirm of a chain ... answered ..., want ErrUnknownChoiceRequired`**: the store defaulted a missing choice again (owner ruling OD-4).
+- **`module 2's own job table holds ... job(s) of the campaign for [...], want exactly the N selected`**: an excluded row reached module 2, or a selected one did not.

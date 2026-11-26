@@ -10,7 +10,10 @@
 #     M1N-4  m1n_stage4   the integration tests (tests/harness/m1_node_test.go, TestM1Node_*): one bulk job holding one address per recipe, the cache, a control per recipe family
 #     M1N-4b m1n_outage   the OUTAGE proof (Phase 3, B12; tests/harness/m1_node_outage_test.go): a job in flight, the control plane stopped, the platform's calls and books while it is down, the
 #                         control plane started again, the job completed exactly once; three test phases in three processes with the stop and the start between them, then m1n_floor counts all of them
-#   m1n_floor     every TestM1Node test (the ordinary run and the three outage phases) ran, counted against the floor of this scope
+#   M1N-4c m1n_chain    a chain from the node's REAL verdicts into a REAL module 2 send (Phase 4 close-out, D4; tests/harness/m1_node_chain_*_test.go, a binary of its own built with the tags m1node AND m2worker): a verify job
+#                         through the platform's job engine against m1n, send jobs chained on it against module 2's real worker and the controllable sink, judged per address. A test of the FULL run only: it needs module 2,
+#                         so it runs when M2W_ON=1 and otherwise prints that it did NOT run (scope m1node never claims it); m1n_floor counts its tests only when it ran
+#   m1n_floor     every TestM1Node test (the ordinary run, the three outage phases and, when module 2 is in the run, the chain tests) ran, counted against the floor of this scope
 #   m1n_exposure  no service of this stack publishes a port; the fixture network is internal
 #
 # DORMANT until proven: run.sh sets M1N_ON=1, merges docker-compose.m1node.yml, calls m1n_mint and runs these stages ONLY under H_SCOPE=m1node, or in the full run once `m1node` is named in
@@ -53,7 +56,16 @@ M1N_OUTAGE_TESTS=(
   TestM1Node_OutagePhase3Resume
 )
 M1N_OUTAGE_SKIP='^TestM1Node_OutagePhase'
-M1N_READY_SECS=90        # how long m1n_outage waits for the restarted control plane to answer /readyz with ready=true over the private network
+# the tests of stage M1N-4c (Phase 4 close-out, D4): a chain from the node's real verdicts into a real module 2 send. They are compiled into a binary of their own (tags harness, m1node and m2worker: the ordinary binary of
+# stage M1N-4 has no m2worker tag and never contains them, so M1N_TESTS above stays exactly what scope m1node declares and runs) and run ONLY when module 2 is part of the run (M2W_ON=1). m1n_floor counts them with the
+# ordinary tests and the outage phases when, and only when, that stage ran.
+M1N_CHAIN_TESTS=(
+  TestM1Node_ChainRealVerdictsIntoModule2
+  TestM1Node_ChainChecksBite
+)
+M1N_CHAIN_RE='^TestM1Node_Chain'
+M1N_CHAIN_BIN="harness-m1node-chain.test"
+M1N_READY_SECS=90       # how long m1n_outage waits for the restarted control plane to answer /readyz with ready=true over the private network
 M1N_NODE_TOKEN=""
 M1N_T0=$SECONDS
 
@@ -358,21 +370,111 @@ m1n_outage() {
   echo "  M1N-4b OK in $((SECONDS - t0)) s"
 }
 
-# the test-count floor of this scope: the tests of stage M1N-4 and the three outage phases, each proven to have run by its own PASS line (the phases were run by name, outside the ordinary run)
+# ── M1N-4c: a chain from the node's REAL verdicts into a REAL module 2 send ────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+# Phase 4 close-out, D4. A verify job runs through the platform's job engine (the test process) against m1n, the control plane wired to the real node, and SUCCEEDS with the verdicts the recipe table of
+# m1_node_test.go gives (valid, risky, invalid and unknown, two addresses each); send jobs chained on it (CreateReq.SourceJobID) run through the same engine against module 2's REAL Control and worker, and the
+# controllable sink is read per address: exactly the selected verdicts reach it, an invalid address never, the unknown ones follow the user's explicit choice both ways, a source with no unknown row needs no
+# choice (tests/harness/m1_node_chain_real_test.go and m1_node_chain_checks_test.go, each assertion with its control).
+# HOW IT IS ARRANGED. It is a test of the FULL run only: it needs module 2 (its Control, its worker and the sink), and scope m1node has none. So it is not one of M1N_TESTS: its tests carry the build tag
+# m2worker as well, are compiled into a binary of their own ($M1N_CHAIN_BIN, tags harness m1node m2worker: stage M1N-4's binary never contains them) and are run by this stage, which runs only when M2W_ON=1
+# (run.sh: H_SCOPE=m2worker, or `m2worker` in FULL_INCLUDES) and otherwise prints, loudly, that it did NOT run and returns 0: scope m1node never claims what it did not do. m1n_floor counts the chain tests
+# when, and only when, this stage ran.
+# WHEN IT RUNS. After stage M1N-4b (the module-1 control plane is back and the node promoted itself again) and, in the full run, near the end of the run: module 2's Control, its worker and the sink were
+# started at stage 5c, restarted gracefully by m2w_outage (which waits for both and starts the worker again if it exited), and nothing since has stopped them except the Postgres restart of stage 9 (the Control
+# may have gone down with it): so the stage PROVES they answer before it runs the tests, starts them when they do not, and waits for the worker's heartbeat (m2w_outage_worker, tests/harness/m2worker/stage.sh).
+# What the test container needs of module 2 is in docker-compose.m1node.yml (the harness's own variables, passed through: nothing is minted for it).
+
+# 0 when the URL answers 200 over the private network (a throwaway container of the test image, busybox wget) within <tries> probes two seconds apart
+m1n_chain_wait() { # url tries
+  local i=0
+  while :; do
+    m1n_outage_probe "$1" >/dev/null && return 0
+    i=$((i+1)); [ "$i" -lt "$2" ] || return 1
+    sleep 2
+  done
+}
+
+# module 2's Control, the sink and the worker are in service: probed from the private network; started when they are not; the worker's heartbeat awaited
+m1n_chain_module2() {
+  if ! m1n_chain_wait http://m2:8080/readyz 1 || ! m1n_chain_wait http://smtp-ctl:8025/readyz 1; then
+    echo "  module 2's Control or the controllable sink does not answer over the private network (an earlier stage left it down): starting them"
+    DC up -d --wait --wait-timeout 240 m2 smtp-ctl >/dev/null 2>&1 || { DC logs --no-color --tail 60 m2 smtp-ctl 2>&1 | m1n_show; die "module 2's Control or the controllable sink could not be started again for stage M1N-4c (their log tail is above)"; }
+  fi
+  m1n_chain_wait http://m2:8080/readyz 30 || die "module 2 does not answer /readyz over the private network after 30 probes: the chain needs its Control"
+  m1n_chain_wait http://smtp-ctl:8025/readyz 30 || die "the controllable sink does not answer /readyz over the private network after 30 probes: the chain needs it"
+  echo "  module 2's Control and the controllable sink answer /readyz over the private network"
+  m2w_outage_worker
+}
+
+m1n_chain() {
+  STAGE=m1n-chain; banner "M1N-4c" "a chain from the node's REAL verdicts into a REAL module 2 send: a verify job through the engine, send jobs chained on it, the sink read per address"
+  if [ "${M2W_ON:-0}" != 1 ]; then
+    echo "  M1N-4c NOT RUN: module 2 is not part of this run (scope m1node, or a full run without m2worker in FULL_INCLUDES), and the chain needs module 2's Control, its real worker and the controllable sink."
+    echo "  The chain from real verdicts into a real send is a test of the full run only: nothing in this run claims it (the TestM1Node_Chain* tests were not compiled, not listed and not run)."
+    return 0
+  fi
+  local t0=$SECONDS t lrc trc name v n
+  m1n_step M1N-4c.1 "compile the chain tests into a binary of their own (tags harness m1node m2worker): the ordinary binary of stage M1N-4 has no m2worker tag and never contains them"
+  ( cd "$PLATFORM_DIR" && CGO_ENABLED=0 GOTOOLCHAIN=local go test -tags "harness m1node m2worker" -c -o "$WORK/out/$M1N_CHAIN_BIN" ./tests/harness ) || die "the chain test binary (tags harness m1node m2worker) did not compile"
+  m1n_step M1N-4c.2 "module 2 must be in service: its Control and the controllable sink answering /readyz over the private network, its worker heartbeating (the stages since stage 5c may have left them down)"
+  m1n_chain_module2
+  # an engine of the jobs stage (dormant unless `jobs` is in FULL_INCLUDES) that is still running would serve this test's jobs too: it must not be
+  DC stop -t 10 jobs-a jobs-b >/dev/null 2>&1 || true
+  m1n_step M1N-4c.3 "list the chain tests of the binary (a name that is not declared, or a count that differs from M1N_CHAIN_TESTS, is red)"
+  DC run --rm -T --entrypoint "/h/$M1N_CHAIN_BIN" m1node-tests -test.list "$M1N_CHAIN_RE" > "$WORK/m1n-chain-list.log" 2>&1; lrc=$?
+  [ "$lrc" = 0 ] || { cat "$WORK/m1n-chain-list.log"; die "listing the TestM1Node chain tests failed ($lrc)"; }
+  for t in "${M1N_CHAIN_TESTS[@]}"; do grep -qx "$t" "$WORK/m1n-chain-list.log" || die "$t is not among the declared tests of the chain binary"; done
+  n="$(grep -c '^TestM1Node_' "$WORK/m1n-chain-list.log" || true)"
+  [ "$n" = "${#M1N_CHAIN_TESTS[@]}" ] || die "the chain binary declares $n TestM1Node tests matching $M1N_CHAIN_RE, m1node.sh names ${#M1N_CHAIN_TESTS[@]} (M1N_CHAIN_TESTS): a test was added or removed without the list"
+  m1n_step M1N-4c.4 "run them: one verify job through the engine against the node-wired module 1, three chained sends through the engine against module 2's real worker, the sink read per address"
+  DC run --rm -T --entrypoint "/h/$M1N_CHAIN_BIN" m1node-tests -test.run "$M1N_CHAIN_RE" -test.v -test.count=1 -test.timeout=25m > "$WORK/m1n-chain.log" 2>&1; trc=$?
+  # the credentials of this run, in no line of what this stage is about to print (a workflow log is public): a name and a count, never a value
+  for name in M2_TOKEN M2_ADMIN_KEY SINK_PASS M1N_NODE_TOKEN M1_KEY; do
+    v="${!name:-}"; [ -n "$v" ] || die "$name is empty: the leak scan of the chain test's log would vouch for nothing"
+    n="$(grep -cF -- "$v" "$WORK/m1n-chain.log" || true)"
+    [ "$n" = 0 ] || die "LEAK: the value of $name appears $n time(s) in the chain test's log (the log is not shown: it is public)"
+  done
+  echo "  ---- the chain tests' own log lines (the verdict table of each source, what each chained send selected and what the sink gained, the books) ----"
+  grep -E " (m1_node|jobs_live|m2_worker)(_[a-z0-9]+)*_test.go:[0-9]+: " "$WORK/m1n-chain.log" | cut -c1-460 | m1n_show | head -400
+  echo "  ---- go test verdict lines ----"
+  grep -E "^(--- (PASS|FAIL|SKIP)|PASS|FAIL|ok )" "$WORK/m1n-chain.log" | m1n_show
+  if [ "$trc" != 0 ]; then
+    echo "  ---- failing tests (with context) ----"; grep -n -B1 -A40 -e "--- FAIL" "$WORK/m1n-chain.log" | cut -c1-700 | sed "s/^/  | /" | head -400
+    echo "  ---- each failing test, whole (the last 150 lines before its FAIL line: a failure is printed BEFORE the verdict line) ----"
+    awk -v keep=150 '/^=== RUN +Test[A-Za-z0-9_]+$/ {n=0} {buf[n%keep]=$0; n++} /^--- FAIL: Test/ {start=(n>keep)?n-keep:0; for(i=start;i<n;i++) print buf[i%keep]; print "-----"; n=0}' "$WORK/m1n-chain.log" | cut -c1-700 | sed "s/^/  | /" | head -400
+    die "the TestM1Node chain tests failed (exit $trc)"
+  fi
+  for t in "${M1N_CHAIN_TESTS[@]}"; do grep -q "^--- PASS: $t " "$WORK/m1n-chain.log" || die "$t has no '--- PASS' line in the chain test's log: it did not run, or did not pass"; done
+  # the test that needs the stack must have run LIVE: a binary that only ran its controls would print this and nothing else of the live test
+  grep -q ' NOTE d4 chain C (no choice needed): ' "$WORK/m1n-chain.log" || die "TestM1Node_ChainRealVerdictsIntoModule2 passed but wrote no 'NOTE d4 chain C' line: its last chained send did not run"
+  echo "  M1N-4c OK in $((SECONDS - t0)) s: ${#M1N_CHAIN_TESTS[@]} chain tests passed (their count joins the floor of m1n_floor)"
+}
+
+# the test-count floor of this scope: the tests of stage M1N-4, the three outage phases and, when module 2 is part of the run, the chain tests of stage M1N-4c, each proven to have run by its own PASS line
+# (the phases were run by name, outside the ordinary run; the chain tests are another binary's)
 m1n_floor() {
-  STAGE=m1n-floor; banner "M1N-F" "every TestM1Node test ran: the ordinary run and the three outage phases, counted against the floor"
-  local i t n=$(( ${#M1N_TESTS[@]} + ${#M1N_OUTAGE_TESTS[@]} ))
+  STAGE=m1n-floor; banner "M1N-F" "every TestM1Node test ran: the ordinary run, the three outage phases and, when module 2 is in the run, the chain tests, counted against the floor"
+  local i t n=$(( ${#M1N_TESTS[@]} + ${#M1N_OUTAGE_TESTS[@]} )) chain=0 extra=""
+  [ "${M2W_ON:-0}" = 1 ] && chain=${#M1N_CHAIN_TESTS[@]}
+  n=$((n + chain))
   for i in 1 2 3; do
     [ -s "$WORK/m1n-outage-$i.log" ] || die "the log of outage phase $i is missing: the outage sub-stage did not run it"
     cat "$WORK/m1n-outage-$i.log" >> "$WORK/m1n-run.log"
   done
   for t in "${M1N_OUTAGE_TESTS[@]}"; do grep -q "^--- PASS: $t " "$WORK/m1n-run.log" || die "$t has no '--- PASS' line in the run log: it did not run, or did not pass"; done
+  if [ "$chain" != 0 ]; then
+    [ -s "$WORK/m1n-chain.log" ] && [ -s "$WORK/m1n-chain-list.log" ] || die "the log of stage M1N-4c is missing: module 2 is part of this run, so the chain stage must have run and left its log"
+    cat "$WORK/m1n-chain.log" >> "$WORK/m1n-run.log"
+    grep '^TestM1Node_' "$WORK/m1n-chain-list.log" >> "$WORK/m1n-list.log"
+    for t in "${M1N_CHAIN_TESTS[@]}"; do grep -q "^--- PASS: $t " "$WORK/m1n-run.log" || die "$t has no '--- PASS' line in the run log: it did not run, or did not pass"; done
+    extra=", $chain chain tests"
+  fi
   printf 'ok  \t%s\t0.000s\n' "$GO_PKG" >> "$WORK/m1n-run.log"
   printf 'ok  \t%s\t0.000s\n' "$GO_PKG" >> "$WORK/m1n-list.log"
   # the floor of THIS scope is the number of tests named in M1N_TESTS and M1N_OUTAGE_TESTS (the full floor, tests/floors-harness.txt, never counts them: they are behind a build tag)
   printf '# the TestM1Node tests of scope m1node\ngo|%s|%s\n' "$GO_PKG" "$n" > "$WORK/floors-m1node.txt"
   bash "$PLATFORM_DIR/scripts/check-test-floors.sh" --floors "$WORK/floors-m1node.txt" --go-run-log "$WORK/m1n-run.log" --go-list-log "$WORK/m1n-list.log" || die "the TestM1Node test-count floor ($n)"
-  echo "  floor: $n TestM1Node tests declared, run and passed (${#M1N_TESTS[@]} in the ordinary run, ${#M1N_OUTAGE_TESTS[@]} outage phases)"
+  echo "  floor: $n TestM1Node tests declared, run and passed (${#M1N_TESTS[@]} in the ordinary run, ${#M1N_OUTAGE_TESTS[@]} outage phases$extra)"
 }
 
 # None of this run's credentials may appear in what the stack logged or in what this script captured (a workflow log is public). Names a file and a count, never a value.
@@ -412,6 +514,7 @@ m1n_run() {
   m1n_stage3
   m1n_stage4
   m1n_outage      # stops and starts m1n: after every stage that needs it up, before the two checks that read its logs
+  m1n_chain       # M1N-4c: the chain from the node's real verdicts into a real module 2 send: runs only when module 2 is part of the run, and says so when it does not (it needs m1n back and promoted, which M1N-4b ends with)
   m1n_floor
   m1n_exposure
   m1n_secret_leak
@@ -439,4 +542,16 @@ m1n_not_checked() {
     unknown_error). The wired control plane is a second service (m1n) on the same database, not the m1 of the other stages.
   - a verdict module 1 derived from a transcript is only as real as the fixture's conversation: the fixture is hand-written (tests/harness/fx), the node is not.
 EOF
+  if [ "${M2W_ON:-0}" = 1 ]; then
+    cat <<'EOF'
+  - the chain from the node's real verdicts into a real module 2 send (stage M1N-4c): ONE source job of eight addresses (two of each verdict class: valid, risky, invalid, unknown, the recipes of this stack's table) and a second of three
+    (no unknown row), run through the platform's job engine against the node-wired module 1, and three chained sends run through the same engine against module 2's real worker and the controllable sink. Not exercised: a source of more than
+    a handful of rows or with malformed, repeated or suppressed rows (the store's own tests cover those, against fakes), a chain to module 3 (TestJobsLive_Chain_ExactlySelectedVerdictsMove, with a module 1 that can only say unknown), a verdict
+    this fixture cannot produce (the first bullet's list), a chained send that bounces or fails (the sink accepts every recipient here), two users at once, the engine of a platform SERVICE (the engine here is the test process's, as in the
+    other live job tests), and a chain whose source is older than the run.
+EOF
+  else
+    echo "  - stage M1N-4c (the chain from the node's real verdicts into a real module 2 send) did NOT run: module 2 is not part of this run, and the chain needs its Control, its real worker and the controllable sink. The chain test is the full run's: until a"
+    echo "    full run with module 2 has passed it, nothing here shows a verdict of this stack moving, or not moving, into a real send (TestJobsLive_Chain_ExactlySelectedVerdictsMove shows only the unknown ones, with a module 1 that has no node)."
+  fi
 }

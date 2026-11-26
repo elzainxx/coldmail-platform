@@ -12,7 +12,7 @@
         "completed_at": null,
         "attempt_count": 1,
         "account_id": "00000000-0000-4000-8000-000000000003",
-        "account_username": "sender-1-edge-591eba0a@example.test",
+        "account_username": "sender-1-edge-5a6a4a13@example.test",
         "smtp_response": "451 4.7.1 try later",
         "error_class": "transport_4xx",
         "failed_at": null
@@ -31,6 +31,7 @@
       }
     ]
   },
+  "paused": false,
   "progress": {
     "fraction_complete": 0,
     "is_complete": false,
@@ -49,7 +50,7 @@
   "totals_by_account": [
     {
       "account_id": "00000000-0000-4000-8000-000000000003",
-      "account_username": "sender-1-edge-591eba0a@example.test",
+      "account_username": "sender-1-edge-5a6a4a13@example.test",
       "sent": 0,
       "bounced": 0,
       "failed": 0,

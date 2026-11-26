@@ -13,7 +13,7 @@
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"; HARNESS="$(cd "$HERE/.." && pwd)"
 T="$(mktemp -d)" || exit 2; trap 'rm -rf "$T"' EXIT
-MIN=60; cases=0; ok=0; bad=0
+MIN=100; cases=0; ok=0; bad=0
 verdict() { # label want-rc want-substring out rc [forbidden-substring]
   local label="$1" want="$2" sub="$3" out="$4" rc="$5" forbid="${6:-}" n f=0
   cases=$((cases+1))
@@ -87,8 +87,8 @@ verdict "m1n_secret_leak: an empty credential is refused (a scan with nothing to
 # ── consistency of the files ──
 srcs=("$HARNESS"/m1_node*_test.go "$HARNESS"/zz_m1_node*_test.go)   # every file of the module-1 node tests: the tests, their helpers, the end-to-end tests of B9-B11 and the contract drift gate (zz_: the last test of the binary)
 in_go="$(grep -ho '^func TestM1Node_[A-Za-z0-9_]*' "${srcs[@]}" | sed 's/^func //' | sort | tr '\n' ' ')"
-in_sh="$( ( WORK=/x; . "$T/env.sh"; HERE="$HARNESS"; PLATFORM_DIR=/x; . "$HERE/m1node/m1node.sh"; printf '%s\n' "${M1N_TESTS[@]}" "${M1N_OUTAGE_TESTS[@]}" ) | sort | tr '\n' ' ')"
-verdict "M1N_TESTS and M1N_OUTAGE_TESTS together are exactly the set of TestM1Node_ functions of the m1_node*_test.go files" 0 "same" "$([ -n "$in_go" ] && [ "$in_go" = "$in_sh" ] && echo same || printf 'go: %s\nsh: %s' "$in_go" "$in_sh")" 0
+in_sh="$( ( WORK=/x; . "$T/env.sh"; HERE="$HARNESS"; PLATFORM_DIR=/x; . "$HERE/m1node/m1node.sh"; printf '%s\n' "${M1N_TESTS[@]}" "${M1N_OUTAGE_TESTS[@]}" "${M1N_CHAIN_TESTS[@]}" ) | sort | tr '\n' ' ')"
+verdict "M1N_TESTS, M1N_OUTAGE_TESTS and M1N_CHAIN_TESTS together are exactly the set of TestM1Node_ functions of the m1_node*_test.go files" 0 "same" "$([ -n "$in_go" ] && [ "$in_go" = "$in_sh" ] && echo same || printf 'go: %s\nsh: %s' "$in_go" "$in_sh")" 0
 # the control: a list with one more name, or one fewer, is not the same set
 verdict "a list with an extra name is not the same set (the control)" 1 "differ" "$([ "$in_go" = "$in_sh TestM1Node_Extra " ] && echo same || echo differ)" 1
 fx="$HARNESS/m1node/fixture.json"
@@ -219,7 +219,7 @@ verdict "m1n_outage: when the stop does not stop, phase 2 never runs" 1 "m1n is 
 floor_run() { # label scenario
   W="$T/f-$1"; mkdir -p "$W"
   ( set -u; WORK="$W"; PLATFORM_DIR="$HARNESS/../.."; . "$T/env.sh"; . "$HERE/m1node.sh"
-    DROP_ORD=0; MISSING_LOG=0; NOPASS_LOG=0; eval "${2:-}"
+    DROP_ORD=0; MISSING_LOG=0; NOPASS_LOG=0; CHAIN_LOG=1; CHAIN_NOPASS=0; STRAY_CHAIN=0; eval "${2:-}"
     : > "$W/m1n-list.log"; : > "$W/m1n-run.log"
     for t in "${M1N_TESTS[@]}" "${M1N_OUTAGE_TESTS[@]}"; do echo "$t" >> "$W/m1n-list.log"; done
     n=0; for t in "${M1N_TESTS[@]}"; do n=$((n+1)); [ "$DROP_ORD" = 1 ] && [ "$n" = 1 ] && continue; echo "--- PASS: $t (0.00s)" >> "$W/m1n-run.log"; done
@@ -227,6 +227,11 @@ floor_run() { # label scenario
       i=$((i+1)); [ "$MISSING_LOG" = "$i" ] && continue
       if [ "$NOPASS_LOG" = "$i" ]; then echo "ran, printed no verdict" > "$W/m1n-outage-$i.log"; else printf -- '--- PASS: %s (0.00s)\nPASS\n' "$t" > "$W/m1n-outage-$i.log"; fi
     done
+    # the chain stage (M1N-4c) leaves its own two logs when module 2 is part of the run (M2W_ON=1); a stray pair of logs with the stage off must not be counted
+    if { [ "${M2W_ON:-0}" = 1 ] || [ "$STRAY_CHAIN" = 1 ]; } && [ "$CHAIN_LOG" = 1 ]; then
+      printf '%s\n' "${M1N_CHAIN_TESTS[@]}" > "$W/m1n-chain-list.log"
+      n=0; for t in "${M1N_CHAIN_TESTS[@]}"; do n=$((n+1)); [ "$CHAIN_NOPASS" = "$n" ] && continue; echo "--- PASS: $t (0.00s)"; done > "$W/m1n-chain.log"
+    fi
     m1n_floor ) 2>&1
 }
 want_n="$( ( WORK=/x; . "$T/env.sh"; HERE="$HARNESS"; PLATFORM_DIR=/x; . "$HERE/m1node/m1node.sh"; echo $(( ${#M1N_TESTS[@]} + ${#M1N_OUTAGE_TESTS[@]} )) ) )"
@@ -240,6 +245,130 @@ out="$(floor_run dropped 'DROP_ORD=1')"; rc=$?
 verdict "m1n_floor: the floor bites: one ordinary test that did not run is red, declared against ran" 1 "declared=$want_n ran=$((want_n - 1))" "$out" "$rc"
 verdict "m1n_floor: ... and the stage says which floor" 1 "the TestM1Node test-count floor ($want_n)" "$out" "$rc"
 
+# the floor with the chain stage (M1N-4c): counted when module 2 is part of the run and the stage ran, never otherwise
+out="$(floor_run chainok 'M2W_ON=1')"; rc=$?
+verdict "m1n_floor: with module 2 in the run the two chain tests join the floor" 0 "floor: $((want_n + 2)) TestM1Node tests declared, run and passed ($((want_n - 3)) in the ordinary run, 3 outage phases, 2 chain tests)" "$out" "$rc"
+out="$(floor_run chainnolog 'M2W_ON=1; CHAIN_LOG=0')"; rc=$?
+verdict "m1n_floor: with module 2 in the run a chain stage that left no log is red" 1 "the log of stage M1N-4c is missing" "$out" "$rc"
+out="$(floor_run chainnopass 'M2W_ON=1; CHAIN_NOPASS=2')"; rc=$?
+verdict "m1n_floor: a chain test with no PASS line is red, named" 1 "TestM1Node_ChainChecksBite has no '--- PASS' line in the run log" "$out" "$rc"
+out="$(floor_run chainstray 'STRAY_CHAIN=1')"; rc=$?
+verdict "m1n_floor: chain logs left behind by a run without module 2 are not counted (the floor stays the scope's)" 0 "floor: $want_n TestM1Node tests declared, run and passed" "$out" "$rc" ", 2 chain tests"
+
+# ── the chain stage (M1N-4c), against stubs ──
+# What is stubbed: docker compose (DC), go, sleep, the probe from the private network (m1n_outage_probe) and the worker wait of module 2's stage (m2w_outage_worker). Every scenario is a few assignments that the stubs
+# read: M2W_ON (the stage is on when 1), GO_RC (the compile), M2_UP / CTL_UP (module 2's Control and the sink answer from the start), NEVER (they never answer), UP_RC (docker compose up), WORKER_RC (module 2's worker
+# wait), LIST_RC, LIST_DROP (a name the binary does not declare), LIST_EXTRA (one more it declares), RUN_RC, NOPASS (the first test prints no PASS line), NOLIVE (the live test wrote no NOTE line), LEAK (the name of a
+# credential that appears in the log). $W/calls records every call of DC, go and the worker wait: a stage that did not run must make none. Every reject case asserts the sentence the stage dies with.
+# a stand-in credential of a run, made from the name of the variable at run time (no literal in this file looks like a credential): the stage must find it in a log and must never print it
+cred() { printf 'stand-in-%s-z9' "$1"; }
+chain_run() { # label scenario
+  W="$T/c-$1"; mkdir -p "$W"
+  ( set -u; WORK="$W"; PLATFORM_DIR="$W"; . "$T/env.sh"; . "$HERE/m1node.sh"
+    M2W_ON=1; GO_RC=0; M2_UP=1; CTL_UP=1; NEVER=0; UP_RC=0; WORKER_RC=0; LIST_RC=0; LIST_DROP=""; LIST_EXTRA=0; RUN_RC=0; NOPASS=0; NOLIVE=0; LEAK=""
+    for cn in M2_TOKEN M2_ADMIN_KEY SINK_PASS M1N_NODE_TOKEN M1_KEY; do eval "$cn=\"$(cred $cn)\""; done
+    eval "${2:-}"
+    : > "$W/calls"
+    DC() {
+      echo "DC $*" >> "$W/calls"
+      case "$1" in
+        run)
+          case "$*" in
+            *"-test.list "*)
+              [ "$LIST_RC" = 0 ] || { echo "stub: the list failed"; return "$LIST_RC"; }
+              for t in "${M1N_CHAIN_TESTS[@]}"; do [ "$t" = "$LIST_DROP" ] || echo "$t"; done
+              [ "$LIST_EXTRA" = 1 ] && echo "TestM1Node_ChainSomethingElse"
+              return 0;;
+            *"-test.run "*)
+              echo "=== RUN   ${M1N_CHAIN_TESTS[0]}"
+              echo "    m1_node_chain_real_test.go:100: NOTE d4 chain A (exclude): a log line of the first chained send"
+              [ "$NOLIVE" = 1 ] || echo "    m1_node_chain_real_test.go:200: NOTE d4 chain C (no choice needed): choice \"\"; the last chained send ran"
+              [ -z "$LEAK" ] || { v="$(eval echo "\$$LEAK")"; echo "    m1_node_chain_real_test.go:300: oops: $v appeared"; }
+              n=0
+              for t in "${M1N_CHAIN_TESTS[@]}"; do
+                n=$((n+1)); [ "$NOPASS" = 1 ] && [ "$n" = 1 ] && continue
+                if [ "$RUN_RC" = 0 ]; then echo "--- PASS: $t (0.10s)"; else echo "--- FAIL: $t (0.10s)"; fi
+              done
+              if [ "$RUN_RC" = 0 ]; then echo PASS; else echo FAIL; fi
+              return "$RUN_RC";;
+          esac
+          return 9;;
+        up) if [ "$UP_RC" = 0 ]; then touch "$W/started"; fi; return "$UP_RC";;
+        stop) return 1;;                          # `no such service: jobs-a`: the stage ignores it
+        logs) echo "a log line of module 2";;
+      esac
+    }
+    go() { echo "go $*" >> "$W/calls"; return "$GO_RC"; }
+    sleep() { :; }
+    m1n_outage_probe() {
+      [ "$NEVER" = 0 ] || return 1
+      case "$1" in
+        http://m2:8080/readyz) [ "$M2_UP" = 1 ] || [ -f "$W/started" ];;
+        http://smtp-ctl:8025/readyz) [ "$CTL_UP" = 1 ] || [ -f "$W/started" ];;
+        *) return 1;;
+      esac
+    }
+    m2w_outage_worker() { echo "m2w_outage_worker" >> "$W/calls"; [ "$WORKER_RC" = 0 ] || die "module 2's worker never heartbeated (stub)"; echo "  stub: module 2's worker is registered and heartbeating"; }
+    m1n_chain ) 2>&1
+}
+calls_of() { cat "$T/c-$1/calls" 2>/dev/null; }
+out="$(chain_run noton 'unset M2W_ON')"; rc=$?
+verdict "m1n_chain: with module 2 not in the run (M2W_ON unset, as in scope m1node) it says it did NOT run and returns 0" 0 "M1N-4c NOT RUN: module 2 is not part of this run" "$out" "$rc" "M1N-4c OK"
+verdict "m1n_chain: ... and it made no call of docker compose, go or module 2's worker wait" 0 "no call" "$([ -z "$(calls_of noton)" ] && echo "no call" || echo "calls: $(calls_of noton | tr '\n' ';')")" 0
+out="$(chain_run notoff 'M2W_ON=0')"; rc=$?
+verdict "m1n_chain: with M2W_ON=0 it says the same" 0 "the TestM1Node_Chain* tests were not compiled, not listed and not run" "$out" "$rc" "M1N-4c OK"
+verdict "m1n_chain: ... and made no call either" 0 "no call" "$([ -z "$(calls_of notoff)" ] && echo "no call" || echo "calls: $(calls_of notoff | tr '\n' ';')")" 0
+out="$(chain_run good)"; rc=$?
+verdict "m1n_chain: a good run" 0 "M1N-4c OK in" "$out" "$rc"
+verdict "m1n_chain: ... which names the two tests it passed" 0 "2 chain tests passed" "$out" "$rc"
+verdict "m1n_chain: the binary is compiled with the three tags and the tests are run through it, by its own entrypoint" 0 "go test -tags harness m1node m2worker -c -o $T/c-good/out/harness-m1node-chain.test" "$(calls_of good | head -1)" 0
+verdict "m1n_chain: ... the run names the chain binary and the anchored pattern" 0 "--entrypoint /h/harness-m1node-chain.test m1node-tests -test.run ^TestM1Node_Chain -test.v -test.count=1 -test.timeout=25m" "$(calls_of good)" 0
+verdict "m1n_chain: ... module 2's worker is waited for before the tests are listed" 0 "worker-before-list" "$(calls_of good | awk '/m2w_outage_worker/{w=NR} /-test.list/{l=NR} END{ if (w && l && w < l) print "worker-before-list"; else print "order is wrong: worker line " w ", list line " l }')" 0
+out="$(chain_run gofail 'GO_RC=1')"; rc=$?
+verdict "m1n_chain: a binary that does not compile is red" 1 "the chain test binary (tags harness m1node m2worker) did not compile" "$out" "$rc" "M1N-4c.2"
+out="$(chain_run started 'M2_UP=0; CTL_UP=0')"; rc=$?
+verdict "m1n_chain: module 2 left down by an earlier stage is started again, then the stage goes on" 0 "(an earlier stage left it down): starting them" "$out" "$rc"
+verdict "m1n_chain: ... and the run passes" 0 "M1N-4c OK in" "$out" "$rc"
+out="$(chain_run upfail 'M2_UP=0; CTL_UP=0; UP_RC=1')"; rc=$?
+verdict "m1n_chain: module 2 that cannot be started again is red, with its log tail first" 1 "could not be started again for stage M1N-4c (their log tail is above)" "$out" "$rc" "M1N-4c.3"
+verdict "m1n_chain: ... the log tail is printed before the stage dies" 1 "a log line of module 2" "$out" "$rc"
+out="$(chain_run never 'M2_UP=0; CTL_UP=0; NEVER=1')"; rc=$?
+verdict "m1n_chain: module 2 that never answers over the private network is red after the bounded wait" 1 "module 2 does not answer /readyz over the private network after 30 probes" "$out" "$rc" "M1N-4c.3"
+out="$(chain_run noworker 'WORKER_RC=1')"; rc=$?
+verdict "m1n_chain: a worker that never heartbeats is red, and no test is listed or run" 1 "module 2's worker never heartbeated" "$out" "$rc" "M1N-4c.3"
+out="$(chain_run listfail 'LIST_RC=1')"; rc=$?
+verdict "m1n_chain: a listing that fails is red" 1 "listing the TestM1Node chain tests failed (1)" "$out" "$rc" "M1N-4c.4"
+out="$(chain_run notdeclared 'LIST_DROP=TestM1Node_ChainChecksBite')"; rc=$?
+verdict "m1n_chain: a test of the list the binary does not declare is red, named" 1 "TestM1Node_ChainChecksBite is not among the declared tests of the chain binary" "$out" "$rc" "M1N-4c.4"
+out="$(chain_run extra 'LIST_EXTRA=1')"; rc=$?
+verdict "m1n_chain: a test the binary declares and the list does not name is red" 1 "the chain binary declares 3 TestM1Node tests matching ^TestM1Node_Chain, m1node.sh names 2 (M1N_CHAIN_TESTS)" "$out" "$rc" "M1N-4c.4"
+out="$(chain_run runfail 'RUN_RC=1')"; rc=$?
+verdict "m1n_chain: tests that fail are red" 1 "the TestM1Node chain tests failed (exit 1)" "$out" "$rc" "M1N-4c OK"
+verdict "m1n_chain: ... and the failing test is printed before the stage dies" 1 "--- FAIL: TestM1Node_ChainRealVerdictsIntoModule2" "$out" "$rc"
+out="$(chain_run nopass 'NOPASS=1')"; rc=$?
+verdict "m1n_chain: a test that exits 0 without its PASS line is red, named" 1 "TestM1Node_ChainRealVerdictsIntoModule2 has no '--- PASS' line in the chain test's log" "$out" "$rc" "M1N-4c OK"
+out="$(chain_run nolive 'NOLIVE=1')"; rc=$?
+verdict "m1n_chain: a live test that passed without its last NOTE line did not run its last chained send: red" 1 "wrote no 'NOTE d4 chain C' line" "$out" "$rc" "M1N-4c OK"
+for name in M2_TOKEN M2_ADMIN_KEY SINK_PASS M1N_NODE_TOKEN M1_KEY; do
+  val="$(cred "$name")"
+  out="$(chain_run "leak$name" "LEAK=$name")"; rc=$?
+  verdict "m1n_chain: $name in the test's log is red, naming it, and the log is not printed" 1 "LEAK: the value of $name appears 1 time(s) in the chain test's log" "$out" "$rc" "$val"
+done
+out="$(chain_run emptycred 'M2_ADMIN_KEY=""')"; rc=$?
+verdict "m1n_chain: an empty credential is refused (a scan with nothing to look for)" 1 "M2_ADMIN_KEY is empty" "$out" "$rc" "M1N-4c OK"
+
+# the stage, the compose twin and the Go files agree
+chain_re="$( ( WORK=/x; . "$T/env.sh"; HERE="$HARNESS"; PLATFORM_DIR=/x; . "$HERE/m1node/m1node.sh"; printf '%s' "$M1N_CHAIN_RE" ) )"
+sel_chain="$( ( WORK=/x; . "$T/env.sh"; HERE="$HARNESS"; PLATFORM_DIR=/x; . "$HERE/m1node/m1node.sh"; printf '%s\n' "${M1N_CHAIN_TESTS[@]}" ) | grep -cE "$chain_re" || true)"
+sel_other="$( ( WORK=/x; . "$T/env.sh"; HERE="$HARNESS"; PLATFORM_DIR=/x; . "$HERE/m1node/m1node.sh"; printf '%s\n' "${M1N_TESTS[@]}" "${M1N_OUTAGE_TESTS[@]}" ) | grep -cE "$chain_re" || true)"
+verdict "the chain pattern selects both chain tests and none of the ordinary or outage tests (the pattern bites both ways)" 0 "2 and 0" "$sel_chain and $sel_other" 0
+verdict "the chain tests are compiled only with the tag m2worker: both files start with the three tags, and stage M1N-4's own binary is built with no m2worker tag" 0 "tagged" "$( [ "$(head -1 "$HARNESS/m1_node_chain_real_test.go")" = '//go:build harness && m1node && m2worker' ] && [ "$(head -1 "$HARNESS/m1_node_chain_checks_test.go")" = '//go:build harness && m1node && m2worker' ] && grep -q 'go test -tags "harness m1node" -c -o "$WORK/out/harness-m1node.test"' "$HERE/m1node.sh" && echo tagged || echo "the build tags of the chain files or of stage M1N-4 are not what the stage assumes")" 0
+m2_envs="$(grep -ohE 'm2wEnv[A-Za-z]+ += "HARNESS_[A-Z0-9_]+"' "$HARNESS/m2_worker_helpers_test.go" | grep -o 'HARNESS_[A-Z0-9_]*' | sort -u | tr '\n' ' ')"
+twin_missing() { local v out=""; for v in $m2_envs; do grep -qE "^ +$v:" "$1" || out="$out $v"; done; printf '%s' "$out"; }
+verdict "the compose twin passes the test container every variable module 2's test helpers read (the chain test builds module 2's run from them)" 0 "none missing of 6" "$([ "$(printf '%s' "$m2_envs" | wc -w | tr -d ' ')" = 6 ] && [ -z "$(twin_missing "$HARNESS/docker-compose.m1node.yml")" ] && echo "none missing of 6" || echo "missing:$(twin_missing "$HARNESS/docker-compose.m1node.yml") (helpers read: $m2_envs)")" 0
+grep -vE '^ +HARNESS_M2_URL:' "$HARNESS/docker-compose.m1node.yml" > "$T/twin-less.yml"
+verdict "the twin check bites: a twin without HARNESS_M2_URL is refused, naming it (the control)" 0 " HARNESS_M2_URL" "$(twin_missing "$T/twin-less.yml")" 0
+
 # the names, the exclusion and the guard agree between the Go files, the lists and the stage
 phase_names="$(grep -ho '^func TestM1Node_OutagePhase[A-Za-z0-9_]*' "${srcs[@]}" | sed 's/^func //' | tr '\n' ' ')"
 verdict "the outage phases carry their order in their names and are declared in that order" 0 "TestM1Node_OutagePhase1Start TestM1Node_OutagePhase2Down TestM1Node_OutagePhase3Resume" "$(printf '%s' "$phase_names" | sed 's/ $//')" 0
@@ -250,7 +379,7 @@ verdict "the -test.skip pattern excludes all three outage phases from the ordina
 verdict "the -test.skip pattern excludes none of the ordinary tests (the pure outage test stays in the ordinary run)" 0 "0" "$ord_match" 0
 verdict "stage M1N-4 passes the skip pattern to the ordinary run" 0 "-test.skip \"\$M1N_OUTAGE_SKIP\"" "$(grep -o -- '-test.skip "\$M1N_OUTAGE_SKIP"' "$HERE/m1node.sh" | head -1)" 0
 verdict "the outage phases are run by an anchored name with the guard variable the Go tests require" 0 "HARNESS_M1_OUTAGE" "$(grep -q 'HARNESS_M1_OUTAGE=1 m1node-tests -test.run "^${name}' "$HERE/m1node.sh" && grep -q 'm1oEnvStage *= "HARNESS_M1_OUTAGE"' "$HARNESS/m1_node_outage_helpers_test.go" && echo HARNESS_M1_OUTAGE || echo "the stage and the Go tests disagree on the guard variable")" 0
-verdict "m1n_run runs the stages in the order: tests, outage, floor, exposure, leak scan" 0 "m1n_stage4 m1n_outage m1n_floor m1n_exposure m1n_secret_leak" "$(sed -n '/^m1n_run() {/,/^}/p' "$HERE/m1node.sh" | grep -oE '^  m1n_[a-z0-9_]+' | tr -d ' ' | tr '\n' ' ' | grep -o 'm1n_stage4 m1n_outage m1n_floor m1n_exposure m1n_secret_leak')" 0
+verdict "m1n_run runs the stages in the order: tests, outage, chain, floor, exposure, leak scan" 0 "m1n_stage4 m1n_outage m1n_chain m1n_floor m1n_exposure m1n_secret_leak" "$(sed -n '/^m1n_run() {/,/^}/p' "$HERE/m1node.sh" | grep -oE '^  m1n_[a-z0-9_]+' | tr -d ' ' | tr '\n' ' ' | grep -o 'm1n_stage4 m1n_outage m1n_chain m1n_floor m1n_exposure m1n_secret_leak')" 0
 margin="$(sed -n 's/^ *TM_QUEUE_LEASE_MARGIN_SECONDS: "\([0-9]*\)".*/\1/p' "$HARNESS/docker-compose.m1node.yml")"
 verdict "the control plane's lease margin is set low enough for the outage proof and above zero (the module refuses 0)" 0 "ok" "$([ -n "$margin" ] && [ "$margin" -gt 0 ] && [ "$margin" -le 30 ] && echo ok || echo "margin '${margin:-unset}'")" 0
 cap_cp="$(sed -n 's/^ *TM_QUEUE_BULK_MAX_ADDRESSES: "\${H_M1N_BULK_CAP:-\([0-9]*\)}".*/\1/p' "$HARNESS/docker-compose.m1node.yml")"

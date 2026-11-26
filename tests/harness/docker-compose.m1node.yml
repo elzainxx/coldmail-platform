@@ -158,6 +158,16 @@ services:
       HARNESS_ADMIN_DATABASE_URL: postgres://supabase_admin:${H_PG_SUPERPASS:?}@postgres:5432/postgres
       HARNESS_M1NODE_BULK_CAP: "${H_M1N_BULK_CAP:-500}"   # the cap the control plane was started with (TM_QUEUE_BULK_MAX_ADDRESSES above): the edge test submits one row more
       HARNESS_PLATFORM_APP_PASSWORD: ${H_PLATFORM_APP_PASSWORD:?}   # the end-to-end tests (m1_node_e2e_test.go) run the platform's money core and tenant resolver as the platform_app login, like the service
+      # Stage M1N-4c (a chain from the node's real verdicts into a real module 2 send: tests/harness/m1_node_chain_*_test.go, tags m1node AND m2worker, a test of the FULL run only) reads module 2's address and
+      # service token, its operator key and the worker's id, the controllable sink's control API and the sink's password: the harness's OWN variables, passed through under the names docker-compose.yml and
+      # docker-compose.m2worker.yml give them for harness-tests; nothing is minted for this twin. H_M2_ADMIN_KEY and H_M2_WORKER_ID exist only when module 2's stage is on (run.sh m2w_mint), so they default to
+      # empty here: scope m1node has no module 2 and compiles none of the tests that read them, and a test that did read an empty one FAILS naming the variable (requireEnv), it never skips.
+      HARNESS_M2_URL: http://m2:8080
+      HARNESS_M2_TOKEN: ${H_M2_TOKEN:?}
+      HARNESS_M2_ADMIN_KEY: ${H_M2_ADMIN_KEY:-}
+      HARNESS_M2_WORKER_ID: ${H_M2_WORKER_ID:-}
+      HARNESS_CTL_URL: http://smtp-ctl:8025
+      HARNESS_SINK_PASSWORD: ${H_SINK_PASSWORD:?}
     volumes:
       - ${H_WORK:?}/out:/h:ro
       - ${H_PLATFORM_DIR:?}:/repo:ro

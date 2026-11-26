@@ -8,6 +8,7 @@
     "click_tracking": false,
     "content_variation": true,
     "open_tracking": false,
+    "pause_resume": true,
     "plain_text_alternative": true,
     "reply_to_per_campaign": true,
     "sequences": false,
@@ -32,6 +33,10 @@
     },
     {
       "code": "conflict",
+      "http_status": 409
+    },
+    {
+      "code": "job_item_cancelled",
       "http_status": 409
     },
     {

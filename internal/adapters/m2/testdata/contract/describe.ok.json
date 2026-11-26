@@ -1,6 +1,7 @@
 {
   "api_version": "v1",
   "capabilities": {
+    "campaign_pause_resume": true,
     "click_tracking": false,
     "content_variation": true,
     "open_tracking": false,
@@ -28,6 +29,10 @@
     },
     {
       "code": "conflict",
+      "http_status": 409
+    },
+    {
+      "code": "job_item_cancelled",
       "http_status": 409
     },
     {

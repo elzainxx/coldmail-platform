@@ -12,13 +12,14 @@
         "completed_at": "2026-01-01T00:00:00Z",
         "attempt_count": 0,
         "account_id": "00000000-0000-4000-8000-000000000003",
-        "account_username": "sender-1-page-306266c8@example.test",
+        "account_username": "sender-1-page-e4b2e821@example.test",
         "smtp_response": null,
         "error_class": null,
         "failed_at": null
       }
     ]
   },
+  "paused": false,
   "progress": {
     "fraction_complete": 1,
     "is_complete": true,
@@ -37,7 +38,7 @@
   "totals_by_account": [
     {
       "account_id": "00000000-0000-4000-8000-000000000003",
-      "account_username": "sender-1-page-306266c8@example.test",
+      "account_username": "sender-1-page-e4b2e821@example.test",
       "sent": 45,
       "bounced": 0,
       "failed": 0,
