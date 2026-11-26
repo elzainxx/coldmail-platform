@@ -18,6 +18,11 @@
 //	verify   --job J   the invariants of a finished job, each printed as `OK <name>` or failed by name (see verify.go)
 //	leader   which of the instances holds the engine's leader lock (pg_stat_activity.application_name)
 //
+// and, for the senders (send.go, send_verify.go; scope sendjobs, tests/harness/jobs/send-stage.sh): create and setup with --module m2|m3 (a user with an account at the module, module 2's credits or module 3's
+// entitlement, the controllable sink told which recipients to reject and how long to hold each message, a campaign with a subject and a body), send-prepare (the modules' dials and the sink, once), move (the
+// user's pause, resume or cancel of a job through the API), state of a send job (the module's own tables and the sink; --report adds the module's campaign report) and verify of a send job (--path
+// normal|pause|cancel: the invariants with the sink counted per recipient).
+//
 // and the five of stage J6 (vendor.go; each takes --expect conditions of the syntax of `state`): vendor (module 1's own describe: vendor_fallback.reachable), flag (the platform's stored flag of m1_vendor and
 // its history), preview (a job previewed again through the API: the rate, the credits, whether module 1 was read), reserve (what the ledger and the price snapshot of a job hold) and cancel (the user's
 // cancel of a scheduled job).
@@ -84,7 +89,7 @@ func mustJSON(v any) []byte {
 	return out
 }
 
-const usageText = `usage: jobscenario <create|confirm|confirm-retry|setup|wait|state|verify|leader|vendor|flag|preview|reserve|cancel> [flags]   (see the header of tests/harness/jobscenario/main.go)`
+const usageText = `usage: jobscenario <create|confirm|confirm-retry|setup|wait|state|verify|leader|vendor|flag|preview|reserve|cancel|send-prepare|move> [flags]   (see the header of tests/harness/jobscenario/main.go)`
 
 func main() { os.Exit(run(os.Args[1:])) }
 
@@ -122,6 +127,10 @@ func run(args []string) int {
 		err = cmdReserve(rest)
 	case "cancel":
 		err = cmdCancel(rest)
+	case "send-prepare":
+		err = cmdSendPrepare(rest)
+	case "move":
+		err = cmdMove(rest)
 	case "-h", "--help", "help":
 		fmt.Fprintln(os.Stderr, usageText)
 		return exitUsage

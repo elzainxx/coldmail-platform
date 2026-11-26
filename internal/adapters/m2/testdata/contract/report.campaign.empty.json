@@ -52,7 +52,6 @@
       }
     ]
   },
-  "paused": false,
   "progress": {
     "fraction_complete": 1,
     "is_complete": true,

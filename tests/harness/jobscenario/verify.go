@@ -63,13 +63,17 @@ func (v *verdict) check(name string, problems []string) {
 
 func cmdVerify(args []string) error {
 	fs := flags("verify")
-	var job string
+	var job, path string
 	fs.StringVar(&job, "job", "", "the finished job")
+	fs.StringVar(&path, "path", pathNormal, "a send job's path: normal, pause (paused while running, then resumed) or cancel (cancelled while running)")
 	if err := parse(fs, args); err != nil {
 		return err
 	}
 	if job == "" {
 		return failf(exitUsage, "--job is required")
+	}
+	if _, ok := sendPaths[path]; !ok {
+		return failf(exitUsage, "--path is normal, pause or cancel (got %q)", path)
 	}
 	ctx, cancel := ctxFor(10 * time.Minute)
 	defer cancel()
@@ -81,6 +85,12 @@ func cmdVerify(args []string) error {
 	h, err := d.head(ctx, job) // a job that does not exist ends here, naming it: the program's own control
 	if err != nil {
 		return err
+	}
+	if h.Module != "m1" {
+		return verifySend(ctx, d, h, path) // modules 2 and 3: the senders' invariants, with the sink (send_verify.go)
+	}
+	if path != pathNormal {
+		return failf(exitUsage, "--path %s is a path of a send job; job %s is a module 1 job", path, job)
 	}
 	var v verdict
 
@@ -127,7 +137,7 @@ func cmdVerify(args []string) error {
 		return err
 	}
 	v.check("balance_drift_empty", prefixed("platform.balance_drift is not empty: ", bd))
-	rf, err := d.reserveFactsOf(ctx, job, h.User)
+	rf, err := d.reserveFactsOf(ctx, job, h.User, "m1")
 	if err != nil {
 		return err
 	}
@@ -306,7 +316,7 @@ func (d *db) driftRows(ctx context.Context, q string) ([]string, error) {
 	return out, d.scrub(rs.Err())
 }
 
-func (d *db) reserveFactsOf(ctx context.Context, job, user string) (reserveFacts, error) {
+func (d *db) reserveFactsOf(ctx context.Context, job, user, module string) (reserveFacts, error) {
 	var f reserveFacts
 	err := d.c.QueryRow(ctx, `SELECT
 		(SELECT count(*) FROM platform.ledger WHERE job_id = $1::uuid AND kind = 'reserve'),
@@ -315,10 +325,10 @@ func (d *db) reserveFactsOf(ctx context.Context, job, user string) (reserveFacts
 		COALESCE((SELECT reserved FROM platform.reserves WHERE job_id = $1::uuid), 0),
 		COALESCE((SELECT charged FROM platform.reserves WHERE job_id = $1::uuid), 0),
 		COALESCE((SELECT released FROM platform.reserves WHERE job_id = $1::uuid), 0),
-		COALESCE((SELECT sum(available_delta) FROM platform.ledger WHERE user_id = $2::uuid AND module_id = 'm1' AND kind = 'grant'), 0)::bigint,
-		COALESCE((SELECT available FROM platform.balances WHERE user_id = $2::uuid AND module_id = 'm1'), 0),
-		COALESCE((SELECT reserved FROM platform.balances WHERE user_id = $2::uuid AND module_id = 'm1'), 0),
-		COALESCE((SELECT sum(units::bigint * unit_cost::bigint) FROM platform.ledger WHERE job_id = $1::uuid AND kind = 'charge'), 0)::bigint`, job, user).
+		COALESCE((SELECT sum(available_delta) FROM platform.ledger WHERE user_id = $2::uuid AND module_id = $3 AND kind = 'grant'), 0)::bigint,
+		COALESCE((SELECT available FROM platform.balances WHERE user_id = $2::uuid AND module_id = $3), 0),
+		COALESCE((SELECT reserved FROM platform.balances WHERE user_id = $2::uuid AND module_id = $3), 0),
+		COALESCE((SELECT sum(units::bigint * unit_cost::bigint) FROM platform.ledger WHERE job_id = $1::uuid AND kind = 'charge'), 0)::bigint`, job, user, module).
 		Scan(&f.Reserves, &f.Releases, &f.ReleasedCredits, &f.Reserved, &f.Charged, &f.Released, &f.Granted, &f.Available, &f.BalanceReserved, &f.ChargedUnitCostSum)
 	if err != nil {
 		return reserveFacts{}, d.scrub(err)

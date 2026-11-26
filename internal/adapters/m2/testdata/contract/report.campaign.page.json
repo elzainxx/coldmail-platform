@@ -34,11 +34,11 @@
       },
       {
         "job_item_id": "00000000-0000-4000-8000-000000000005",
-        "state": "queued",
+        "state": "failed",
         "provider_message_id": null,
-        "completed_at": null,
-        "attempt_count": 1,
-        "reason": "transport_4xx",
+        "completed_at": "2026-01-01T00:00:00Z",
+        "attempt_count": 2,
+        "reason": "attempts_exhausted",
         "error_class": "transport_4xx"
       },
       {
@@ -52,27 +52,27 @@
       },
       {
         "job_item_id": "00000000-0000-4000-8000-000000000007",
-        "state": "queued",
-        "provider_message_id": null,
-        "completed_at": null,
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
+        "completed_at": "2026-01-01T00:00:00Z",
         "attempt_count": 0,
         "reason": null,
         "error_class": null
       },
       {
         "job_item_id": "00000000-0000-4000-8000-000000000008",
-        "state": "queued",
+        "state": "bounced",
         "provider_message_id": null,
-        "completed_at": null,
+        "completed_at": "2026-01-01T00:00:00Z",
         "attempt_count": 0,
-        "reason": null,
-        "error_class": null
+        "reason": "bounce_permanent",
+        "error_class": "bounce_permanent"
       },
       {
         "job_item_id": "00000000-0000-4000-8000-000000000009",
-        "state": "queued",
-        "provider_message_id": null,
-        "completed_at": null,
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
+        "completed_at": "2026-01-01T00:00:00Z",
         "attempt_count": 0,
         "reason": null,
         "error_class": null
@@ -82,34 +82,33 @@
         "state": "queued",
         "provider_message_id": null,
         "completed_at": null,
-        "attempt_count": 0,
-        "reason": null,
-        "error_class": null
+        "attempt_count": 1,
+        "reason": "transport_4xx",
+        "error_class": "transport_4xx"
       },
       {
         "job_item_id": "00000000-0000-4000-8000-000000000011",
-        "state": "queued",
-        "provider_message_id": null,
-        "completed_at": null,
+        "state": "sent",
+        "provider_message_id": "AAAAAAAAAAAAAAAAA",
+        "completed_at": "2026-01-01T00:00:00Z",
         "attempt_count": 0,
         "reason": null,
         "error_class": null
       }
     ]
   },
-  "paused": false,
   "progress": {
-    "fraction_complete": 0.4,
+    "fraction_complete": 0.9,
     "is_complete": false,
-    "terminal": 4
+    "terminal": 9
   },
   "totals": {
     "total": 10,
-    "sent": 3,
-    "bounced": 1,
-    "failed": 0,
+    "sent": 6,
+    "bounced": 2,
+    "failed": 1,
     "in_flight": 0,
-    "pending": 6,
+    "pending": 1,
     "waiting_for_capacity": 0,
     "cancelled": 0
   }

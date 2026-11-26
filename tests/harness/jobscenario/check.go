@@ -360,6 +360,11 @@ var normalPath = []string{"draft>previewed", "previewed>confirmed", "confirmed>r
 // eventsLegalAndOnceEach: every transition is a row of platform.job_transitions taken by an actor the row allows, the chain is unbroken from draft, no hop appears twice, the path is the normal one,
 // and the last hop ends where the job is.
 func eventsLegalAndOnceEach(evs []event, allowed map[string][]string, status string) []string {
+	return eventsFollowPath(evs, allowed, status, normalPath)
+}
+
+// eventsFollowPath is eventsLegalAndOnceEach for a given path (a send job paused or cancelled while it ran takes a longer one: send_verify.go, sendPaths).
+func eventsFollowPath(evs []event, allowed map[string][]string, status string, want []string) []string {
 	var out []string
 	created := 0
 	var path []string
@@ -397,8 +402,8 @@ func eventsLegalAndOnceEach(evs []event, allowed map[string][]string, status str
 	if created != 1 {
 		out = append(out, fmt.Sprintf("the job has %d `created` event(s), want 1", created))
 	}
-	if strings.Join(path, " ") != strings.Join(normalPath, " ") {
-		out = append(out, fmt.Sprintf("the job's path is [%s], want [%s]", strings.Join(path, " "), strings.Join(normalPath, " ")))
+	if strings.Join(path, " ") != strings.Join(want, " ") {
+		out = append(out, fmt.Sprintf("the job's path is [%s], want [%s]", strings.Join(path, " "), strings.Join(want, " ")))
 	}
 	if at != status {
 		out = append(out, fmt.Sprintf("the events end at %s and the job is %s", at, status))

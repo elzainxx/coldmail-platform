@@ -90,6 +90,11 @@ func (d *db) newUser(ctx context.Context, tag string) (string, error) {
 // grant gives the user credits for module 1 through the LEDGER, as the harness's money tests do (a `grant` row naming an active admin: the first admin run.sh made in stage 4b). The balance is the
 // ledger trigger's: nothing writes platform.balances here.
 func (d *db) grant(ctx context.Context, user string, credits int) error {
+	return d.grantModule(ctx, user, "m1", credits)
+}
+
+// grantModule is grant for a metered module of the caller's choice (m1 or m2: module 3 holds no credits).
+func (d *db) grantModule(ctx context.Context, user, module string, credits int) error {
 	var admin string
 	err := d.c.QueryRow(ctx, `SELECT id::text FROM platform.admins WHERE disabled_at IS NULL ORDER BY created_at, id LIMIT 1`).Scan(&admin)
 	switch {
@@ -99,8 +104,11 @@ func (d *db) grant(ctx context.Context, user string, credits int) error {
 		return d.scrub(err)
 	}
 	ref := "jobs-grant-" + user
+	if module != "m1" {
+		ref = "jobs-grant-" + module + "-" + user
+	}
 	if _, err := d.c.Exec(ctx, `INSERT INTO platform.ledger (user_id, module_id, kind, available_delta, acting_admin_id, reason, idempotency_key)
-		VALUES ($1::uuid, 'm1', 'grant', $2, $3::uuid, 'the jobs scenario funds its user', $4)`, user, credits, admin, ref); err != nil {
+		VALUES ($1::uuid, $5, 'grant', $2, $3::uuid, 'the jobs scenario funds its user', $4)`, user, credits, admin, ref, module); err != nil {
 		return failf(exitFail, "could not grant credits through the ledger: %v", d.scrub(err))
 	}
 	return nil
@@ -240,10 +248,10 @@ func (d *db) snapshotOf(ctx context.Context, job string) (snapshot, error) {
 		(SELECT count(*) FROM platform.job_events WHERE job_id = $1::uuid AND kind = 'transition' AND to_status = 'running'),
 		(SELECT count(*) FROM platform.job_events WHERE job_id = $1::uuid AND kind = 'stale'),
 		(SELECT count(*) FROM platform.job_events WHERE job_id = $1::uuid AND kind = 'flag'),
-		COALESCE((SELECT available FROM platform.balances WHERE user_id = $2::uuid AND module_id = 'm1'), 0),
-		COALESCE((SELECT reserved FROM platform.balances WHERE user_id = $2::uuid AND module_id = 'm1'), 0),
+		COALESCE((SELECT available FROM platform.balances WHERE user_id = $2::uuid AND module_id = $4), 0),
+		COALESCE((SELECT reserved FROM platform.balances WHERE user_id = $2::uuid AND module_id = $4), 0),
 		(SELECT count(*) FROM verify.jobs WHERE idem_caller_id = $3),
-		(SELECT count(*) FROM platform.job_results WHERE job_id = $1::uuid AND origin = 'platform' AND module_state NOT IN ('malformed', 'duplicate', 'suppressed', 'excluded'))`, job, h.User, tenant.M1CallerID(h.User)).
+		(SELECT count(*) FROM platform.job_results WHERE job_id = $1::uuid AND origin = 'platform' AND module_state NOT IN ('malformed', 'duplicate', 'suppressed', 'excluded'))`, job, h.User, tenant.M1CallerID(h.User), h.Module).
 		Scan(&rows, &pending, &stamped, &results, &moduleResults, &reserves, &charges, &releases, &rsvReserved, &rsvCharged, &rsvReleased, &running, &stale, &flags, &availableNow, &reservedNow, &m1Jobs, &invented)
 	if err != nil {
 		return snapshot{}, d.scrub(err)

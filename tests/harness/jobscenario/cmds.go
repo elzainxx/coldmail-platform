@@ -230,8 +230,10 @@ func atNote(c condition, s snapshot) string {
 func cmdState(args []string) error {
 	fs := flags("state")
 	var job, expect string
+	var report bool
 	fs.StringVar(&job, "job", "", "the job")
 	fs.StringVar(&expect, "expect", "", "conditions that must hold, comma separated: name=value, name>n, ...")
+	fs.BoolVar(&report, "report", false, "a send job: also read the module's own campaign report (the module must answer)")
 	if err := parse(fs, args); err != nil {
 		return err
 	}
@@ -252,6 +254,14 @@ func cmdState(args []string) error {
 	s, err := d.snapshotOf(ctx, job)
 	if err != nil {
 		return err
+	}
+	switch {
+	case s.Head.Module != "m1":
+		if s, err = d.sendSnapshot(ctx, s, report); err != nil { // send.go: the module's own tables, the sink and (with --report) the module's report
+			return err
+		}
+	case report:
+		return failf(exitUsage, "--report reads a send job's campaign report; job %s is a module 1 job", job)
 	}
 	pairs := []any{"job", job}
 	for _, p := range s.Vals {

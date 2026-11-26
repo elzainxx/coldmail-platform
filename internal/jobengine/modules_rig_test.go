@@ -358,7 +358,7 @@ func (r *senderRig) capName() string {
 	return "pause_resume"
 }
 
-// describeBody answers GET /v1/describe with the module's recorded describe and, unless noPause is set, the capability key (HAND-WRITTEN: the recordings predate the routes).
+// describeBody answers GET /v1/describe with the module's recorded describe and, with the capability key present or, when noPause is set, REMOVED (the recordings are of the modules that have the pause routes; the case of an older module is a transformation of the recording).
 func (r *senderRig) describeBody(w http.ResponseWriter) {
 	r.describes.Add(1)
 	var doc map[string]any
@@ -371,7 +371,9 @@ func (r *senderRig) describeBody(w http.ResponseWriter) {
 		caps = map[string]any{}
 		doc["capabilities"] = caps
 	}
-	if !r.noPause.Load() {
+	if r.noPause.Load() {
+		delete(caps, r.capName()) // the recordings of the Phase 4 close-out carry the key (the modules have the routes): a module older than them does not
+	} else {
 		caps[r.capName()] = true
 	}
 	out, _ := json.Marshal(doc)

@@ -1,0 +1,40 @@
+# The senders' crash matrix and real outages (Phase 4 close-out D5 and D6): a compose override file that run.sh merges AFTER docker-compose.yml, docker-compose.m2worker.yml and docker-compose.jobs.yml
+# (`-f ... -f docker-compose.sendjobs.yml`) ONLY when the stage is on: under H_SCOPE=sendjobs, sendjobs-m2 or sendjobs-m3, or in the full run once `sendjobs` (with `jobs`) is named in FULL_INCLUDES (run.sh, one
+# place). In every other run this file is not read at all.
+#
+# WHAT IS HERE: nothing new is built and no service is added. The two platform instances of the jobs overlay (jobs-a, jobs-b: the job engine ON, the fault points armed by name) are ALSO given module 2's and
+# module 3's addresses and service tokens (the platform reads PLATFORM_M2_URL with PLATFORM_M2_SERVICE_TOKEN and PLATFORM_M3_URL with PLATFORM_M3_SERVICE_TOKEN; PLATFORM_M3_URL and the operator key
+# PLATFORM_M3_ADMIN_TOKEN, which the entitlement loops use, are already in the jobs overlay) and the staleness limit of both senders at its minimum (one minute: the outage proof waits for the `stale`
+# event). The tick, the settle interval and the backoff cap are the jobs overlay's (200 ms, 1 s, 2 s). The scenario program's container is given what it needs to make a user ready to send and to read what a
+# send left behind: each module's URL, service token and operator key (three credentials of each module, minted per run by run.sh stage 2 and m2w_mint, never printed), the controllable sink's control
+# API and the SMTP password the accounts use (the sink accepts any credential).
+#
+# Keep jobs-b in step with jobs-a. NO port is published here (the exposure check lists the services; docker inspect is the second instrument).
+
+services:
+  jobs-a:
+    environment:
+      PLATFORM_M2_URL: http://m2:8080
+      PLATFORM_M2_SERVICE_TOKEN: ${H_M2_TOKEN:?}
+      PLATFORM_M3_SERVICE_TOKEN: ${H_M3_TOKEN:?}
+      PLATFORM_JOB_STALE_AFTER_MIN_M2: "1"
+      PLATFORM_JOB_STALE_AFTER_MIN_M3: "1"
+
+  jobs-b:
+    environment:
+      PLATFORM_M2_URL: http://m2:8080
+      PLATFORM_M2_SERVICE_TOKEN: ${H_M2_TOKEN:?}
+      PLATFORM_M3_SERVICE_TOKEN: ${H_M3_TOKEN:?}
+      PLATFORM_JOB_STALE_AFTER_MIN_M2: "1"
+      PLATFORM_JOB_STALE_AFTER_MIN_M3: "1"
+
+  jobscenario:
+    environment:
+      SENDJOBS_M2_URL: http://m2:8080
+      SENDJOBS_M2_TOKEN: ${H_M2_TOKEN:?}
+      SENDJOBS_M2_ADMIN_KEY: ${H_M2_ADMIN_KEY:?}
+      SENDJOBS_M3_URL: http://m3:8080
+      SENDJOBS_M3_TOKEN: ${H_M3_TOKEN:?}
+      SENDJOBS_M3_ADMIN_KEY: ${H_M3_ADMIN_KEY:?}
+      SENDJOBS_CTL_URL: http://smtp-ctl:8025
+      SENDJOBS_SINK_PASSWORD: ${H_SINK_PASSWORD:?}

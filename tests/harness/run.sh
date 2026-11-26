@@ -15,6 +15,7 @@
 #   5c m2-worker module 2's REAL worker (Phase 3, B8; part of `full` since FULL_INCLUDES names it, and the only stage of its scope otherwise): its credentials minted in stage 2 with module 2's own tools, its box row seeded before it starts, a heartbeat awaited; module 2 really sends (sent, bounced, failed/attempts_exhausted, cancelled) to the controllable sink (tests/harness/m2worker/stage.sh)
 #   5d gotrue    a REAL, digest-pinned GoTrue (Phase 4, B15; dormant until proven: only under H_SCOPE=gotrue, or in `full` once FULL_INCLUDES names it): its database role's password minted per run, its own migrations on the real auth schema, a per-run JWT secret; the platform's token verification (internal/auth) and login resolution (internal/tenant) are run against tokens it ISSUED (tests/harness/gotrue/stage.sh, TestGoTrue_*)
 #   5e jobs      the job engine's crash, handover and outage proofs (Phase 4, B17a; dormant until proven: only under H_SCOPE=jobs, or in `full` once FULL_INCLUDES names it): module 1 asked by a fixture DNS, TWO platform instances with the engine on and the fault points armed by name; the platform's own process is killed at five points, the leader is killed, module 1 is stopped, and every job ends with the books closed (tests/harness/jobs/stage.sh, the scenario program tests/harness/jobscenario)
+#   5f sendjobs  the senders' crash matrix and real outages (Phase 4 close-out D5, D6; dormant until proven: only under H_SCOPE=sendjobs, sendjobs-m2 or sendjobs-m3, or in `full` once FULL_INCLUDES names `sendjobs` and `jobs`): modules 2 and 3 with their workers and the controllable sink, the platform instance jobs-a with the engine on and the fault points armed by name, killed at seven points of a send job and the senders stopped mid-job; nothing lost, nothing sent twice at the sink (tests/harness/jobs/send-stage.sh)
 #   scope        H_SCOPE=m2worker runs stages 1-4b, then only module 2's Control, its worker, the sink, the TestM2Worker tests and the exposure check (m2w_scope_run); H_SCOPE=gotrue runs stages 1-4b, then only GoTrue, the TestGoTrue tests and the exposure check (gotrue_scope_run); H_SCOPE=jobs runs stages 1-4b, then only module 1 (m1j) with its fixture DNS, two platform instances and the scenario program J1-J4 (jobs_scope_run); H_SCOPE=full (the default) runs everything except the dormant stages
 #   9b m3-outage module 3 stopped while an entitlement expires: the platform retries, claims no convergence it did not see, converges when module 3 is back
 #   9b-adapter   module 3's Domain A API stopped in the middle of a campaign of the adapter's (Phase 3, B12; tests/harness/m3adapter/outage.sh): three test phases with the stop and the start between them, nothing settled or invented, the campaign completes exactly once
@@ -27,13 +28,16 @@ PINS_ONLY=0; [ "${1:-}" = "--pins-only" ] && PINS_ONLY=1   # stage 1 only: used 
 # H_SCOPE (the workflow's `scope` input): full = every stage; m2worker = Postgres + the migrations + module 2 + its real worker + the controllable sink + only the TestM2Worker tests (tests/harness/m2worker/stage.sh, m2w_scope_run);
 # m1node = module 1's real node (its own stage file); gotrue = a real GoTrue (tests/harness/gotrue/stage.sh) and only the TestGoTrue tests. A scope builds and starts only what it needs: BUILD_ONLY is the list stage 3 builds (empty = every service).
 SCOPE="${H_SCOPE:-full}"
-case "$SCOPE" in full|m1node|m2worker|gotrue|jobs) ;; *) echo "H_SCOPE must be full, m1node, m2worker, gotrue or jobs (got '$SCOPE')"; exit 2;; esac
+case "$SCOPE" in full|m1node|m2worker|gotrue|jobs) ;; sendjobs|sendjobs-m2|sendjobs-m3) ;; *) echo "H_SCOPE must be full, m1node, m2worker, gotrue, jobs, sendjobs, sendjobs-m2 or sendjobs-m3 (got '$SCOPE')"; exit 2;; esac
 BUILD_ONLY=""
 case "$SCOPE" in
   gotrue)   BUILD_ONLY="migrate-platform migrate-m1 migrate-m2 migrate-m3";;   # stage 4 runs every migration chain; GoTrue itself is an image (docker-compose.gotrue.yml), pulled by digest, never built
   m2worker) BUILD_ONLY="migrate-platform migrate-m1 migrate-m2 migrate-m3 m2 m2-worker smtp-ctl";;
   jobs)     BUILD_ONLY="migrate-platform migrate-m1 migrate-m2 migrate-m3 m1j jobsdns jobs-a jobs-b";;   # stage 4 runs every migration chain; module 1 is `m1j`, the fixture DNS `jobsdns` and the two instances `jobs-a`/`jobs-b` (docker-compose.jobs.yml); the scenario program is compiled by Go, not built as an image
   m1node) BUILD_ONLY="migrate-platform migrate-m1 migrate-m2 migrate-m3 m1n fx verifier-node";;   # stage 4 runs every migration chain; module 1's own control plane is `m1n` in this scope (docker-compose.m1node.yml)
+  sendjobs)    BUILD_ONLY="migrate-platform migrate-m1 migrate-m2 migrate-m3 m2 m2-worker m3 m3-worker m3-worker-2 m3-worker-3 smtp-ctl m3dns jobs-a jobs-b";;   # both senders, their workers, the controllable sink, the From-gate's DNS and the two instances; Mailpit is an image
+  sendjobs-m2) BUILD_ONLY="migrate-platform migrate-m1 migrate-m2 migrate-m3 m2 m2-worker smtp-ctl jobs-a jobs-b";;   # module 2 only (tests/harness/jobs/send-stage.sh says why the scope splits)
+  sendjobs-m3) BUILD_ONLY="migrate-platform migrate-m1 migrate-m2 migrate-m3 m3 m3-worker m3-worker-2 m3-worker-3 smtp-ctl m3dns jobs-a jobs-b";;   # module 3 only
 esac
 # FULL_INCLUDES: the optional stages the `full` run ALSO runs, once a runner has proven each in its own scope. It was EMPTY until the first scoped runs were green: a stage of a scope is DORMANT in `full` (it does not compile into the test binary, add a compose
 # file, start a container, mint a credential or print a line), so the full harness is exactly what it was before the stage existed. (Both stages have since been proven and included, see the value below.) THE ONE PLACE TO FLIP: name the stage here (FULL_INCLUDES="m2worker m1node"); a stage
@@ -59,7 +63,7 @@ case " ${FULL_INCLUDES:-} " in *" m1node "*) [ "$SCOPE" = full ] && M1N_ON=1;; e
 # m2-worker service, profile m2worker), its credentials, stage 5c, the evidence and PASS-line checks, the exposure of m2-worker and the build tag m2worker of the test binary exist ONLY under H_SCOPE=m2worker, or in the full run once
 # `m2worker` is named in FULL_INCLUDES. M2W_ON is 1 exactly then. TEST_TAGS is the build tags of the test binary: `harness` alone in `full`; a scope adds its own tag (m2worker here; the m1node stage compiles its own).
 M2W_ON=0; M2W_DC=(); M2W_EXPOSE=""; TEST_TAGS="harness"
-case "$SCOPE" in m2worker) M2W_ON=1;; esac
+case "$SCOPE" in m2worker|sendjobs|sendjobs-m2|sendjobs-m3) M2W_ON=1;; esac   # the senders' scopes need module 2's operator key and its worker's credentials (m2w_mint) and docker-compose.m2worker.yml
 case " ${FULL_INCLUDES:-} " in *" m2worker "*) [ "$SCOPE" = full ] && M2W_ON=1;; esac
 [ "$M2W_ON" = 1 ] && { M2W_DC=(-f "$HERE/docker-compose.m2worker.yml" --profile m2worker); M2W_EXPOSE="m2-worker"; TEST_TAGS="$TEST_TAGS m2worker"; }
 # A REAL GoTrue (tests/harness/gotrue/stage.sh, docker-compose.gotrue.yml, tests/harness/gotrue_test.go behind the build tag gotrue; Phase 4, chunk B15) is DORMANT in the same way: its compose file (the gotrue service, profile gotrue, and the environment
@@ -73,10 +77,18 @@ case " ${FULL_INCLUDES:-} " in *" gotrue "*) [ "$SCOPE" = full ] && GT_ON=1;; es
 # `m1j` with a fixture DNS, the two platform instances jobs-a and jobs-b with the job engine ON and the fault points armed by name, the scenario program's container), its two secrets, the stages J0-J6 and the build of the scenario program exist
 # ONLY under H_SCOPE=jobs, or in the full run once `jobs` is named in FULL_INCLUDES. JOBS_ON is 1 exactly then. It adds no build tag and no test: the scenario program is a program, compiled by the stage.
 JOBS_ON=0; JOBS_DC=()
-case "$SCOPE" in jobs) JOBS_ON=1;; esac
+case "$SCOPE" in jobs|sendjobs|sendjobs-m2|sendjobs-m3) JOBS_ON=1;; esac
 case " ${FULL_INCLUDES:-} " in *" jobs "*) [ "$SCOPE" = full ] && JOBS_ON=1;; esac
 [ "$JOBS_ON" = 1 ] && JOBS_DC=(-f "$HERE/docker-compose.jobs.yml" --profile jobs)
-DC() { docker compose --project-directory "$HERE" -f "$HERE/docker-compose.yml" ${M2W_DC[@]+"${M2W_DC[@]}"} ${GT_DC[@]+"${GT_DC[@]}"} ${JOBS_DC[@]+"${JOBS_DC[@]}"} ${M1N_FILES[@]+"${M1N_FILES[@]}"} --env-file "$WORK/harness.env" --profile probe --profile tests "$@"; }
+# The senders' crash matrix and real outages (tests/harness/jobs/send-stage.sh, docker-compose.sendjobs.yml, the same scenario program; Phase 4 close-out D5 and D6) are DORMANT in the same way: the overlay (module 2's and module 3's
+# URLs and service tokens for the instances, what the scenario program needs to make a user ready to send), the stages SJ-0 to SJ-S and the build of the scenario program exist ONLY under H_SCOPE=sendjobs, sendjobs-m2 or
+# sendjobs-m3 (which also switch on JOBS_ON and M2W_ON above, for the instances, the scenario program's container and module 2's credentials), or in the full run once `sendjobs` AND `jobs` are named in FULL_INCLUDES.
+# SJ_ON is 1 exactly then; SJ_MODS is the senders it drives. It adds no build tag and no test.
+SJ_ON=0; SJ_DC=(); SJ_MODS=""
+case "$SCOPE" in sendjobs) SJ_ON=1; SJ_MODS="m2 m3";; sendjobs-m2) SJ_ON=1; SJ_MODS="m2";; sendjobs-m3) SJ_ON=1; SJ_MODS="m3";; esac
+case " ${FULL_INCLUDES:-} " in *" sendjobs "*) case " ${FULL_INCLUDES:-} " in *" jobs "*) [ "$SCOPE" = full ] && { SJ_ON=1; SJ_MODS="m2 m3"; };; esac;; esac
+[ "$SJ_ON" = 1 ] && SJ_DC=(-f "$HERE/docker-compose.sendjobs.yml")
+DC() { docker compose --project-directory "$HERE" -f "$HERE/docker-compose.yml" ${M2W_DC[@]+"${M2W_DC[@]}"} ${GT_DC[@]+"${GT_DC[@]}"} ${JOBS_DC[@]+"${JOBS_DC[@]}"} ${SJ_DC[@]+"${SJ_DC[@]}"} ${M1N_FILES[@]+"${M1N_FILES[@]}"} --env-file "$WORK/harness.env" --profile probe --profile tests "$@"; }
 banner() { echo; echo "================ [$1] $2"; }
 # drift_evidence LOG: the contract drift gate's own output (internal/contractcheck Session, tests TestM*_ZContractDrift): everything the session printed, whole (the differences, the undeclared calls, the contracts no response reached with the reason
 # of each allowance, the coverage and what it cannot see). In record mode (CONTRACT_RECORD=1, the dispatch input contract_record) the session prints each CONTRACT-FIXTURE block as test log lines: those are printed RAW (no prefix) so that
@@ -97,7 +109,52 @@ lockpin() { tr -d '\r' < "$LOCK" | awk -v r="$1" '/^[[:space:]]*#/ || NF==0 {nex
 . "$HERE/m1node/m1node.sh"   # module 1's real verifier node, its fixtures and a wired control plane (Phase 3, chunk B7): functions only (m1n_mint, m1n_stage1..4, m1n_exposure, m1n_run, m1n_run_scope, m1n_not_checked)
 . "$HERE/m3adapter/outage.sh"   # module 3's adapter outage proof (Phase 3, chunk B12): functions only (m3a_evidence, m3a_outage and the steps it calls); called once, after stage 9b
 . "$HERE/jobs/stage.sh"   # the job engine's crash, handover and outage proofs (Phase 4, chunk B17a): functions only (jobs_mint, jobs_run, jobs_scope_run, jobs_not_checked, then the stages and helpers they call)
+. "$HERE/jobs/send-stage.sh"   # the senders' crash matrix and real outages (Phase 4 close-out D5, D6): functions only (sj_run, sj_scope_run, sj_not_checked, then the stages and helpers they call); it uses the helpers of the two files above
 . "$HERE/gotrue/stage.sh"   # a real GoTrue (Phase 4, chunk B15): functions only (gotrue_mint, gotrue_pull, gotrue_stage, gotrue_evidence, gotrue_require_pass, gotrue_secret_leak, gotrue_scope_run, gotrue_not_checked)
+
+# ── stage 5b, as functions: the full run calls m3w_stage_5b at stage 5b, the senders' scopes from their own stage (tests/harness/jobs/send-stage.sh, sj_infra) ─────────────────────────────────────────────────────
+psql_su() { DC exec -T postgres psql -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -tAc "$1"; }
+# m3w_probe <url>: one request from a container on the private network (busybox wget; no credential is sent): the platform service in the full run, the instance jobs-a in the senders' scopes (M3W_PROBE_SVC)
+m3w_probe() { DC exec -T "${M3W_PROBE_SVC:-platform}" wget -q -O /dev/null "$1"; }
+# Phase 2 (chunks B8, B9): module 3 must REALLY send for the entitlement proofs to mean anything. Its worker registers with a token whose bcrypt hash is seeded into send_byo.boxes BEFORE the worker starts
+# (a worker that is rejected exits), the From-gate is switched off (module 3's own harness does the same: no DNS needed to send), and the sink is Mailpit, which accepts any credential and keeps what it received.
+m3w_stage_5b() {
+  psql_su "UPDATE send_byo.config SET value = '{\"v\":\"off\"}' WHERE key = 'from_gate_mode'" >/dev/null || die "could not switch module 3's From-gate off"
+  # Module 3 guards the destination of every SMTP host a user gives it (Phase 3 close-out C4: loopback, private networks, link-local, the cloud metadata address and the other special-use ranges are refused at add time AND at
+  # connect time). The harness's sink lives on the private compose network, so exactly the three private ranges of RFC 1918 are allowed by the one dial built for that (smtp_host_allow_cidrs, empty in production: the module logs
+  # a loud warning at every start while it is not). Everything else stays refused, and the live tests prove it: loopback, localhost and the metadata address are still refused with the allowlist in force.
+  psql_su "UPDATE send_byo.config SET value = '{\"v\":[\"10.0.0.0/8\",\"172.16.0.0/12\",\"192.168.0.0/16\"]}' WHERE key = 'smtp_host_allow_cidrs'" >/dev/null || die "could not set module 3's SMTP host allowlist for the private compose network"
+  t0="$(psql_su "select clock_timestamp()")"; [ -n "$t0" ] || die "could not read the database clock"
+  psql_su "INSERT INTO send_byo.boxes (id, user_id, token_hash, status) VALUES ('$M3_WORKER_ID', '00000000-0000-0000-0000-000000000000', '$M3_WORKER_HASH', 'active')" >/dev/null || die "could not seed module 3's worker box row"
+  # the second and third workers (E2: several lanes): their box rows are seeded exactly like the first's, before they start
+  psql_su "INSERT INTO send_byo.boxes (id, user_id, token_hash, status) VALUES ('$M3_WORKER2_ID', '00000000-0000-0000-0000-000000000000', '$M3_WORKER2_HASH', 'active')" >/dev/null || die "could not seed module 3's second worker box row"
+  psql_su "INSERT INTO send_byo.boxes (id, user_id, token_hash, status) VALUES ('$M3_WORKER3_ID', '00000000-0000-0000-0000-000000000000', '$M3_WORKER3_HASH', 'active')" >/dev/null || die "could not seed module 3's third worker box row"
+  DC up -d m3-worker m3-worker-2 m3-worker-3 smtp-sink smtp-ctl || die "module 3's workers, the SMTP sink or the controllable sink did not start"
+  # Phase 3 close-out D2: the From-gate's fixture DNS (service m3dns, tests/harness/m3adapter/m3dns.json). The dial from_gate_mode stays off above for the raw module 3 tests; the module 3 ADAPTER tests switch it to enforce and
+  # point from_dns_resolver at m3dns:53 themselves (m3aEnv, set and restored per test), so nothing about the resolver is written here.
+  DC up -d --wait --wait-timeout 90 m3dns || die "the From-gate's fixture DNS (service m3dns: tests/harness/fx built with FX_ROLES=dns,api, tests/harness/m3adapter/m3dns.json) did not become healthy"
+  i=0; while [ $i -lt 30 ]; do m3w_probe http://m3dns:8025/readyz 2>/dev/null && break; i=$((i+1)); sleep 2; done
+  [ "$i" -lt 30 ] || die "the From-gate's fixture DNS (m3dns) is healthy by its own check but its control API does not answer from another container on the network"
+  i=0; while [ $i -lt 60 ]; do
+    [ "$(psql_su "select count(*) from send_byo.boxes where id = '$M3_WORKER_ID' and status = 'active' and last_heartbeat_at > '$t0'")" = 1 ] && break
+    i=$((i+1)); sleep 2
+  done
+  [ "$i" -lt 60 ] || die "module 3's worker never heartbeated after $t0 (it registers over mTLS with its token; its logs are below)"
+  for wid in "$M3_WORKER2_ID" "$M3_WORKER3_ID"; do
+    i=0; while [ $i -lt 60 ]; do
+      [ "$(psql_su "select count(*) from send_byo.boxes where id = '$wid' and status = 'active' and last_heartbeat_at > '$t0'")" = 1 ] && break
+      i=$((i+1)); sleep 2
+    done
+    [ "$i" -lt 60 ] || die "module 3's worker $wid never heartbeated after $t0 (it registers over mTLS with its token; its logs are below)"
+  done
+  [ "$(psql_su "select count(*) from send_byo.boxes where id in ('$M3_WORKER_ID', '$M3_WORKER2_ID', '$M3_WORKER3_ID') and status = 'active' and last_heartbeat_at > '$t0'")" = 3 ] || die "not all three of module 3's workers are registered and heartbeating"
+  i=0; while [ $i -lt 30 ]; do m3w_probe http://smtp-sink:8025/api/v1/info 2>/dev/null && break; i=$((i+1)); sleep 2; done
+  [ "$i" -lt 30 ] || die "the SMTP sink's API did not answer"
+  # the controllable sink: ready means its SMTP listener accepts connections (it exits at start when it cannot read module 3's dev sink certificate and key: its log is below)
+  i=0; while [ $i -lt 30 ]; do m3w_probe http://smtp-ctl:8025/readyz 2>/dev/null && break; i=$((i+1)); sleep 2; done
+  [ "$i" -lt 30 ] || die "the controllable SMTP sink (smtp-ctl) did not answer /readyz"
+  echo "  module 3's three workers are registered and heartbeating; the SMTP sink and the controllable sink answer; the From-gate's fixture DNS (m3dns) answers; From-gate off for the raw tests (the adapter tests run it on)"
+}
 
 # ── 1. pins ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 STAGE=pins; banner 1 "the modules are exactly the pinned commits"
@@ -267,6 +324,7 @@ echo "  first admin created as postgres on the real auth schema; a second run re
 [ "$SCOPE" = m2worker ] && m2w_scope_run   # H_SCOPE=m2worker: module 2's Control, its worker (5c), the TestM2Worker tests and the exposure check, then the end of the run: it never returns
 [ "$SCOPE" = m1node ] && m1n_run_scope     # H_SCOPE=m1node (M1N_ON is 1): the fixtures, module 1's real node, a wired control plane and the TestM1Node tests (stages M1N-1 to M1N-5), then the end of the run: it never returns
 [ "$SCOPE" = jobs ] && jobs_scope_run      # H_SCOPE=jobs (JOBS_ON is 1): module 1 with its fixture DNS, two platform instances, the scenario program, stages J0-J6, the evidence, leak and exposure checks, then the end of the run: it never returns
+[ "$SJ_ON" = 1 ] && [ "$SCOPE" != full ] && sj_scope_run   # H_SCOPE=sendjobs, sendjobs-m2 or sendjobs-m3 (SJ_ON is 1): the senders, their workers, the sink, the instance jobs-a, stages SJ-0 to SJ-S, the evidence, leak and exposure checks, then the end of the run: it never returns
 [ "$SCOPE" = gotrue ] && gotrue_scope_run  # H_SCOPE=gotrue (GT_ON is 1): GoTrue (5d), the TestGoTrue tests, the secret-leak and exposure checks, then the end of the run: it never returns
 
 # ── 5. services ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -278,45 +336,10 @@ n="$(psql_ "select count(*) from pg_stat_activity where usename = 'verify_app'")
 echo "  module 1 holds $n connection(s) as verify_app (pg_stat_activity)"
 
 # ── 5b. module 3's worker and an SMTP sink ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-# Phase 2 (chunks B8, B9): module 3 must REALLY send for the entitlement proofs to mean anything. Its worker registers with a token whose bcrypt hash is seeded into send_byo.boxes BEFORE the worker starts
-# (a worker that is rejected exits), the From-gate is switched off (module 3's own harness does the same: no DNS needed to send), and the sink is Mailpit, which accepts any credential and keeps what it received.
+# Phase 2 (chunks B8, B9) and the Phase 2 and 3 close-outs: m3w_stage_5b (defined above, beside psql_su: the senders' scopes call the same function) seeds module 3's three box rows, starts its three workers, both sinks and
+# the From-gate's fixture DNS and waits for each; its probes are made from the platform service here (M3W_PROBE_SVC unset).
 STAGE=m3-worker; banner "5b" "module 3's three workers (own token, own box row each), the SMTP sink and the controllable sink"
-psql_su() { DC exec -T postgres psql -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -tAc "$1"; }
-psql_su "UPDATE send_byo.config SET value = '{\"v\":\"off\"}' WHERE key = 'from_gate_mode'" >/dev/null || die "could not switch module 3's From-gate off"
-# Module 3 guards the destination of every SMTP host a user gives it (Phase 3 close-out C4: loopback, private networks, link-local, the cloud metadata address and the other special-use ranges are refused at add time AND at
-# connect time). The harness's sink lives on the private compose network, so exactly the three private ranges of RFC 1918 are allowed by the one dial built for that (smtp_host_allow_cidrs, empty in production: the module logs
-# a loud warning at every start while it is not). Everything else stays refused, and the live tests prove it: loopback, localhost and the metadata address are still refused with the allowlist in force.
-psql_su "UPDATE send_byo.config SET value = '{\"v\":[\"10.0.0.0/8\",\"172.16.0.0/12\",\"192.168.0.0/16\"]}' WHERE key = 'smtp_host_allow_cidrs'" >/dev/null || die "could not set module 3's SMTP host allowlist for the private compose network"
-t0="$(psql_su "select clock_timestamp()")"; [ -n "$t0" ] || die "could not read the database clock"
-psql_su "INSERT INTO send_byo.boxes (id, user_id, token_hash, status) VALUES ('$M3_WORKER_ID', '00000000-0000-0000-0000-000000000000', '$M3_WORKER_HASH', 'active')" >/dev/null || die "could not seed module 3's worker box row"
-# the second and third workers (E2: several lanes): their box rows are seeded exactly like the first's, before they start
-psql_su "INSERT INTO send_byo.boxes (id, user_id, token_hash, status) VALUES ('$M3_WORKER2_ID', '00000000-0000-0000-0000-000000000000', '$M3_WORKER2_HASH', 'active')" >/dev/null || die "could not seed module 3's second worker box row"
-psql_su "INSERT INTO send_byo.boxes (id, user_id, token_hash, status) VALUES ('$M3_WORKER3_ID', '00000000-0000-0000-0000-000000000000', '$M3_WORKER3_HASH', 'active')" >/dev/null || die "could not seed module 3's third worker box row"
-DC up -d m3-worker m3-worker-2 m3-worker-3 smtp-sink smtp-ctl || die "module 3's workers, the SMTP sink or the controllable sink did not start"
-# Phase 3 close-out D2: the From-gate's fixture DNS (service m3dns, tests/harness/m3adapter/m3dns.json). The dial from_gate_mode stays off above for the raw module 3 tests; the module 3 ADAPTER tests switch it to enforce and
-# point from_dns_resolver at m3dns:53 themselves (m3aEnv, set and restored per test), so nothing about the resolver is written here.
-DC up -d --wait --wait-timeout 90 m3dns || die "the From-gate's fixture DNS (service m3dns: tests/harness/fx built with FX_ROLES=dns,api, tests/harness/m3adapter/m3dns.json) did not become healthy"
-i=0; while [ $i -lt 30 ]; do DC exec -T platform wget -q -O /dev/null http://m3dns:8025/readyz 2>/dev/null && break; i=$((i+1)); sleep 2; done
-[ "$i" -lt 30 ] || die "the From-gate's fixture DNS (m3dns) is healthy by its own check but its control API does not answer from another container on the network"
-i=0; while [ $i -lt 60 ]; do
-  [ "$(psql_su "select count(*) from send_byo.boxes where id = '$M3_WORKER_ID' and status = 'active' and last_heartbeat_at > '$t0'")" = 1 ] && break
-  i=$((i+1)); sleep 2
-done
-[ "$i" -lt 60 ] || die "module 3's worker never heartbeated after $t0 (it registers over mTLS with its token; its logs are below)"
-for wid in "$M3_WORKER2_ID" "$M3_WORKER3_ID"; do
-  i=0; while [ $i -lt 60 ]; do
-    [ "$(psql_su "select count(*) from send_byo.boxes where id = '$wid' and status = 'active' and last_heartbeat_at > '$t0'")" = 1 ] && break
-    i=$((i+1)); sleep 2
-  done
-  [ "$i" -lt 60 ] || die "module 3's worker $wid never heartbeated after $t0 (it registers over mTLS with its token; its logs are below)"
-done
-[ "$(psql_su "select count(*) from send_byo.boxes where id in ('$M3_WORKER_ID', '$M3_WORKER2_ID', '$M3_WORKER3_ID') and status = 'active' and last_heartbeat_at > '$t0'")" = 3 ] || die "not all three of module 3's workers are registered and heartbeating"
-i=0; while [ $i -lt 30 ]; do DC exec -T platform wget -q -O /dev/null http://smtp-sink:8025/api/v1/info 2>/dev/null && break; i=$((i+1)); sleep 2; done
-[ "$i" -lt 30 ] || die "the SMTP sink's API did not answer"
-# the controllable sink: ready means its SMTP listener accepts connections (it exits at start when it cannot read module 3's dev sink certificate and key: its log is below)
-i=0; while [ $i -lt 30 ]; do DC exec -T platform wget -q -O /dev/null http://smtp-ctl:8025/readyz 2>/dev/null && break; i=$((i+1)); sleep 2; done
-[ "$i" -lt 30 ] || die "the controllable SMTP sink (smtp-ctl) did not answer /readyz"
-echo "  module 3's three workers are registered and heartbeating; the SMTP sink and the controllable sink answer; the From-gate's fixture DNS (m3dns) answers; From-gate off for the raw tests (the adapter tests run it on)"
+m3w_stage_5b
 [ "$M2W_ON" = 1 ] && m2w_stage_5c   # module 2's real worker (only when it is on): its box row seeded, then the worker started and a heartbeat awaited (tests/harness/m2worker/stage.sh)
 [ "$GT_ON" = 1 ] && gotrue_stage    # a real GoTrue (only when it is on, here only in the full run: in its own scope gotrue_scope_run calls it): the role's password set, GoTrue started, healthy, asked by name from the private network, its migrations read back (tests/harness/gotrue/stage.sh)
 
@@ -535,7 +558,8 @@ STAGE=ledger; banner 10 "the balance invariant holds on the live database (rolle
 bash "$PLATFORM_DIR/scripts/check-balance-invariant.sh" --psql-cmd "docker compose --project-directory $HERE -f $HERE/docker-compose.yml --env-file $WORK/harness.env --profile probe --profile tests exec -T postgres psql -U supabase_admin -d postgres" --exercise || die "the balance invariant gate is red on the live database"
 
 [ "$JOBS_ON" = 1 ] && [ "$SCOPE" = full ] && jobs_run   # the job engine's proofs (stages J0-J6), only when `jobs` is named in FULL_INCLUDES: it stops the legacy platform containers and module 1 first (the leader lock and the queue are theirs otherwise); dormant otherwise
-[ "$M1N_ON" = 1 ] && [ "$SCOPE" = full ] && m1n_run   # the module-1 node stack, only when `m1node` is named in FULL_INCLUDES (stages M1N-1 to M1N-5, tests/harness/m1node/m1node.sh); dormant otherwise
+[ "$SJ_ON" = 1 ] && [ "$SCOPE" = full ] && sj_run   # the senders' crash matrix and outages (stages SJ-0 to SJ-S), only when `sendjobs` and `jobs` are named in FULL_INCLUDES: it stops the legacy platform containers first; dormant otherwise
+[ "$M1N_ON" = 1 ] && [ "$SCOPE" = full ] && m1n_run   # the module-1 node stack, only when `m1node` is named in FULL_INCLUDES (stages M1N-1 to M1N-5, tests/harness/m1node/m1node.sh; stage M1N-4c, the chain from the node's real verdicts into a real module 2 send, runs here because module 2 is part of the full run (M2W_ON=1) and says it did NOT run otherwise); dormant otherwise
 
 # ── result ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 STAGE=done
@@ -570,6 +594,7 @@ EOF
 [ "$M2W_ON" = 1 ] && m2w_not_checked correction   # what module 2's real worker stage does not vouch for (tests/harness/m2worker/stage.sh); printed only when that stage ran, and it says that the first bullet's "Module 2 has no worker" no longer holds
 [ "$M1N_ON" = 1 ] && m1n_not_checked   # what the module-1 node stack does not vouch for (tests/harness/m1node/m1node.sh); printed only when that stack ran
 [ "$JOBS_ON" = 1 ] && jobs_not_checked   # what the job engine's proofs do not vouch for (tests/harness/jobs/stage.sh); printed only when that stage ran
+[ "$SJ_ON" = 1 ] && sj_not_checked   # what the senders' crash matrix and outages do not vouch for (tests/harness/jobs/send-stage.sh); printed only when that stage ran
 [ "$GT_ON" = 1 ] && gotrue_not_checked correction   # what the GoTrue stage does not vouch for (tests/harness/gotrue/stage.sh); printed only when that stage ran, and it says that the "Not here: GoTrue" of the bullet above no longer holds
 echo
 echo "HARNESS RESULT: GREEN — modules built from $(lockpin coldmail-verify | cut -c1-7) / $(lockpin coldmail-send-managed | cut -c1-7) / $(lockpin coldmail-send-byo | cut -c1-7); $sline"

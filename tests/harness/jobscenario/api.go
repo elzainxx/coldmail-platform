@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -163,6 +164,12 @@ func domainFor(g int) string {
 // genRows makes the n lines of a list: n-bad-dup distinct good addresses, bad malformed lines and dup repeats of an earlier good address in another spelling (upper case: the platform normalises it to the
 // same address, so it is a duplicate, free and never sent). The malformed and duplicate lines are spread through the list, not grouped at an end. It is deterministic.
 func genRows(n, bad, dup int) ([]string, error) {
+	return genRowsWith(n, bad, dup, func(i int) string { return fmt.Sprintf("user%05d@%s", i, domainFor(i)) }, "")
+}
+
+// genRowsWith is genRows with the good addresses of the caller (good(i) is the i-th distinct good address, lower case) and a mark that begins every malformed line (a send job's lines carry the
+// job's recipient prefix, so that a malformed line that reached the sink would be seen as this job's).
+func genRowsWith(n, bad, dup int, goodAt func(i int) string, mark string) ([]string, error) {
 	good := n - bad - dup
 	switch {
 	case n < 1 || bad < 0 || dup < 0:
@@ -209,19 +216,19 @@ func genRows(n, bad, dup int) ([]string, error) {
 	for _, k := range kinds {
 		switch k {
 		case 'g':
-			a := fmt.Sprintf("user%05d@%s", len(goods), domainFor(len(goods)))
+			a := goodAt(len(goods))
 			goods = append(goods, a)
 			out = append(out, a)
 		case 'b':
 			switch badN % 4 {
 			case 0:
-				out = append(out, fmt.Sprintf("no-at-sign-%03d.example.test", badN))
+				out = append(out, fmt.Sprintf("%sno-at-sign-%03d.example.test", mark, badN))
 			case 1:
-				out = append(out, fmt.Sprintf("two@@signs-%03d.example.test", badN))
+				out = append(out, fmt.Sprintf("%stwo@@signs-%03d.example.test", mark, badN))
 			case 2:
-				out = append(out, fmt.Sprintf("@no-local-part-%03d.example.test", badN))
+				out = append(out, fmt.Sprintf("@%sno-local-part-%03d.example.test", mark, badN))
 			default:
-				out = append(out, fmt.Sprintf("nodot-%03d@localhost", badN))
+				out = append(out, fmt.Sprintf("%snodot-%03d@localhost", mark, badN))
 			}
 			badN++
 		case 'd':
@@ -244,12 +251,28 @@ type createOpts struct {
 	bad    int
 	dup    int
 	grant  int
+	// the senders only (modules 2 and 3, send.go): how many good recipients the sink rejects at RCPT TO (550), how long it holds the final reply of every message to the job's recipients, and a
+	// word naming the scenario in the campaign's subject
+	bounce int
+	holdMS int
+	tag    string
+}
+
+// addSendFlags declares the flags of a send job on a create or a setup.
+func addSendFlags(fs *flag.FlagSet, o *createOpts) {
+	fs.IntVar(&o.bounce, "bounce", 0, "a send job: how many of the good recipients the controllable sink rejects at RCPT TO with 550 (module 2 and 3 report them bounced)")
+	fs.IntVar(&o.holdMS, "hold-ms", 0, "a send job: milliseconds the controllable sink holds the final reply of every message to the job's recipients (so that a send is in flight on demand)")
+	fs.StringVar(&o.tag, "tag", "", "a send job: a word naming the scenario (in the campaign's subject)")
 }
 
 // createJob makes a fresh user with credits, then creates and previews a draft of the list through the API, and prints the facts. It returns the job and the user.
 func createJob(ctx context.Context, d *db, sg *signer, o createOpts) (job, user string, err error) {
-	if o.module != "m1" {
-		return "", "", failf(exitUsage, "module %q is not driven by this chunk: B17a proves module 1 (modules 2 and 3 follow, with a send campaign's content, a worker and a sink)", o.module)
+	switch o.module {
+	case "m1":
+	case "m2", "m3":
+		return createSendJob(ctx, d, sg, o) // send.go: an account at the module, the sink's mode, the campaign's content
+	default:
+		return "", "", failf(exitUsage, "module %q is none of m1, m2, m3", o.module)
 	}
 	lines, err := genRows(o.rows, o.bad, o.dup)
 	if err != nil {
@@ -266,53 +289,69 @@ func createJob(ctx context.Context, d *db, sg *signer, o createOpts) (job, user 
 	if err := d.grant(ctx, user, credits); err != nil {
 		return "", user, err
 	}
+	job, prev, err := apiDraft(ctx, sg, o, user, lines, nil)
+	if err != nil {
+		return job, user, err
+	}
+	p := prev.Job.Preview
+	fact("created", "user", user, "job", job, "rows", o.rows, "malformed", o.bad, "duplicates", o.dup, "pending", p.Pending, "credits", p.Credits, "granted", credits, "fingerprint", prev.Job.PreviewFingerprint)
+	return job, user, nil
+}
+
+// apiDraft creates the draft of the list through the API as the user (with the campaign's content for a send job), previews it, and requires the preview to classify the list as the scenario built
+// it (rows, and pending = rows - malformed - repeats). It returns the job and the preview's answer.
+func apiDraft(ctx context.Context, sg *signer, o createOpts, user string, lines []string, content map[string]string) (string, jobBody, error) {
 	hc := httpClient(2 * time.Minute)
 	tok := sg.mint(user, time.Now())
 	items := make([]map[string]string, len(lines))
 	for i, l := range lines {
 		items[i] = map[string]string{"email": l}
 	}
-	a, err := call(ctx, hc, o.api, http.MethodPost, "/v1/jobs", tok, nil, map[string]any{"module": o.module, "rows": items})
+	body := map[string]any{"module": o.module, "rows": items}
+	if content != nil {
+		body["content"] = content
+	}
+	a, err := call(ctx, hc, o.api, http.MethodPost, "/v1/jobs", tok, nil, body)
 	if err != nil {
-		return "", user, err
+		return "", jobBody{}, err
 	}
 	if a.Status != http.StatusCreated {
-		return "", user, refused("creating the draft", a)
+		return "", jobBody{}, refused("creating the draft", a)
 	}
 	var created jobBody
 	if err := json.Unmarshal(a.Body, &created); err != nil || !isUUID(created.Job.ID) {
-		return "", user, failf(exitFail, "the platform's answer to the create is not a job (status %d, request %s)", a.Status, orDash(a.RequestID))
+		return "", jobBody{}, failf(exitFail, "the platform's answer to the create is not a job (status %d, request %s)", a.Status, orDash(a.RequestID))
 	}
-	job = created.Job.ID
+	job := created.Job.ID
 	a, err = call(ctx, hc, o.api, http.MethodPost, "/v1/jobs/"+job+"/preview", tok, nil, nil)
 	if err != nil {
-		return job, user, err
+		return job, jobBody{}, err
 	}
 	if a.Status != http.StatusOK {
-		return job, user, refused("previewing the draft", a)
+		return job, jobBody{}, refused("previewing the draft", a)
 	}
 	var prev jobBody
 	if err := json.Unmarshal(a.Body, &prev); err != nil || prev.Job.Status != "previewed" || prev.Job.Preview == nil || len(prev.Job.PreviewFingerprint) != 64 {
-		return job, user, failf(exitFail, "the platform's answer to the preview is not a previewed job with a fingerprint (status %d, request %s)", a.Status, orDash(a.RequestID))
+		return job, jobBody{}, failf(exitFail, "the platform's answer to the preview is not a previewed job with a fingerprint (status %d, request %s)", a.Status, orDash(a.RequestID))
 	}
 	p := prev.Job.Preview
 	wantPending := o.rows - o.bad - o.dup
 	if p.Rows != o.rows || p.Pending != wantPending {
-		return job, user, failf(exitFail, "the preview counts %d row(s) of which %d pending, the list has %d lines of which %d are good addresses: the platform classified the list differently from the scenario", p.Rows, p.Pending, o.rows, wantPending)
+		return job, jobBody{}, failf(exitFail, "the preview counts %d row(s) of which %d pending, the list has %d lines of which %d are good addresses: the platform classified the list differently from the scenario", p.Rows, p.Pending, o.rows, wantPending)
 	}
-	fact("created", "user", user, "job", job, "rows", o.rows, "malformed", o.bad, "duplicates", o.dup, "pending", p.Pending, "credits", p.Credits, "granted", credits, "fingerprint", prev.Job.PreviewFingerprint)
-	return job, user, nil
+	return job, prev, nil
 }
 
 func cmdCreate(args []string) error {
 	fs := flags("create")
 	var o createOpts
 	fs.StringVar(&o.api, "api", "http://jobs-a:8080", "the platform instance to call")
-	fs.StringVar(&o.module, "module", "m1", "the module (m1)")
+	fs.StringVar(&o.module, "module", "m1", "the module (m1, m2 or m3)")
 	fs.IntVar(&o.rows, "rows", 0, "lines in the list")
 	fs.IntVar(&o.bad, "bad", 0, "of which malformed")
 	fs.IntVar(&o.dup, "dup", 0, "of which repeats of an earlier address")
 	fs.IntVar(&o.grant, "grant", 0, "credits to grant (default: far more than the job reserves)")
+	addSendFlags(fs, &o)
 	if err := parse(fs, args); err != nil {
 		return err
 	}
@@ -456,11 +495,12 @@ func cmdSetup(args []string) error {
 	var c createOpts
 	var scheduledIn int
 	fs.StringVar(&c.api, "api", "http://jobs-a:8080", "the platform instance to call")
-	fs.StringVar(&c.module, "module", "m1", "the module (m1)")
+	fs.StringVar(&c.module, "module", "m1", "the module (m1, m2 or m3)")
 	fs.IntVar(&c.rows, "rows", 0, "lines in the list")
 	fs.IntVar(&c.bad, "bad", 0, "of which malformed")
 	fs.IntVar(&c.dup, "dup", 0, "of which repeats of an earlier address")
 	fs.IntVar(&c.grant, "grant", 0, "credits to grant")
+	addSendFlags(fs, &c)
 	fs.IntVar(&scheduledIn, "scheduled-in", 0, "seconds ahead to schedule the start (at least 60), 0 for now")
 	if err := parse(fs, args); err != nil {
 		return err

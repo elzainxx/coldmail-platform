@@ -8,6 +8,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -72,9 +74,25 @@ func TestM1Node_Tier4DescribeAndVocabulariesAreTheModulesOwn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CheckVocabularies failed (%s): %v", modclient.KindOf(err), err)
 	}
-	// the one thing module 1 publishes that the adapter does not handle is detail_issue (the issue words of a validation error): additive, never breaking
-	if rep.Breaking() || len(rep.Diffs) != 7 || len(rep.CodesMissing) != 0 || len(rep.CodesExtra) != 0 || len(rep.VocabulariesExtra) != 1 || rep.VocabulariesExtra[0] != "detail_issue" {
-		t.Errorf("module 1's vocabularies against the adapter's: %+v (breaking %v, additive %v, %d diffs): want seven exact vocabularies, no code missing or extra, and detail_issue as the only vocabulary the adapter does not handle", rep, rep.Breaking(), rep.Additive(), len(rep.Diffs))
+	// the seven verdict vocabularies are compared exactly. Module 1 also publishes four more words the adapter does not take from the describe: detail_issue (the issue words of a validation error) and, since the
+	// Phase 4 close-out (module 1 migration 0020, the cancel of a bulk job), cancel_outcome, non_verdict_status and non_verdict_reason. All four are ADDITIVE, never breaking; the three new ones are checked here
+	// against the words the adapter handles (m1ad.CancelOutcome*, m1ad.StatusCancelled, m1ad.ReasonCancelledByCaller), so a module that changes one of them is seen by this test and by the adapter's own decoding.
+	wantExtra := []string{"cancel_outcome", "detail_issue", "non_verdict_reason", "non_verdict_status"}
+	if rep.Breaking() || len(rep.Diffs) != 7 || len(rep.CodesMissing) != 0 || len(rep.CodesExtra) != 0 || !reflect.DeepEqual(rep.VocabulariesExtra, wantExtra) {
+		t.Errorf("module 1's vocabularies against the adapter's: %+v (breaking %v, additive %v, %d diffs): want seven exact vocabularies, no code missing or extra, and exactly %v as the vocabularies the adapter does not compare", rep, rep.Breaking(), rep.Additive(), len(rep.Diffs), wantExtra)
+	}
+	for name, want := range map[string][]string{
+		"cancel_outcome":     {m1ad.CancelOutcomeCancelled, m1ad.CancelOutcomeAlreadyCancelled, m1ad.CancelOutcomeAlreadyComplete},
+		"non_verdict_status": {m1ad.StatusCancelled},
+		"non_verdict_reason": {m1ad.ReasonCancelledByCaller},
+	} {
+		got := append([]string(nil), d.Vocabularies[name]...)
+		w := append([]string(nil), want...)
+		sort.Strings(got)
+		sort.Strings(w)
+		if !reflect.DeepEqual(got, w) {
+			t.Errorf("module 1 publishes %s = %v, the adapter handles %v: a word was added, changed or removed", name, got, w)
+		}
 	}
 	for _, df := range rep.Diffs {
 		if !df.Exact() {

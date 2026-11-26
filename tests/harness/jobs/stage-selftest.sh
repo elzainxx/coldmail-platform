@@ -19,7 +19,7 @@
 #                      off, on, off; a scenario command that fails stops it, naming the step; the numbers it asks for are 1 and 2 credits a row exactly where the vendor is off and on
 #   consistency        the J6 names are the calls of jobs_j6 in order; the commands the stage gives the scenario program are commands it has; the service caller's id and the platform's memory of module 1's answer are the
 #                      platform's own constants; the compose file's vendor switches are off unless the stage sets them, and the stage sets exactly those;
-#                      the kill points are exactly the registry's names; the stage's list of invariants is the scenario program's, in order, and each is checked once in verify.go; the compose file publishes no port, names every
+#                      the kill points, with the senders' of send-stage.sh, are exactly the registry's names (and the senders' stage selftest is run and must be green); the stage's list of invariants is the scenario program's, in order, and each is checked once in verify.go; the compose file publishes no port, names every
 #                      service of the scope in the profile jobs, arms the fault points from the two variables, keeps the engine on in the instances and off in the legacy ones, and gives the scenario program every variable it
 #                      reads; every H_ variable it needs is written by run.sh or jobs_mint; run.sh allows the scope, sources the stage, builds only what it needs and calls every jobs_ function only under its guard; the stage is
 #                      DORMANT in `full` until FULL_INCLUDES names it (the guard block of run.sh is evaluated for settings); the workflows offer the scope, vet the scenario program and run this selftest
@@ -402,7 +402,10 @@ verdict "consistency: every invariant is checked, exactly once, by a v.check cal
 verdict "consistency: no invariant name appears twice in the stage's list" 0 "unique" "$([ -z "$(oks | sort | uniq -d)" ] && echo unique || echo duplicated)" 0
 points="$( . "$HERE/stage.sh" >/dev/null 2>&1; printf '%s\n' "${JOBS_POINTS[@]}" | sort )"
 registry="$(sed -n 's/^\([a-z0-9_]*\.[a-z0-9_]*\)[[:space:]]*#.*/\1/p' "$REG" | sort)"
-verdict "consistency: the kill points are exactly the names of internal/faultpoint/names.txt (a point added to the registry and not killed here is red)" 0 "same" "$([ -n "$registry" ] && [ "$points" = "$registry" ] && echo same || printf 'stage: %s\nregistry: %s' "$(printf '%s' "$points" | tr '\n' ' ')" "$(printf '%s' "$registry" | tr '\n' ' ')")" 0
+sjpoints="$( . "$HERE/send-stage.sh" >/dev/null 2>&1; printf '%s\n' "${SJ_POINTS[@]}" | sort )"
+both="$(printf '%s\n%s\n' "$points" "$sjpoints" | sort -u)"
+verdict "consistency: every name of internal/faultpoint/names.txt is killed by this scope (module 1) or by the senders' scope (send-stage.sh), and nothing else is (a point added to the registry and killed nowhere is red)" 0 "same" "$([ -n "$registry" ] && [ -n "$sjpoints" ] && [ "$both" = "$registry" ] && echo same || printf 'stages: %s\nregistry: %s' "$(printf '%s' "$both" | tr '\n' ' ')" "$(printf '%s' "$registry" | tr '\n' ' ')")" 0
+verdict "consistency: every kill point of this scope is a name of the registry" 0 "listed" "$(miss=""; for p in $points; do printf '%s\n' "$registry" | grep -qx "$p" || miss="$miss $p"; done; [ -n "$points" ] && [ -z "$miss" ] && echo listed || echo "not in the registry:$miss")" 0
 verdict "consistency: every point has a kill stage (jobs_j2 names each, with the state it must leave)" 0 "all-killed" "$(miss=""; for p in $points; do grep -q "^  jobs_kill_point $p " "$HERE/stage.sh" || miss="$miss $p"; done; [ -z "$miss" ] && echo all-killed || echo "no kill stage for:$miss")" 0
 verdict "consistency: the compose file publishes no port" 0 "none" "$(grep -qE '^[[:space:]]*ports:' "$COMPOSE" && echo "a ports: key" || echo none)" 0
 verdict "consistency: the compose file names jobs-a, jobs-b, m1j, jobsdns and jobscenario, each in the profile jobs" 0 "all-profiled" "$(c=0; for s in jobs-a jobs-b m1j jobsdns jobscenario; do awk -v s="  $s:" '$0==s {p=1; next} p && /^  [a-z0-9]/ {p=0} p && /profiles: \[jobs\]/ {f=1} END {exit f?0:1}' "$COMPOSE" && c=$((c+1)); done; [ "$c" = 5 ] && echo all-profiled || echo "$c of 5")" 0
@@ -472,6 +475,11 @@ verdict "workflows: the harness workflow offers the scope jobs" 0 "offered" "$(g
 verdict "workflows: the go workflow vets every program under tests/harness with the scoped tags" 0 "vetted" "$(grep -q 'go vet -tags "harness m1node m2worker gotrue" ./tests/harness/\.\.\.' "$ROOT/.github/workflows/go.yml" && echo vetted || echo missing)" 0
 verdict "workflows: the go workflow builds the scenario program" 0 "built" "$(grep -q 'go build -tags harness -o /dev/null ./tests/harness/jobscenario' "$ROOT/.github/workflows/go.yml" && echo built || echo missing)" 0
 verdict "workflows: the gates workflow runs this selftest" 0 "wired" "$(grep -q 'tests/harness/jobs/stage-selftest.sh' "$ROOT/.github/workflows/gates.yml" && echo wired || echo missing)" 0
+
+# the senders' scope (send-stage.sh) has a selftest of its own; this one runs it (the gates workflow runs this file) and is red when it is red
+out="$(bash "$HERE/send-stage-selftest.sh" 2>&1)"; rc=$?
+verdict "the senders' stage selftest (tests/harness/jobs/send-stage-selftest.sh) is green" 0 "behaved as expected, 0 did not" "$(printf '%s\n' "$out" | tail -3)" "$rc" "MISMATCH"
+printf '%s\n' "$out" | grep '^selftest: ' | sed 's/^/      (send-stage-selftest) /'
 
 # ── the control: the verdict function itself fails when the substring is wrong (a selftest that cannot fail proves nothing) ──
 before_bad=$bad; before_ok=$ok; before_cases=$cases

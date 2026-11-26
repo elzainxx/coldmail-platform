@@ -735,8 +735,8 @@ jobs_scope_run() {
 # what the jobs stage does not vouch for (printed by the scoped run and, in the full run, run.sh's own list refers to it)
 jobs_not_checked() {
   cat <<'EOF'
-  - module 1 ONLY: modules 2 and 3 (their campaigns, workers, sinks and cancels) follow in a later chunk; their rows in the five kills, the two instances and the outage are not exercised here.
-  - the kill points are the five of internal/faultpoint/names.txt, each hit by the real process killing ITSELF (SIGKILL, exit status 137): NOT exercised are a kill at any other instant (between two statements of one transaction other than
+  - module 1 ONLY: modules 2 and 3 (their campaigns, workers, sinks, pauses and cancels) are the scope sendjobs's (tests/harness/jobs/send-stage.sh: seven kills and an outage per sender, ONE instance); the two instances are not exercised for them anywhere.
+  - the kill points are five of the eight of internal/faultpoint/names.txt (submit.before_module, pause.after_module and cancel.after_module are killed by the scope sendjobs only), each hit by the real process killing ITSELF (SIGKILL, exit status 137): NOT exercised are a kill at any other instant (between two statements of one transaction other than
     the named ones, mid-HTTP-response, mid-write of a log line), an out-of-memory kill, a kill of the database or of module 1 together with the platform, and two kills in a row in one job. Which instant of the job each point lands at is asserted
     from the database at the moment of the kill (the state conditions in stage.sh); that the kill of `settle.after_commit` lands with SOME results recorded and not all depends on module 1 settling the list over more than one pass of the
     engine, which a list of JOBS_SETTLE_ROWS lines makes certain on the runners measured and nothing makes certain on every machine (the stage is red, naming it, when the kill lands with every result recorded).

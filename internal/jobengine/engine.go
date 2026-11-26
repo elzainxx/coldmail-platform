@@ -464,6 +464,7 @@ func (e *Engine) submit(ctx context.Context, j *jobs.EngineJob, mod Module, rows
 		at := e.now()
 		j.ItemsEnsuredAt = &at
 	}
+	faultpoint.Hit("submit.before_module")
 	res, err := mod.Submit(ctx, *j, rows)
 	if err != nil {
 		return 0, err
@@ -666,6 +667,7 @@ func (e *Engine) pausedRunning(ctx context.Context, j jobs.EngineJob) (bool, err
 			e.flagIfNotSupported(ctx, j, "pause", perr)
 			keep(perr)
 		} else {
+			faultpoint.Hit("pause.after_module")
 			r2, o2, oerr := e.observe(ctx, j, mod)
 			recorded += r2
 			progressed = progressed || r2 > 0
@@ -914,6 +916,7 @@ func (e *Engine) cancelling(ctx context.Context, j jobs.EngineJob) (bool, error)
 		}
 		firstErr = err
 	}
+	faultpoint.Hit("cancel.after_module")
 	recorded, obs, err := e.observe(ctx, j, mod)
 	if err != nil && firstErr == nil {
 		firstErr = err
