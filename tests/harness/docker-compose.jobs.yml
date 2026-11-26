@@ -130,8 +130,8 @@ services:
       TM_FALLBACK_MODE: ${H_M1J_FALLBACK_MODE:-off}
       TM_EXTERNAL_DPA_CONFIRMED: ${H_M1J_DPA_CONFIRMED:-false}
       TM_EXTERNAL_DAILY_SPEND_CAP: ${H_M1J_DAILY_SPEND_CAP:-0}
-      TM_EXTERNAL_ZEROBOUNCE_KEY_ENV: M1J_VENDOR_KEY
-      M1J_VENDOR_KEY: ${H_M1J_VENDOR_KEY:-}
+      TM_EXTERNAL_ZEROBOUNCE_KEY_ENV: JOBS_VENDOR_VAR
+      JOBS_VENDOR_VAR: ${H_M1J_VENDOR_KEY:-}
     volumes:
       - ${H_WORK:?}/jobs/resolv.conf:/etc/resolv.conf:ro
     healthcheck:

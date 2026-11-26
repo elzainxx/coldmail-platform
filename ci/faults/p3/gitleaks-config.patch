@@ -1,11 +1,11 @@
 --- a/.gitleaks.toml
 +++ b/.gitleaks.toml
-@@ -69,3 +69,8 @@
- description = "a deliberately too-short secret in the JWT dial validation test (commit 114b9e7): the value the service refuses, not a secret"
+@@ -77,3 +77,8 @@
+ description = "the NAME of the variable that holds module 1's stand-in vendor key, as the value of its dial (commit 9752344): a variable name, not a secret"
  targetRules = ["generic-api-key"]
- commits = ["114b9e7a51cf1d6ab7381f4b7c4cf4a9678a0b66"]
+ commits = ["9752344529ea42a4d42c6fd0ed751790925c4ff8"]
 +
 +[[allowlists]]
-+description = "a seventh exception, which the gate must refuse"
++description = "an eighth exception, which the gate must refuse"
 +targetRules = ["generic-api-key"]
 +commits = ["355299a6c605a2ca0601bf58afb0e0468d7fccb0"]

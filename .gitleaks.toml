@@ -69,3 +69,11 @@ commits = ["56eb8ab26d7ac8edfbeb5dcb1afe09919ce10053"]
 description = "a deliberately too-short secret in the JWT dial validation test (commit 114b9e7): the value the service refuses, not a secret"
 targetRules = ["generic-api-key"]
 commits = ["114b9e7a51cf1d6ab7381f4b7c4cf4a9678a0b66"]
+
+# Phase 4 close-out, chunk J6: tests/harness/docker-compose.jobs.yml, jobs/stage.sh and jobs/stage-selftest.sh in commit 9752344 carry the line `TM_EXTERNAL_ZEROBOUNCE_KEY_ENV: M1J_VENDOR_KEY`: module 1's dial that NAMES the environment variable holding its vendor key, with the NAME of that variable as its value. `generic-api-key` flags it because the line names a key and the
+# value has entropy 3.52. It is not a secret (it is a variable name; the key itself is minted per run into that variable and is never in a file), and it is the only finding of the history at that commit (read in full on 2026-11-26 with gitleaks 8.30.1 -v --redact: three findings, all this line).
+# The next commit renames the variable (JOBS_VENDOR_VAR, entropy 3.37, below the rule's threshold) so that nothing later raises it; the commit itself is in published history and cannot be rewritten (no history rewrites, no GitHub deletions).
+[[allowlists]]
+description = "the NAME of the variable that holds module 1's stand-in vendor key, as the value of its dial (commit 9752344): a variable name, not a secret"
+targetRules = ["generic-api-key"]
+commits = ["9752344529ea42a4d42c6fd0ed751790925c4ff8"]

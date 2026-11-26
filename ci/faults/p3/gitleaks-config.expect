@@ -4,5 +4,5 @@ TARGET=platform
 SETUP=
 STEP=check-gitleaks-config on the real repository
 CMD=bash scripts/check-gitleaks-config.sh
-MESSAGE=7 [[allowlists]] blocks (at most 6 are accepted
+MESSAGE=8 [[allowlists]] blocks (at most 7 are accepted
 MESSAGE=check-gitleaks-config: RED

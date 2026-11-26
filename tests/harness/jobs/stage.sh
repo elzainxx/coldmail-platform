@@ -483,15 +483,15 @@ jobs_m1j_vendor() {
   printf '%s\n' "$env_out" | grep -qx "TM_FALLBACK_MODE=$want_mode" || die "module 1's container has TM_FALLBACK_MODE=$(printf '%s\n' "$env_out" | sed -n 's/^TM_FALLBACK_MODE=//p'), want $want_mode"
   printf '%s\n' "$env_out" | grep -qx "TM_EXTERNAL_DPA_CONFIRMED=$want_dpa" || die "module 1's container has TM_EXTERNAL_DPA_CONFIRMED=$(printf '%s\n' "$env_out" | sed -n 's/^TM_EXTERNAL_DPA_CONFIRMED=//p'), want $want_dpa"
   printf '%s\n' "$env_out" | grep -qx "TM_EXTERNAL_DAILY_SPEND_CAP=$want_cap" || die "module 1's container has TM_EXTERNAL_DAILY_SPEND_CAP=$(printf '%s\n' "$env_out" | sed -n 's/^TM_EXTERNAL_DAILY_SPEND_CAP=//p'), want $want_cap"
-  printf '%s\n' "$env_out" | grep -qx "TM_EXTERNAL_ZEROBOUNCE_KEY_ENV=M1J_VENDOR_KEY" || die "module 1's container does not name M1J_VENDOR_KEY as the variable that holds the vendor key"
-  got_key="$(printf '%s\n' "$env_out" | sed -n 's/^M1J_VENDOR_KEY=//p')"
+  printf '%s\n' "$env_out" | grep -qx "TM_EXTERNAL_ZEROBOUNCE_KEY_ENV=JOBS_VENDOR_VAR" || die "module 1's container does not name JOBS_VENDOR_VAR as the variable that holds the vendor key"
+  got_key="$(printf '%s\n' "$env_out" | sed -n 's/^JOBS_VENDOR_VAR=//p')"
   if [ "$mode" = on ]; then
-    [ -n "$got_key" ] && [ "$got_key" = "$JOBS_VENDOR" ] || die "module 1's key variable M1J_VENDOR_KEY is not the minted stand-in key (it is ${#got_key} characters long): the switch did not reach the container"
+    [ -n "$got_key" ] && [ "$got_key" = "$JOBS_VENDOR" ] || die "module 1's key variable JOBS_VENDOR_VAR is not the minted stand-in key (it is ${#got_key} characters long): the switch did not reach the container"
   else
-    [ -z "$got_key" ] || die "module 1's key variable M1J_VENDOR_KEY holds a value (${#got_key} characters) with the vendor switched off"
+    [ -z "$got_key" ] || die "module 1's key variable JOBS_VENDOR_VAR holds a value (${#got_key} characters) with the vendor switched off"
   fi
   got_key=""
-  echo "  module 1 (m1j) was re-created with its vendor fallback $mode: TM_FALLBACK_MODE=$want_mode, TM_EXTERNAL_DPA_CONFIRMED=$want_dpa, TM_EXTERNAL_DAILY_SPEND_CAP=$want_cap, the key variable M1J_VENDOR_KEY $([ "$mode" = on ] && echo 'holds the minted stand-in key (not shown)' || echo 'is empty')"
+  echo "  module 1 (m1j) was re-created with its vendor fallback $mode: TM_FALLBACK_MODE=$want_mode, TM_EXTERNAL_DPA_CONFIRMED=$want_dpa, TM_EXTERNAL_DAILY_SPEND_CAP=$want_cap, the key variable JOBS_VENDOR_VAR $([ "$mode" = on ] && echo 'holds the minted stand-in key (not shown)' || echo 'is empty')"
 }
 
 # jobs_remember_wait: waits longer than the platform keeps module 1's last answer, so that the next preview or confirm asks module 1 again

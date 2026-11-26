@@ -272,7 +272,7 @@ DC() {   # docker compose, as a stand-in: ps answers a container id, logs a line
 }
 docker() {   # docker inspect -f '{{range .Config.Env}}...' <cid>: what the container "has"
   [ "$1" = inspect ] || return 0
-  printf 'PATH=/usr/bin\nTM_FALLBACK_MODE=%s\nTM_EXTERNAL_DPA_CONFIRMED=%s\nTM_EXTERNAL_DAILY_SPEND_CAP=%s\nTM_EXTERNAL_ZEROBOUNCE_KEY_ENV=%s\nM1J_VENDOR_KEY=%s\n' "${SC_MODE-off}" "${SC_DPA-false}" "${SC_CAP-0}" "${SC_KEYENV-M1J_VENDOR_KEY}" "${SC_KEYVAL-}"
+  printf 'PATH=/usr/bin\nTM_FALLBACK_MODE=%s\nTM_EXTERNAL_DPA_CONFIRMED=%s\nTM_EXTERNAL_DAILY_SPEND_CAP=%s\nTM_EXTERNAL_ZEROBOUNCE_KEY_ENV=%s\nJOBS_VENDOR_VAR=%s\n' "${SC_MODE-off}" "${SC_DPA-false}" "${SC_CAP-0}" "${SC_KEYENV-JOBS_VENDOR_VAR}" "${SC_KEYVAL-}"
 }
 EOF
 m1jrun() { # <on|off> [stage's vendor key] -- the container's answer is the SC_* variables of the caller
@@ -284,7 +284,7 @@ verdict "jobs_m1j_vendor: on: the stage set the four variables for that one comm
 verdict "jobs_m1j_vendor: on: the log of the container it replaces was kept" 0 "KEPT: 1" "$out" "$rc"
 verdict "jobs_m1j_vendor: on: the key is not shown, only that the container holds it" 0 "holds the minted stand-in key (not shown)" "$out" "$rc" "$SV"
 out="$(m1jrun off)"; rc=$?
-verdict "jobs_m1j_vendor: off, and the container has what was said" 0 "was re-created with its vendor fallback off: TM_FALLBACK_MODE=off, TM_EXTERNAL_DPA_CONFIRMED=false, TM_EXTERNAL_DAILY_SPEND_CAP=0, the key variable M1J_VENDOR_KEY is empty" "$out" "$rc"
+verdict "jobs_m1j_vendor: off, and the container has what was said" 0 "was re-created with its vendor fallback off: TM_FALLBACK_MODE=off, TM_EXTERNAL_DPA_CONFIRMED=false, TM_EXTERNAL_DAILY_SPEND_CAP=0, the key variable JOBS_VENDOR_VAR is empty" "$out" "$rc"
 verdict "jobs_m1j_vendor: off: no key and a cap of 0 are what compose is handed" 0 "UP mode=off dpa=false cap=0 keylen=0" "$out" "$rc"
 out="$(SC_MODE=off SC_DPA=true SC_CAP=100 SC_KEYVAL="$SV" m1jrun on)"; rc=$?
 verdict "jobs_m1j_vendor: on, a container whose mode is still off is red naming the dial" 1 "TM_FALLBACK_MODE=off, want enabled" "$out" "$rc" "$SV"
@@ -293,7 +293,7 @@ verdict "jobs_m1j_vendor: on, a DPA that is not confirmed is red" 1 "TM_EXTERNAL
 out="$(SC_MODE=enabled SC_DPA=true SC_CAP=0 SC_KEYVAL="$SV" m1jrun on)"; rc=$?
 verdict "jobs_m1j_vendor: on, a spend cap of 0 is red" 1 "TM_EXTERNAL_DAILY_SPEND_CAP=0, want 100" "$out" "$rc"
 out="$(SC_MODE=enabled SC_DPA=true SC_CAP=100 SC_KEYENV=ZEROBOUNCE_API_KEY SC_KEYVAL="$SV" m1jrun on)"; rc=$?
-verdict "jobs_m1j_vendor: on, a container that names another variable for the key is red" 1 "does not name M1J_VENDOR_KEY as the variable that holds the vendor key" "$out" "$rc" "$SV"
+verdict "jobs_m1j_vendor: on, a container that names another variable for the key is red" 1 "does not name JOBS_VENDOR_VAR as the variable that holds the vendor key" "$out" "$rc" "$SV"
 out="$(SC_MODE=enabled SC_DPA=true SC_CAP=100 SC_KEYVAL="" m1jrun on)"; rc=$?
 verdict "jobs_m1j_vendor: on, a container with an empty key is red" 1 "is not the minted stand-in key (it is 0 characters long)" "$out" "$rc"
 out="$(SC_MODE=enabled SC_DPA=true SC_CAP=100 SC_KEYVAL="$SB" m1jrun on)"; rc=$?
@@ -445,7 +445,7 @@ miss=""; for c in $cmds; do grep -q "case \"$c\":" "$HERE/../jobscenario/main.go
 verdict "consistency: every command the stage gives the scenario program is a command of it (and the stage gives it at least ten kinds)" 0 "all-commands" "$([ -z "$miss" ] && [ "$(printf '%s\n' "$cmds" | wc -l | tr -d ' ')" -ge 10 ] && echo all-commands || echo "no such command:$miss")" 0
 verdict "consistency: the platform's service caller at module 1 is the same id in the service and in the scenario program" 0 "same-id" "$(a="$(sed -n 's/^const m1ServiceCallerID = "\(.*\)"$/\1/p' "$ROOT/internal/app/reachability_provider.go")"; b="$(sed -n 's/^const serviceCallerID = "\(.*\)"$/\1/p' "$HERE/../jobscenario/vendor.go")"; [ -n "$a" ] && [ "$a" = "$b" ] && echo same-id || echo "service: '$a' scenario: '$b'")" 0
 verdict "consistency: the stage waits longer than the platform keeps module 1's answer (the stage's memory constant is the store's DefaultVendorReadTTL)" 0 "same-memory" "$(a="$(sed -n 's/^const DefaultVendorReadTTL = \([0-9]*\) \* time.Second$/\1/p' "$ROOT/internal/jobs/vendor.go")"; b="$( . "$HERE/stage.sh" >/dev/null 2>&1; echo "$JOBS_VENDOR_MEMORY_SEC" )"; [ -n "$a" ] && [ "$a" = "$b" ] && echo same-memory || echo "store: '$a' stage: '$b'")" 0
-verdict "consistency: module 1's vendor switches in the compose file are OFF unless the stage sets them (five lines, each once, in the m1j service)" 0 "switches-off" "$(blk="$(awk '$0=="  m1j:" {p=1; next} p && /^  [a-z0-9]/ {p=0} p' "$COMPOSE")"; ok=1; for l in 'TM_FALLBACK_MODE: ${H_M1J_FALLBACK_MODE:-off}' 'TM_EXTERNAL_DPA_CONFIRMED: ${H_M1J_DPA_CONFIRMED:-false}' 'TM_EXTERNAL_DAILY_SPEND_CAP: ${H_M1J_DAILY_SPEND_CAP:-0}' 'TM_EXTERNAL_ZEROBOUNCE_KEY_ENV: M1J_VENDOR_KEY' 'M1J_VENDOR_KEY: ${H_M1J_VENDOR_KEY:-}'; do [ "$(printf '%s\n' "$blk" | grep -cF "      $l")" = 1 ] && [ "$(grep -cF "$l" "$COMPOSE")" = 1 ] || ok=0; done; [ "$ok" = 1 ] && echo switches-off || echo WRONG)" 0
+verdict "consistency: module 1's vendor switches in the compose file are OFF unless the stage sets them (five lines, each once, in the m1j service)" 0 "switches-off" "$(blk="$(awk '$0=="  m1j:" {p=1; next} p && /^  [a-z0-9]/ {p=0} p' "$COMPOSE")"; ok=1; for l in 'TM_FALLBACK_MODE: ${H_M1J_FALLBACK_MODE:-off}' 'TM_EXTERNAL_DPA_CONFIRMED: ${H_M1J_DPA_CONFIRMED:-false}' 'TM_EXTERNAL_DAILY_SPEND_CAP: ${H_M1J_DAILY_SPEND_CAP:-0}' 'TM_EXTERNAL_ZEROBOUNCE_KEY_ENV: JOBS_VENDOR_VAR' 'JOBS_VENDOR_VAR: ${H_M1J_VENDOR_KEY:-}'; do [ "$(printf '%s\n' "$blk" | grep -cF "      $l")" = 1 ] && [ "$(grep -cF "$l" "$COMPOSE")" = 1 ] || ok=0; done; [ "$ok" = 1 ] && echo switches-off || echo WRONG)" 0
 verdict "consistency: the stage sets exactly the four per-command variables the compose file reads for module 1's switches" 0 "four-set" "$(n=0; for v in H_M1J_FALLBACK_MODE H_M1J_DPA_CONFIRMED H_M1J_DAILY_SPEND_CAP H_M1J_VENDOR_KEY; do grep -q "export .*$v=" "$HERE/stage.sh" && grep -q "\${$v:-" "$COMPOSE" && n=$((n+1)); done; [ "$n" = 4 ] && [ "$(grep -o '\${H_M1J_[A-Z_]*' "$COMPOSE" | sort -u | wc -l | tr -d ' ')" = 4 ] && echo four-set || echo "$n of 4")" 0
 verdict "consistency: the compose file keeps no switch of its own for the vendor on the platform's side (the instances' environment names no vendor setting)" 0 "none" "$(blk="$(awk '$0=="  jobs-a:" || $0=="  jobs-b:" {p=1} /^  [a-z0-9]/ && $0!="  jobs-a:" && $0!="  jobs-b:" {p=0} p' "$COMPOSE")"; printf '%s\n' "$blk" | grep -qiE 'vendor|reachab' && echo "a vendor setting" || echo none)" 0
 verdict "consistency: stage J6 starts no verification of module 1's (it previews, confirms scheduled jobs an hour ahead and cancels them: it never waits for a job to run)" 0 "no-wait" "$(sed -n '/^jobs_j6() {/,/^}/p' "$HERE/stage.sh" | grep -qE 'jobs_wait_terminal|jobs_verify|--until' && echo "J6 waits for a job" || echo no-wait)" 0
