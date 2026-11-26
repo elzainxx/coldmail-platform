@@ -388,10 +388,12 @@ func TestResultsCSV_AClientThatGoesAwayStopsTheStream(t *testing.T) {
 	r.store.results = manyResults(5000)
 	gate := newLineGate(1 + jobs.ResultsPageSize)
 	sawCancel := make(chan struct{})
+	inSecondRead := make(chan struct{}) // closed when the server is inside its second read of the store: the client leaves only then, so the second read is always the one in flight
 	r.store.resultsHook = func(ctx context.Context, call int) {
 		if call != 2 {
 			return
 		}
+		close(inSecondRead)
 		select {
 		case <-ctx.Done(): // the request's context ends when the client's connection does
 			close(sawCancel)
@@ -412,6 +414,11 @@ func TestResultsCSV_AClientThatGoesAwayStopsTheStream(t *testing.T) {
 		if gate.reached() {
 			break
 		}
+	}
+	select { // a client that leaves BEFORE the server asked for the second page makes a server that stops between pages correct and this test's expectation of two reads wrong (it failed that way on a loaded runner)
+	case <-inSecondRead:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the server never asked the store for the second page although the client had read the first")
 	}
 	cancel() // the client goes away with the first page in hand, while the server is waiting for the second
 	resp.Body.Close()
