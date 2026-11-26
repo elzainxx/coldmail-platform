@@ -69,8 +69,10 @@ func TestJobsLive_M3_CancelRunningJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReportCampaign before the cancel failed: %s", e.raw.scrub(err.Error()))
 	}
-	if before.Totals.Total != n || before.Totals.Cancelled != 0 || before.Totals.Sent != 0 || e.jobCount(t, k.UserID, "cancelled") != 0 {
-		t.Fatalf("before the cancel module 3's totals are (%s), want %d items and none cancelled or sent", m3aTotalsLine(before.Totals), n)
+	// one lane: at most one item may be in flight and one may already have been answered (the report counts an item sent once its DATA is accepted, which is before the sink's held final reply); what the cancel needs is that
+	// items are still QUEUED at module 3, none cancelled yet, and that the whole list is there
+	if before.Totals.Total != n || before.Totals.Cancelled != 0 || before.Totals.Pending+before.Totals.WaitingForCapacity < 1 || before.Totals.Sent+before.Totals.InFlight > 2 || e.jobCount(t, k.UserID, "cancelled") != 0 {
+		t.Fatalf("before the cancel module 3's totals are (%s), want %d items, none cancelled, at least one still queued and at most two sent or in flight (one lane)", m3aTotalsLine(before.Totals), n)
 	}
 
 	// ---- the user cancels the RUNNING job ----

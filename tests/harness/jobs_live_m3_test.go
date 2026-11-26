@@ -170,8 +170,17 @@ func TestJobsLive_M3_SendJobSettlesItemByItem(t *testing.T) {
 	if problems := jlM3ThreeWay(view); len(problems) != 0 {
 		t.Fatalf("module 3's report, the sink, module 3's own table and the job's results disagree (%d):\n  %s", len(problems), strings.Join(problems, "\n  "))
 	}
-	m3aProblems(t, "the report against what was submitted (the adapter tests' comparison)", m3aCompareReport(tn, view.Report))
-	m3aProblems(t, "the sink against the report (the adapter tests' comparison)", m3aCompareSink(tn, view.Report, sink, 0))
+	// The adapter tests' comparisons take the report in the order the tenant's items were created. Module 3 lists a campaign's items by creation time and id; the platform inserts a batch of them in ONE statement (one creation time) with
+	// random ids, so the report's order is the ids' and not the rows': the tenant's items are put in the report's order for the comparison, which still fails on a missing, an unexpected or a repeated item.
+	ordered := *tn
+	pos := map[string]int{}
+	for i, it := range view.Report {
+		pos[it.JobItemID] = i
+	}
+	ordered.Items = append([]*m3aItem(nil), tn.Items...)
+	slices.SortStableFunc(ordered.Items, func(a, b *m3aItem) int { return pos[a.ID] - pos[b.ID] })
+	m3aProblems(t, "the report against what was submitted (the adapter tests' comparison)", m3aCompareReport(&ordered, view.Report))
+	m3aProblems(t, "the sink against the report (the adapter tests' comparison)", m3aCompareSink(&ordered, view.Report, sink, 0))
 
 	// the platform's classes never reached module 3, and the module holds exactly the pending rows
 	byState := map[string]int{}

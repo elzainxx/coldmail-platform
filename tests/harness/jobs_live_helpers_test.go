@@ -281,6 +281,20 @@ func (s *jlStack) cleanup() {
 				s.t.Logf("cleanup: job %s (%s) could not be ended through the store: %v", jlShort(id), status, err)
 			}
 		}
+		// the store has only MOVED a running job to cancelling: module 3 goes on sending until the engine tells it to stop, and a campaign left sending would deliver into the sink during the next test of the binary (found by the first runner run: an extra message in the hostile-sink test). The engine ticks until every job of this test has ended.
+		for deadline := time.Now().Add(25 * time.Second); time.Now().Before(deadline); time.Sleep(500 * time.Millisecond) {
+			s.eng.Tick(ctx)
+			left := 0
+			for _, id := range s.made {
+				var status string
+				if err := s.admin.QueryRow(ctx, `SELECT status FROM platform.jobs WHERE id = $1::uuid`, id).Scan(&status); err == nil && (status == jobs.StatusCancelling || status == jobs.StatusCompleting || status == jobs.StatusRunning) {
+					left++
+				}
+			}
+			if left == 0 {
+				break
+			}
+		}
 	}
 	if len(s.users) > 0 {
 		callers := make([]string, len(s.users))
