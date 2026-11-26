@@ -87,13 +87,15 @@ jobs:
           echo "gofmt: clean"
 
       - name: Build
-        run: go build ./...
+        run: |
+          go build ./...
+          go build -tags harness -o /dev/null ./tests/harness/jobscenario    # the jobs scope's scenario program (tag harness: `go build ./...` does not see it); nothing here runs it
 
       - name: Vet (plain, with the harness tag so the integration tests are compiled too, and with the fault-point tag so the armed build keeps compiling)
         run: |
           go vet ./...
           go vet -tags harness ./...
-          go vet -tags "harness m1node m2worker gotrue" ./tests/harness/    # the scoped stages' tests (dormant in the full harness, tests/harness/run.sh FULL_INCLUDES) must keep compiling
+          go vet -tags "harness m1node m2worker gotrue" ./tests/harness/...  # the scoped stages' tests (dormant in the full harness, tests/harness/run.sh FULL_INCLUDES) and the programs under tests/harness (the jobs scope's scenario program) must keep compiling
           go vet -tags faultpoints ./internal/... ./cmd/...                  # vet only: nothing here builds or runs a tagged binary (scripts/check-faultpoints.sh allows the tag on this one kind of line)
 
       - name: Unit tests (verbose log captured for the floor gate)

@@ -14,7 +14,8 @@
 #   5b worker    module 3's three workers (each with its own token and box row), the SMTP sink (Mailpit) and the controllable sink (smtp-ctl: it rejects, defers and delays on command): module 3 really sends, on several lanes, to a sink that can be hostile
 #   5c m2-worker module 2's REAL worker (Phase 3, B8; part of `full` since FULL_INCLUDES names it, and the only stage of its scope otherwise): its credentials minted in stage 2 with module 2's own tools, its box row seeded before it starts, a heartbeat awaited; module 2 really sends (sent, bounced, failed/attempts_exhausted, cancelled) to the controllable sink (tests/harness/m2worker/stage.sh)
 #   5d gotrue    a REAL, digest-pinned GoTrue (Phase 4, B15; dormant until proven: only under H_SCOPE=gotrue, or in `full` once FULL_INCLUDES names it): its database role's password minted per run, its own migrations on the real auth schema, a per-run JWT secret; the platform's token verification (internal/auth) and login resolution (internal/tenant) are run against tokens it ISSUED (tests/harness/gotrue/stage.sh, TestGoTrue_*)
-#   scope        H_SCOPE=m2worker runs stages 1-4b, then only module 2's Control, its worker, the sink, the TestM2Worker tests and the exposure check (m2w_scope_run); H_SCOPE=gotrue runs stages 1-4b, then only GoTrue, the TestGoTrue tests and the exposure check (gotrue_scope_run); H_SCOPE=full (the default) runs everything except the dormant stages
+#   5e jobs      the job engine's crash, handover and outage proofs (Phase 4, B17a; dormant until proven: only under H_SCOPE=jobs, or in `full` once FULL_INCLUDES names it): module 1 asked by a fixture DNS, TWO platform instances with the engine on and the fault points armed by name; the platform's own process is killed at five points, the leader is killed, module 1 is stopped, and every job ends with the books closed (tests/harness/jobs/stage.sh, the scenario program tests/harness/jobscenario)
+#   scope        H_SCOPE=m2worker runs stages 1-4b, then only module 2's Control, its worker, the sink, the TestM2Worker tests and the exposure check (m2w_scope_run); H_SCOPE=gotrue runs stages 1-4b, then only GoTrue, the TestGoTrue tests and the exposure check (gotrue_scope_run); H_SCOPE=jobs runs stages 1-4b, then only module 1 (m1j) with its fixture DNS, two platform instances and the scenario program J1-J4 (jobs_scope_run); H_SCOPE=full (the default) runs everything except the dormant stages
 #   9b m3-outage module 3 stopped while an entitlement expires: the platform retries, claims no convergence it did not see, converges when module 3 is back
 #   9b-adapter   module 3's Domain A API stopped in the middle of a campaign of the adapter's (Phase 3, B12; tests/harness/m3adapter/outage.sh): three test phases with the stop and the start between them, nothing settled or invented, the campaign completes exactly once
 #   9c leader    TWO platform instances on one database: exactly one holds the leader lock and runs the loops (the other runs none); dated entitlements expire exactly once; the leader is killed, the other takes over; the killed one comes back as the standby
@@ -26,17 +27,19 @@ PINS_ONLY=0; [ "${1:-}" = "--pins-only" ] && PINS_ONLY=1   # stage 1 only: used 
 # H_SCOPE (the workflow's `scope` input): full = every stage; m2worker = Postgres + the migrations + module 2 + its real worker + the controllable sink + only the TestM2Worker tests (tests/harness/m2worker/stage.sh, m2w_scope_run);
 # m1node = module 1's real node (its own stage file); gotrue = a real GoTrue (tests/harness/gotrue/stage.sh) and only the TestGoTrue tests. A scope builds and starts only what it needs: BUILD_ONLY is the list stage 3 builds (empty = every service).
 SCOPE="${H_SCOPE:-full}"
-case "$SCOPE" in full|m1node|m2worker|gotrue) ;; *) echo "H_SCOPE must be full, m1node, m2worker or gotrue (got '$SCOPE')"; exit 2;; esac
+case "$SCOPE" in full|m1node|m2worker|gotrue|jobs) ;; *) echo "H_SCOPE must be full, m1node, m2worker, gotrue or jobs (got '$SCOPE')"; exit 2;; esac
 BUILD_ONLY=""
 case "$SCOPE" in
   gotrue)   BUILD_ONLY="migrate-platform migrate-m1 migrate-m2 migrate-m3";;   # stage 4 runs every migration chain; GoTrue itself is an image (docker-compose.gotrue.yml), pulled by digest, never built
   m2worker) BUILD_ONLY="migrate-platform migrate-m1 migrate-m2 migrate-m3 m2 m2-worker smtp-ctl";;
+  jobs)     BUILD_ONLY="migrate-platform migrate-m1 migrate-m2 migrate-m3 m1j jobsdns jobs-a jobs-b";;   # stage 4 runs every migration chain; module 1 is `m1j`, the fixture DNS `jobsdns` and the two instances `jobs-a`/`jobs-b` (docker-compose.jobs.yml); the scenario program is compiled by Go, not built as an image
   m1node) BUILD_ONLY="migrate-platform migrate-m1 migrate-m2 migrate-m3 m1n fx verifier-node";;   # stage 4 runs every migration chain; module 1's own control plane is `m1n` in this scope (docker-compose.m1node.yml)
 esac
 # FULL_INCLUDES: the optional stages the `full` run ALSO runs, once a runner has proven each in its own scope. It was EMPTY until the first scoped runs were green: a stage of a scope is DORMANT in `full` (it does not compile into the test binary, add a compose
 # file, start a container, mint a credential or print a line), so the full harness is exactly what it was before the stage existed. (Both stages have since been proven and included, see the value below.) THE ONE PLACE TO FLIP: name the stage here (FULL_INCLUDES="m2worker m1node"); a stage
 # that adds tests also needs tests/floors-harness.txt raised by its test count at the same time (they then compile into the full binary). Known names: m2worker (tests/harness/m2worker/stage.sh), m1node (tests/harness/m1node),
-# gotrue (tests/harness/gotrue/stage.sh: NOT yet named below, on purpose: it is dormant in `full` until a runner run of H_SCOPE=gotrue is green; then the lead names it here, raises the floor by the length of GT_TESTS (6) and corrects Docs/install.md, which says CI runs no GoTrue).
+# gotrue (tests/harness/gotrue/stage.sh: NOT yet named below, on purpose: it is dormant in `full` until a runner run of H_SCOPE=gotrue is green; then the lead names it here, raises the floor by the length of GT_TESTS (6) and corrects Docs/install.md, which says CI runs no GoTrue),
+# jobs (tests/harness/jobs/stage.sh: NOT yet named below, on purpose, for the same reason: dormant in `full` until a runner run of H_SCOPE=jobs is green; it adds no test to the floor, the scenario program is not a test).
 FULL_INCLUDES="m2worker m1node"   # both proven in their own scope on the runner at aeb29ed: m1node run 44183527048 (9 TestM1Node tests), m2worker run 44183533432 (5 TestM2Worker tests)
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PLATFORM_DIR="$(cd "$HERE/../.." && pwd)"
@@ -66,7 +69,14 @@ GT_ON=0; GT_DC=(); GT_EXPOSE=""
 case "$SCOPE" in gotrue) GT_ON=1;; esac
 case " ${FULL_INCLUDES:-} " in *" gotrue "*) [ "$SCOPE" = full ] && GT_ON=1;; esac
 [ "$GT_ON" = 1 ] && { GT_DC=(-f "$HERE/docker-compose.gotrue.yml" --profile gotrue); GT_EXPOSE="gotrue"; TEST_TAGS="$TEST_TAGS gotrue"; }
-DC() { docker compose --project-directory "$HERE" -f "$HERE/docker-compose.yml" ${M2W_DC[@]+"${M2W_DC[@]}"} ${GT_DC[@]+"${GT_DC[@]}"} ${M1N_FILES[@]+"${M1N_FILES[@]}"} --env-file "$WORK/harness.env" --profile probe --profile tests "$@"; }
+# The job engine's crash, handover and outage proofs (tests/harness/jobs/stage.sh, docker-compose.jobs.yml, the scenario program tests/harness/jobscenario; Phase 4, chunk B17a) are DORMANT in the same way: the compose file (module 1 as
+# `m1j` with a fixture DNS, the two platform instances jobs-a and jobs-b with the job engine ON and the fault points armed by name, the scenario program's container), its two secrets, the stages J0-J4 and the build of the scenario program exist
+# ONLY under H_SCOPE=jobs, or in the full run once `jobs` is named in FULL_INCLUDES. JOBS_ON is 1 exactly then. It adds no build tag and no test: the scenario program is a program, compiled by the stage.
+JOBS_ON=0; JOBS_DC=()
+case "$SCOPE" in jobs) JOBS_ON=1;; esac
+case " ${FULL_INCLUDES:-} " in *" jobs "*) [ "$SCOPE" = full ] && JOBS_ON=1;; esac
+[ "$JOBS_ON" = 1 ] && JOBS_DC=(-f "$HERE/docker-compose.jobs.yml" --profile jobs)
+DC() { docker compose --project-directory "$HERE" -f "$HERE/docker-compose.yml" ${M2W_DC[@]+"${M2W_DC[@]}"} ${GT_DC[@]+"${GT_DC[@]}"} ${JOBS_DC[@]+"${JOBS_DC[@]}"} ${M1N_FILES[@]+"${M1N_FILES[@]}"} --env-file "$WORK/harness.env" --profile probe --profile tests "$@"; }
 banner() { echo; echo "================ [$1] $2"; }
 # drift_evidence LOG: the contract drift gate's own output (internal/contractcheck Session, tests TestM*_ZContractDrift): everything the session printed, whole (the differences, the undeclared calls, the contracts no response reached with the reason
 # of each allowance, the coverage and what it cannot see). In record mode (CONTRACT_RECORD=1, the dispatch input contract_record) the session prints each CONTRACT-FIXTURE block as test log lines: those are printed RAW (no prefix) so that
@@ -86,6 +96,7 @@ lockpin() { tr -d '\r' < "$LOCK" | awk -v r="$1" '/^[[:space:]]*#/ || NF==0 {nex
 . "$HERE/m2worker/stage.sh"   # module 2's real worker (Phase 3, chunk B8): functions only (m2w_mint, m2w_stage_5c, m2w_evidence, m2w_require_pass, m2w_secret_leak, m2w_scope_run, m2w_not_checked)
 . "$HERE/m1node/m1node.sh"   # module 1's real verifier node, its fixtures and a wired control plane (Phase 3, chunk B7): functions only (m1n_mint, m1n_stage1..4, m1n_exposure, m1n_run, m1n_run_scope, m1n_not_checked)
 . "$HERE/m3adapter/outage.sh"   # module 3's adapter outage proof (Phase 3, chunk B12): functions only (m3a_evidence, m3a_outage and the steps it calls); called once, after stage 9b
+. "$HERE/jobs/stage.sh"   # the job engine's crash, handover and outage proofs (Phase 4, chunk B17a): functions only (jobs_mint, jobs_run, jobs_scope_run, jobs_not_checked, then the stages and helpers they call)
 . "$HERE/gotrue/stage.sh"   # a real GoTrue (Phase 4, chunk B15): functions only (gotrue_mint, gotrue_pull, gotrue_stage, gotrue_evidence, gotrue_require_pass, gotrue_secret_leak, gotrue_scope_run, gotrue_not_checked)
 
 # ── 1. pins ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -181,6 +192,7 @@ EOF
 echo "  minted: 5 database/app passwords, 1 pepper, 1 module-1 queue key, 1 module-1 caller key, 2 module service tokens (+ bcrypt hashes), module 3's admin key and its three workers' tokens (+ hashes, ids), KMS keys and mTLS material for modules 2 and 3 — none printed"
 [ "$M2W_ON" = 1 ] && m2w_mint   # module 2's real worker (only when it is on): the operator key and the worker's id and token (+ hashes), minted with module 2's own provision-worker, masked, appended to the env file (tests/harness/m2worker/stage.sh)
 [ "$M1N_ON" = 1 ] && m1n_mint   # module 1's node stack (only when it is on): the node's token (masked), a per-run CA and the api.ipify.org certificate (keys mode 600, never printed), two resolv.conf files, the fixture network prefix; appended to the env file (tests/harness/m1node/m1node.sh)
+[ "$JOBS_ON" = 1 ] && jobs_mint   # the job engine's proofs (only when they are on): the JWT secret of the two instances and the secret module 1's per-user keys are derived from, masked, appended to the env file (tests/harness/jobs/stage.sh)
 [ "$GT_ON" = 1 ] && gotrue_mint   # a real GoTrue (only when it is on): its JWT secret (48 random bytes in hex) and the password of its database role, masked, appended to the env file (tests/harness/gotrue/stage.sh)
 
 # ── 3. build ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -254,6 +266,7 @@ grep -qi "admin already exists\|already exists" "$WORK/first-admin-2.log" || die
 echo "  first admin created as postgres on the real auth schema; a second run refused; platform.admins holds exactly one row"
 [ "$SCOPE" = m2worker ] && m2w_scope_run   # H_SCOPE=m2worker: module 2's Control, its worker (5c), the TestM2Worker tests and the exposure check, then the end of the run: it never returns
 [ "$SCOPE" = m1node ] && m1n_run_scope     # H_SCOPE=m1node (M1N_ON is 1): the fixtures, module 1's real node, a wired control plane and the TestM1Node tests (stages M1N-1 to M1N-5), then the end of the run: it never returns
+[ "$SCOPE" = jobs ] && jobs_scope_run      # H_SCOPE=jobs (JOBS_ON is 1): module 1 with its fixture DNS, two platform instances, the scenario program, stages J0-J4, the evidence, leak and exposure checks, then the end of the run: it never returns
 [ "$SCOPE" = gotrue ] && gotrue_scope_run  # H_SCOPE=gotrue (GT_ON is 1): GoTrue (5d), the TestGoTrue tests, the secret-leak and exposure checks, then the end of the run: it never returns
 
 # ── 5. services ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -337,6 +350,11 @@ printf "$t\n" >> "$WORK/h-run.log"; printf "ok  \t$GO_PKG\t0.000s\n" >> "$WORK/h
 grep -q '^--- PASS: TestM1Live_BulkJobSettlesItemByItem ' "$WORK/h-run.log" || die "TestM1Live_BulkJobSettlesItemByItem (a real module-1 bulk job settled item by item, compared with the module's own report) has no '--- PASS' line in the run log: it did not run, or did not pass"
 # Phase 4 B16: the eleven TestM1LiveProvision_* tests (module 1's caller key is registered through platform.provision_m1_caller) must all be among the tests that PASSED in the log the run itself produced; the floor counts the package, this names the family
 [ "$(grep -c '^--- PASS: TestM1LiveProvision_' "$WORK/h-run.log")" -ge 11 ] || die "fewer than 11 TestM1LiveProvision_* tests have a '--- PASS' line in the run log (found $(grep -c '^--- PASS: TestM1LiveProvision_' "$WORK/h-run.log")): the key-provisioning proofs did not all run, or did not all pass"
+# Phase 4 B8-B12: the TestJobsLive_* tests (the job engine, in the test process, against the REAL modules 1 and 3: six live tests and four comparison controls) must all be among the tests that PASSED in the log the run itself produced; each live test is named, so that a missing one is named
+for jl_t in TestJobsLive_M1_VerifyJobSettlesItemByItem TestJobsLive_M3_SendJobSettlesItemByItem TestJobsLive_M3_ConfirmChecksEntitlementAndFeasibilityAgainstTheModule TestJobsLive_M3_CancelRunningJob TestJobsLive_Chain_ExactlySelectedVerdictsMove TestJobsLive_M3_ScheduledStartsOnTime; do
+  grep -q "^--- PASS: $jl_t " "$WORK/h-run.log" || die "$jl_t has no '--- PASS' line in the run log: it did not run, or did not pass"
+done
+[ "$(grep -c '^--- PASS: TestJobsLive_' "$WORK/h-run.log")" -ge 10 ] || die "fewer than 10 TestJobsLive_* tests have a '--- PASS' line in the run log (found $(grep -c '^--- PASS: TestJobsLive_' "$WORK/h-run.log")): the six live job tests and their four comparison controls did not all run, or did not all pass"
 [ "$M2W_ON" = 1 ] && m2w_outage   # (only when module 2's real worker is on) B12: module 2's API stopped in the middle of a campaign and started again, three phases (tests/harness/m2worker/stage.sh; proven in scope m2worker, run 44206820889); it puts module 2 and its worker back before the stages that follow
 [ "$M2W_ON" = 1 ] && m2w_require_pass "$WORK/h-run.log"   # (only when module 2's real worker is on) every TestM2Worker_* test has a '--- PASS' line (module 2 really sent, bounced, exhausted and cancelled)
 [ "$GT_ON" = 1 ] && gotrue_require_pass "$WORK/h-run.log"   # (only when GoTrue is on) every TestGoTrue_* test has a '--- PASS' line (the platform's token verification was shown against tokens the real GoTrue issued)
@@ -516,6 +534,7 @@ echo "  d. $LEAD ($LSVC) is back: /readyz 200, no pass run, no lock held; for 12
 STAGE=ledger; banner 10 "the balance invariant holds on the live database (rolled-back exercise through the ledger)"
 bash "$PLATFORM_DIR/scripts/check-balance-invariant.sh" --psql-cmd "docker compose --project-directory $HERE -f $HERE/docker-compose.yml --env-file $WORK/harness.env --profile probe --profile tests exec -T postgres psql -U supabase_admin -d postgres" --exercise || die "the balance invariant gate is red on the live database"
 
+[ "$JOBS_ON" = 1 ] && [ "$SCOPE" = full ] && jobs_run   # the job engine's proofs (stages J0-J4), only when `jobs` is named in FULL_INCLUDES: it stops the legacy platform containers and module 1 first (the leader lock and the queue are theirs otherwise); dormant otherwise
 [ "$M1N_ON" = 1 ] && [ "$SCOPE" = full ] && m1n_run   # the module-1 node stack, only when `m1node` is named in FULL_INCLUDES (stages M1N-1 to M1N-5, tests/harness/m1node/m1node.sh); dormant otherwise
 
 # ── result ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -550,6 +569,7 @@ cat <<'EOF'
 EOF
 [ "$M2W_ON" = 1 ] && m2w_not_checked correction   # what module 2's real worker stage does not vouch for (tests/harness/m2worker/stage.sh); printed only when that stage ran, and it says that the first bullet's "Module 2 has no worker" no longer holds
 [ "$M1N_ON" = 1 ] && m1n_not_checked   # what the module-1 node stack does not vouch for (tests/harness/m1node/m1node.sh); printed only when that stack ran
+[ "$JOBS_ON" = 1 ] && jobs_not_checked   # what the job engine's proofs do not vouch for (tests/harness/jobs/stage.sh); printed only when that stage ran
 [ "$GT_ON" = 1 ] && gotrue_not_checked correction   # what the GoTrue stage does not vouch for (tests/harness/gotrue/stage.sh); printed only when that stage ran, and it says that the "Not here: GoTrue" of the bullet above no longer holds
 echo
 echo "HARNESS RESULT: GREEN — modules built from $(lockpin coldmail-verify | cut -c1-7) / $(lockpin coldmail-send-managed | cut -c1-7) / $(lockpin coldmail-send-byo | cut -c1-7); $sline"

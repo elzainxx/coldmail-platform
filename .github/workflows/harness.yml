@@ -68,13 +68,14 @@ on:
   workflow_dispatch:
     inputs:
       scope:
-        description: 'What to run. full = every stage (the default, and what every other trigger runs); m1node = module 1 real verifier node; m2worker = Postgres + migrations + module 2 + its real worker + the controllable sink + only the TestM2Worker tests; gotrue = Postgres + migrations + a real, digest-pinned GoTrue + only the TestGoTrue tests (the platform''s token verification against tokens GoTrue issued)'
+        description: 'What to run. full = every stage (the default, and what every other trigger runs); m1node = module 1 real verifier node; m2worker = Postgres + migrations + module 2 + its real worker + the controllable sink + only the TestM2Worker tests; gotrue = Postgres + migrations + a real, digest-pinned GoTrue + only the TestGoTrue tests (the platform''s token verification against tokens GoTrue issued); jobs = Postgres + migrations + module 1 with a fixture DNS + TWO platform instances with the job engine on: the platform''s own process killed at five injected points, the leader killed, module 1 stopped mid-job, every job verified (tests/harness/jobs/stage.sh)'
         type: choice
         options:
           - full
           - m1node
           - m2worker
           - gotrue
+          - jobs
         default: full
       contract_record:
         description: 'Record mode of the contract drift gate: the sessions PRINT the real responses as CONTRACT-FIXTURE blocks (the lead commits them as the fixtures) instead of failing on a difference. Leave off for every normal run.'

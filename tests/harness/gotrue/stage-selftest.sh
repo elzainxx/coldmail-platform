@@ -280,7 +280,7 @@ missing=""
 for v in $(grep -o '"HARNESS_GOTRUE_[A-Z_]*"' "$GOF" | tr -d '"' | sort -u); do grep -q "^      $v:" "$COMPOSE" || missing="$missing $v"; done
 nvars="$(grep -o '"HARNESS_GOTRUE_[A-Z_]*"' "$GOF" | sort -u | wc -l | tr -d ' ')"
 verdict "consistency: the test container gets every HARNESS_GOTRUE_ variable the Go file reads (and the Go file reads three)" 0 "given" "$([ -z "$missing" ] && [ "$nvars" = 3 ] && echo given || echo "missing:$missing, the Go file names $nvars")" 0
-verdict "consistency: run.sh allows the scope gotrue" 0 "scope-allowed-ok" "$(grep -q 'case "\$SCOPE" in full|m1node|m2worker|gotrue) ;;' "$RUNSH" && echo scope-allowed-ok || echo "SCOPE-NOT-ALLOWED-FAIL")" 0
+verdict "consistency: run.sh allows the scope gotrue" 0 "scope-allowed-ok" "$(grep -q 'case "\$SCOPE" in full|m1node|m2worker|gotrue|jobs) ;;' "$RUNSH" && echo scope-allowed-ok || echo "SCOPE-NOT-ALLOWED-FAIL")" 0
 verdict "consistency: run.sh sources the stage and ends the scope through gotrue_scope_run" 0 "wired" "$(grep -q '^\. "\$HERE/gotrue/stage.sh"' "$RUNSH" && grep -q '^\[ "\$SCOPE" = gotrue \] && gotrue_scope_run' "$RUNSH" && echo wired || echo missing)" 0
 verdict "consistency: the scope builds only the four migration images (GoTrue is pulled by digest, never built)" 0 "scoped" "$(grep -q 'gotrue)   BUILD_ONLY="migrate-platform migrate-m1 migrate-m2 migrate-m3";;' "$RUNSH" && echo scoped || echo missing)" 0
 # every call of a gotrue_ function in run.sh sits under its guard: GT_ON is 1, or the scope is gotrue (the line that sources the stage is the one exception)

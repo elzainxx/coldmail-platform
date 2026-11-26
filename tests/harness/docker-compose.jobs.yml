@@ -1,0 +1,177 @@
+# The crash, handover and outage proofs of the job engine (Phase 4, chunk B17a): a compose override file that run.sh merges after docker-compose.yml
+# (`-f docker-compose.yml -f docker-compose.jobs.yml --profile jobs`) ONLY when the stage is on: under H_SCOPE=jobs, or in the full run once `jobs` is named in FULL_INCLUDES (run.sh, one place). In
+# the normal full run this file is not read at all, so nothing here exists. Every service also carries `profiles: [jobs]`, so that even a merge without the profile flag could not start one by accident.
+#
+# WHAT IS HERE. Two platform INSTANCES with the job engine ON (jobs-a, jobs-b), a REAL module 1 of their own (m1j), the fixture DNS that module 1 asks (jobsdns) and the scenario program's container
+# (jobscenario). Nothing of docker-compose.yml is changed: `m1`, `platform` and `platform-2` of the other stages keep their configuration (the legacy platform containers keep the engine OFF, because
+# their tests write jobs by hand). The overlay ADDS services and the one environment the scenario needs.
+#
+# THE PLATFORM INSTANCES are built from the same recipe as `platform` (the Dockerfile, with the one build argument that arms the fault points: only the harness builds that tag, and a tagged binary does
+# nothing until the variable below is set). Their environment is the engine's: a short tick and settle interval so that a proof finishes in seconds, the staleness limit of module 1 at its minimum (one
+# minute: the outage proof waits for it), the instance's own name (the application_name of the session that holds the leader lock), module 1's address and the SECRET its per-user keys are derived from, and
+# the JWT secret and issuer the job API verifies. Both secrets are minted per run by tests/harness/jobs/stage.sh (jobs_mint), written mode 600 to the env file and masked in the log; the SAME values go to
+# both instances and to the scenario program (it mints the tokens of its users with the JWT secret and derives the key it reads module 1's report with from the other).
+#
+# THE FAULT POINT of an instance comes from the variable H_JOBS_A_FAULT / H_JOBS_B_FAULT, which the stage sets only for the one command that creates the service (`up --force-recreate`): empty means no
+# fault is armed. `restart: "no"`: a container that was killed (or stopped) stays dead until the stage starts it again, which is what lets the stage read its exit status and its log.
+#
+# MODULE 1 IS `m1j`, not `m1`: the same build and environment as `m1` (docker-compose.yml) plus two things. Its resolver is the scope's fixture DNS (a resolv.conf the stage writes after jobsdns is up: a
+# name under .test answers NXDOMAIN, so module 1 says invalid/no_mx, a CHARGED answer; free.example.test has an MX, so module 1, wired to no SMTP node, says risky/plausible with the skip token
+# smtp_unwired, a FREE answer): without it the answers depend on what the runner's resolver says of names that do not exist, which can be nothing a charge rule prices, and the ledger half of every proof
+# would hold of an empty set. And a short lease margin: the drainer leases a batch of ten items and a STOP leaves them leased until the lease runs out (the outage proof stops this container in the middle of
+# a job), so a stranded batch is picked up within about a minute of the restart, not two. One control plane drains the queue: in the scope `m1` is never started; a full run that includes this stage must stop `m1` first.
+#
+# NO service here publishes a port (the exposure check lists them all; docker inspect is the second instrument). The network is the base file's `private`, which is `internal: true`.
+
+x-jobs-issuer: &jobs-issuer "https://jobs.harness.example.test/auth/v1"
+
+services:
+  # ── the platform: two instances of one deployment ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  # Keep jobs-b in step with jobs-a: a change to one environment is a change to the other, except the instance name and the fault variable. (PLATFORM_M3_URL and its operator key are required by the
+  # service whatever it does; module 3 is not started in this scope and nothing here calls it: no user has an entitlement.)
+  jobs-a:
+    profiles: [jobs]
+    build:
+      context: "${H_PLATFORM_DIR:?}"
+      dockerfile: Dockerfile
+      args: { GO_TAGS: faultpoints }
+    environment:
+      PLATFORM_DATABASE_URL: postgres://platform_app:${H_PLATFORM_APP_PASSWORD:?}@postgres:5432/postgres
+      PLATFORM_HTTP_ADDR: ":8080"
+      PLATFORM_ENV: development
+      PLATFORM_LOG_LEVEL: debug
+      PLATFORM_M3_URL: http://m3:8080
+      PLATFORM_M3_ADMIN_TOKEN: ${H_M3_ADMIN_KEY:?}
+      PLATFORM_ENTITLEMENT_EXPIRE_INTERVAL_SEC: "2"
+      PLATFORM_M3_RECONCILE_INTERVAL_SEC: "2"
+      PLATFORM_INSTANCE_ID: jobs-a
+      PLATFORM_JOB_ENGINE_ENABLED: "true"
+      PLATFORM_JOB_TICK_MS: "200"
+      PLATFORM_JOB_SETTLE_INTERVAL_SEC: "1"
+      PLATFORM_JOB_STALE_AFTER_MIN_M1: "1"
+      PLATFORM_M1_URL: http://m1j:8080
+      PLATFORM_M1_KEY_SECRET: ${H_JOBS_M1_KEY_SECRET:?}
+      PLATFORM_M1_KEY_VERSION: "1"
+      PLATFORM_M1_VENDOR_REACHABLE: "false"
+      PLATFORM_JWT_SECRET: ${H_JOBS_JWT_SECRET:?}
+      PLATFORM_JWT_ISSUER: *jobs-issuer
+      PLATFORM_JWT_AUDIENCE: authenticated
+      PLATFORM_FAULTPOINT: ${H_JOBS_A_FAULT:-}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/readyz || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    depends_on: { postgres: { condition: service_healthy } }
+    networks: [private]
+    restart: "no"
+
+  jobs-b:
+    profiles: [jobs]
+    build:
+      context: "${H_PLATFORM_DIR:?}"
+      dockerfile: Dockerfile
+      args: { GO_TAGS: faultpoints }
+    environment:
+      PLATFORM_DATABASE_URL: postgres://platform_app:${H_PLATFORM_APP_PASSWORD:?}@postgres:5432/postgres
+      PLATFORM_HTTP_ADDR: ":8080"
+      PLATFORM_ENV: development
+      PLATFORM_LOG_LEVEL: debug
+      PLATFORM_M3_URL: http://m3:8080
+      PLATFORM_M3_ADMIN_TOKEN: ${H_M3_ADMIN_KEY:?}
+      PLATFORM_ENTITLEMENT_EXPIRE_INTERVAL_SEC: "2"
+      PLATFORM_M3_RECONCILE_INTERVAL_SEC: "2"
+      PLATFORM_INSTANCE_ID: jobs-b
+      PLATFORM_JOB_ENGINE_ENABLED: "true"
+      PLATFORM_JOB_TICK_MS: "200"
+      PLATFORM_JOB_SETTLE_INTERVAL_SEC: "1"
+      PLATFORM_JOB_STALE_AFTER_MIN_M1: "1"
+      PLATFORM_M1_URL: http://m1j:8080
+      PLATFORM_M1_KEY_SECRET: ${H_JOBS_M1_KEY_SECRET:?}
+      PLATFORM_M1_KEY_VERSION: "1"
+      PLATFORM_M1_VENDOR_REACHABLE: "false"
+      PLATFORM_JWT_SECRET: ${H_JOBS_JWT_SECRET:?}
+      PLATFORM_JWT_ISSUER: *jobs-issuer
+      PLATFORM_JWT_AUDIENCE: authenticated
+      PLATFORM_FAULTPOINT: ${H_JOBS_B_FAULT:-}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/readyz || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    depends_on: { postgres: { condition: service_healthy } }
+    networks: [private]
+    restart: "no"
+
+  # ── module 1, as the platform's engine meets it in this scope ───────────────────────────────────────────────────────────────────────────────────────────────────
+  # `m1` of docker-compose.yml again (same build, same database, same environment; see the header for the two differences). Its resolv.conf is written by the stage (jobs_infra) from the fixture's
+  # address before this service starts: a bind mount of a file that does not exist would make Docker create a DIRECTORY there. The platform's per-user keys are registered with module 1 by the platform
+  # itself, at each user's first job, through platform.provision_m1_caller (db/install/postmodule1.sql, which run.sh ran after module 1's migrations).
+  m1j:
+    profiles: [jobs]
+    build: { context: "${H_MODULES_ROOT:?}/coldmail-verify", dockerfile: "${H_PLATFORM_DIR:?}/tests/harness/m1/Dockerfile" }
+    environment:
+      TM_DATABASE_URL: postgres://verify_app:${H_M1_APP_PASSWORD:?}@postgres:5432/postgres
+      TM_PEPPER: ${H_M1_PEPPER:?}
+      TM_QUEUE_ADDR_KEY: ${H_M1_QUEUE_KEY:?}
+      TM_ENV: development
+      TM_LISTEN_ADDR: ":8080"
+      TM_QUEUE_LEASE_MARGIN_SECONDS: "5"
+    volumes:
+      - ${H_WORK:?}/jobs/resolv.conf:/etc/resolv.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/readyz >/dev/null || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    depends_on:
+      postgres: { condition: service_healthy }
+      jobsdns: { condition: service_healthy }
+    networks: [private]
+
+  # ── the fixture DNS module 1 asks (tests/harness/fx with its dns and api roles only, the zone of tests/harness/jobs/dns.json) ─────────────────────────────────────────────────
+  # The same program and the same hardening as `m3dns` of docker-compose.yml. Port 53 is below 1024: bound by a non-root user through the namespaced sysctl net.ipv4.ip_unprivileged_port_start=0, no
+  # capability. It forwards the dotless names that belong to Docker (module 1's database host `postgres`) to Docker's embedded resolver, which answers them for the network it is on.
+  jobsdns:
+    profiles: [jobs]
+    build: { context: "${H_PLATFORM_DIR:?}/tests/harness/fx", dockerfile: Dockerfile }
+    user: "${H_HOST_UID:?}:${H_HOST_GID:?}"
+    environment:
+      FX_ROLES: "dns,api"
+      FX_CONFIG: /fx/fixture.json
+      FX_DNS_ADDR: ":53"
+      FX_API_ADDR: ":8025"
+    volumes:
+      - ${H_PLATFORM_DIR:?}/tests/harness/jobs/dns.json:/fx/fixture.json:ro
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: "0"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8025/readyz || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    networks: [private]
+
+  # ── the scenario program, run INSIDE the private network (`docker compose run --rm -T --no-deps jobscenario <command>`) ───────────────────────────────────────────────────
+  # The binary is compiled on the runner (tests/harness/jobscenario, build tag harness) into $H_WORK/out and mounted read-only, like the integration tests. It talks to the platform's HTTP API, reads the
+  # database as the harness's superuser and asks module 1 with the key the platform derives for the user, so it is given the two secrets of the instances (they are not printed by anything).
+  jobscenario:
+    profiles: [jobs]
+    image: alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
+    entrypoint: ["/h/jobscenario"]
+    environment:
+      HARNESS_ADMIN_DATABASE_URL: postgres://supabase_admin:${H_PG_SUPERPASS:?}@postgres:5432/postgres
+      JOBS_JWT_SECRET: ${H_JOBS_JWT_SECRET:?}
+      JOBS_JWT_ISSUER: *jobs-issuer
+      JOBS_JWT_AUDIENCE: authenticated
+      JOBS_M1_KEY_SECRET: ${H_JOBS_M1_KEY_SECRET:?}
+      JOBS_M1_KEY_VERSION: "1"
+      JOBS_M1_URL: http://m1j:8080
+    volumes:
+      - ${H_WORK:?}/out:/h:ro
+    depends_on: { postgres: { condition: service_healthy } }
+    networks: [private]
+    restart: "no"
