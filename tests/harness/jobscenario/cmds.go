@@ -74,9 +74,11 @@ func cmdWait(args []string) error {
 	fs := flags("wait")
 	var job, spec string
 	var timeout, pollMS, minResults int
+	var allStamped bool
 	fs.StringVar(&job, "job", "", "the job")
 	fs.StringVar(&spec, "until", "terminal", "terminal, running or any:<status>[,<status>]")
 	fs.IntVar(&minResults, "min-results", 0, "also wait until the engine has recorded at least this many results of module 1's answers")
+	fs.BoolVar(&allStamped, "all-stamped", false, "also wait until every pending row has been handed to the module (submitted_at set): a pause or a cancel then lands on a job the module holds whole, never on a job whose engine is still between two batches")
 	fs.IntVar(&timeout, "timeout", 300, "seconds to wait")
 	fs.IntVar(&pollMS, "poll-ms", 200, "milliseconds between two reads of the job")
 	if err := parse(fs, args); err != nil {
@@ -116,6 +118,13 @@ func cmdWait(args []string) error {
 					return d.scrub(err)
 				}
 				enough = n >= minResults
+			}
+			if enough && allStamped {
+				var unstamped int
+				if err := d.c.QueryRow(ctx, `SELECT count(*) FROM platform.job_rows WHERE job_id = $1::uuid AND state = 'pending' AND submitted_at IS NULL`, job).Scan(&unstamped); err != nil {
+					return d.scrub(err)
+				}
+				enough = unstamped == 0
 			}
 			if enough {
 				break

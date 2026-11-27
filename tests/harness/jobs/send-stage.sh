@@ -235,7 +235,7 @@ sj_kill_point() {
       jobs_need "SJ-K $m $point: the confirm was meant to get no answer";;
     pause.after_module|cancel.after_module)
       sj_setup "$m" "kill-$point" "$SJ_HOLD_MS"
-      JOBS_QUIET=1 jobs_scn wait --job "$JOB" --until running --min-results 1 --timeout 180 --poll-ms 50
+      JOBS_QUIET=1 jobs_scn wait --job "$JOB" --until running --min-results 1 --all-stamped --timeout 180 --poll-ms 50
       [ "$JOBS_RC" = 0 ] || { cat "$WORK/jobs-scn-last.txt"; die "SJ-K $m $point: the job did not reach running with a first result recorded: $(printf '%s' "$JOBS_ERR" | tail -2 | tr '\n' ' ')"; }
       if [ "$point" = pause.after_module ]; then
         path=pause; jobs_scn move --api "$JOBS_API_A" --job "$JOB" --op pause --expect-status paused; jobs_need "SJ-K $m $point: the user's pause of the running job"
@@ -330,7 +330,7 @@ sj_outage() {
   case "$m" in m2) svc=m2;; *) svc=m3;; esac
   sj_stop_others; sj_up jobs-a ""
   sj_setup "$m" outage "$SJ_OUTAGE_HOLD_MS" "$SJ_TEXT_GENERATED"
-  JOBS_QUIET=1 jobs_scn wait --job "$JOB" --until running --min-results 1 --timeout 180 --poll-ms 50
+  JOBS_QUIET=1 jobs_scn wait --job "$JOB" --until running --min-results 1 --all-stamped --timeout 180 --poll-ms 50
   [ "$JOBS_RC" = 0 ] || { cat "$WORK/jobs-scn-last.txt"; die "SJ-O $m: the job did not reach running with a first result recorded: $(printf '%s' "$JOBS_ERR" | tail -2 | tr '\n' ' ')"; }
   if [ "$m" = m2 ]; then
     echo "  the job is running with its first results recorded; module 2's control is stopped now (docker compose stop: SIGTERM, a graceful drain; its grace period is 90 s)"
