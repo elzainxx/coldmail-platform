@@ -33,14 +33,15 @@ type renderedMessage struct {
 
 // The words a refused message is named by (a row's reason when its state is unrenderable: platform_0019, rule P-10; also the reason a refusal is logged by). A word is never a value of the row.
 const (
-	WordRendererRefused   = "renderer_refused"     // the renderer returned an error for the row
-	WordInvalidText       = "invalid_text"         // a rendered part is not valid UTF-8 text without NUL
-	WordSubjectBlank      = "subject_blank"        // the rendered subject is empty after trimming
-	WordSubjectTooLong    = "subject_too_long"     // more than MaxSubjectBytes
-	WordSubjectNotOneLine = "subject_not_one_line" // a line break in the subject
-	WordHTMLTooLarge      = "html_too_large"       // more than MaxBodyBytes
-	WordTextTooLarge      = "text_too_large"       // more than MaxBodyBytes
-	WordNoBody            = "no_body"              // the HTML and the text are both blank
+	WordRendererRefused   = "renderer_refused"            // the renderer returned an error for the row
+	WordInvalidText       = "invalid_text"                // a rendered part is not valid UTF-8 text without NUL
+	WordSubjectBlank      = "subject_blank"               // the rendered subject is empty after trimming
+	WordSubjectTooLong    = "subject_too_long"            // more than MaxSubjectBytes
+	WordSubjectNotOneLine = "subject_not_one_line"        // a line break in the subject
+	WordHTMLTooLarge      = "html_too_large"              // more than MaxBodyBytes
+	WordTextTooLarge      = "text_too_large"              // more than MaxBodyBytes
+	WordNoBody            = "no_body"                     // the HTML and the text are both blank
+	WordNoVisibleLink     = "no_visible_unsubscribe_link" // the message holds no link a recipient can see to unsubscribe by, even with the footer (an unclosed comment or tag swallowed it): never sent without one
 )
 
 // renderRefusal is the ErrBadRequest of a message the table refuses, with the word that names the refusal. It unwraps to the *BadRequestError that says it in a sentence, so errors.As and errors.Is see the
@@ -106,6 +107,10 @@ func renderRow(r Renderer, c Content, row EngineRow) (renderedMessage, error) {
 func renderPrepared(p PreparedCampaign, replyTo string, row EngineRow) (renderedMessage, error) {
 	subject, html, text, err := p.Render(row)
 	if err != nil {
+		var already *renderRefusal
+		if errors.As(err, &already) { // a refusal that names its own word (template.go: no visible unsubscribe link) keeps it
+			return renderedMessage{}, err
+		}
 		return renderedMessage{}, refuse(WordRendererRefused, "row %d: the renderer refused the row", row.Ordinal)
 	}
 	return checkRendered(row.Ordinal, subject, html, text, replyTo)

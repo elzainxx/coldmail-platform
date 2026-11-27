@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"path"
 	"runtime/debug"
 	"strings"
 	"time"
@@ -169,13 +170,15 @@ func (s *service) accessLog(next http.Handler) http.Handler {
 var secretPathPrefixes = []string{"/u/"}
 
 // loggedPath is the path as the access log records it: the path itself, except that everything after a secret prefix is replaced by [token], whatever it is and whether or not a route took it.
-func loggedPath(path string) string {
+func loggedPath(raw string) string {
+	cleaned := path.Clean(raw)
 	for _, p := range secretPathPrefixes {
-		if strings.HasPrefix(path, p) {
+		// the cleaned form too: the mux answers "//u/<token>" and "/./u/<token>" with a redirect to "/u/<token>", and that first request is logged as it arrived
+		if strings.HasPrefix(raw, p) || strings.HasPrefix(cleaned, p) {
 			return p + "[token]"
 		}
 	}
-	return path
+	return raw
 }
 
 // recoverer turns a handler panic into a 500 envelope. The panic value and stack go to the log under the

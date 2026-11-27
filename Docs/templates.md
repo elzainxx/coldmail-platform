@@ -76,7 +76,7 @@ When the text template is blank, the text body is made from the rendered HTML: p
 
 ## Errors
 
-A template with a mistake is refused where it is saved, with a position (line and column, counted in characters): an unclosed `{` or `{{`; a stray `}`; a group of fewer than two options or more than 64; nesting deeper than 8; an empty or invalid field name or one longer than 64; a field closed with one brace; a brace inside a fallback.
+A template with a mistake is refused where it is saved, with a position (line and column, counted in characters): an unclosed `{` or `{{`; a stray `}`; a group of fewer than two options or more than 64; nesting deeper than 8; an empty or invalid field name or one longer than 64; a field closed with one brace; a brace inside a fallback; and `{{unsubscribe_url}}` inside a group (see "The unsubscribe footer": the link must always be there).
 
 ## In a job
 
@@ -115,7 +115,7 @@ The confirm leaves out, in the same transaction as the suppression list and befo
 | State | Rule | Reason | When |
 |---|---|---|---|
 | `missing_field` | `P-09` | the names of the missing fields, separated by commas (`first_name,plan`), never a value | the row lacks a field its templates need and give no fallback for |
-| `unrenderable` | `P-10` | one word: `subject_blank`, `subject_too_long`, `subject_not_one_line`, `html_too_large`, `text_too_large`, `no_body`, `invalid_text` or `renderer_refused` | the message the templates make for the row is one the platform refuses: a subject that renders blank or over 998 bytes, a part over 1 MiB, no body at all, text that is not valid UTF-8 |
+| `unrenderable` | `P-10` | one word: `subject_blank`, `subject_too_long`, `subject_not_one_line`, `html_too_large`, `text_too_large`, `no_body`, `no_visible_unsubscribe_link`, `invalid_text` or `renderer_refused` | the message the templates make for the row is one the platform refuses: a subject that renders blank or over 998 bytes, a part over 1 MiB, no body at all, text that is not valid UTF-8, or an HTML that shows no unsubscribe link even with the footer (below) |
 
 A send **chained** to a verify job takes its rows from that job's results, and those rows have an address and no merge data: a template that needs a field without a fallback leaves every row out (and the confirm is `422 nothing_to_do`). Use fallbacks (`{{first_name|there}}`) or only `{{email}}` there.
 
@@ -125,11 +125,13 @@ A row is judged by **rendering it once** during the confirm, exactly as it will 
 
 ### The unsubscribe footer
 
-Every part a recipient can read needs a way to stop receiving the messages. The rule is **per part**: for the HTML, and for the text when you wrote a text template, if **that** template does not place `{{unsubscribe_url}}`, the platform adds a footer to that part, always the same words:
+Every part a recipient can read needs a way to stop receiving the messages. The rule is **per part and judged on what is rendered**, not on what the template says: for the HTML, and for the text when you wrote a text template, if the rendered part does not already show the recipient's link, the platform adds a footer to that part, always the same words. For the HTML "shows" is the plain-text view of the rendered HTML (the same conversion that makes the generated text: a link is `text (url)`, comments, tags, attributes, scripts and styles are dropped), so a `{{unsubscribe_url}}` placed only in an `<img src>`, in a comment or in a script is not shown and the footer is still added; for a text it is the rendered text itself.
 
 - to the HTML, a paragraph before the closing `</body>` (or at the end when there is none): `To stop receiving these messages, <a href="LINK">unsubscribe</a>.`
 - to an explicit text template, a blank line and `To stop receiving these messages, unsubscribe: LINK`;
 - a text made from the HTML (a blank text template) comes from the **final** HTML, so it has the link exactly when the HTML does (your own link or the footer's), once and never twice.
+
+**The placement must be unconditional.** `{{unsubscribe_url}}` inside a spintax option (`{bye|<a href="{{unsubscribe_url}}">stop</a>}`) is refused when the job is saved, with the position of its `{{`: the recipients whose draw misses the option would have no link of yours. Put it at the top level of the template (an attribute of a top-level `<a>` is fine), or leave it out and let the footer do it; the same rule holds in the subject, where the field is otherwise allowed. **A message that still shows no link is not sent.** After the footer is added the HTML is read again; when it still shows no link (an unclosed `<!--`, tag, `<style>` or `<script>` swallows the footer, and everything after it) the row is left out as `unrenderable`, reason `no_visible_unsubscribe_link`, free (the preview counts it). Close the comment or the tag. A text-only campaign is not affected: its text is footed.
 
 So an HTML that places the link next to an explicit text that does not gets no second link in the HTML and a footer line in the text, and the reverse; when both place it nothing is added; when neither does, both get the footer. A campaign with no HTML part (text only) gets the text footer and no HTML. The subject never gets a footer, and a subject that uses `{{unsubscribe_url}}` is allowed and decides nothing for the other parts. The link is the recipient's own (it names the item, never the address) and is the one the platform hands the sending module for that item (`public.job_items.unsubscribe_url`, see [`unsubscribe.md`](unsubscribe.md)).
 

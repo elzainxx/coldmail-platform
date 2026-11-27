@@ -657,3 +657,45 @@ func TestJobsTemplates_TheStateVocabularyAndTheReasonRuleAtTheTable(t *testing.T
 	}
 	ledgerExpectRefused(t, tx, "a state that is none of the seven", "23514", ledgerWhy{Constraint: "job_rows_state_vocabulary"}, ins, try("skipped", "why", nil, false)...)
 }
+
+// A message that would leave with no link a recipient can see (the HTML ends in an unclosed comment, which swallows the footer) is counted as unrenderable by the preview, left out by the confirm, free, and
+// never given an item; the same campaign with the comment closed is sent. The two jobs differ only in that one character.
+func TestJobsTemplates_AMessageWithNoVisibleUnsubscribeLinkIsCountedAndLeftOutNotSent(t *testing.T) {
+	e := newJtEnv(t)
+	ctx := testCtx(t)
+	bad := e.jtFundedUser("m2")
+	job := e.jtCreate(bad, "m2", jtRows(3, nil), jobs.Content{Subject: "S", HTML: "<p>Hi</p><!-- oops", ReplyTo: "reply@example.test"})
+	p := e.preview(bad, job.ID)
+	if p.Unrenderable != 3 || p.MissingFields != 0 || p.Units != 0 || p.Credits != 0 || len(p.Samples) != 0 {
+		t.Fatalf("preview: unrenderable %d missing %d units %d credits %d samples %d; want 3 0 0 0 0", p.Unrenderable, p.MissingFields, p.Units, p.Credits, len(p.Samples))
+	}
+	before := e.writes()
+	_, err := e.tryConfirm(bad, job.ID, p.Fingerprint, e.key(), nil)
+	jbsIs(t, "the confirm of a list none of whose messages has a visible link", err, jobs.ErrNothingToDo)
+	e.requireWrites("the refused confirm", before)
+
+	// the control: a closed comment, and one row that is complete among rows that are not, shows the word in the results
+	good := e.jtFundedUser("m2")
+	ok := e.jtCreate(good, "m2", jtRows(3, nil), jobs.Content{Subject: "S", HTML: "<p>Hi</p><!-- fine -->", ReplyTo: "reply@example.test"})
+	gp := e.preview(good, ok.ID)
+	if gp.Unrenderable != 0 || gp.Units != 3 {
+		t.Fatalf("the control preview: unrenderable %d units %d, want 0 and 3", gp.Unrenderable, gp.Units)
+	}
+	res := e.confirm(good, ok.ID, gp.Fingerprint)
+	if res.Pending != 3 || res.Unrenderable != 0 {
+		t.Fatalf("the control confirm: %+v", res)
+	}
+	if n, err := e.jobs.EnsureJobItems(ctx, ok.ID); err != nil || n != 3 {
+		t.Fatalf("EnsureJobItems: %d, %v", n, err)
+	}
+	for _, r := range e.rowsOf(ok.ID) {
+		it := e.jtItem(r.ID)
+		if strings.Count(it.Body, it.Link) != 1 || strings.Count(it.Text, it.Link) != 1 {
+			t.Errorf("row %d: the message does not carry its link once in each part: %+v", r.Ordinal, it)
+		}
+	}
+	// the refused confirm rolled everything back: no result of any rule was written for the job
+	if got := e.rows("SELECT count(*)::text FROM platform.job_results WHERE job_id = $1 AND rule = 'P-10'", job.ID); len(got) != 1 || got[0] != "0" {
+		t.Errorf("the refused confirm wrote results: %v", got)
+	}
+}

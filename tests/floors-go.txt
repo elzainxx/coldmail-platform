@@ -22,7 +22,7 @@ go|github.com/coldmail-platform/platform/internal/faultpoint|1
 go|github.com/coldmail-platform/platform/internal/httpapi|22
 go|github.com/coldmail-platform/platform/internal/jobengine|103
 go|github.com/coldmail-platform/platform/internal/jobengine/jobenginetest|22
-go|github.com/coldmail-platform/platform/internal/jobs|116
+go|github.com/coldmail-platform/platform/internal/jobs|119
 go|github.com/coldmail-platform/platform/internal/logging|6
 go|github.com/coldmail-platform/platform/internal/m3admin|38
 go|github.com/coldmail-platform/platform/internal/migrate|47

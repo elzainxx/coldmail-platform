@@ -55,6 +55,12 @@ func TestLoggedPath_OnlyTheRemainderAfterASecretPrefixIsReplaced(t *testing.T) {
 		"/U/abc":        "/U/abc",
 		"":              "",
 		"/v1/jobs/x/u/": "/v1/jobs/x/u/",
+		// the mux redirects these to /u/<token>; the request as it arrived must not hold the token either
+		"//u/abc":      "/u/[token]",
+		"/./u/abc":     "/u/[token]",
+		"/x/../u/abc":  "/u/[token]",
+		"///u/a/b":     "/u/[token]",
+		"/v1/../v1/u/": "/v1/../v1/u/",
 	} {
 		if got := loggedPath(in); got != want {
 			t.Errorf("loggedPath(%q) = %q, want %q", in, got, want)

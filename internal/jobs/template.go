@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/coldmail-platform/platform/internal/render"
 )
@@ -24,9 +25,12 @@ import (
 // WHAT A ROW RENDERS TO. The values of a row are, in this order of precedence: the two reserved names (`email` is the row's normalised address, `unsubscribe_url` is the link the store made for the row),
 // then the row's merge data (a column named like a reserved field NEVER overrides it). The seed is render.SpinSeed(job id, row id): the same job and row render the same bytes, whoever renders them and
 // whenever (no clock, no randomness, no map order: a test renders twice, with two renderers, and after a rolled-back EnsureJobItems). The text part is the explicit text template rendered, or, when the text
-// template is blank, render.HTMLToText of the rendered HTML (so every message has a text part). THE UNSUBSCRIBE FOOTER, PER PART: the HTML gets the footer link when the HTML template does not place
-// {{unsubscribe_url}}, an explicit text gets the footer line when the TEXT template does not, so each part a recipient can read carries the link; a generated text derives from the final HTML, so it carries
-// the link exactly when the HTML does and is never footed twice; the subject never gets a footer and never suppresses one.
+// template is blank, render.HTMLToText of the rendered HTML (so every message has a text part). THE UNSUBSCRIBE FOOTER, PER RENDERED PART: each part a recipient can read must carry the link, and
+// that is judged on the RENDERED part, never on the template. The HTML gets the footer unless render.HTMLToText of the rendered HTML (which keeps a link as `text (url)` and drops comments, tags, attributes,
+// scripts and styles: it is the test of what a recipient sees) already holds the link; an explicit text gets its footer line unless the rendered text holds it; a generated text derives from the final HTML,
+// so it carries the link exactly when the HTML does and is never footed twice. After the footer is added the HTML is tested again: a message that STILL shows no link (an unclosed comment or tag swallowed
+// the footer) is refused as WordNoVisibleLink and left out at confirm, free, never sent without one. The subject never gets a footer and decides nothing. To make the placement unconditional
+// {{unsubscribe_url}} is refused at save inside a spintax option (checkLinkPlacement).
 
 // Preparer is the optional second face of a store's renderer: it prepares a job's campaign once (compiling the templates, which is where a syntax error is found) and answers for each row.
 // jobID is "" when the campaign is only being checked (a draft being created: the job has no id yet), and then Render must not be called.
@@ -75,7 +79,6 @@ func (TemplateRenderer) Prepare(jobID string, c Content) (PreparedCampaign, erro
 			return nil, err
 		}
 	}
-	p.htmlPlacesLink, p.textPlacesLink = placesLink(p.html), placesLink(p.text) // the subject's use of the field is allowed and decides nothing
 	return p, nil
 }
 
@@ -88,25 +91,73 @@ func compilePart(part, src string) (*render.Template, error) {
 		}
 		return nil, fmt.Errorf("the %s template could not be compiled", part) // Compile returns nothing else: not reachable, and never quotes the source
 	}
+	if off := linkInGroup(src); off >= 0 { // the source is valid: its braces balance and its escapes are known
+		line, col := position(src, off)
+		return nil, &TemplateError{Part: part, Line: line, Column: col, Message: "{{unsubscribe_url}} cannot be inside a group {a|b}: the link must always be there, so put it outside the braces"}
+	}
 	return t, nil
 }
 
-// placesLink says whether the template uses the reserved field unsubscribe_url (a nil template, the blank text, uses nothing).
-func placesLink(t *render.Template) bool {
-	for _, f := range t.Fields() {
-		if f.Name == render.FieldUnsubscribeURL {
-			return true
+// linkInGroup is the byte offset of the first {{unsubscribe_url}} (with or without a fallback) that stands inside a spintax option of a source that compiled, -1 when there is none. A field in an option is
+// there for the recipients whose draw picks that option and not for the others, which would leave some recipients with no link in the message; the placement must be unconditional. It reads the source with
+// the grammar's own rules (a backslash makes the next { } | or  plain; {{ opens a field that ends at }}; a single { opens a group and a } closes the innermost), and it lives here because internal/render does not
+// say where a field is.
+func linkInGroup(src string) int {
+	depth := 0
+	for i := 0; i < len(src); {
+		switch src[i] {
+		case '\\':
+			if i+1 < len(src) && (src[i+1] == '{' || src[i+1] == '}' || src[i+1] == '|' || src[i+1] == '\\') {
+				i += 2
+			} else {
+				i++
+			}
+		case '{':
+			if i+1 >= len(src) || src[i+1] != '{' { // a group
+				depth++
+				i++
+				continue
+			}
+			start, k := i, i+2
+			for k < len(src) && (src[k] == '_' || src[k] >= 'a' && src[k] <= 'z' || src[k] >= 'A' && src[k] <= 'Z' || src[k] >= '0' && src[k] <= '9') {
+				k++
+			}
+			if depth > 0 && src[i+2:k] == render.FieldUnsubscribeURL {
+				return start
+			}
+			for i = k; i < len(src); { // to the }} that closes the field; a fallback is plain text whose escapes are skipped
+				if src[i] == '\\' && i+1 < len(src) {
+					i += 2
+				} else if src[i] == '}' {
+					i += 2
+					break
+				} else {
+					i++
+				}
+			}
+		case '}':
+			if depth > 0 {
+				depth--
+			}
+			i++
+		default:
+			i++
 		}
 	}
-	return false
+	return -1
+}
+
+// position is the 1-based line and column (in characters) of a byte offset of src, counted as internal/render counts them in a SyntaxError.
+func position(src string, off int) (line, col int) {
+	head := src[:off]
+	start := strings.LastIndexByte(head, '\n') + 1
+	return 1 + strings.Count(head, "\n"), 1 + utf8.RuneCountInString(head[start:])
 }
 
 // templates is the compiled campaign of one job.
 type templates struct {
 	jobID               string
 	subject, html, text *render.Template // text is nil when the text template is blank
-	htmlPlacesLink      bool             // the HTML template uses {{unsubscribe_url}}: the HTML gets no footer
-	textPlacesLink      bool             // the explicit text template uses it: the text gets no footer (nil text: the text derives from the HTML)
 }
 
 // values is the lookup of one row: the reserved names first, then the row's merge data.
@@ -143,37 +194,64 @@ func (p *templates) Missing(row EngineRow) []string {
 	return out
 }
 
-// Render renders the row. It never fails: a field the row lacks renders its fallback or nothing (the caller leaves such a row out beforehand, with Missing), and the shared table's own limits are
-// judged by the caller (checkRendered).
+// Render renders the row. A field the row lacks renders its fallback or nothing (the caller leaves such a row out beforehand, with Missing) and the shared table's own limits are judged by the caller
+// (checkRendered). The one refusal Render makes itself is WordNoVisibleLink.
+//
+// THE FOOTER IS DECIDED ON WHAT WAS RENDERED, never on the template (a link placed in a comment, in an <img src> or in a script is in the template and not on the screen). With a link to place:
+//   - HTML (when the rendered HTML is not blank): if render.HTMLToText of it does not hold the link, the footer is added, before the last </body> or, when that does not make the link visible (the </body> is
+//     itself inside a comment), at the end. If the HTML still shows no link, the row has no way to unsubscribe in its HTML (an unclosed comment, tag, script or style swallowed the footer): refused, not sent.
+//   - an explicit text (when the rendered text is not blank): if it does not hold the link, the footer line is added (after which it does).
+//   - a generated text is HTMLToText of the FINAL html, so it holds the link exactly when the html does, once.
+//
+// With no link (a store with no maker: no send job can be confirmed there) nothing is added and nothing is refused. The same row always gives the same bytes: every decision is a pure function of the
+// rendered text.
 func (p *templates) Render(row EngineRow) (string, string, string, error) {
 	seed := render.SpinSeed(p.jobID, row.ID)
 	vals := p.values(row)
 	subject := p.subject.Render(seed, render.PartSubject, vals)
 	body := p.html.Render(seed, render.PartHTML, vals)
 	link := row.UnsubscribeURL
-	if link != "" && !p.htmlPlacesLink && strings.TrimSpace(body) != "" { // a text-only campaign has no HTML part to add one to
-		body = withHTMLFooter(body, link)
+	htmlSent := strings.TrimSpace(body) != "" // a text-only campaign has no HTML part to add a footer to or to show a link in
+	seen := ""                                // render.HTMLToText of the final html, once it has been made
+	if htmlSent && (p.text == nil || link != "") {
+		seen = render.HTMLToText(body)
+		if link != "" && !strings.Contains(seen, link) {
+			shown := false
+			for _, cand := range footerCandidates(body, link) {
+				if t := render.HTMLToText(cand); strings.Contains(t, link) {
+					body, seen, shown = cand, t, true
+					break
+				}
+			}
+			if !shown {
+				return "", "", "", refuse(WordNoVisibleLink, "row %d: the message has no unsubscribe link a recipient can see", row.Ordinal)
+			}
+		}
 	}
 	var text string
 	if p.text != nil {
 		text = p.text.Render(seed, render.PartText, vals)
-		if link != "" && !p.textPlacesLink && strings.TrimSpace(text) != "" {
+		if link != "" && strings.TrimSpace(text) != "" && !strings.Contains(text, link) {
 			text = strings.TrimRight(text, " \t\r\n") + "\n\n" + FooterTextLead + link
 		}
-	} else {
-		text = render.HTMLToText(body) // from the FINAL html: the text has the link exactly when the html does (its own, or the footer's), once
+	} else if htmlSent {
+		text = seen // from the FINAL html: the text has the link exactly when the html does (its own, or the footer's), once
 	}
 	return subject, body, text, nil
 }
 
-// withHTMLFooter adds the footer paragraph before the last </body> (compared without regard to ASCII case) or, when there is none, at the end.
-func withHTMLFooter(body, link string) string {
+// footerCandidates are the ways to add the footer paragraph to the HTML, in the order they are tried: before the last </body> (compared without regard to ASCII case) when there is one, and at the end.
+func footerCandidates(body, link string) []string {
 	footer := FooterHTMLLead + html.EscapeString(link) + FooterHTMLTrail
+	var out []string
 	if i := lastBodyClose(body); i >= 0 {
-		return body[:i] + footer + "\n" + body[i:]
+		out = append(out, body[:i]+footer+"\n"+body[i:])
 	}
-	return body + "\n" + footer
+	return append(out, body+"\n"+footer)
 }
+
+// withHTMLFooter adds the footer paragraph before the last </body> or, when there is none, at the end.
+func withHTMLFooter(body, link string) string { return footerCandidates(body, link)[0] }
 
 // lastBodyClose is the byte index of the last "</body>" of s, -1 when there is none. It compares bytes (ASCII fold), not a lower-cased copy: lower-casing can change the length of non-ASCII text.
 func lastBodyClose(s string) int {

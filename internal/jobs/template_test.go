@@ -591,3 +591,146 @@ func TestFingerprint_MergeDataIsNamedWhenThereIsSome(t *testing.T) {
 		t.Error("the control: a malformed row digests like a pending one")
 	}
 }
+
+// ---- the footer follows what is seen, and the link is never conditional --------------------------------------------------------------------------------------------------------------------
+
+// {{unsubscribe_url}} inside a spintax option is refused at save, in the part it is in, at the position of its `{{`: the recipients whose draw misses the option would get no link. The controls are the
+// placements that are unconditional: at the top level, after a group has closed, next to a group, with escaped braces around it, and a field that only LOOKS like it (another name, or the name in a fallback).
+func TestTemplateRenderer_ALinkInsideAGroupIsRefusedAtSaveWithItsPosition(t *testing.T) {
+	at := func(src string) int { return strings.Index(src, "{{unsubscribe_url") + 1 } // the column, for a one-line source of ASCII
+	htmlGroup := `<p>Hi</p>{bye|<a href="{{unsubscribe_url}}">stop</a>}`
+	nested := "<p>{a|{b|{{unsubscribe_url}}}}</p>"
+	fallback := "<p>{a|{{unsubscribe_url|none}}}</p>"
+	for _, c := range []struct {
+		name         string
+		c            Content
+		part         string
+		line, column int
+	}{
+		{"in an option of the html", Content{Subject: "S", HTML: htmlGroup}, TemplateHTML, 1, at(htmlGroup)},
+		{"in a group of a group", Content{Subject: "S", HTML: nested}, TemplateHTML, 1, at(nested)},
+		{"with a fallback, in a group", Content{Subject: "S", HTML: fallback}, TemplateHTML, 1, at(fallback)},
+		{"in the text, on its second line", Content{Subject: "S", HTML: "<p>x</p>", Text: "ok\n{a|{{unsubscribe_url}}}"}, TemplateText, 2, 4},
+		{"in the subject (the rule is one rule for the three templates)", Content{Subject: "S {a|{{unsubscribe_url}}}", HTML: "<p>x</p>"}, TemplateSubject, 1, 6},
+	} {
+		_, err := TemplateRenderer{}.Prepare(tplJob, c.c)
+		var te *TemplateError
+		if !errors.As(err, &te) || !errors.Is(err, ErrBadRequest) || te.Part != c.part || te.Line != c.line || te.Column != c.column || !strings.Contains(te.Message, "outside the braces") {
+			t.Errorf("%s: got %v (%+v), want a TemplateError in %s at %d:%d saying to put it outside the braces", c.name, err, te, c.part, c.line, c.column)
+			continue
+		}
+		if strings.Contains(err.Error(), "<a href") || strings.Contains(err.Error(), "bye") {
+			t.Errorf("%s: the error quotes the template: %v", c.name, err)
+		}
+	}
+	for _, c := range []struct{ name, html string }{
+		{"at the top level, in an attribute of an anchor", `<p>Hi</p><a href="{{unsubscribe_url}}">stop</a>`},
+		{"after a group that has closed", `{Hi|Hello} <a href="{{unsubscribe_url}}">stop</a>`},
+		{"next to a group inside nested groups that have closed", `{a|{b|c}}{{unsubscribe_url}}{d|e}`},
+		{"with the braces around it escaped", `\{ {{unsubscribe_url}} \} \\{{unsubscribe_url}}`},
+		{"a group holding other fields", `{Hi {{n}}|Hello {{n|x}}} {{unsubscribe_url}}`},
+		{"a field with another name in a group", `{a|{{unsubscribe_urls}}} {{unsubscribe_url}}`},
+		{"the name in the fallback of another field, in a group", `{a|{{x|unsubscribe_url}}} {{unsubscribe_url}}`},
+	} {
+		if _, err := (TemplateRenderer{}).Prepare(tplJob, Content{Subject: "S", HTML: c.html}); err != nil {
+			t.Errorf("control %s: %v", c.name, err)
+		}
+	}
+	// the helper itself: a source that holds the link only at depth 0 has no position
+	if linkInGroup(`{{unsubscribe_url}}{a|b}`) != -1 || linkInGroup(`{a|{{unsubscribe_url}}}`) != 3 {
+		t.Errorf("linkInGroup = %d and %d, want -1 and 3", linkInGroup(`{{unsubscribe_url}}{a|b}`), linkInGroup(`{a|{{unsubscribe_url}}}`))
+	}
+}
+
+// The footer is decided on the RENDERED message: a link that the template places but that no recipient sees (in a comment, in an <img src>, in a script) does not stop the footer, and a link that is seen does.
+// Each case is rendered twice for the same bytes, and the text part is looked at in each: the generated one and an explicit one.
+func TestTemplateRenderer_TheFooterIsDecidedOnWhatIsSeenNotOnTheTemplate(t *testing.T) {
+	const words = "To stop receiving these messages"
+	count := strings.Count
+	row := tplRow(1, map[string]string{"n": "Ann"})
+	for _, c := range []struct {
+		name                         string
+		c                            Content
+		wantHTMLLinks, wantTextLinks int
+		htmlFooter, textFooter       bool
+	}{
+		{"only in an <img src>, blank text", Content{Subject: "S", HTML: `<p>Hi</p><img src="{{unsubscribe_url}}">`}, 2, 1, true, true},
+		{"only in a comment, blank text", Content{Subject: "S", HTML: `<!-- {{unsubscribe_url}} --><p>Hi</p>`}, 2, 1, true, true},
+		{"only in a script, blank text", Content{Subject: "S", HTML: `<script>var u = "{{unsubscribe_url}}"</script><p>Hi</p>`}, 2, 1, true, true},
+		{"only in an <img src>, explicit text that places it: the text keeps its own line and gets no second one", Content{Subject: "S", HTML: `<img src="{{unsubscribe_url}}"><p>Hi</p>`, Text: "stop: {{unsubscribe_url}}"}, 2, 1, true, false},
+		{"only in an <img src>, explicit text that does not: both are footed", Content{Subject: "S", HTML: `<img src="{{unsubscribe_url}}"><p>Hi</p>`, Text: "Hi {{n}}"}, 2, 1, true, true},
+		{"the closing body tag is inside a comment: the footer goes to the end and is seen", Content{Subject: "S", HTML: `<p>Hi</p><!-- </body> -->`}, 1, 1, true, true},
+		// the controls: a link that is seen gets no footer
+		{"control: in an anchor", Content{Subject: "S", HTML: `<p><a href="{{unsubscribe_url}}">stop</a></p>`}, 1, 1, false, false},
+		{"control: as visible text", Content{Subject: "S", HTML: `<p>Stop: {{unsubscribe_url}}</p>`}, 1, 1, false, false},
+		{"control: in an anchor before an unclosed comment (the link is seen)", Content{Subject: "S", HTML: `<a href="{{unsubscribe_url}}">stop</a><!-- later`}, 1, 1, false, false},
+	} {
+		s, h, x, err := prepareT(t, tplJob, c.c).Render(row)
+		if err != nil {
+			t.Errorf("%s: %v", c.name, err)
+			continue
+		}
+		if got := count(h, tplLink); got != c.wantHTMLLinks {
+			t.Errorf("%s: the html holds the link %d times, want %d: %q", c.name, got, c.wantHTMLLinks, h)
+		}
+		if got := count(x, tplLink); got != c.wantTextLinks {
+			t.Errorf("%s: the text holds the link %d times, want %d: %q", c.name, got, c.wantTextLinks, x)
+		}
+		if got := strings.Contains(h, words); got != c.htmlFooter || count(h, words) > 1 {
+			t.Errorf("%s: footer words in the html = %v (%d), want %v once: %q", c.name, got, count(h, words), c.htmlFooter, h)
+		}
+		if got := strings.Contains(x, words); got != c.textFooter || count(x, words) > 1 {
+			t.Errorf("%s: footer words in the text = %v (%d), want %v once: %q", c.name, got, count(x, words), c.textFooter, x)
+		}
+		if s2, h2, x2, _ := prepareT(t, tplJob, c.c).Render(row); s2 != s || h2 != h || x2 != x {
+			t.Errorf("%s: a second render differs", c.name)
+		}
+	}
+}
+
+// A message whose HTML shows no link even with the footer (an unclosed comment, tag or style swallows everything after it) is REFUSED with its own word, never sent without a way to unsubscribe, whatever the
+// text says; the refusal names the row and never the link. The controls: a closed comment, a text-only campaign, a row that has no link at all (a store with no maker), and the refusal through
+// messageFor, which is what the preview and the confirm judge a row by.
+func TestTemplateRenderer_AnHTMLThatSwallowsTheFooterIsRefusedAndNotSent(t *testing.T) {
+	row := tplRow(1, map[string]string{"n": "Ann"})
+	for _, c := range []struct{ name, html, text string }{
+		{"an unclosed comment", "<p>Hi</p><!-- oops", ""},
+		{"an unclosed comment, with an explicit text that has the link", "<p>Hi</p><!-- oops", "Hi {{n}}"},
+		{"an unclosed tag", `<p>Hi</p><a href="https://x.example.test/p`, ""},
+		{"an unclosed style", "<style>p \\{ color: red \\}", ""},
+	} {
+		content := Content{Subject: "S", HTML: c.html, Text: c.text}
+		_, _, _, err := prepareT(t, tplJob, content).Render(row)
+		if w := refusalWordOf(err); w != WordNoVisibleLink || !errors.Is(err, ErrBadRequest) || !strings.Contains(err.Error(), "row 1") || strings.Contains(err.Error(), tplLink) {
+			t.Errorf("%s: got %v (word %q), want the no-visible-link refusal for row 1 that does not quote the link", c.name, err, w)
+		}
+		if _, err := renderPrepared(prepareT(t, tplJob, content), "", row); refusalWordOf(err) != WordNoVisibleLink {
+			t.Errorf("%s: renderPrepared lost the word: %v", c.name, err)
+		}
+	}
+	for _, c := range []struct {
+		name string
+		c    Content
+		link string
+	}{
+		{"control: a closed comment", Content{Subject: "S", HTML: "<p>Hi</p><!-- fine -->"}, tplLink},
+		{"control: a text-only campaign has no html to swallow anything", Content{Subject: "S", HTML: "", Text: "Hi {{n}}"}, tplLink},
+		{"control: a row with no link is not refused for lacking one", Content{Subject: "S", HTML: "<p>Hi</p><!-- oops"}, ""},
+	} {
+		r := row
+		r.UnsubscribeURL = c.link
+		if _, _, _, err := prepareT(t, tplJob, c.c).Render(r); err != nil {
+			t.Errorf("%s: refused: %v", c.name, err)
+		}
+	}
+	// what the preview and the confirm judge a row by: messageFor carries the word, so the row is counted unrenderable and left out
+	s := &Store{unsub: func(id string) (string, error) { return "https://app.example.test/u/" + id, nil }}
+	bare := EngineRow{ID: rowID(1), Ordinal: 1, EmailNorm: "a@example.test"}
+	_, _, err := s.messageFor(prepareT(t, tplJob, Content{Subject: "S", HTML: "<p>Hi</p><!-- oops"}), "", bare)
+	if refusalWordOf(err) != WordNoVisibleLink {
+		t.Errorf("messageFor: %v (word %q), want %s", err, refusalWordOf(err), WordNoVisibleLink)
+	}
+	if _, _, err := s.messageFor(prepareT(t, tplJob, Content{Subject: "S", HTML: "<p>Hi</p>"}), "", bare); err != nil {
+		t.Errorf("messageFor of a good message: %v", err)
+	}
+}
