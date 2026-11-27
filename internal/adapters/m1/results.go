@@ -36,6 +36,10 @@ type Row struct {
 	SkipReason string
 	// FailureOrigin is signals.failure_origin ("" = absent; "own", "remote" or "undetermined" on an unknown).
 	FailureOrigin string
+	// Policy and PolicyVersion are meta.policy and meta.policy_version: the policy module 1 made the row under ("" and 0 when the row does not say). They are read so that the platform can CHECK the policy of
+	// an opted-out job's rows (ResultsUnder); they never reach the charge table.
+	Policy        string
+	PolicyVersion int
 }
 
 // Outcome is what the charge table reads of the row. A row that repeats an earlier row's address (DuplicateOf set) is the platform's own outcome, platform / duplicate: the first
@@ -85,6 +89,11 @@ type wireRow struct {
 		SMTPSkippedReason string `json:"smtp_skipped_reason"`
 		FailureOrigin     string `json:"failure_origin"`
 	} `json:"signals"`
+	// Meta is the policy stamp of the row (absent: not said). resultsShape has judged the types of the two members before this is decoded.
+	Meta struct {
+		Policy        string `json:"policy"`
+		PolicyVersion int    `json:"policy_version"`
+	} `json:"meta"`
 }
 
 // rowOf judges one decoded element and keeps what the platform acts on, or says which key is wrong. Every refusal is about a key, never a value (a module that echoes an address into a
@@ -125,6 +134,8 @@ func rowOf(i int, w wireRow) (Row, string, string) {
 		FromCache:     w.Flags.FromCache != nil && *w.Flags.FromCache,
 		SkipReason:    w.Signals.SMTPSkippedReason,
 		FailureOrigin: w.Signals.FailureOrigin,
+		Policy:        w.Meta.Policy,
+		PolicyVersion: w.Meta.PolicyVersion,
 	}, "", ""
 }
 
@@ -133,8 +144,18 @@ func rowOf(i int, w wireRow) (Row, string, string) {
 // is exhausted AS IT STANDS: a job that is still running can settle more rows later (see Drain). A page with one element that is not on contract fails the WHOLE page: partial rows
 // are never returned.
 func (a *Adapter) Results(ctx context.Context, id, cursor string, limit int) (rows []Row, next string, err error) {
+	return a.ResultsUnder(ctx, id, cursor, limit, "")
+}
+
+// ResultsUnder is Results for a job that was submitted under a NAMED policy (Phase 5 S6: an opted-out job, SubmitUnder): besides everything Results judges, every row of the page must say it was made under
+// that policy (meta.policy equal to it, meta.policy_version a positive number), and the first row that does not fails the WHOLE page as a Contract error naming results[i].meta.policy (cause
+// ErrNotUnderPolicy): nothing is returned, so nothing of a page that contradicts the customer's choice is ever recorded or charged. policy "" is Results exactly: an opted-in job's rows are not judged for it.
+func (a *Adapter) ResultsUnder(ctx context.Context, id, cursor string, limit int, policy string) (rows []Row, next string, err error) {
 	if e := checkJobID(routeResults, id); e != nil {
 		return nil, "", e
+	}
+	if policy != "" && !ValidPolicyKey(policy) {
+		return nil, "", newErr(modclient.Invalid, routeResults, "the policy to check the results against must be a policy name (the key module 1's describe published)")
 	}
 	// MODULE-FORCED(M1-F12): module 1 answers a limit that is not 1..1000 (0, negative, not a number, above 1000) with ITS OWN DEFAULT of 100, silently and with no error, so a caller
 	// who asked for 5000 would believe it had read pages of 5000; the adapter refuses what the module would silently change.
@@ -172,6 +193,11 @@ func (a *Adapter) Results(ctx context.Context, id, cursor string, limit int) (ro
 			return nil, "", contractErr(routeResults, resp, key, why)
 		}
 		rows = append(rows, r)
+	}
+	if policy != "" {
+		if err := checkPolicy(resp, rows, policy); err != nil {
+			return nil, "", err
+		}
 	}
 	return rows, w.NextCursor, nil
 }

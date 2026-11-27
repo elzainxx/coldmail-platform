@@ -94,8 +94,31 @@ const (
 	VarJobStepTimeoutSec    = "PLATFORM_JOB_STEP_TIMEOUT_SEC"
 	VarJobBackoffCapSec     = "PLATFORM_JOB_BACKOFF_CAP_SEC"
 
+	// The two housekeeping rules of the engine (internal/jobengine sweep.go, Phase 5 S7 and S8): how many days a job may stay paused before the engine cancels it, and how many days after a send job ended the
+	// message the platform kept for it is cleared.
+	VarJobPauseMaxDays      = "PLATFORM_JOB_PAUSE_MAX_DAYS"
+	VarContentRetentionDays = "PLATFORM_CONTENT_RETENTION_DAYS"
+
 	// Which instance this is, when more than one platform instance runs (Phase 2 close-out D9): the name of the session that holds the leader lock of the loops.
 	VarInstanceID = "PLATFORM_INSTANCE_ID"
+
+	// The unsubscribe link of every message of a send job (internal/unsubscribe and internal/unsubscribe/endpoint, built by internal/app, Phase 5 S3): the secret its tokens are signed with, the public
+	// address the link starts with, and how fast one client address may ask the public endpoint.
+	VarUnsubscribeSecret     = "PLATFORM_UNSUBSCRIBE_SECRET"
+	VarPublicBaseURL         = "PLATFORM_PUBLIC_BASE_URL"
+	VarUnsubscribeRatePerMin = "PLATFORM_UNSUBSCRIBE_RATE_PER_MIN"
+)
+
+// MinUnsubscribeSecretBytes is the shortest PLATFORM_UNSUBSCRIBE_SECRET accepted (internal/unsubscribe refuses the same: unsubscribe.MinSecretBytes, pinned equal by a test there). 32 bytes is the size of
+// the HMAC-SHA256 output the link's token is made of.
+const MinUnsubscribeSecretBytes = 32
+
+// The bounds of the unsubscribe dials. The public base URL is at most 500 characters (a link, with its path and its 54-character token, must stay far inside the 2000 characters the column
+// public.job_items.unsubscribe_url allows); a client address may ask the endpoint at least once and at most ten times a second, a minute's worth (600) being the most a person or a mail
+// client's scanner has any reason to do.
+const (
+	maxPublicBaseURL   = 500
+	maxUnsubscribeRate = 600
 )
 
 // MinM1KeySecretBytes is the shortest PLATFORM_M1_KEY_SECRET accepted (and the shortest internal/tenant derives a key from). 32 bytes is the size of the HMAC-SHA256 output the key is made of:
@@ -142,6 +165,13 @@ const (
 	minJobStepTimeoutSec = 5
 	maxJobStepTimeoutSec = 3600
 	maxJobBackoffCapSec  = 600 // jobs.MaxPollBackoff, which the database keeps as its own wall (platform.jobs_engine_schedule); pinned equal by a test
+)
+
+// The bounds of the two housekeeping dials, in days: a pause is cancelled after at most a quarter of a year (jobs.MaxPauseLimit), the content of an ended job is kept at most a year
+// (jobs.MaxContentRetention); each pinned equal to the store's own bound by a test. The defaults (7 and 7) are Docs/phase-5-spec.md decisions 9 and 7.
+const (
+	maxJobPauseDays         = 90
+	maxContentRetentionDays = 365
 )
 
 // Upper bounds on the integer dials. They are sanity guards, not tuning: they keep a typo (an extra digit,
@@ -276,6 +306,16 @@ func Vars() []Var {
 			Doc: fmt.Sprintf("The most seconds the engine spends on ONE job in one pass: a module that hangs costs a job this much, then the engine goes on to the next job and tries this one again at the next pass. Keep it above `PLATFORM_MODULE_TIMEOUT_MS` (module 1's bulk submit is given at least two minutes). Integer, %d to %d. Consumed by `internal/app` (`jobengine.Config.StepTimeout`).", minJobStepTimeoutSec, maxJobStepTimeoutSec)},
 		{Name: VarJobBackoffCapSec, Default: "60",
 			Doc: fmt.Sprintf("The longest the engine leaves a job alone after a pass that made no progress on it (its module is down or full: nothing handed over, nothing recorded). The wait starts at one pass (`PLATFORM_JOB_TICK_MS`) and doubles with every such pass in a row up to this, so a hundred jobs whose module is down cannot keep the engine from newer jobs, and a module that recovers is polled again within this many seconds; a job that is moved by someone (a cancel) or makes progress is looked at at the next pass. The engine never waits longer than a quarter of the module's staleness limit (`PLATFORM_JOB_STALE_AFTER_MIN_M1`, `_M2`, `_M3`), so a stale job is still noticed on time, and the database refuses a wait of more than %d seconds whatever this says. Integer, 1 to %d. Consumed by `internal/app` (`jobengine.Config.BackoffCap`).", maxJobBackoffCapSec, maxJobBackoffCapSec)},
+		{Name: VarJobPauseMaxDays, Default: "7",
+			Doc: fmt.Sprintf("Days a job may stay paused before the engine cancels it, counted by the database's clock from the moment it was paused (a job that is resumed and paused again starts a new count). A job paused while it was running is cancelled through `cancelling`: its module cancels the items it has not claimed, every item already sent stays sent and charged, and the job ends `cancelled`; a job paused before its start is cancelled at once. Either way the items not sent are cancelled and free, the credits not consumed are released, the user's one-active-job slot is freed, and an event whose reason begins `pause_limit` says why, with the limit in its detail. A user who resumes at the very moment the engine cancels meets exactly one of the two outcomes: the resume wins, or it is refused as a resume of a job that is not paused. Integer, 1 to %d. Consumed by `internal/app` (`jobengine.Config.PauseMax`, in the engine of the instance that leads).", maxJobPauseDays)},
+		{Name: VarContentRetentionDays, Default: "7",
+			Doc: fmt.Sprintf("Days after a send job ended (succeeded, failed, cancelled or expired), counted from its `finished_at` by the database's clock, before the engine clears the message the platform kept for it in `public.job_items`: `rendered_subject` and `rendered_body` become `[removed]`, `rendered_text` and `unsubscribe_url` become empty (`reply_to` and the recipient stay). The job's outcomes (its rows, results, events and charges) are kept for ever, and so are the items of a job that has not ended and the rows that belong to no job. A job of 100000 rows is cleared a few thousand rows at a time over several passes, and the job is marked once the last page is done. Integer, 1 to %d. Consumed by `internal/app` (`jobengine.Config.RetentionAfter`, in the engine of the instance that leads).", maxContentRetentionDays)},
+		{Name: VarUnsubscribeSecret, Default: unsetMarker, Secret: true,
+			Doc: fmt.Sprintf("The secret the unsubscribe links of sent messages are signed with: a link's token names one item of a send job and carries the first 24 bytes of the HMAC-SHA256, under this secret, of the text unsub, v1 and the item's id, each part set off by a vertical bar (the format is in Docs/unsubscribe.md). At least %d bytes of printable ASCII with no spaces (64 random hexadecimal characters are plenty). The default (unset) means no link can be made: the service still starts, but a send job (module 2 or 3) cannot be confirmed (409 `not_allowed`, reason `unsubscribe_not_configured`) and the `/u/{token}` routes are not served. It works only together with PLATFORM_PUBLIC_BASE_URL. There is no rotation: changing it makes every link already sent answer the not-found page, so keep it. Consumed by `internal/app` (`unsubscribe.NewSigner`, `jobs.WithUnsubscribe` and the public endpoint). Never printed or logged.", MinUnsubscribeSecretBytes)},
+		{Name: VarPublicBaseURL, Default: unsetMarker,
+			Doc: fmt.Sprintf("The public address of this platform as the recipients of its messages reach it, for example `https://app.example.com`: the unsubscribe link of every message is this, `/u/` and the item's token. `https://` in lower case, then a host name of letters, digits, dots and hyphens, an optional port and an optional path of letters, digits and `._~-/`; no credentials, query or fragment, at most %d characters; trailing slashes are dropped. The default (unset) means no link can be made (see PLATFORM_UNSUBSCRIBE_SECRET). Whatever stands at this address must pass `/u/` on to this service unchanged. Consumed by `internal/app` (`unsubscribe.Link`, through `jobs.WithUnsubscribe`).", maxPublicBaseURL)},
+		{Name: VarUnsubscribeRatePerMin, Default: "30",
+			Doc: fmt.Sprintf("How many requests one client address may make to the public `/u/{token}` routes in a minute before they answer 429 with a `Retry-After`: a token bucket per address (an IPv6 address counts as its /64) that holds this many requests at most and refills evenly; at most 10000 addresses are remembered. Behind a reverse proxy the address is the proxy's until a trusted forwarded-for header is configured (a later phase), so every recipient shares one bucket there. Integer, 1 to %d. Consumed by `internal/app` (`endpoint.Config.RatePerMin`).", maxUnsubscribeRate)},
 		{Name: VarInstanceID, Default: instanceIDDefault,
 			Doc: fmt.Sprintf("Name of this platform instance, 1 to %d printable ASCII characters. With more than one instance running, only the one holding the leader lock runs the expiry and reconcile loops; the name is the application_name of the database session that holds it (pg_stat_activity) and appears in the loop log lines. Each instance needs its own. The default (hostname) means this machine's host name.", maxInstanceIDBytes)},
 	}
@@ -333,6 +373,12 @@ type Config struct {
 	JobSubmitConcurrency int           // the run calls to module 2 or 3 in flight at once in one batch (internal/app: jobengine.RegistryDeps.SubmitConcurrency)
 	JobStepTimeout       time.Duration // the bound of one job's step (internal/app: jobengine.Config.StepTimeout)
 	JobBackoffCap        time.Duration // the longest the engine leaves a job alone after a pass that made no progress on it (internal/app: jobengine.Config.BackoffCap)
+	JobPauseMax          time.Duration // how long a job may stay paused before the engine cancels it (internal/app: jobengine.Config.PauseMax)
+	ContentRetention     time.Duration // how long after a send job ended the engine clears its rendered content (internal/app: jobengine.Config.RetentionAfter)
+
+	UnsubscribeSecret     Secret // the secret the unsubscribe tokens are signed with; "" means not configured (internal/app: unsubscribe.NewSigner)
+	PublicBaseURL         string // the public https address the unsubscribe link starts with, no trailing slash; "" means not configured (internal/app: unsubscribe.Link)
+	UnsubscribeRatePerMin int    // requests per minute one client address may make to the public endpoint (internal/app: endpoint.Config.RatePerMin)
 
 	InstanceID string // this instance's name; "" means the default, the host name, which the service resolves (internal/entitlements ResolveInstanceID)
 }
@@ -602,6 +648,39 @@ func Load(getenv func(string) string) (Config, error) {
 			if n, ok := intIn(v.Name, raw, 1, maxJobBackoffCapSec); ok {
 				c.JobBackoffCap = time.Duration(n) * time.Second
 			}
+		case VarJobPauseMaxDays:
+			if n, ok := intIn(v.Name, raw, 1, maxJobPauseDays); ok {
+				c.JobPauseMax = time.Duration(n) * 24 * time.Hour
+			}
+		case VarContentRetentionDays:
+			if n, ok := intIn(v.Name, raw, 1, maxContentRetentionDays); ok {
+				c.ContentRetention = time.Duration(n) * 24 * time.Hour
+			}
+		case VarUnsubscribeSecret:
+			if raw != v.Default { // the default stands for "not configured", which leaves the field empty (see unsetMarker)
+				if len(raw) < MinUnsubscribeSecretBytes {
+					fail(v.Name, fmt.Sprintf("must be at least %d bytes", MinUnsubscribeSecretBytes))
+					continue
+				}
+				if !validClaimText(raw, len(raw)) {
+					fail(v.Name, "must be printable ASCII with no spaces (the secret is used as the raw bytes of the string)")
+					continue
+				}
+				c.UnsubscribeSecret = Secret(raw)
+			}
+		case VarPublicBaseURL:
+			if raw != v.Default {
+				u, ok := validPublicBaseURL(raw)
+				if !ok {
+					fail(v.Name, fmt.Sprintf("must be an https URL in lower case with a host name, an optional port and an optional path of letters, digits and ._~-/, no credentials, query or fragment, at most %d characters, for example https://app.example.com", maxPublicBaseURL))
+					continue
+				}
+				c.PublicBaseURL = u
+			}
+		case VarUnsubscribeRatePerMin:
+			if n, ok := intIn(v.Name, raw, 1, maxUnsubscribeRate); ok {
+				c.UnsubscribeRatePerMin = n
+			}
 		case VarInstanceID:
 			if raw != v.Default { // the default stands for the host name, which Load does not read (see instanceIDDefault)
 				if !validInstanceID(raw) {
@@ -686,6 +765,57 @@ func validBearerToken(s string) bool {
 	return s != ""
 }
 
+// validPublicBaseURL accepts the public address the unsubscribe link starts with and returns it without its trailing slashes: `https://` in lower case, a host name (labels of letters, digits and
+// hyphens, none starting or ending with one, none longer than 63 bytes), an optional port (1 to 65535) and an optional path of letters, digits and ._~-/ , at most maxPublicBaseURL characters, no
+// credentials, query or fragment. The alphabet is that narrow on purpose: the link ends up in an HTML attribute, in a header and in a column whose CHECK refuses white space and angle brackets
+// (platform_0017), and nothing outside it needs escaping anywhere.
+func validPublicBaseURL(s string) (string, bool) {
+	if len(s) > maxPublicBaseURL || !strings.HasPrefix(s, "https://") {
+		return "", false
+	}
+	rest := strings.TrimRight(s[len("https://"):], "/")
+	host, path := rest, ""
+	if i := strings.IndexByte(rest, '/'); i >= 0 {
+		host, path = rest[:i], rest[i:]
+	}
+	for i := 0; i < len(path); i++ {
+		c := path[i]
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '.' || c == '_' || c == '~' || c == '-' || c == '/') {
+			return "", false
+		}
+	}
+	if path != "" {
+		for _, seg := range strings.Split(path[1:], "/") { // no empty segment (that would make "//u/") and no "." or ".." (a client would fold it away and the link would point elsewhere)
+			if seg == "" || seg == "." || seg == ".." {
+				return "", false
+			}
+		}
+	}
+	name := host
+	if i := strings.IndexByte(host, ':'); i >= 0 {
+		name = host[:i]
+		port, err := strconv.Atoi(host[i+1:])
+		if err != nil || port < 1 || port > 65535 || host[i+1:] != strconv.Itoa(port) {
+			return "", false
+		}
+	}
+	if name == "" {
+		return "", false
+	}
+	for _, label := range strings.Split(name, ".") {
+		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return "", false
+		}
+		for i := 0; i < len(label); i++ {
+			c := label[i]
+			if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-') {
+				return "", false
+			}
+		}
+	}
+	return "https://" + host + path, true
+}
+
 // secretState is what a Config says about an optional secret (the module 1 key secret, the module 2 and 3 service tokens): the redaction marker when it is set, "(unset)" when it is not.
 // Either way, never the value.
 func secretState(s Secret) string {
@@ -748,6 +878,11 @@ func (c Config) attrs() []slog.Attr {
 		slog.Int("job_submit_concurrency", c.JobSubmitConcurrency),
 		slog.Duration("job_step_timeout", c.JobStepTimeout),
 		slog.Duration("job_backoff_cap", c.JobBackoffCap),
+		slog.Duration("job_pause_max", c.JobPauseMax),
+		slog.Duration("content_retention", c.ContentRetention),
+		slog.String("unsubscribe_secret", secretState(c.UnsubscribeSecret)),
+		slog.String("public_base_url", urlState(c.PublicBaseURL)),
+		slog.Int("unsubscribe_rate_per_min", c.UnsubscribeRatePerMin),
 		slog.String("instance_id", c.InstanceID),
 	}
 }

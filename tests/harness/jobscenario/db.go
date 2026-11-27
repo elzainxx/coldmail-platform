@@ -251,7 +251,7 @@ func (d *db) snapshotOf(ctx context.Context, job string) (snapshot, error) {
 		COALESCE((SELECT available FROM platform.balances WHERE user_id = $2::uuid AND module_id = $4), 0),
 		COALESCE((SELECT reserved FROM platform.balances WHERE user_id = $2::uuid AND module_id = $4), 0),
 		(SELECT count(*) FROM verify.jobs WHERE idem_caller_id = $3),
-		(SELECT count(*) FROM platform.job_results WHERE job_id = $1::uuid AND origin = 'platform' AND module_state NOT IN ('malformed', 'duplicate', 'suppressed', 'excluded'))`, job, h.User, tenant.M1CallerID(h.User), h.Module).
+		(SELECT count(*) FROM platform.job_results WHERE job_id = $1::uuid AND origin = 'platform' AND module_state NOT IN ('malformed', 'duplicate', 'suppressed', 'excluded', 'missing_field', 'unrenderable'))`, job, h.User, tenant.M1CallerID(h.User), h.Module).
 		Scan(&rows, &pending, &stamped, &results, &moduleResults, &reserves, &charges, &releases, &rsvReserved, &rsvCharged, &rsvReleased, &running, &stale, &flags, &availableNow, &reservedNow, &m1Jobs, &invented)
 	if err != nil {
 		return snapshot{}, d.scrub(err)

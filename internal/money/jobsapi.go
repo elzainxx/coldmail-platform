@@ -62,6 +62,13 @@ type RateQuote struct {
 // row of the module, FOR SHARE), so that a price change or a flip of the reachable flag waits until the caller's transaction ends: a caller that compares what it reads here with a reserve
 // it makes in the same transaction (the confirm of a job) then reserves at exactly the prices it compared. A module with no reachable unit is ErrSnapshot (the reserve would refuse it too).
 func (s *Store) ReserveRateIn(ctx context.Context, tx pgx.Tx, module string, lockPrices bool) (RateQuote, error) {
+	return s.ReserveRateForIn(ctx, tx, module, lockPrices, false)
+}
+
+// ReserveRateForIn is ReserveRateIn for a job whose own choice is known (Phase 5 S6): with optOut true the job is opted out of the paid vendor fallback, and the quote is over the module's reachable
+// units WITHOUT the ones that need the vendor (platform.unit_costs.needs_vendor, m1_vendor): the very set ReserveIn copies into the job's price snapshot, so the rate a preview shows is the rate the
+// confirm freezes. The vendor's reachability does not enter into it at all: an opted-out job's rate is the same whether module 1's vendor is on or off. With optOut false it is ReserveRateIn exactly.
+func (s *Store) ReserveRateForIn(ctx context.Context, tx pgx.Tx, module string, lockPrices, optOut bool) (RateQuote, error) {
 	if !moduleIDShape(module) {
 		return RateQuote{}, opErr("rate", invalid("module", "must be a module id (lower-case letters, digits and underscore), got %q", clip(module)))
 	}
@@ -76,7 +83,7 @@ func (s *Store) ReserveRateIn(ctx context.Context, tx pgx.Tx, module string, loc
 			return RateQuote{}, opErr("rate", s.fail(err, pgCtx{}))
 		}
 	}
-	rows, err := tx.Query(ctx, `SELECT unit, cost FROM platform.unit_costs WHERE module_id = $1 AND reachable ORDER BY unit`, module)
+	rows, err := tx.Query(ctx, `SELECT unit, cost FROM platform.unit_costs WHERE module_id = $1 AND reachable AND NOT ($2::boolean AND needs_vendor) ORDER BY unit`, module, optOut)
 	if err != nil {
 		return RateQuote{}, opErr("rate", s.fail(err, pgCtx{}))
 	}

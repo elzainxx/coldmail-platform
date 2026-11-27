@@ -67,6 +67,10 @@ type RegistryDeps struct {
 	// cut to it.
 	SubmitConcurrency int
 	Log               *slog.Logger // nil: nothing is logged
+	// OptOutPolicy is where module 1's opt-out policy key is read (module 1's own describe, vendor_fallback.opt_out_policy: the one source of truth, never a constant of the platform). An opted-out
+	// job (jobs.Settings.VendorOptOut) is submitted under that policy and its results are checked against it; with no source, or a key that cannot be read, such a job WAITS (free) and is never submitted
+	// under the default policy. nil is allowed: only opted-out jobs need it.
+	OptOutPolicy jobs.OptOutPolicySource
 }
 
 // Registry is the production Modules: it gives the engine the Module of a job's module id for the job's user.
@@ -78,6 +82,7 @@ type Registry struct {
 	prov   M1Provisioner
 	conc   int
 	log    *slog.Logger
+	optOut jobs.OptOutPolicySource // module 1's opt-out policy key (RegistryDeps.OptOutPolicy); nil: an opted-out job waits
 
 	provisioned  sync.Map     // user id -> true: users whose module 1 caller row was ensured by this process (it is idempotent: this only spares the call)
 	pauseCapable sync.Map     // module id -> time.Time: when a describe last declared the module's per-campaign pause capability (see sendapiModule.requirePauseCapability)
@@ -86,7 +91,7 @@ type Registry struct {
 
 // NewRegistry builds the Registry.
 func NewRegistry(d RegistryDeps) *Registry {
-	r := &Registry{m1: d.M1, m2: d.M2, m3: d.M3, prov: d.Provisioner, conc: d.SubmitConcurrency, log: d.Log}
+	r := &Registry{m1: d.M1, m2: d.M2, m3: d.M3, prov: d.Provisioner, conc: d.SubmitConcurrency, log: d.Log, optOut: d.OptOutPolicy}
 	switch {
 	case d.Scoper != nil:
 		r.scoper = d.Scoper
@@ -221,6 +226,8 @@ const (
 	phaseCancel  phase = "cancel"
 	phasePause   phase = "pause"
 	phaseResume  phase = "resume"
+	// phaseDescribe is a read of module 1's own describe (the opt-out policy key). It is read-only and never a refusal of a JOB: whatever module 1 answers, the step waits.
+	phaseDescribe phase = "describe"
 )
 
 // declinesOperation says whether a phase is one in which a module can honestly say "I do not have that route": cancel, pause and resume are optional capabilities of a module (a module older than the

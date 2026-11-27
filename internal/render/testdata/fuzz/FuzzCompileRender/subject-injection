@@ -1,0 +1,5 @@
+go test fuzz v1
+string("Re: {{x}} {a|b}")
+uint64(5)
+string("a\r\nBcc: e@example.com\x00\x1f")
+int(2)

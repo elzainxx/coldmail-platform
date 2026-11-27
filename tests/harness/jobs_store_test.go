@@ -976,7 +976,7 @@ func TestJobsStore_ScheduledConfirm(t *testing.T) {
 		t.Errorf("the immediate confirm is %+v, want confirmed with no start and a deadline of confirmed_at + 30 minutes", r2.Job)
 	}
 	// the delay is the store's dial
-	e45, err := jobs.New(e.pool, e.store, jobs.WithMaxStartDelay(45*time.Minute))
+	e45, err := jobs.New(e.pool, e.store, harnessUnsubscribeOption(), jobs.WithMaxStartDelay(45*time.Minute))
 	mnyNoErr(t, "jobs.New with a 45 minute delay", err)
 	B := mnyUserB
 	e.fund(B, "m2", 10)

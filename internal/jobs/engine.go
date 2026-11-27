@@ -104,7 +104,12 @@ type EngineRow struct {
 	ID        string
 	Ordinal   int
 	EmailNorm string
-	Fields    map[string]string
+	// Fields is the row's merge data (platform.job_rows.fields): a string as it was stored, a JSON number or boolean as the text it is written as, anything else absent (decodeFields, template.go). It is never nil.
+	Fields map[string]string
+	// UnsubscribeURL is the row's unsubscribe link. It is SET BY THE STORE, never scanned from a table: insertItems makes it (the maker WithUnsubscribe gave the store) for every row it hands the
+	// renderer and writes the same link to public.job_items.unsubscribe_url, so what a template places for {{unsubscribe_url}} and what a sender puts in List-Unsubscribe are one string. It is ""
+	// when the store has no maker (a test, or a service with no PLATFORM_UNSUBSCRIBE_SECRET: no send job can be confirmed there) and on every row the engine hands module 1, which has no links.
+	UnsubscribeURL string
 }
 
 // ResultItem is one item a module reported final: the item reference (job_rows.id), what happened (the charge table's input) and the module's own detail for it (a jsonb object, at most
@@ -379,11 +384,9 @@ func (s *Store) scanEngineRows(rows pgx.Rows) ([]EngineRow, error) {
 			return nil, s.fail(err)
 		}
 		r.Ordinal, r.EmailNorm = int(ord), deref(email)
-		r.Fields = map[string]string{}
-		if len(fields) > 0 {
-			if err := json.Unmarshal(fields, &r.Fields); err != nil {
-				return nil, fmt.Errorf("the merge data of row %s is not a flat object: %w", r.ID, err)
-			}
+		var err error
+		if r.Fields, err = decodeFields(fields); err != nil { // strings as they are, numbers and booleans as their text, anything else absent (template.go)
+			return nil, fmt.Errorf("the merge data of row %s is not an object: %w", r.ID, err)
 		}
 		out = append(out, r)
 	}
@@ -435,6 +438,10 @@ func (s *Store) EnsureModuleItems(ctx context.Context, jobID string, ids []strin
 		default:
 			return notAllowed(reasonNotSubmittable)
 		}
+		prep, err := s.prepare(j.ID, *j.Content) // the templates are compiled once for the call
+		if err != nil {
+			return err
+		}
 		rows, err := tx.Query(ctx, `SELECT id::text, ordinal, email_norm, fields FROM platform.job_rows
 			WHERE job_id = $1::uuid AND state = 'pending' AND id = ANY($2::text[]::uuid[]) ORDER BY ordinal`, j.ID, want)
 		if err != nil {
@@ -447,7 +454,7 @@ func (s *Store) EnsureModuleItems(ctx context.Context, jobID string, ids []strin
 		if len(pend) != len(want) {
 			return badRequest("%d of the %d named rows are not pending rows of the job", len(want)-len(pend), len(want))
 		}
-		inserted, err = s.insertItems(ctx, tx, j, pend)
+		inserted, err = s.insertItems(ctx, tx, j, prep, pend)
 		return err
 	})
 	if err != nil {
@@ -456,26 +463,32 @@ func (s *Store) EnsureModuleItems(ctx context.Context, jobID string, ids []strin
 	return inserted, nil
 }
 
-// insertItems renders the rows through the store's Renderer and writes their public.job_items rows, one INSERT per rowBatch rows (ON CONFLICT (id) DO NOTHING: a row that is already there is not
+// insertItems makes each row's unsubscribe link (the maker of WithUnsubscribe; a store with none writes no item at all: ReasonUnsubscribeNotConfigured), renders the rows through the job's prepared campaign (prep: the
+// store's Preparer, or its Renderer; it sees the link as EngineRow.UnsubscribeURL and is built ONCE per call by the caller, never per page or per row: messageFor, template.go) and writes their public.job_items rows, link included, one INSERT per rowBatch rows (ON CONFLICT (id) DO NOTHING: a row that is already there is not
 // touched), in the caller's transaction, and returns how many it newly wrote. A message that does not satisfy checkRendered or a renderer that refuses a row fails the call: the caller's transaction
 // is then rolled back, so nothing of the call is written.
-func (s *Store) insertItems(ctx context.Context, tx pgx.Tx, j Job, pend []EngineRow) (int, error) {
+func (s *Store) insertItems(ctx context.Context, tx pgx.Tx, j Job, prep PreparedCampaign, pend []EngineRow) (int, error) {
+	if s.unsub == nil && len(pend) > 0 {
+		// a send without a working unsubscribe link is not allowed (Phase 5, decision 5): a store that cannot make one writes NO item, not an item with a NULL link. A job confirmed before the dials were
+		// removed therefore waits (the engine keeps the job and tries again) until the configuration is back, and no message ever leaves without its link.
+		return 0, notAllowed(ReasonUnsubscribeNotConfigured)
+	}
 	inserted := 0
 	for start := 0; start < len(pend); start += rowBatch {
 		end := min(start+rowBatch, len(pend))
 		n := end - start
-		rid, email, subject, body, text, reply := make([]string, n), make([]string, n), make([]string, n), make([]string, n), make([]string, n), make([]string, n)
+		rid, email, subject, body, text, reply, link := make([]string, n), make([]string, n), make([]string, n), make([]string, n), make([]string, n), make([]string, n), make([]string, n)
 		for i := start; i < end; i++ {
-			m, err := renderRow(s.render, *j.Content, pend[i])
+			row, m, err := s.messageFor(prep, j.Content.ReplyTo, pend[i]) // the row's link ("" with no maker) and its message: the renderer sees the link and the column holds it
 			if err != nil {
 				return 0, err
 			}
-			rid[i-start], email[i-start], subject[i-start], body[i-start], text[i-start], reply[i-start] = pend[i].ID, pend[i].EmailNorm, m.subject, m.html, m.text, m.replyTo
+			rid[i-start], email[i-start], subject[i-start], body[i-start], text[i-start], reply[i-start], link[i-start] = row.ID, row.EmailNorm, m.subject, m.html, m.text, m.replyTo, row.UnsubscribeURL
 		}
-		tag, err := tx.Exec(ctx, `INSERT INTO public.job_items (id, campaign_id, user_id, recipient_email, rendered_subject, rendered_body, rendered_text, reply_to)
-			SELECT u.id::uuid, $1::uuid, $2::uuid, u.email, u.subject, u.body, NULLIF(u.txt, ''), NULLIF(u.reply, '')
-			FROM unnest($3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[]) AS u(id, email, subject, body, txt, reply)
-			ON CONFLICT (id) DO NOTHING`, j.ID, j.UserID, rid, email, subject, body, text, reply)
+		tag, err := tx.Exec(ctx, `INSERT INTO public.job_items (id, campaign_id, user_id, recipient_email, rendered_subject, rendered_body, rendered_text, reply_to, unsubscribe_url)
+			SELECT u.id::uuid, $1::uuid, $2::uuid, u.email, u.subject, u.body, NULLIF(u.txt, ''), NULLIF(u.reply, ''), NULLIF(u.link, '')
+			FROM unnest($3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[], $9::text[]) AS u(id, email, subject, body, txt, reply, link)
+			ON CONFLICT (id) DO NOTHING`, j.ID, j.UserID, rid, email, subject, body, text, reply, link)
 		if err != nil {
 			return 0, s.fail(err)
 		}
@@ -509,6 +522,10 @@ func (s *Store) EnsureJobItems(ctx context.Context, jobID string) (int, error) {
 		if done {
 			return nil // another call wrote them while this one waited for the lock
 		}
+		prep, err := s.prepare(j.ID, *j.Content) // the templates are compiled ONCE for the whole call, not per page and not per row
+		if err != nil {
+			return err
+		}
 		after := 0 // ordinals start at 1: the page is the rows after the last one read
 		for {
 			rows, err := tx.Query(ctx, `SELECT id::text, ordinal, email_norm, fields FROM platform.job_rows
@@ -520,7 +537,7 @@ func (s *Store) EnsureJobItems(ctx context.Context, jobID string) (int, error) {
 			if err != nil {
 				return err
 			}
-			n, err := s.insertItems(ctx, tx, j, pend)
+			n, err := s.insertItems(ctx, tx, j, prep, pend)
 			if err != nil {
 				return err
 			}

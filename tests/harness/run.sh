@@ -33,7 +33,7 @@ BUILD_ONLY=""
 case "$SCOPE" in
   gotrue)   BUILD_ONLY="migrate-platform migrate-m1 migrate-m2 migrate-m3";;   # stage 4 runs every migration chain; GoTrue itself is an image (docker-compose.gotrue.yml), pulled by digest, never built
   m2worker) BUILD_ONLY="migrate-platform migrate-m1 migrate-m2 migrate-m3 m2 m2-worker smtp-ctl";;
-  jobs)     BUILD_ONLY="migrate-platform migrate-m1 migrate-m2 migrate-m3 m1j jobsdns jobs-a jobs-b";;   # stage 4 runs every migration chain; module 1 is `m1j`, the fixture DNS `jobsdns` and the two instances `jobs-a`/`jobs-b` (docker-compose.jobs.yml); the scenario program is compiled by Go, not built as an image
+  jobs)     BUILD_ONLY="migrate-platform migrate-m1 migrate-m2 migrate-m3 m1j jobsdns zbstub jobs-a jobs-b";;   # stage 4 runs every migration chain; module 1 is `m1j`, the fixture DNS `jobsdns`, the vendor stand-in `zbstub` (stage J7) and the two instances `jobs-a`/`jobs-b` (docker-compose.jobs.yml); the scenario program is compiled by Go, not built as an image
   m1node) BUILD_ONLY="migrate-platform migrate-m1 migrate-m2 migrate-m3 m1n fx verifier-node";;   # stage 4 runs every migration chain; module 1's own control plane is `m1n` in this scope (docker-compose.m1node.yml)
   sendjobs)    BUILD_ONLY="migrate-platform migrate-m1 migrate-m2 migrate-m3 m2 m2-worker m3 m3-worker m3-worker-2 m3-worker-3 smtp-ctl m3dns jobs-a jobs-b";;   # both senders, their workers, the controllable sink, the From-gate's DNS and the two instances; Mailpit is an image
   sendjobs-m2) BUILD_ONLY="migrate-platform migrate-m1 migrate-m2 migrate-m3 m2 m2-worker smtp-ctl jobs-a jobs-b";;   # module 2 only (tests/harness/jobs/send-stage.sh says why the scope splits)

@@ -23,7 +23,7 @@ var (
 	ErrBadRequest = errors.New("bad request")
 	// ErrTooManyRows is wrapped by every *TooManyRowsError: the list is longer than the store's limit (WithMaxRows, default DefaultMaxRows).
 	ErrTooManyRows = errors.New("too many rows")
-	// ErrNothingToDo: not one row would reach the module (every row is malformed, a repeat, excluded or suppressed), so there is nothing to confirm.
+	// ErrNothingToDo: not one row would reach the module (every row is malformed, a repeat, excluded, suppressed or, for a send job, left out because its templates cannot be rendered for it: missing_field, unrenderable), so there is nothing to confirm.
 	ErrNothingToDo = errors.New("no row would reach the module")
 	// ErrNotAllowed is wrapped by every *NotAllowedError: the job's lifecycle refuses the move. When the refusal is the database's (SQLSTATE 23001, platform.jobs_transition_guard), Reason is the
 	// constraint's name (job_transition_illegal, job_module_cannot_cancel, job_module_cannot_pause, job_resume_to_where_it_paused_from, ...).
@@ -103,6 +103,22 @@ func (e *BadRequestError) Is(target error) bool { return target == ErrBadRequest
 func badRequest(format string, args ...any) error {
 	return &BadRequestError{Reason: fmt.Sprintf(format, args...)}
 }
+
+// TemplateError is a campaign that does not follow the grammar of internal/render: the part, and the position and the message the package gives (it never repeats more than one character of the source).
+// It is an ErrBadRequest, so every caller that treats a bad request treats it; the API tells the user the part, the line, the column and the message.
+type TemplateError struct {
+	Part    string // subject, html or text
+	Line    int    // 1-based
+	Column  int    // 1-based, in characters
+	Message string
+}
+
+func (e *TemplateError) Error() string {
+	return fmt.Sprintf("bad request: the %s template has a syntax error at line %d, column %d: %s", e.Part, e.Line, e.Column, e.Message)
+}
+
+// Is makes errors.Is(err, ErrBadRequest) true.
+func (e *TemplateError) Is(target error) bool { return target == ErrBadRequest }
 
 // TooManyRowsError is an ErrTooManyRows with the limit that was exceeded.
 type TooManyRowsError struct {

@@ -38,7 +38,7 @@ type Outcome struct {
 	// Module is "m1", "m2", "m3" or "platform".
 	Module string
 	// State is M1's status (valid, invalid, risky, unknown), M2's item state (sent, bounced, failed, queued, assigned, sending, cancelled) or,
-	// for Module "platform", one of cancelled, expired, quarantined, infrastructure_failure, pool_exhausted, smtp_login_rejected, duplicate, malformed.
+	// for Module "platform", one of cancelled, expired, quarantined, infrastructure_failure, pool_exhausted, smtp_login_rejected, duplicate, malformed, missing_field, unrenderable.
 	State string
 	// Reason is the module's reason: M1's reason, or M2's item reason ("" when the module names none, and for every other module).
 	Reason string

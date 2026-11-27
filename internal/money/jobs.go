@@ -14,16 +14,21 @@ type jobRow struct {
 	module  string
 	status  string
 	metered bool
+	// optOut is the job's own frozen choice (platform.jobs.frozen_settings, settings.vendor_opt_out; Phase 5 S6): true when the customer was opted out of the paid vendor fallback when the job was
+	// created. An opted-out job's price snapshot, reserve rate and complete-snapshot check leave out the units that need the vendor (platform.unit_costs.needs_vendor). A job with no such key (every
+	// job created before platform_0020, every send job) is opted in. The key is a JSON boolean (CHECK jobs_vendor_opt_out_is_boolean), so the cast cannot fail.
+	optOut bool
 }
 
 // job reads a job and its module's metering with a plain SELECT (no row lock). user_id and module_id never change (platform.jobs_guard), so they are safe to
-// use for the lock key; the status is read AGAIN under the lock by the operations that decide on it.
+// use for the lock key; the status is read AGAIN under the lock by the operations that decide on it. frozen_settings is frozen once the job has left previewed, and the reserve
+// (which is made from draft or previewed) is the one reader that decides on optOut under the job's row lock.
 func (s *Store) job(ctx context.Context, tx pgx.Tx, jobID string) (jobRow, error) {
-	const q = `SELECT j.user_id::text, j.module_id, j.status, m.metered
+	const q = `SELECT j.user_id::text, j.module_id, j.status, m.metered, COALESCE((j.frozen_settings #>> '{settings,vendor_opt_out}')::boolean, false)
 		FROM platform.jobs j JOIN platform.modules m ON m.id = j.module_id
 		WHERE j.id = $1::uuid`
 	var j jobRow
-	err := tx.QueryRow(ctx, q, jobID).Scan(&j.user, &j.module, &j.status, &j.metered)
+	err := tx.QueryRow(ctx, q, jobID).Scan(&j.user, &j.module, &j.status, &j.metered, &j.optOut)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return jobRow{}, fmt.Errorf("%w: %s", ErrJobNotFound, jobID)
 	}

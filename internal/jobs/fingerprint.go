@@ -23,6 +23,9 @@ import (
 //	source          the source job's id ("" when none)
 //	source_results  the digest of the source job's module results, one line `item_ref|module_state` per result ordered by item_ref ("" when none)
 //	prices          unit -> cost of the REACHABLE units of the module (a price change and a flip of a unit's reachability each change it; {} for module 3)
+//	fields          (send jobs whose rows carry merge data only: the member is absent otherwise, so no fingerprint of a job without merge data changed) the digest of the rows' merge data, one line
+//	                `ordinal|md5 of the row's fields as jsonb text` per row that has any, in ordinal order. The templates are in `content`; the missing-field count and the samples of a preview are functions of the
+//	                templates and of these values, so a change of a value must be a stale preview. The values themselves are never in the fingerprint, only their digest.
 //
 // The credits the user holds are NOT in it: a balance that moved is not a stale preview (confirm checks the balance itself). Preview and Confirm compute it with the same code.
 
@@ -35,6 +38,7 @@ type fingerprintInput struct {
 	UnknownChoice string
 	SourceJobID   string
 	SourceDigest  string
+	FieldsDigest  string // "" when no row of a send job carries merge data (and for every verify job)
 	Prices        map[string]int
 }
 
@@ -53,6 +57,9 @@ func (in fingerprintInput) fingerprint() string {
 		"source":         in.SourceJobID,
 		"source_results": in.SourceDigest,
 		"prices":         prices,
+	}
+	if in.FieldsDigest != "" { // present only when there is merge data to name: a job without any keeps the fingerprint it had before the templates
+		doc["fields"] = in.FieldsDigest
 	}
 	b, err := canonicalJSON(doc)
 	if err != nil { // the document is built from strings and integers above: this cannot happen
@@ -163,9 +170,9 @@ func (d *lineDigest) sum() string {
 	return hex.EncodeToString(d.h.Sum(nil))
 }
 
-// rowLine adds a row to the rows digest: ordinal|state|email_norm|reason, with `suppressed` read as `pending`.
+// rowLine adds a row to the rows digest: ordinal|state|email_norm|reason, with `suppressed` (and the two states a send job's confirm leaves rows in) read as `pending`.
 func (d *lineDigest) rowLine(ordinal int, state, emailNorm, reason string) {
-	if state == StateSuppressed {
+	if state == StateSuppressed || state == StateMissingField || state == StateUnrenderable {
 		state = StatePending
 	}
 	d.add(strconv.Itoa(ordinal), state, emailNorm, reason)

@@ -3,7 +3,8 @@
  "zones": ["test"],
  "records": [
   {"name":"free.example.test","type":"MX","values":["10 mx.free.example.test."]},
-  {"name":"mx.free.example.test","type":"A","values":["192.0.2.10"]}
+  {"name":"mx.free.example.test","type":"A","values":["192.0.2.10"]},
+  {"name":"provider.example.test","type":"MX","values":["10 aspmx.l.google.com."]}
  ],
  "modes": [],
  "smtp": []

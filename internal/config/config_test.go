@@ -108,11 +108,20 @@ func TestVars_AreWellFormed(t *testing.T) {
 			t.Errorf("%s must be declared optional, not secret, with the default %q, got %+v", name, def, v)
 		}
 	}
+	// The unsubscribe dials (Phase 5 S3): the signing secret is a secret and the public address is not, both optional with the (unset) marker; the rate has a real default.
+	for _, c := range []struct {
+		name, def string
+		secret    bool
+	}{{VarUnsubscribeSecret, "(unset)", true}, {VarPublicBaseURL, "(unset)", false}, {VarUnsubscribeRatePerMin, "30", false}} {
+		if v, ok := byName[c.name]; !ok || v.Secret != c.secret || v.Required || v.Default != c.def {
+			t.Errorf("%s must be declared optional, with the default %q and Secret=%v, got %+v", c.name, c.def, c.secret, v)
+		}
+	}
 	// Every other variable is a non-secret dial: a new secret must be added to the list above on purpose.
-	knownSecrets := map[string]bool{VarDatabaseURL: true, VarM3AdminToken: true, VarM1KeySecret: true, VarM2ServiceToken: true, VarM3ServiceToken: true, VarJWTSecret: true}
+	knownSecrets := map[string]bool{VarDatabaseURL: true, VarM3AdminToken: true, VarM1KeySecret: true, VarM2ServiceToken: true, VarM3ServiceToken: true, VarJWTSecret: true, VarUnsubscribeSecret: true}
 	for _, v := range vars {
 		if v.Secret && !knownSecrets[v.Name] {
-			t.Errorf("%s is Secret but is not one of the six known secrets: extend this test deliberately", v.Name)
+			t.Errorf("%s is Secret but is not one of the seven known secrets: extend this test deliberately", v.Name)
 		}
 	}
 
@@ -173,6 +182,13 @@ func TestLoad_DefaultsAreTheDocumentedOnes(t *testing.T) {
 		"PLATFORM_JOB_SUBMIT_CONCURRENCY":  "8",
 		"PLATFORM_JOB_STEP_TIMEOUT_SEC":    "120",
 		"PLATFORM_JOB_BACKOFF_CAP_SEC":     "60",
+
+		"PLATFORM_JOB_PAUSE_MAX_DAYS":     "7",
+		"PLATFORM_CONTENT_RETENTION_DAYS": "7",
+
+		"PLATFORM_UNSUBSCRIBE_SECRET":       "(unset)",
+		"PLATFORM_PUBLIC_BASE_URL":          "(unset)",
+		"PLATFORM_UNSUBSCRIBE_RATE_PER_MIN": "30",
 
 		"PLATFORM_INSTANCE_ID": "(hostname)",
 	}
@@ -383,6 +399,13 @@ var alternatives = map[string]string{
 	VarJobSubmitConcurrency: "5",
 	VarJobStepTimeoutSec:    "45",
 	VarJobBackoffCapSec:     "90",
+
+	VarJobPauseMaxDays:      "3",
+	VarContentRetentionDays: "30",
+
+	VarUnsubscribeSecret:     strings.Repeat("unsub-", 7), // 42 bytes
+	VarPublicBaseURL:         "https://app.example.test/mail",
+	VarUnsubscribeRatePerMin: "75",
 
 	VarInstanceID: "platform-2",
 }

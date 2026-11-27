@@ -510,7 +510,7 @@ func newJlStackWith(t *testing.T, ctx context.Context, o jlOpts) (*jlStack, *jlT
 	if delay == 0 {
 		delay = jobs.DefaultMaxStartDelay
 	}
-	jopts := []jobs.Option{jobs.WithMaxRows(jobs.DefaultMaxRows), jobs.WithMaxStartDelay(delay), jobs.WithLogger(log)}
+	jopts := []jobs.Option{jobs.WithMaxRows(jobs.DefaultMaxRows), jobs.WithMaxStartDelay(delay), jobs.WithLogger(log), harnessUnsubscribeOption()}
 	if s.m3ad != nil {
 		jopts = append(jopts, jobs.WithPreChecks(jlM3PreChecks{ad: s.m3ad}))
 	}

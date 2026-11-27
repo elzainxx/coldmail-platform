@@ -1,0 +1,5 @@
+go test fuzz v1
+string("<a href=\"{{u}}\">{{x}}</a>")
+uint64(3)
+string("\" onmouseover=\"x")
+int(0)

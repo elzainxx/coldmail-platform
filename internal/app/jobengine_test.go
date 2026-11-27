@@ -463,7 +463,7 @@ func TestRegistry_TheSubmitConcurrencyDialReachesTheRegistryAndTheAdaptersAreBui
 		if err != nil || ad.M3 == nil || ad.M1 != nil || ad.M2 != nil {
 			t.Fatalf("adapters = %+v, %v; want only module 3", ad, err)
 		}
-		reg := newModuleRegistry(pool, cfg, ad, nil, log)
+		reg := newModuleRegistry(pool, cfg, ad, nil, log, nil)
 		mod, err := reg.For(t.Context(), "2f6d1c1e-7a4b-4c55-9f0e-5b7a3c9d8e21", jobs.ModuleSendBYO)
 		if err != nil {
 			t.Fatal(err)

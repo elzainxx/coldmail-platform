@@ -226,7 +226,7 @@ func newJlStack(t *testing.T, ctx context.Context) *jlStack {
 		t.Fatalf("m3.FromConfig: %v", err)
 	}
 	s.mny = money.New(s.pool, money.WithLockTimeout(20*time.Second))
-	if s.store, err = jobs.New(s.pool, s.mny, jobs.WithMaxRows(jobs.DefaultMaxRows), jobs.WithMaxStartDelay(jobs.DefaultMaxStartDelay), jobs.WithLogger(log), jobs.WithPreChecks(jlM3PreChecks{ad: s.m3ad})); err != nil {
+	if s.store, err = jobs.New(s.pool, s.mny, jobs.WithMaxRows(jobs.DefaultMaxRows), jobs.WithMaxStartDelay(jobs.DefaultMaxStartDelay), jobs.WithLogger(log), jobs.WithPreChecks(jlM3PreChecks{ad: s.m3ad}), harnessUnsubscribeOption()); err != nil {
 		t.Fatalf("jobs.New: %v", err)
 	}
 	reg := jobengine.NewRegistry(jobengine.RegistryDeps{

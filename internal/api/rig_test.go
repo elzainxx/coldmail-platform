@@ -285,23 +285,27 @@ func (s *syncBuf) lines(t *testing.T) []map[string]any {
 }
 
 type rig struct {
-	t     *testing.T
-	store *fakeStore
-	res   *fakeResolver
-	mint  *authtest.Minter
-	api   *API
-	srv   *httptest.Server
-	logs  *syncBuf
+	t        *testing.T
+	store    *fakeStore
+	settings *fakeSettings // the user settings store (settings_test.go), mounted with the job routes
+	res      *fakeResolver
+	mint     *authtest.Minter
+	api      *API
+	srv      *httptest.Server
+	logs     *syncBuf
 }
 
 // rigOpt adjusts a rig before its server starts.
 type rigOpt func(*rigCfg)
 
 type rigCfg struct {
-	pageMax int
-	wrap    func(http.Handler) http.Handler
-	mint    func(testing.TB) *authtest.Minter
+	pageMax    int
+	wrap       func(http.Handler) http.Handler
+	mint       func(testing.TB) *authtest.Minter
+	noSettings bool // build the API with no settings store: its two routes are not mounted
 }
+
+func withoutSettings() rigOpt { return func(c *rigCfg) { c.noSettings = true } }
 
 func withPageMax(n int) rigOpt                          { return func(c *rigCfg) { c.pageMax = n } }
 func withWrap(w func(http.Handler) http.Handler) rigOpt { return func(c *rigCfg) { c.wrap = w } }
@@ -313,7 +317,7 @@ func newRig(t *testing.T, opts ...rigOpt) *rig {
 	for _, o := range opts {
 		o(&cfg)
 	}
-	r := &rig{t: t, store: newFakeStore(), logs: &syncBuf{}}
+	r := &rig{t: t, store: newFakeStore(), settings: newFakeSettings(), logs: &syncBuf{}}
 	r.res = &fakeResolver{
 		users: map[string]tenant.Tenant{
 			loginA: {UserID: userA, AuthUserID: loginA, Active: true},
@@ -327,7 +331,11 @@ func newRig(t *testing.T, opts ...rigOpt) *rig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.api, err = New(Deps{Service: r.store, Verifier: r.mint.Verifier(t), Resolver: r.res, Logger: log, ResultsPageMax: cfg.pageMax})
+	deps := Deps{Service: r.store, Verifier: r.mint.Verifier(t), Resolver: r.res, Logger: log, ResultsPageMax: cfg.pageMax, Settings: r.settings}
+	if cfg.noSettings {
+		deps.Settings = nil
+	}
+	r.api, err = New(deps)
 	if err != nil {
 		t.Fatal(err)
 	}

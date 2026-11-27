@@ -50,6 +50,8 @@ Every route needs `Authorization: Bearer <token>`, where the token is the **acce
 | `GET /v1/jobs/{id}/events` | the job's history (`after`, `limit` 1 to 1000, default 100) | `200`, `{"events":[...],"next_after":...}` |
 | `GET /v1/jobs/{id}/results` | the results by row (`cursor`, `limit`) | `200`, `{"results":[...],"next_cursor":...}` |
 | `GET /v1/jobs/{id}/results.csv` | every result as a CSV, streamed | `200`, `text/csv` |
+| `GET /v1/settings` | the user's own settings (today one: `vendor_fallback_opt_out`) | `200`, `{"vendor_fallback_opt_out":false}` |
+| `PUT /v1/settings` | state a setting: body `{"vendor_fallback_opt_out": true or false}` | `200`, the settings now in force |
 
 The five moves (`discard`, `reopen`, `cancel`, `pause`, `resume`) take no body. **What a module can do to a running job is data** (`platform.modules.can_pause`, `can_cancel`), and the database refuses what it cannot:
 modules 2 and 3 can pause and resume one running job, every module can cancel one, and module 1 has no pause. The API does not pretend: each move attempts the right move for the job's state and the database
@@ -72,10 +74,24 @@ the job), and a module that claimed an item a moment before keeps working that i
 is held, the engine writes a `note` event whose `reason` begins `module_paused`; when it stops saying so, one that begins `module_resumed`. The job's `paused` transition event is the API's answer, the `note` is
 the module's acknowledgement, and the time between them is the lag. A module that does not acknowledge keeps being asked at every look.
 
-**A paused job holds its credits.** The reserve and the one-active-job slot stay held while the job is paused (and while it is `cancelling`) until the user resumes it or cancels it. **There is no automatic expiry
-of a pause taken while the job was running** (a job that was running has no start to miss, and the database refuses to expire it); a job paused *before* its start still expires at its start deadline. While a
+**A paused job holds its credits.** The reserve and the one-active-job slot stay held while the job is paused (and while it is `cancelling`) until the user resumes it or cancels it. **A pause is not for ever: after
+`PLATFORM_JOB_PAUSE_MAX_DAYS` (7 days by default) the engine cancels the job** (see "A pause has a limit" below). A job that was running has no start to miss and never expires; a job paused *before* its start also
+expires at its start deadline if that comes first. While a
 job is paused the engine submits nothing and raises no `stale` alert (nothing is expected to progress); when the job resumes its staleness clock starts again. If everything the module held finishes while the
 job is paused, the job completes the normal way.
+
+**A pause has a limit.** A job that stays paused for longer than `PLATFORM_JOB_PAUSE_MAX_DAYS` (default 7, 1 to 90) is ended by the engine, counted by the **database's** clock from the moment the job was paused
+(`paused_at`, which only the lifecycle sets: a job that is resumed and paused again starts a new count). What happens depends on where the job paused from, and in both cases nothing already sent is touched or refunded:
+
+| The job paused | The engine moves it to | What follows |
+|---|---|---|
+| while it was `running` (modules 2 and 3) | `cancelling` | on its next look the engine tells the module, which cancels the items it has not claimed; every item already sent stays sent and charged; the engine records what finished, ends the job `cancelled` and releases the credits not consumed; the slot is held until then |
+| before its start (`scheduled`) | `cancelled`, at once | nothing was submitted: every row gets the platform's free `cancelled` result and the whole reserve is back |
+
+Either way the unsent items are cancelled and free, the user's one-active-job slot for that module is free once the job has ended, and the job's history says why: an event whose `reason` begins `pause_limit` names the
+limit ("the job was paused for longer than the limit of 7 days and the engine cancelled it"), written by the engine, and a note beside it carries the limit and the numbers in its detail for the operator. **A user who
+resumes at the very moment the engine cancels meets exactly one of two outcomes**: the resume wins (the job runs or is scheduled again and the engine finds nothing to cancel), or the engine wins and the resume is
+refused like any resume of a job that is not paused (`409 not_allowed`, `details.reason` `not_paused`). Nothing else ends a pause: the user's resume or cancel, an administrator, or this limit.
 
 **Module 1's cancel** is real: the rows it had not started become `cancelled` results (free: `cancelled_by_caller`, never a verdict), the rows it was already checking finish and are charged as the charge table
 says, and the module's own counts add up as `submitted = settled + cancelled + pending` (the platform's results hold the cancelled rows as `cancelled`, decision `free`, rule `M1-24`). A cancel of a job that
@@ -93,12 +109,12 @@ had nothing left to cancel still ends `cancelled`: the request was accepted.
     "scheduled_start": null,
     "start_deadline": null,
     "paused_from": null,
-    "settings": {"unknown_choice": null},
+    "settings": {"unknown_choice": null, "vendor_opt_out": false},
     "preview": {
-      "rows": 5, "pending": 3, "malformed": 1, "malformed_reasons": {"no_at": 1}, "duplicates": 1, "excluded": 0, "suppressed": 1, "suppressed_still_verified": true, "missing_fields": 0,
+      "rows": 5, "pending": 3, "malformed": 1, "malformed_reasons": {"no_at": 1}, "duplicates": 1, "excluded": 0, "suppressed": 1, "suppressed_still_verified": true, "missing_fields": 0, "missing_field_names": [], "missing_field_names_truncated": false, "unrenderable": 0,
       "units": 3, "selected": 0, "unknown_choice": null, "unknown_count": 0, "unknown_choice_required": false,
       "metered": true, "rate_unit": "m1_own", "unit_cost": 1, "credits": 3, "available": 100, "shortfall": 0,
-      "vendor_reachable_known": true,
+      "vendor_reachable_known": true, "vendor_opt_out": false,
       "fingerprint": "3f9a...c1", "computed_at": "2026-12-01T09:00:00.123456Z"
     },
     "preview_fingerprint": "3f9a...c1",
@@ -118,7 +134,21 @@ reserved, a free `suppressed` result) and `units` and `credits` do not count the
 row, `units` and `credits` count them, `suppressed_still_verified` is `true`, and the results carry `"suppressed": true` on them (below). A chained send still excludes them: its rows are the verify job's results,
 and the user's list is applied again at the send's own confirm, so an address suppressed after the verify job finished is not sent to.
 
+**Templates (send jobs).** A send job's subject, HTML and text are templates ([`templates.md`](templates.md)). `missing_fields` is how many pending rows lack a merge field the templates need and give no fallback for (the suppression
+list is applied first, so a row that is on it counts as suppressed and not here); `missing_field_names` lists those fields (sorted, never a value, at most 50: `missing_field_names_truncated` says there were more);
+`unrenderable` is how many of the other pending rows render to a message the platform refuses (a blank or over-long subject, a part over 1 MiB, no body). The confirm leaves all of them out, free, so `units` and `credits`
+count only the rows that would be sent (`pending - suppressed - missing_fields - unrenderable`); a list that is skipped entirely previews as `units` 0 and confirming it is `422 nothing_to_do`. All three are 0 for a verify
+job and `missing_field_names` is then `[]`. **`samples`** is in the answer of `POST /v1/jobs/{id}/preview` and nowhere else: up to three `{"ordinal", "subject", "html", "text"}`, real rows (the first, the middle and
+the last of the rows that would be sent) rendered exactly as they will be sent. They hold the recipients' data, so they are never stored: a `GET` of the job has no `samples` member, and they are not part of
+the `fingerprint`. The fingerprint names the templates and every row's merge data, so a changed value is a stale preview.
+
 **`vendor_reachable_known`** (a module 1 job): module 1 says in its `describe` whether its vendor fallback is reachable NOW (fallback enabled, DPA confirmed, key present, spend cap above zero, kill switch off), and the platform reads that at every preview and every confirm, so the reserve (1 credit per row with the vendor off, 2 with it on) follows module 1's own configuration and there is no platform dial for it. `vendor_reachable_known` is `true` when module 1 answered for this preview, `false` when it could not be read (a stored reading is then used) and for jobs of any other module. A confirm made under the other reachability than the one the preview saw is `409 preview_stale`; an IMMEDIATE confirm that cannot be priced (module 1 unreadable and the stored reading was never set by module 1) is `503 module_unavailable`; a scheduled confirm is not refused for it. A job already confirmed never changes its reserve or its price snapshot.
+
+**`settings.vendor_opt_out` and `preview.vendor_opt_out`** (a module 1 job; see "Settings" below). `settings.vendor_opt_out` is `true` when the user's setting `vendor_fallback_opt_out` was `true` at the moment the job was created, `false` otherwise; it is
+read **once**, in the transaction that creates the job, and never changes afterwards (a later change of the setting does not alter a job that exists, a draft included). A job created before this field existed reads `false`. A send job (modules 2 and 3) has no vendor: the member is
+absent from its `settings`, and the setting is never read for it. It cannot be sent in a create: `settings.vendor_opt_out` in a request body is an unknown member (`400 bad_request`) like any other. `preview.vendor_opt_out` repeats it on the preview.
+For an opted-out job the preview and the confirm use the **non-vendor price** (1 credit per row today, whether or not module 1's vendor is reachable: `rate_unit` is never `m1_vendor`), module 1 is **not** asked whether its vendor is reachable
+(`vendor_reachable_known` is `false`, and the job is never refused for module 1's reachability), and the rate a preview shows is the rate the confirm freezes. What the customer is told about the vendor is drafted with the terms (P8): nothing here is user-facing copy.
 
 **The `unknown` choice of a chained send is never defaulted.** `settings.unknown_choice` and `preview.unknown_choice` are `null` until the user says `include` or `exclude`; until then the `unknown` rows are shown
 as excluded (the safe reading) and `selected` counts them out. `preview.unknown_count` is how many of the source job's results are `unknown`, and `preview.unknown_choice_required` is `true` when there is at least
@@ -141,7 +171,7 @@ one: the confirm then **must** carry `unknown_choice`, equal to the one the prev
 
 (`source_job_id` and `settings.unknown_choice` are for a chained send only: a choice on a list that is not chained is `400 validation_failed`, `exclude` as much as `include`.)
 
-`module` is `m1` (verify, no content), `m2` or `m3` (send, content required). A send **chained** to a succeeded verify job of the same user names it in `source_job_id` and sends no rows: its rows are that job's results,
+`module` is `m1` (verify, no content), `m2` or `m3` (send, content required; its `subject`, `html` and `text` are templates, and a syntax error in one is `400 validation_failed` with `details` `part` (`subject`, `html` or `text`), `line`, `column` and `message`, and nothing is written: [`templates.md`](templates.md)). A send **chained** to a succeeded verify job of the same user names it in `source_job_id` and sends no rows: its rows are that job's results,
 selected by verdict (`valid` and `risky` in, `invalid` out, `unknown` by `settings.unknown_choice`: `include` or `exclude`, **no default**; it may be left out here and given at the preview, see below).
 `fields` values are strings.
 
@@ -189,9 +219,20 @@ with the choice you want), so nobody confirms a list under a choice they did not
 
 - **The same key on the same job is one confirm.** The first request does the work; a second (a retry, a double click, a lost response) is answered `200` with `"replayed": true` and the numbers the first one had, and
   writes nothing. The same key on **another** job of the user is `409 idempotency_key_reused`.
-- The answer: `{"job": {...}, "replayed": false, "reserved": 3, "pending": 3, "suppressed": 0}`: `reserved` is the credits held (0 for module 3), `pending` the rows that will reach the module, `suppressed` the rows
-  that carry the user's suppression flag: in a **send** job they were left out (and are not in `pending`); in a **verify** job they are still in `pending`, verified and reserved, and flagged in the results.
+- The answer: `{"job": {...}, "replayed": false, "reserved": 3, "pending": 3, "suppressed": 0, "missing_fields": 0, "unrenderable": 0}`: `reserved` is the credits held (0 for module 3), `pending` the rows that will reach the module, `suppressed` the rows
+  that carry the user's suppression flag: in a **send** job they were left out (and are not in `pending`); in a **verify** job they are still in `pending`, verified and reserved, and flagged in the results. `missing_fields` and
+  `unrenderable` are the rows of a **send** job the confirm left out, free, because its templates cannot be rendered for them (a merge field they need is missing; the message they make is one the platform refuses): not in `pending`,
+  not reserved, never given to a module, each with a platform result `missing_field` (rule `P-09`, the reason names the fields) or `unrenderable` (rule `P-10`, the reason is a word). Both are 0 for a verify job. A replay returns the same numbers.
 - A confirm is one transaction: it either holds the credits and takes the slot (one active job per user and module) or leaves nothing behind.
+- **A send job needs a working unsubscribe link.** Every message of a module 2 or module 3 job carries a per-recipient unsubscribe link (see [`unsubscribe.md`](unsubscribe.md)); a service that cannot make one
+  (`PLATFORM_UNSUBSCRIBE_SECRET` or `PLATFORM_PUBLIC_BASE_URL` is unset) refuses the confirm of a send job with `409 not_allowed`, `details.reason` `unsubscribe_not_configured`, before it asks module 3 anything and
+  before anything is held. Nothing is written: the job stays previewed, and the same confirm succeeds once the operator has set both dials. A verify job (module 1) is not asked, and a confirm that is only a
+  replay (the key already confirmed this job) is answered as a replay whatever the configuration is now.
+- **An opted-out module 1 job needs module 1's opt-out policy.** A job created while the user was opted out of the vendor fallback (`settings.vendor_opt_out` true) is created at module 1 under the policy module 1 itself
+  publishes for it (`vendor_fallback.opt_out_policy` in its describe: the platform holds no name for it), which never reaches the paid vendor. If that policy is not known at the confirm (module 1 cannot be asked, or it is an older
+  module 1 that publishes none) the confirm is `409 not_allowed`, `details.reason` `opt_out_policy_unavailable`, before anything is held: the job stays previewed and the same confirm succeeds once module 1 answers. The platform never
+  submits an opted-out job under the default policy, so a job whose policy later becomes unknown waits (free) instead; and a result of module 1 that is not stamped with the opt-out policy is never recorded or charged.
+  Should a result of an opted-out job still be priced at the vendor's unit (it must not happen), it is **not charged**: the job's price snapshot never held that unit, so the result is recorded as `unmapped` (free) and the job is flagged.
 
 ### Events
 
@@ -209,7 +250,7 @@ with the choice you want), so nobody confirms a list under a choice they did not
 ], "next_cursor": "bzEw"}
 ```
 
-`origin` says who decided (`module` or `platform`: the platform's own outcomes are `malformed`, `duplicate`, `suppressed`, `excluded`, `cancelled`, `expired`, `failed`), `decision` is `charge`, `free` or `unmapped`,
+`origin` says who decided (`module` or `platform`: the platform's own outcomes are `malformed`, `duplicate`, `suppressed`, `excluded`, `missing_field`, `unrenderable`, `cancelled`, `expired`, `failed`), `decision` is `charge`, `free` or `unmapped`,
 and a charged row names its `unit`. **`suppressed`** (added after the others, which keep their names, meaning and order) is `true` when the address was on the user's suppression list when the job was confirmed.
 In a **verify** job that row is a module result like any other (verified, charged) and the flag is how the user learns the address is suppressed; in a **send** job it is the platform's own `suppressed` result (never
 sent, free, rule `P-SUP`). It is `false` for every other row. The results are **immutable and keyed by ordinal**, so walking the pages of a **finished** job with `next_cursor` neither repeats nor skips a row; the last page has
@@ -230,7 +271,7 @@ ordinal,email,origin,state,reason,decision,unit,rule,suppressed
 2,no-at-sign,platform,malformed,no_at,free,,P-08,false
 ```
 
-- **One line per result, including the platform's own** (malformed, duplicate, suppressed, excluded), written through `encoding/csv` (commas, quotes and line breaks are quoted by the standard rules), LF line ends.
+- **One line per result, including the platform's own** (malformed, duplicate, suppressed, excluded, missing_field, unrenderable), written through `encoding/csv` (commas, quotes and line breaks are quoted by the standard rules), LF line ends.
 - **The escape rule** (`internal/csvsafe`): a cell that starts with `=`, `+`, `-`, `@`, TAB, CR or `'` gets **one leading apostrophe**, so that no cell opens as a formula in a spreadsheet (`=cmd|' /C calc'!A0` is written
   `'=cmd|' /C calc'!A0`). The inverse is exact: **strip one leading apostrophe when there is one**. A cell that already started with an apostrophe is prefixed too, so the mapping is one-to-one and a program gets the original back
   (`csvsafe.Unescape`). Not checked: look-alike characters of the triggers (full-width `=` and the like), a trigger after leading white space or a byte order mark, and how a given spreadsheet shows the apostrophe (Excel shows it,
@@ -241,6 +282,32 @@ ordinal,email,origin,state,reason,decision,unit,rule,suppressed
   error, **never one that looks complete**. A client must treat a download that ends in an error as incomplete and fetch it again; a failure before the first byte (a job that is not the user's, a database down) is the ordinary
   error envelope.
 
+## Settings
+
+`GET /v1/settings` and `PUT /v1/settings` are the user's own settings (Phase 5; `internal/usersettings`, `platform.user_settings`). There is one today:
+
+| Member | Meaning | Default |
+|---|---|---|
+| `vendor_fallback_opt_out` | `true`: the user's **module 1** jobs are created without the paid vendor fallback; `false`: with it (module 1's own configuration decides whether a vendor answer can happen at all) | `false`: opted **in** (a user who never stated it has no row and reads `false`) |
+
+```
+GET /v1/settings            ->  200  {"vendor_fallback_opt_out": false}
+PUT /v1/settings            Content-Type: application/json
+                            {"vendor_fallback_opt_out": true}   ->  200  {"vendor_fallback_opt_out": true}
+```
+
+- **The user is the authenticated principal's and nothing else.** No path, query or body names a user; a body or a query that tries (`user_id`, `owner`, ...) is `400 bad_request`. A user never reads or writes another user's setting.
+- **The body is judged as strictly as every other body.** One JSON object (`application/json`, at most 64 KiB) with the one member, a JSON boolean: an unknown member, a member of another type (`"true"`, `1`), data after the object, a body that is not
+  an object and an empty body are `400 bad_request`; `null` or the member missing is `400 validation_failed` (`details.reason`: `vendor_fallback_opt_out is required: true or false`); another content type is `415`; a body over 64 KiB is `413`.
+  `GET` takes no query parameter (`400 bad_request`). Nothing is written by a refused request.
+- **Idempotent.** The same value again is `200` with that value and changes nothing; two requests at once end in one state.
+- **What a change does.** It changes the user's **next** module 1 jobs. A module 1 job reads the setting once, when it is created, and keeps it as `settings.vendor_opt_out` (above): a job that exists, a draft included, keeps the value it was created
+  under, so a customer who wants the new value on a draft discards it and creates it again. A send job (modules 2 and 3) never reads it.
+- **The audit trail.** Every change of the value writes one row in `platform.user_settings_history` (written by the database: the user as the actor, the old and the new value, the database's clock, nothing else); a request that changes nothing writes none.
+  The history is append-only for every role.
+- **What opting out means for the platform** (the customer's wording is drafted with the terms, P8): the user's module 1 jobs are created at module 1 under the policy module 1 publishes for it, which has no paid-vendor stage; they are reserved
+  at the non-vendor price; and a job's answer that module 1 had already cached from an earlier vendor answer may still answer it (nothing is sent to the vendor for it, and the row is charged as any cached answer is, by rule `M1-01`).
+
 ## Errors
 
 The envelope is `{"error": {"code", "message", "request_id"}}`, plus `details` **only** where a code has something to say. `message` is a fixed sentence per code; nothing a client sent, no address, no constraint name and
@@ -250,19 +317,19 @@ no SQL is ever in it.
 |---|---|---|---|
 | 401 | `unauthenticated` | the login is refused for any reason (see Authentication) | none; `WWW-Authenticate: Bearer` |
 | 404 | `not_found` | no such job **for this user** (also another user's job and an id that is not a job id), or an unknown path | none |
-| 400 | `validation_failed` | the request names something that cannot be done with it (the module, the content, the key, the fingerprint, a start time, a `limit`, a cursor, a CSV line) | `reason`: a sentence, never an address |
+| 400 | `validation_failed` | the request names something that cannot be done with it (the module, the content, the key, the fingerprint, a start time, a `limit`, a cursor, a CSV line, a template with a syntax error) | `reason`: a sentence, never an address; for a template also `part` (`subject`, `html`, `text`), `line`, `column` and `message` (the template package's, which quotes at most one character of what was written) |
 | 400 | `bad_request` | the body or the query cannot be read: not JSON, an unknown member, a parameter the route does not know or given twice, data after the JSON value | `reason` |
 | 413 | `payload_too_large` | the body is over its cap, or the query of a CSV create is over 64 KiB | `limit_bytes` |
 | 413 | `too_many_rows` | the list is longer than `PLATFORM_JOB_MAX_ROWS` | `limit` |
 | 415 | `unsupported_media_type` | the body is not `application/json` (or `text/csv` on a create) | `reason` |
-| 422 | `nothing_to_do` | not one row would reach the module (every row malformed, a repeat, excluded or, **for a send job only**, suppressed: a verify job whose rows are all suppressed is verified) | none |
+| 422 | `nothing_to_do` | not one row would reach the module (every row malformed, a repeat, excluded or, **for a send job only**, suppressed, missing a merge field or unrenderable: a verify job whose rows are all suppressed is verified) | none |
 | 422 | `unknown_choice_required` | the confirm of a chained send whose source job holds `unknown` results carries no `unknown_choice`; nothing was written | `unknown_rows`: how many results are unknown; `allowed`: `["include","exclude"]` |
 | 409 | `preview_stale` | what the preview depended on changed (the list, a price, the content, the choice, the source job's results), or the confirm's `unknown_choice` is not the one the job was previewed under: preview again | none, or `reason`: `unknown_choice_changed` |
 | 409 | `job_slot_taken` | the user already has an active job on this module; nothing was held | none |
 | 409 | `idempotency_key_reused` | the key already confirmed another job of the user | none |
 | 409 | `not_previewed` | the job is not previewed (or was confirmed with another key) | none |
 | 409 | `infeasible` | module 3 says the campaign cannot run (asked BEFORE the confirm's transaction: a user who already has an active module 3 campaign gets `campaign_active` here and not `job_slot_taken`; nothing was held) | `causes`: the module's words |
-| 409 | `not_allowed` | the job's lifecycle does not allow the move | `reason`: `pause_not_supported`, `cancel_not_supported`, `not_a_draft`, `already_a_draft`, `not_confirmed`, `not_paused`, `start_deadline_passed`, `submitted_job_ends_through_the_engine`, `job_status_has_no_preview` or `not_allowed` |
+| 409 | `not_allowed` | the job's lifecycle does not allow the move | `reason`: `pause_not_supported`, `cancel_not_supported`, `not_a_draft`, `already_a_draft`, `not_confirmed`, `not_paused`, `start_deadline_passed`, `submitted_job_ends_through_the_engine`, `unsubscribe_not_configured`, `opt_out_policy_unavailable`, `job_status_has_no_preview` or `not_allowed` |
 | 402 | `insufficient_credits` | the balance does not cover the whole list | `available`, `needed`, `shortfall` |
 | 403 | `no_entitlement` | module 3 is not enabled (or has expired) for the user | none |
 | 403 | `suspended` | module 3 is observed holding the user suspended | none |
@@ -274,7 +341,15 @@ no SQL is ever in it.
 
 `not_allowed`'s `reason` is a word of the API's, never the database's constraint name: the two refusals a module's capabilities cause are `pause_not_supported` (module 1 has no per-job pause) and
 `cancel_not_supported` (reserved: no seeded module reaches it), a job the module holds that somebody tried to end without the engine is `submitted_job_ends_through_the_engine`, and every other refusal of the
-lifecycle that has no word of its own is `not_allowed`.
+lifecycle that has no word of its own is `not_allowed`. The reasons that are the operator's and not the user's are `unsubscribe_not_configured` and `opt_out_policy_unavailable` (see "Confirm" above).
+
+## How long the messages of a send job are kept
+
+A send job (modules 2 and 3) leaves one rendered message per recipient in the table the modules read. **`PLATFORM_CONTENT_RETENTION_DAYS` (default 7) after the job ended** (succeeded, failed, cancelled or expired, counted
+from its end by the database's clock) the engine clears them: the subject and the body read `[removed]`, the plain-text part and the stored unsubscribe link are empty, and the recipient and `reply_to` stay. The job
+is then marked (`content_cleared_at`), once. **Outcomes are never touched**: the job's rows, its results (and so the CSV), its events and its charges are kept for ever, and so are the items of a job that has not ended.
+A job of 100000 rows is cleared a few thousand rows at a time, so no step holds a long lock. The unsubscribe link inside a message that was already sent keeps working: it does not depend on the stored copy.
+What the platform and the modules still hold of a campaign is in [`install.md`](install.md), "Content retention".
 
 ## Limits and dials
 
@@ -283,6 +358,8 @@ lifecycle that has no word of its own is `not_allowed`.
 | rows in a job | 100000 | `PLATFORM_JOB_MAX_ROWS` (1 to 100000) |
 | a confirmed or scheduled job's wait for the engine, from its start | 30 minutes | `PLATFORM_JOB_MAX_START_DELAY_MIN` (1 to 1440) |
 | results in a JSON page | 1000 | `PLATFORM_RESULTS_PAGE_MAX` (1 to 1000) |
+| how long a job may stay paused before the engine cancels it | 7 days | `PLATFORM_JOB_PAUSE_MAX_DAYS` (1 to 90) |
+| how long after a send job ended its rendered messages are kept | 7 days | `PLATFORM_CONTENT_RETENTION_DAYS` (1 to 365) |
 | body of `POST /v1/jobs` | 64 MiB | none |
 | body of every other route; query of a CSV create | 64 KiB | none |
 | token | 8 KiB | none |

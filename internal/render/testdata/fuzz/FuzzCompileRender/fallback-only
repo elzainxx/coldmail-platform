@@ -1,0 +1,5 @@
+go test fuzz v1
+string("{{x|a|b}}{{y|}}{{z}}")
+uint64(0)
+string("")
+int(0)

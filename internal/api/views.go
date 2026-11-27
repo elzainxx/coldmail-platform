@@ -30,9 +30,11 @@ func strPtr(s string) *string {
 	return &s
 }
 
-// settingsView shows the job's settings; unknown_choice is null until the user has chosen (there is no default).
+// settingsView shows the job's settings; unknown_choice is null until the user has chosen (there is no default). vendor_opt_out (Phase 5 S6) is on a verify (module 1) job only: whether the user's setting
+// opted this job out of module 1's paid vendor fallback when the job was created (the job keeps it whatever the setting becomes); it is absent from a send job, which has no vendor.
 type settingsView struct {
 	UnknownChoice *string `json:"unknown_choice"`
+	VendorOptOut  *bool   `json:"vendor_opt_out,omitempty"`
 }
 
 type contentView struct {
@@ -48,6 +50,27 @@ type previewView struct {
 	jobs.Preview
 	ComputedAt    string  `json:"computed_at"`
 	UnknownChoice *string `json:"unknown_choice"`
+	// Samples are in the answer of the preview route only (the store keeps none: jobs.Preview.Samples); the outer member hides the embedded one, which the store tags json:"-".
+	Samples []sampleView `json:"samples,omitempty"`
+}
+
+// sampleView is one sample message of a preview: a real row of the list rendered exactly as it will be sent. It holds the recipient's data (and so is never stored); it does not name the address.
+type sampleView struct {
+	Ordinal int    `json:"ordinal"`
+	Subject string `json:"subject"`
+	HTML    string `json:"html"`
+	Text    string `json:"text"`
+}
+
+func viewSamples(in []jobs.Sample) []sampleView {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]sampleView, len(in))
+	for i, s := range in {
+		out[i] = sampleView{Ordinal: s.Ordinal, Subject: s.Subject, HTML: s.HTML, Text: s.Text}
+	}
+	return out
 }
 
 // jobView is a job as a client sees it. The owner (user_id) and the confirm key are not part of it. content is present only on a send job and is left out of a list (a list of 100 jobs must
@@ -78,7 +101,7 @@ func viewJob(j jobs.Job, withContent bool) jobView {
 	v := jobView{
 		ID: j.ID, Module: j.Module, Status: j.Status,
 		SourceJobID: strPtr(j.SourceJobID), ScheduledStart: stampPtr(j.ScheduledStart), StartDeadline: stampPtr(j.StartDeadline), PausedFrom: strPtr(j.PausedFrom),
-		Settings:           settingsView{UnknownChoice: strPtr(j.Settings.UnknownChoice)},
+		Settings:           settingsView{UnknownChoice: strPtr(j.Settings.UnknownChoice), VendorOptOut: vendorOptOutOf(j)},
 		PreviewFingerprint: strPtr(j.PreviewFingerprint),
 		PreviewedAt:        stampPtr(j.PreviewedAt), ConfirmedAt: stampPtr(j.ConfirmedAt), StartedAt: stampPtr(j.StartedAt), FinishedAt: stampPtr(j.FinishedAt),
 		CancelRequestedAt: stampPtr(j.CancelRequestedAt),
@@ -92,9 +115,21 @@ func viewJob(j jobs.Job, withContent bool) jobView {
 		if p.MalformedReasons == nil {
 			p.MalformedReasons = map[string]int{} // an object, never null: a client counts its members
 		}
+		if p.MissingFieldNames == nil {
+			p.MissingFieldNames = []string{} // an array, never null (a preview stored before the templates has none)
+		}
 		v.Preview = &previewView{Preview: p, ComputedAt: stamp(p.ComputedAt), UnknownChoice: strPtr(p.UnknownChoice)}
 	}
 	return v
+}
+
+// vendorOptOutOf is settings.vendor_opt_out of a job: present (true or false) on a module 1 job, nil (absent from the JSON) on any other.
+func vendorOptOutOf(j jobs.Job) *bool {
+	if j.Module != jobs.ModuleVerify {
+		return nil
+	}
+	v := j.Settings.VendorOptOut
+	return &v
 }
 
 type eventView struct {

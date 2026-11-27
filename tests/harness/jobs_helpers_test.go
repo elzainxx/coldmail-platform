@@ -81,7 +81,7 @@ var jobUserHops = map[string]bool{
 const jobMoveSQL = "SELECT platform.job_transition($1::uuid, $2::text, $3::text, $4::uuid, $5::text)"
 
 // jobShapeKV is the name/value pairs of an INSERT that makes a job of the given status satisfy every CHECK of platform_0011 (a job past previewed has a preview, its fingerprint, a confirm key and a
-// confirmed_at; confirmed and scheduled a start deadline; scheduled a start time; a confirmed job none; a paused job says where it paused from). It is for the tests that insert a job in a status with the
+// confirmed_at; confirmed and scheduled a start deadline; scheduled a start time; a confirmed job none; a paused job says where it paused from and since when: paused_from and paused_at). It is for the tests that insert a job in a status with the
 // lifecycle trigger switched off, to prove the CHECKs and the vocabulary behind it; every other test walks a draft job (jobWalkTo).
 func jobShapeKV(status string) []any {
 	kv := []any{"status", status}
@@ -97,7 +97,7 @@ func jobShapeKV(status string) []any {
 		kv = append(kv, "scheduled_start", "2030-06-01T00:00:00Z")
 	}
 	if status == "paused" {
-		kv = append(kv, "paused_from", "scheduled")
+		kv = append(kv, "paused_from", "scheduled", "paused_at", "2030-01-01T00:00:00Z")
 	}
 	return kv
 }

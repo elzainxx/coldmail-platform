@@ -113,6 +113,14 @@ var chainRelations = map[string][]string{
 	"0015": {},
 	// platform_0016 adds no relation: the capability seeds of platform.modules (data), two rows of platform.job_transitions (data) and the amended text of platform.jobs_transition_guard
 	"0016": {},
+	// platform_0017 adds no relation: one nullable column of public.job_items (unsubscribe_url, the per-recipient link) and its CHECK job_items_unsubscribe_url_shape
+	"0017": {},
+	// platform_0018 adds no relation: two columns of platform.jobs (paused_at, content_cleared_at), two CHECKs, two partial indexes, the set-once trigger jobs_content_cleared_once, the engine on two rows of platform.job_transitions (data) and the amended text of platform.jobs_transition_guard
+	"0018": {},
+	// platform_0019 adds no relation: the CHECKs job_rows_state_vocabulary and job_rows_reason_shape of platform.job_rows replaced (two more states, missing_field and unrenderable) and a comment on the state column
+	"0019": {},
+	// platform_0020 adds the per-user settings and their append-only history (two tables), the unit flag platform.unit_costs.needs_vendor, two CHECKs on the frozen key of platform.jobs and the amended text of platform.ledger_check_reserve
+	"0020": {"user_settings", "user_settings_history"},
 }
 
 // relationsThrough is the sorted union of what the listed versions add.
@@ -153,6 +161,22 @@ func downStepBefore(t *testing.T, c *pgx.Conn, v string) {
 	t.Helper()
 	when := "before down " + v
 	switch v {
+	case "0020":
+		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015", "0016", "0017", "0018", "0019", "0020"), when)
+		userSettingsObjects(t, c, true, when)
+		templateRowsObjects(t, c, true, when) // the migration below is whole
+	case "0019":
+		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015", "0016", "0017", "0018", "0019"), when)
+		templateRowsObjects(t, c, true, when)
+		pauseLimitObjects(t, c, true, when) // the migration below is whole
+	case "0018":
+		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015", "0016", "0017", "0018"), when)
+		pauseLimitObjects(t, c, true, when)
+		jobItemsUnsubscribeObjects(t, c, true, when) // the migration below is whole
+	case "0017":
+		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015", "0016", "0017"), when)
+		jobItemsUnsubscribeObjects(t, c, true, when)
+		pauseCancelObjects(t, c, true, when) // the migration below is whole
 	case "0016":
 		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015", "0016"), when)
 		pauseCancelObjects(t, c, true, when)
@@ -231,6 +255,33 @@ func downStepAfter(t *testing.T, c *pgx.Conn, v string) {
 	t.Helper()
 	when := "after down " + v
 	switch v {
+	case "0020":
+		// the two tables, the history trigger and its function, the four refusing triggers, the unit flag and the two CHECKs on the frozen key are gone and the reserve check is platform_0013's text again; everything of 0019 and below is untouched
+		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015", "0016", "0017", "0018", "0019"), when)
+		userSettingsObjects(t, c, false, when)
+		templateRowsObjects(t, c, true, when)
+		pauseLimitObjects(t, c, true, when)
+		jobItemsUnsubscribeObjects(t, c, true, when)
+	case "0019":
+		// the two CHECKs are platform_0012's text again (five states; only a malformed or excluded row must say why) and the comment on the state column is gone; everything of 0018 and below is untouched
+		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015", "0016", "0017", "0018"), when)
+		templateRowsObjects(t, c, false, when)
+		pauseLimitObjects(t, c, true, when)
+		jobItemsUnsubscribeObjects(t, c, true, when)
+		suppressedFlagObjects(t, c, true, when)
+		jobRowsObjects(t, c, true, when)
+	case "0018":
+		// the two columns, the two CHECKs, the two partial indexes, the set-once trigger and its function are gone, the engine no longer holds the two moves and the guard is platform_0016's text again; everything of 0017 and below is untouched
+		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015", "0016", "0017"), when)
+		pauseLimitObjects(t, c, false, when)
+		jobItemsUnsubscribeObjects(t, c, true, when)
+		pauseCancelObjects(t, c, true, when)
+	case "0017":
+		// the column and its CHECK are gone (naming the column is 42703 again) and module 3's six-column INSERT is as it was; the plain-text column of 0010 and everything of 0016 and below is untouched
+		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015", "0016"), when)
+		jobItemsUnsubscribeObjects(t, c, false, when)
+		jobItemsTextObjects(t, c, true, when)
+		pauseCancelObjects(t, c, true, when)
 	case "0016":
 		// the capabilities are platform_0011's seeds again (no module pauses one job, only modules 2 and 3 cancel one), the two moves paused -> cancelling and paused -> completing are gone from the table, the guard is
 		// platform_0011's text (a job paused before its start is no longer judged by walls that only existed for the new moves) and everything of 0015 and below is untouched
@@ -588,6 +639,34 @@ func jobItemsTextObjects(t *testing.T, c *pgx.Conn, present bool, when string) {
 		ledgerExpectOK(t, tx, when+": a row with a plain-text part", withText, a)
 	} else {
 		ledgerExpectRefused(t, tx, when+": a row naming rendered_text", "42703", ledgerWhy{Message: "rendered_text"}, withText, a)
+	}
+}
+
+// jobItemsUnsubscribeObjects is the CONTROL (present) and the ASSERTION (absent) of platform_0017's down: before it, the nullable column public.job_items.unsubscribe_url and its CHECK are there, module
+// 3's six-column test-send INSERT still works (the column is optional), a row with a good link is accepted and a row with a link the CHECK refuses is refused for that constraint; after it, the column and the CHECK
+// are gone and naming the column is 42703. (The CHECK's own cases are in job_items_unsubscribe_test.go.)
+func jobItemsUnsubscribeObjects(t *testing.T, c *pgx.Conn, present bool, when string) {
+	t.Helper()
+	expect := lifecycleCounter(t, c, present, when)
+	expect("the column public.job_items.unsubscribe_url (text, nullable, no default)", 1,
+		"SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'job_items' AND column_name = 'unsubscribe_url' AND data_type = 'text' AND is_nullable = 'YES' AND column_default IS NULL")
+	expect("the CHECK job_items_unsubscribe_url_shape", 1,
+		"SELECT count(*) FROM pg_constraint WHERE conrelid = 'public.job_items'::regclass AND contype = 'c' AND conname::text = 'job_items_unsubscribe_url_shape'")
+	tx, err := c.Begin(testCtx(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	a := ledgerUserA
+	ledgerSeed(t, tx)
+	const six = "INSERT INTO public.job_items (campaign_id, user_id, recipient_email, rendered_subject, rendered_body, status) VALUES ($1, $1, 'r@example.com', 's', '<p>b</p>', 'pending')"
+	ledgerExpectOK(t, tx, when+": module 3's six-column test-send INSERT (it does not name unsubscribe_url)", six, a)
+	const withLink = "INSERT INTO public.job_items (campaign_id, user_id, recipient_email, rendered_subject, rendered_body, unsubscribe_url) VALUES ($1, $1, 'r2@example.com', 's', '<p>b</p>', $2)"
+	if present {
+		ledgerExpectOK(t, tx, when+": a row with a good link", withLink, a, "https://app.example.test/u/x")
+		ledgerExpectRefused(t, tx, when+": a row with a link that holds a space", "23514", ledgerWhy{Constraint: "job_items_unsubscribe_url_shape"}, withLink, a, "https://app.example.test/u/a b")
+	} else {
+		ledgerExpectRefused(t, tx, when+": a row naming unsubscribe_url", "42703", ledgerWhy{Message: "unsubscribe_url"}, withLink, a, "https://app.example.test/u/x")
 	}
 }
 
@@ -1092,7 +1171,7 @@ func TestRunnerLifecycle(t *testing.T) {
 
 	// The executable expectation of the migration chain. scripts/check-migrations.sh reads this literal and fails when the
 	// newest migration is not named in it, so a migration cannot be added without extending this test.
-	wantChain := []string{"0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015", "0016"}
+	wantChain := []string{"0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015", "0016", "0017", "0018", "0019", "0020"}
 
 	dir := repoMigrationsDir(t)
 	if onDisk := chainOnDisk(t, dir); !sameStrings(onDisk, wantChain) {

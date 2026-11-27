@@ -376,6 +376,74 @@ verdict "jobs_j6_reserve: on" 0 "SCN reserve --job J --expect reserve_rows=1,uni
 verdict "jobs_j6_reserve: off" 0 "SCN reserve --job J --expect reserve_rows=1,unit_cost=1,units=10,reserved_credits=10,reserved=10,charged=0,snapshot_units=2,snapshot_vendor=0,rate_unit!=m1_vendor" "$(hp jobs_j6_reserve J 1 off x)" 0
 verdict "jobs_j6_ok: prints the line and keeps it" 0 "J6 OK some_name" "$(hp jobs_j6_ok some_name; cat "$T/hp/jobs-j6.log" 2>/dev/null)" 0
 
+# ── jobs_m1j_vendor_stub (J7): module 1 re-created with its vendor fallback ON and the stand-in as its vendor, and the container proved to have the base URL ──
+cat > "$T/m1js-env.sh" <<'EOF'
+DC() {   # docker compose, as a stand-in: ps answers a container id, logs a line, up records the variables the stage set for that one command and answers SC_UP_RC
+  case "$1" in
+    ps)   [ "${SC_NOCID:-0}" = 1 ] || echo cid-m1j; return 0;;
+    logs) echo "module 1 logged a line"; return 0;;
+    up)   echo "UP base=${H_M1J_VENDOR_BASE-unset} mode=${H_M1J_FALLBACK_MODE-unset} dpa=${H_M1J_DPA_CONFIRMED-unset} cap=${H_M1J_DAILY_SPEND_CAP-unset} keylen=${#H_M1J_VENDOR_KEY}" >> "$WORK/m1js-up.log"; return "${SC_UP_RC:-0}";;
+  esac
+  return 0
+}
+docker() {   # docker inspect: what the container "has" (the base URL and the key are the caller's SC_ variables)
+  [ "$1" = inspect ] || return 0
+  printf 'PATH=/usr/bin\nTM_FALLBACK_MODE=enabled\nTM_EXTERNAL_DPA_CONFIRMED=true\nTM_EXTERNAL_DAILY_SPEND_CAP=100\nTM_EXTERNAL_ZEROBOUNCE_BASE_URL=%s\nJOBS_VENDOR_VAR=%s\n' "${SC_BASE-http://zbstub:8080}" "${SC_KEYVAL-}"
+}
+EOF
+m1jsrun() { # [stage's vendor key] -- the container's answer is the SC_* variables of the caller
+  ( set -u; W="$T/m1js"; rm -rf "$W"; mkdir -p "$W"; WORK="$W"; export WORK; . "$T/env.sh"; . "$HERE/stage.sh"; . "$T/m1js-env.sh"; JOBS_VENDOR="${1-$SV}"; jobs_m1j_vendor_stub; echo "UPLOG: $(cat "$W/m1js-up.log" 2>/dev/null | tr '\n' ' ')" ) 2>&1
+}
+out="$(SC_KEYVAL="$SV" m1jsrun)"; rc=$?
+verdict "jobs_m1j_vendor_stub: the container has the dials, the stand-in as its vendor and the minted key" 0 "was re-created with its vendor fallback ON and http://zbstub:8080 as its vendor" "$out" "$rc" "$SV"
+verdict "jobs_m1j_vendor_stub: the stage set the five variables for that one command (the base URL, the key as 64 characters)" 0 "UP base=http://zbstub:8080 mode=enabled dpa=true cap=100 keylen=64" "$out" "$rc"
+out="$(SC_BASE="" SC_KEYVAL="$SV" m1jsrun)"; rc=$?
+verdict "jobs_m1j_vendor_stub: a container with no base URL (the real vendor, which the network cannot reach) is red naming the variable" 1 "does not have TM_EXTERNAL_ZEROBOUNCE_BASE_URL=http://zbstub:8080" "$out" "$rc" "$SV"
+out="$(SC_BASE="https://api.zerobounce.net" SC_KEYVAL="$SV" m1jsrun)"; rc=$?
+verdict "jobs_m1j_vendor_stub: a container that dials another vendor is red" 1 "does not have TM_EXTERNAL_ZEROBOUNCE_BASE_URL=http://zbstub:8080" "$out" "$rc"
+out="$(SC_KEYVAL="$SB" m1jsrun)"; rc=$?
+verdict "jobs_m1j_vendor_stub: a container with another key is red and shows neither" 1 "is not the minted stand-in key (it is 64 characters long)" "$out" "$rc" "$SB" "$SV"
+out="$(SC_KEYVAL="" m1jsrun)"; rc=$?
+verdict "jobs_m1j_vendor_stub: a container with an empty key is red" 1 "is not the minted stand-in key (it is 0 characters long)" "$out" "$rc"
+out="$(SC_KEYVAL="$SV" m1jsrun "")"; rc=$?
+verdict "jobs_m1j_vendor_stub: no minted key is refused before anything is re-created" 1 "the stand-in vendor key was not minted" "$out" "$rc"
+out="$(SC_UP_RC=1 SC_KEYVAL="$SV" m1jsrun)"; rc=$?
+verdict "jobs_m1j_vendor_stub: a container that does not become healthy is red" 1 "did not become healthy with its vendor fallback on and the stand-in as its vendor" "$out" "$rc"
+out="$(SC_NOCID=1 SC_KEYVAL="$SV" m1jsrun)"; rc=$?
+verdict "jobs_m1j_vendor_stub: no container after the re-create is red" 1 "has no container after it was re-created" "$out" "$rc"
+
+# ── jobs_j7_summary (J7): every assertion once, and nothing else ──
+sum7() { # [mode: all (default) | none | missing:<name> | twice:<name> | extra]
+  ( set -u; W="$T/su7"; rm -rf "$W"; mkdir -p "$W"; WORK="$W"; export WORK; . "$T/env.sh"; . "$HERE/stage.sh"
+    local name mode="${1:-all}"
+    case "$mode" in
+      none) ;;
+      *) : > "$W/jobs-j7.log"
+         for name in "${JOBS_J7_OKS[@]}"; do
+           case "$mode" in missing:*) [ "$name" != "${mode#missing:}" ] || continue;; esac
+           echo "J7 OK $name" >> "$W/jobs-j7.log"
+           case "$mode" in twice:*) [ "$name" != "${mode#twice:}" ] || echo "J7 OK $name" >> "$W/jobs-j7.log";; esac
+         done
+         [ "$mode" != extra ] || echo "J7 OK an_assertion_nobody_listed" >> "$W/jobs-j7.log";;
+    esac
+    jobs_j7_summary ) 2>&1
+}
+nj7="$( . "$HERE/stage.sh" >/dev/null 2>&1; echo "${#JOBS_J7_OKS[@]}" )"
+[ "$nj7" -ge 6 ] || { echo "selftest: RED — stage.sh lists only $nj7 J7 assertions: stage J7 states at least six"; exit 1; }
+out="$(sum7)"; rc=$?
+verdict "jobs_j7_summary: every J7 assertion once" 0 "J7: $nj7 of $nj7 assertions held" "$out" "$rc"
+out="$(sum7 none)"; rc=$?
+verdict "jobs_j7_summary: J7 never ran (no J7 log)" 1 "no J7 line was kept" "$out" "$rc"
+for name in $( . "$HERE/stage.sh" >/dev/null 2>&1; printf '%s\n' "${JOBS_J7_OKS[@]}" ); do
+  out="$(sum7 "missing:$name")"; rc=$?
+  verdict "jobs_j7_summary: 'J7 OK $name' is missing" 1 "J7 printed 'J7 OK $name' 0 time(s)" "$out" "$rc"
+done
+firstj7="$( . "$HERE/stage.sh" >/dev/null 2>&1; printf '%s\n' "${JOBS_J7_OKS[0]}" )"
+out="$(sum7 "twice:$firstj7")"; rc=$?
+verdict "jobs_j7_summary: a J7 line printed twice" 1 "J7 printed 'J7 OK $firstj7' 2 time(s)" "$out" "$rc"
+out="$(sum7 extra)"; rc=$?
+verdict "jobs_j7_summary: a J7 line the stage does not know" 1 "J7 printed $((nj7 + 1)) 'J7 OK' line(s), want exactly $nj7" "$out" "$rc"
+
 # ── jobs_not_checked ──
 out="$( WORK="$T"; . "$T/env.sh"; . "$HERE/stage.sh"; jobs_not_checked )"; rc=$?
 verdict "jobs_not_checked: says it is module 1 only" 0 "module 1 ONLY" "$out" "$rc"
@@ -385,7 +453,7 @@ verdict "jobs_not_checked: ends with one grep-able line that starts with NOT CHE
 
 # ── the wiring of the scope run: its text is read (it needs Docker to run) ──
 wire="$( WORK="$T"; . "$T/env.sh"; . "$HERE/stage.sh"; declare -f jobs_run jobs_scope_run jobs_j2 jobs_kill_point )"
-verdict "jobs_run: runs the infrastructure, the stages J1-J4 and J6, the summary, the leak scan and the exposure check, in that order" 0 "line-ok" "$(printf '%s\n' "$wire" | grep -E '^    (jobs_infra|jobs_j1|jobs_j2|jobs_j3|jobs_j4|jobs_j6|jobs_summary|jobs_secret_leak|jobs_exposure);?$' | tr -d ' ;' | tr '\n' ' ' | grep -qx 'jobs_infra jobs_j1 jobs_j2 jobs_j3 jobs_j4 jobs_j6 jobs_summary jobs_secret_leak jobs_exposure ' && echo line-ok || echo WRONG-ORDER)" 0
+verdict "jobs_run: runs the infrastructure, the stages J1-J4, J6 and J7, the summary (and J7's), the leak scan and the exposure check, in that order" 0 "line-ok" "$(printf '%s\n' "$wire" | grep -E '^    (jobs_infra|jobs_j1|jobs_j2|jobs_j3|jobs_j4|jobs_j6|jobs_j7|jobs_summary|jobs_j7_summary|jobs_secret_leak|jobs_exposure);?$' | tr -d ' ;' | tr '\n' ' ' | grep -qx 'jobs_infra jobs_j1 jobs_j2 jobs_j3 jobs_j4 jobs_j6 jobs_j7 jobs_summary jobs_j7_summary jobs_secret_leak jobs_exposure ' && echo line-ok || echo WRONG-ORDER)" 0
 verdict "jobs_scope_run: calls jobs_run and ends the run" 0 "exit 0" "$wire" 0
 verdict "jobs_kill_point: the kill is proven, the mid-state is asserted and the confirm is replayed" 0 "jobs_prove_killed jobs-a" "$wire" 0
 verdict "jobs_kill_point: ... the state of the database is asserted at the kill" 0 'jobs_scn state --job "$JOB" --expect "$mid"' "$wire" 0
@@ -418,7 +486,7 @@ verdict "consistency: a killed instance stays dead until the stage starts it (re
 verdict "consistency: the scope's image of the scenario program is pinned name:tag@sha256:<64 hex>" 0 "pin-ok" "$(grep -qE '^    image: alpine:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}$' "$COMPOSE" && echo pin-ok || echo PIN-FAIL)" 0
 missing=""
 for v in $(grep -o '\${H_[A-Z0-9_]*' "$COMPOSE" | sed 's/^\${//' | sort -u); do
-  case "$v" in H_JOBS_A_FAULT|H_JOBS_B_FAULT|H_M1J_FALLBACK_MODE|H_M1J_DPA_CONFIRMED|H_M1J_DAILY_SPEND_CAP|H_M1J_VENDOR_KEY) continue;; esac       # set for one command by jobs_up (the faults) and jobs_m1j_vendor (module 1's switches), defaulted everywhere else
+  case "$v" in H_JOBS_A_FAULT|H_JOBS_B_FAULT|H_M1J_FALLBACK_MODE|H_M1J_DPA_CONFIRMED|H_M1J_DAILY_SPEND_CAP|H_M1J_VENDOR_KEY|H_M1J_VENDOR_BASE) continue;; esac       # set for one command by jobs_up (the faults) and jobs_m1j_vendor (module 1's switches), defaulted everywhere else
   grep -q "^$v=" "$RUNSH" || grep -q "echo \"$v=" "$HERE/stage.sh" || missing="$missing $v"
 done
 verdict "consistency: every H_ variable the compose file needs is written by run.sh or by jobs_mint" 0 "written" "$([ -z "$missing" ] && echo written || echo "nobody writes:$missing")" 0
@@ -434,7 +502,7 @@ verdict "consistency: every Go file of the scenario program carries the build ta
 verdict "consistency: the scenario program has no test file (it is not a test: it adds nothing to the floor of tests/floors-harness.txt)" 0 "none" "$(ls "$HERE"/../jobscenario/*_test.go >/dev/null 2>&1 && echo "a test file" || echo none)" 0
 verdict "consistency: run.sh allows the scope jobs" 0 "scope-allowed-ok" "$(grep -q 'case "\$SCOPE" in full|m1node|m2worker|gotrue|jobs) ;;' "$RUNSH" && echo scope-allowed-ok || echo "SCOPE-NOT-ALLOWED-FAIL")" 0
 verdict "consistency: run.sh sources the stage and ends the scope through jobs_scope_run" 0 "wired" "$(grep -q '^\. "\$HERE/jobs/stage.sh"' "$RUNSH" && grep -q '^\[ "\$SCOPE" = jobs \] && jobs_scope_run' "$RUNSH" && echo wired || echo missing)" 0
-verdict "consistency: the scope builds only the four migration images, module 1, the fixture DNS and the two instances" 0 "scoped" "$(grep -q 'jobs)     BUILD_ONLY="migrate-platform migrate-m1 migrate-m2 migrate-m3 m1j jobsdns jobs-a jobs-b";;' "$RUNSH" && echo scoped || echo missing)" 0
+verdict "consistency: the scope builds only the four migration images, module 1, the fixture DNS, the vendor stand-in and the two instances" 0 "scoped" "$(grep -q 'jobs)     BUILD_ONLY="migrate-platform migrate-m1 migrate-m2 migrate-m3 m1j jobsdns zbstub jobs-a jobs-b";;' "$RUNSH" && echo scoped || echo missing)" 0
 unguarded="$(grep -nE '(^|[^_a-z])jobs_(mint|run|scope_run|not_checked)( |$)' "$RUNSH" | grep -vE '^[0-9]+:[[:space:]]*#' | grep -vE '\[ "\$JOBS_ON" = 1 \] &&|\[ "\$SCOPE" = jobs \] &&' | head -5)"
 verdict "consistency: every call of a jobs_ function in run.sh is under the JOBS_ON or the scope guard (the stage is dormant otherwise)" 0 "all-guarded-ok" "$([ -z "$unguarded" ] && echo all-guarded-ok || echo "UNGUARDED-FAIL: $unguarded")" 0
 ncalls="$(grep -cE '\[ "\$JOBS_ON" = 1 \] && (\[ "\$SCOPE" = full \] && )?jobs_(mint|run|not_checked)' "$RUNSH")"
@@ -443,13 +511,20 @@ verdict "consistency: the docker compose function of run.sh merges the scope's c
 
 verdict "consistency: the J6 list is exactly the calls of jobs_j6_ok in jobs_j6, in the same order (a name added to one and not the other is red)" 0 "same" "$(called="$(sed -n '/^jobs_j6() {/,/^}/p' "$HERE/stage.sh" | grep -o 'jobs_j6_ok [a-z0-9_]*' | awk '{print $2}')"; [ -n "$called" ] && [ "$called" = "$( . "$HERE/stage.sh" >/dev/null 2>&1; printf '%s\n' "${JOBS_J6_OKS[@]}" )" ] && echo same || printf 'called: %s\nlisted: %s' "$(printf '%s' "$called" | tr '\n' ' ')" "$(printf '%s' "$names_j6")")" 0
 verdict "consistency: no name of the J6 list appears twice" 0 "unique" "$([ -z "$( . "$HERE/stage.sh" >/dev/null 2>&1; printf '%s\n' "${JOBS_J6_OKS[@]}" | sort | uniq -d)" ] && echo unique || echo duplicated)" 0
+verdict "consistency: the J7 list is exactly the calls of jobs_j7_ok in jobs_j7, in the same order (a name added to one and not the other is red)" 0 "same" "$(called="$(sed -n '/^jobs_j7() {/,/^}/p' "$HERE/stage.sh" | grep -o 'jobs_j7_ok [a-z0-9_]*' | awk '{print $2}')"; [ -n "$called" ] && [ "$called" = "$( . "$HERE/stage.sh" >/dev/null 2>&1; printf '%s\n' "${JOBS_J7_OKS[@]}" )" ] && echo same || printf 'called: %s' "$(printf '%s' "$called" | tr '\n' ' ')")" 0
+verdict "consistency: no name of the J7 list appears twice" 0 "unique" "$([ -z "$( . "$HERE/stage.sh" >/dev/null 2>&1; printf '%s\n' "${JOBS_J7_OKS[@]}" | sort | uniq -d)" ] && echo unique || echo duplicated)" 0
+verdict "consistency: stage J7 runs two jobs through the engine (immediate confirms, none scheduled), opts exactly ONE of them out, and waits for each to end and verifies it" 0 "two-and-one" "$(blk="$(sed -n '/^jobs_j7() {/,/^}/p' "$HERE/stage.sh")"; [ "$(printf '%s\n' "$blk" | grep -c 'jobs_scn setup ')" = 2 ] && [ "$(printf '%s\n' "$blk" | grep -c -- '--optout')" = 1 ] && ! printf '%s\n' "$blk" | grep -q -- '--scheduled-in' && [ "$(printf '%s\n' "$blk" | grep -c 'jobs_wait_terminal ')" = 2 ] && [ "$(printf '%s\n' "$blk" | grep -c 'jobs_j7_verify ')" = 2 ] && echo two-and-one || echo WRONG)" 0
+verdict "consistency: stage J7's two lists are the same shape (rows, malformed, repeats), so the only difference between the jobs is the setting" 0 "same-shape" "$([ "$(sed -n '/^jobs_j7() {/,/^}/p' "$HERE/stage.sh" | grep -o 'setup --api "$JOBS_API_A" --rows "$JOBS_J7_ROWS" --bad 2 --dup 2' | wc -l | tr -d ' ')" = 2 ] && echo same-shape || echo WRONG)" 0
+verdict "consistency: J7's vendor stand-in is module 1's own recipe (built from the module-1 checkout, patched by nobody), in the profile jobs, and publishes no port" 0 "stand-in-ok" "$(blk="$(awk '$0=="  zbstub:" {p=1; next} p && /^  [a-z0-9]/ {p=0} p' "$COMPOSE")"; printf '%s\n' "$blk" | grep -q 'profiles: \[jobs\]' && printf '%s\n' "$blk" | grep -q 'coldmail-verify/control-plane/test/zbstub' && ! printf '%s\n' "$blk" | grep -q 'ports:' && echo stand-in-ok || echo WRONG)" 0
+verdict "consistency: module 1 is told its vendor's base URL ONLY by the per-command variable (empty in every stage but J7)" 0 "base-by-variable" "$([ "$(grep -c 'TM_EXTERNAL_ZEROBOUNCE_BASE_URL: ${H_M1J_VENDOR_BASE:-}' "$COMPOSE")" = 1 ] && [ "$(grep -c 'H_M1J_VENDOR_BASE=' "$HERE/stage.sh")" = 1 ] && echo base-by-variable || echo WRONG)" 0
+verdict "consistency: the fixture DNS answers the MX of the J7 domain (a big provider's host, which module 1 routes to its vendor stage) and the scenario program's domain is that name" 0 "domain-ok" "$(dom="$(sed -n 's/^const vendorDomain = "\(.*\)"$/\1/p' "$HERE/../jobscenario/optout.go")"; [ -n "$dom" ] && grep -q "\"name\":\"$dom\",\"type\":\"MX\",\"values\":\[\"10 aspmx.l.google.com.\"\]" "$HERE/dns.json" && echo domain-ok || echo "WRONG ($dom)")" 0
 cmds="$(grep -vE '^[[:space:]]*#' "$HERE/stage.sh" | grep -oE 'jobs_scn [a-z][a-z-]*' | awk '{print $2}' | sort -u)"
 miss=""; for c in $cmds; do grep -q "case \"$c\":" "$HERE/../jobscenario/main.go" || miss="$miss $c"; done
 verdict "consistency: every command the stage gives the scenario program is a command of it (and the stage gives it at least ten kinds)" 0 "all-commands" "$([ -z "$miss" ] && [ "$(printf '%s\n' "$cmds" | wc -l | tr -d ' ')" -ge 10 ] && echo all-commands || echo "no such command:$miss")" 0
 verdict "consistency: the platform's service caller at module 1 is the same id in the service and in the scenario program" 0 "same-id" "$(a="$(sed -n 's/^const m1ServiceCallerID = "\(.*\)"$/\1/p' "$ROOT/internal/app/reachability_provider.go")"; b="$(sed -n 's/^const serviceCallerID = "\(.*\)"$/\1/p' "$HERE/../jobscenario/vendor.go")"; [ -n "$a" ] && [ "$a" = "$b" ] && echo same-id || echo "service: '$a' scenario: '$b'")" 0
 verdict "consistency: the stage waits longer than the platform keeps module 1's answer (the stage's memory constant is the store's DefaultVendorReadTTL)" 0 "same-memory" "$(a="$(sed -n 's/^const DefaultVendorReadTTL = \([0-9]*\) \* time.Second$/\1/p' "$ROOT/internal/jobs/vendor.go")"; b="$( . "$HERE/stage.sh" >/dev/null 2>&1; echo "$JOBS_VENDOR_MEMORY_SEC" )"; [ -n "$a" ] && [ "$a" = "$b" ] && echo same-memory || echo "store: '$a' stage: '$b'")" 0
 verdict "consistency: module 1's vendor switches in the compose file are OFF unless the stage sets them (five lines, each once, in the m1j service)" 0 "switches-off" "$(blk="$(awk '$0=="  m1j:" {p=1; next} p && /^  [a-z0-9]/ {p=0} p' "$COMPOSE")"; ok=1; for l in 'TM_FALLBACK_MODE: ${H_M1J_FALLBACK_MODE:-off}' 'TM_EXTERNAL_DPA_CONFIRMED: ${H_M1J_DPA_CONFIRMED:-false}' 'TM_EXTERNAL_DAILY_SPEND_CAP: ${H_M1J_DAILY_SPEND_CAP:-0}' 'TM_EXTERNAL_ZEROBOUNCE_KEY_ENV: JOBS_VENDOR_VAR' 'JOBS_VENDOR_VAR: ${H_M1J_VENDOR_KEY:-}'; do [ "$(printf '%s\n' "$blk" | grep -cF "      $l")" = 1 ] && [ "$(grep -cF "$l" "$COMPOSE")" = 1 ] || ok=0; done; [ "$ok" = 1 ] && echo switches-off || echo WRONG)" 0
-verdict "consistency: the stage sets exactly the four per-command variables the compose file reads for module 1's switches" 0 "four-set" "$(n=0; for v in H_M1J_FALLBACK_MODE H_M1J_DPA_CONFIRMED H_M1J_DAILY_SPEND_CAP H_M1J_VENDOR_KEY; do grep -q "export .*$v=" "$HERE/stage.sh" && grep -q "\${$v:-" "$COMPOSE" && n=$((n+1)); done; [ "$n" = 4 ] && [ "$(grep -o '\${H_M1J_[A-Z_]*' "$COMPOSE" | sort -u | wc -l | tr -d ' ')" = 4 ] && echo four-set || echo "$n of 4")" 0
+verdict "consistency: the stage sets exactly the five per-command variables the compose file reads for module 1's switches (J7's base URL of the vendor stand-in included)" 0 "five-set" "$(n=0; for v in H_M1J_FALLBACK_MODE H_M1J_DPA_CONFIRMED H_M1J_DAILY_SPEND_CAP H_M1J_VENDOR_KEY H_M1J_VENDOR_BASE; do grep -q "export .*$v=" "$HERE/stage.sh" && grep -q "\${$v:-" "$COMPOSE" && n=$((n+1)); done; [ "$n" = 5 ] && [ "$(grep -o '\${H_M1J_[A-Z_]*' "$COMPOSE" | sort -u | wc -l | tr -d ' ')" = 5 ] && echo five-set || echo "$n of 5")" 0
 verdict "consistency: the compose file keeps no switch of its own for the vendor on the platform's side (the instances' environment names no vendor setting)" 0 "none" "$(blk="$(awk '$0=="  jobs-a:" || $0=="  jobs-b:" {p=1} /^  [a-z0-9]/ && $0!="  jobs-a:" && $0!="  jobs-b:" {p=0} p' "$COMPOSE")"; printf '%s\n' "$blk" | grep -qiE 'vendor|reachab' && echo "a vendor setting" || echo none)" 0
 verdict "consistency: stage J6 starts no verification of module 1's (it previews, confirms scheduled jobs an hour ahead and cancels them: it never waits for a job to run)" 0 "no-wait" "$(sed -n '/^jobs_j6() {/,/^}/p' "$HERE/stage.sh" | grep -qE 'jobs_wait_terminal|jobs_verify|--until' && echo "J6 waits for a job" || echo no-wait)" 0
 verdict "consistency: every confirm of J6 is scheduled (an immediate confirm would start a job and spend at the vendor), and there are at least four" 0 "scheduled-only" "$(c="$(sed -n '/^jobs_j6() {/,/^}/p' "$HERE/stage.sh" | grep -E 'jobs_scn confirm')"; [ "$(printf '%s

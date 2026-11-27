@@ -200,7 +200,7 @@ func TestRun_WithoutAKeySourceTheJobRoutesAreNotMountedAndWithOneTheyAreBehindAu
 		t.Fatal(err)
 	}
 	l := find(r2.logs.lines(t), "job API mounted")
-	if l == nil || l["routes"] != float64(13) || l["max_rows"] != float64(100000) || l["results_page_max"] != float64(1000) || l["max_start_delay"] != "30m0s" {
+	if l == nil || l["routes"] != float64(15) || l["max_rows"] != float64(100000) || l["results_page_max"] != float64(1000) || l["max_start_delay"] != "30m0s" {
 		t.Errorf("the job API's start-up line is %v:\n%s", l, r2.logs.String())
 	}
 	if strings.Contains(r2.logs.String(), secret) {

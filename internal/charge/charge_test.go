@@ -147,6 +147,8 @@ var rowCases = []rowCase{
 	{"P-06", Outcome{Module: "platform", State: "smtp_login_rejected"}, fre("P-06")},
 	{"P-07", Outcome{Module: "platform", State: "duplicate"}, fre("P-07")},
 	{"P-08", Outcome{Module: "platform", State: "malformed"}, fre("P-08")},
+	{"P-09", Outcome{Module: "platform", State: "missing_field"}, fre("P-09")},
+	{"P-10", Outcome{Module: "platform", State: "unrenderable"}, fre("P-10")},
 }
 
 // TestDecide_Rows drives one subtest per row of the embedded table; each row's input and expected decision are written out in rowCases, so a table edit that changes what a
@@ -778,6 +780,54 @@ func TestDecide_PlatformMalformed(t *testing.T) {
 	}
 	if rows != 1 {
 		t.Errorf("%d rows name the state malformed, want exactly one (P-08)", rows)
+	}
+}
+
+// TestDecide_PlatformTemplateSkips: a send job's row that the templates cannot be rendered for is left out at confirm (Phase 5 S2), free: `missing_field` (a required merge field the row lacks, P-09) and
+// `unrenderable` (the rendered message that the shared table refuses, P-10). Nothing else on the outcome can make either charge, each state is named by exactly one row and that row is the platform's
+// and free with no unit. The controls: another module's state of the same name is not the platform's row, a spelling that differs matches no row, and the two neighbours stay their own rows.
+func TestDecide_PlatformTemplateSkips(t *testing.T) {
+	for _, c := range []struct{ state, rule string }{{"missing_field", "P-09"}, {"unrenderable", "P-10"}} {
+		for _, o := range []Outcome{
+			{Module: "platform", State: c.state},
+			{Module: "platform", State: c.state, Reason: "first_name", FromCache: true, SkipReason: "audit_red", FailureOrigin: "remote"}, // nothing else on the outcome can make it charge
+		} {
+			got := Decide(o)
+			if !sameDecision(got, fre(c.rule)) {
+				t.Errorf("Decide(%+v) = {%s}, want free by %s", o, describe(got), c.rule)
+			}
+			if got.Kind == Charge || got.Unit != "" {
+				t.Errorf("Decide(%+v) charged a skipped row: {%s}", o, describe(got))
+			}
+		}
+		rows := 0
+		for _, r := range Rules() {
+			if r.State == c.state {
+				rows++
+				if r.ID != c.rule || r.Module != "platform" || r.Kind != Free || r.Unit != "" {
+					t.Errorf("row %s names the state %s as %s/%s %s with unit %q, want %s as platform free", r.ID, c.state, r.Module, r.State, r.Kind, r.Unit, c.rule)
+				}
+			}
+		}
+		if rows != 1 {
+			t.Errorf("%d rows name the state %s, want exactly one (%s)", rows, c.state, c.rule)
+		}
+	}
+	for _, c := range []struct {
+		name string
+		in   Outcome
+		want Decision
+	}{
+		{"module 1 has no missing_field state", m1("missing_field", ""), unm("M1-99")},
+		{"module 2 has no unrenderable state", m2("unrenderable", ""), unm("M2-99")},
+		{"module 3 is free whatever it says", Outcome{Module: "m3", State: "missing_field"}, fre("M3-99")},
+		{"a wrong-case spelling matches no row", Outcome{Module: "platform", State: "Missing_Field"}, unm(noRule)},
+		{"a padded spelling matches no row", Outcome{Module: "platform", State: "unrenderable "}, unm(noRule)},
+		{"the neighbouring platform state is its own row", Outcome{Module: "platform", State: "malformed"}, fre("P-08")},
+	} {
+		if got := Decide(c.in); !sameDecision(got, c.want) {
+			t.Errorf("%s: Decide(%+v) = {%s}, want {%s}", c.name, c.in, describe(got), describe(c.want))
+		}
 	}
 }
 
@@ -1505,8 +1555,8 @@ func TestUnitsMatchTheSeededUnitCosts(t *testing.T) {
 func TestRulesAndUnits_ReturnCopies(t *testing.T) {
 	r := Rules()
 	head, tail := r[0], r[len(r)-1] // what the table's first and last rows are (the first is M1-24 since module 1's cancel, which is free; it was M1-01): a copy the test holds before it mutates the other one
-	if head.ID != nonVerdictRow || tail.ID != "P-08" {
-		t.Fatalf("the table starts with %s and ends with %s, want %s and P-08", head.ID, tail.ID, nonVerdictRow)
+	if head.ID != nonVerdictRow || tail.ID != "P-10" {
+		t.Fatalf("the table starts with %s and ends with %s, want %s and P-10", head.ID, tail.ID, nonVerdictRow)
 	}
 	r[0].Unit, r[0].Kind = "m2_bounced", Charge
 	r[len(r)-1].ID = "ZZ-99"

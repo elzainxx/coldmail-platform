@@ -54,11 +54,12 @@ func (s *Store) Reserve(ctx context.Context, req ReserveReq) (ReserveResult, err
 //     check, so a replay still answers after the engine moved the job out of draft;
 //  5. the job must be a draft or (since Phase 4) previewed (ErrJobState);
 //  6. SELECT ... FROM platform.unit_costs WHERE module_id = $1 FOR SHARE (EVERY unit of the module, reachable or not): a price change or a flip of the reachable flag waits until this transaction ends,
-//     so the snapshot below EQUALS the table at that instant instead of racing it; the prices used are the REACHABLE units (platform_0013);
-//  7. the reserve rate is the DEAREST price (ties: the lexicographically first unit); needed = units * rate; the available balance is read under the
+//     so the snapshot below EQUALS the table at that instant instead of racing it; the prices used are the REACHABLE units (platform_0013), and, for a job that is opted out of the vendor
+//     (its frozen settings.vendor_opt_out, read under the job's row lock in step 3: Phase 5 S6), WITHOUT the units that need the vendor (platform.unit_costs.needs_vendor, m1_vendor);
+//  7. the reserve rate is the DEAREST price of those units (ties: the lexicographically first unit); needed = units * rate; the available balance is read under the
 //     lock and available < needed is ErrInsufficientCredits{Available, Needed, Shortfall}, decided BEFORE anything is written;
-//  8. ONE INSERT ... SELECT copies every REACHABLE unit of the module into platform.job_unit_prices, and the ledger reserve row is inserted at the rate
-//     ('reserve:<job>' is its key). The database refuses a reserve that is not at the dearest price or whose snapshot is incomplete.
+//  8. ONE INSERT ... SELECT copies the same units into platform.job_unit_prices, and the ledger reserve row is inserted at the rate
+//     ('reserve:<job>' is its key). The database refuses a reserve that is not at the dearest price or whose snapshot is incomplete (or, for an opted-out job, holds a vendor unit).
 //
 // On any error the caller rolls its transaction back (a refusal at steps 1-7 has written nothing, so the transaction is still usable).
 func (s *Store) ReserveIn(ctx context.Context, tx pgx.Tx, req ReserveReq) (ReserveResult, error) {
@@ -81,8 +82,9 @@ func (s *Store) reserve(ctx context.Context, tx pgx.Tx, req ReserveReq) (Reserve
 		return ReserveResult{}, err
 	}
 
+	// the job's status and its frozen vendor opt-out are decided UNDER the row lock (the plain read above only names the lock)
 	var status string
-	if err := tx.QueryRow(ctx, `SELECT status FROM platform.jobs WHERE id = $1::uuid FOR UPDATE`, req.JobID).Scan(&status); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT status, COALESCE((frozen_settings #>> '{settings,vendor_opt_out}')::boolean, false) FROM platform.jobs WHERE id = $1::uuid FOR UPDATE`, req.JobID).Scan(&status, &job.optOut); err != nil {
 		return ReserveResult{}, s.fail(err, pgCtx{})
 	}
 
@@ -119,7 +121,9 @@ func (s *Store) reserve(ctx context.Context, tx pgx.Tx, req ReserveReq) (Reserve
 	if err := lockRows.Err(); err != nil {
 		return ReserveResult{}, s.fail(err, pgCtx{})
 	}
-	rows, err := tx.Query(ctx, `SELECT unit, cost FROM platform.unit_costs WHERE module_id = $1 AND reachable ORDER BY unit`, job.module)
+	// Phase 5 S6: a job that is opted out of the vendor fallback is priced over the units it can produce WITHOUT the vendor (platform.unit_costs.needs_vendor): its snapshot, its dearest price and so its
+	// reserve rate leave m1_vendor out, whatever the vendor's reachability is. The database's ledger_check_reserve (platform_0020) holds the same rule as a second wall.
+	rows, err := tx.Query(ctx, `SELECT unit, cost FROM platform.unit_costs WHERE module_id = $1 AND reachable AND NOT ($2::boolean AND needs_vendor) ORDER BY unit`, job.module, job.optOut)
 	if err != nil {
 		return ReserveResult{}, s.fail(err, pgCtx{})
 	}
@@ -144,8 +148,8 @@ func (s *Store) reserve(ctx context.Context, tx pgx.Tx, req ReserveReq) (Reserve
 
 	// the snapshot: ONE statement copies every unit of the module, in the transaction that holds the share locks
 	rows, err = tx.Query(ctx, `INSERT INTO platform.job_unit_prices (job_id, module_id, unit, cost)
-		SELECT $1::uuid, u.module_id, u.unit, u.cost FROM platform.unit_costs u WHERE u.module_id = $2 AND u.reachable
-		RETURNING unit, cost`, req.JobID, job.module)
+		SELECT $1::uuid, u.module_id, u.unit, u.cost FROM platform.unit_costs u WHERE u.module_id = $2 AND u.reachable AND NOT ($3::boolean AND u.needs_vendor)
+		RETURNING unit, cost`, req.JobID, job.module, job.optOut)
 	if err != nil {
 		return ReserveResult{}, s.fail(err, c)
 	}

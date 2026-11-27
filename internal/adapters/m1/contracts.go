@@ -130,6 +130,9 @@ var (
 		modclient.Req("reason", modclient.Str),
 		modclient.Req("flags", rowFlagsShape),
 		modclient.Req("signals", signalsShape),
+		// meta (Phase 5 S6) is read for ONE thing, the policy a row was made under (the per-user vendor opt-out checks it). It is optional here because every other part of the platform's judgement of a row stands
+		// without it, and Open because the rest of meta (request_id, checked_at, latency_ms, verifier_ip, node_id, engine_version, config_fingerprint, from_cache) is module 1's own and is not read
+		modclient.Opt("meta", modclient.Object(modclient.Opt("policy", modclient.Str), modclient.Opt("policy_version", modclient.Int)).Open()),
 	)
 
 	// rowFlagsShape is flagsShape with from_cache optional: see rowShape.

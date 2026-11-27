@@ -880,6 +880,7 @@ func shapeBuild(ctx context.Context, tx shapeDB, schema string, c shapeCopy) err
 			rendered_subject text NOT NULL,
 			rendered_body text NOT NULL,
 			rendered_text text,
+			unsubscribe_url text,
 			%s
 			status text NOT NULL DEFAULT 'pending',
 			%s

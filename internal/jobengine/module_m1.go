@@ -57,7 +57,12 @@ func (m *m1Module) Submit(ctx context.Context, j jobs.EngineJob, rows []jobs.Eng
 		m.reg.log.WarnContext(ctx, "pending rows are malformed by module 1's address rule although the store called them good: the platform's classification and the adapter's have drifted; nothing was sent", "job", j.ID, "rows", n)
 		return SubmitResult{}, Wait(fmt.Sprintf("m1 submit: %d pending row(s) are malformed by the address rule the adapter applies, which the store did not find: nothing is sent (a platform bug to find)", n))
 	}
-	res, err := m.ad.Submit(ctx, plan, j.ID)
+	// an opted-out job goes to module 1 under module 1's own opt-out policy, or not at all (module_m1_optout.go); an opted-in job names none, exactly as before
+	policy, err := m.policyOf(ctx, j, phaseSubmit)
+	if err != nil {
+		return SubmitResult{}, err
+	}
+	res, err := m.ad.SubmitUnder(ctx, plan, j.ID, policy)
 	if err != nil {
 		var mm *m1.MismatchError
 		if errors.As(err, &mm) {
@@ -88,11 +93,20 @@ func (m *m1Module) Observe(ctx context.Context, j jobs.EngineJob, fn func([]jobs
 	if !st.Complete && final <= j.PendingResults {
 		return obs, nil // nothing the engine does not have: the status alone answers
 	}
-	delivered, skipped, err := m.walk(ctx, ref, fn)
+	// an opted-out job's rows are read under the policy it was submitted under, and a page with a row that says otherwise is refused whole (module_m1_optout.go)
+	policy, err := m.policyOf(ctx, j, phaseObserve)
+	if err != nil {
+		return Observation{}, err
+	}
+	delivered, skipped, err := m.walk(ctx, ref, policy, fn)
 	if err != nil {
 		var ff fnFailure
 		if errors.As(err, &ff) {
 			return Observation{}, ff.err // the engine's own callback failed: its error, as it is
+		}
+		if errors.Is(err, m1.ErrNotUnderPolicy) {
+			// the customer opted this job out of the vendor and module 1 says a row was made under another policy: nothing of the page is recorded or charged and the job waits (it goes stale); the log names the job
+			m.reg.log.ErrorContext(ctx, "module 1 returned a result of an opted-out job that is not stamped with its opt-out policy: nothing is recorded and the job waits", "job", j.ID)
 		}
 		return Observation{}, m.reg.failed(ctx, jobs.ModuleVerify, phaseObserve, err, false)
 	}
@@ -146,13 +160,13 @@ func (f fnFailure) Error() string { return f.err.Error() }
 // walk reads module 1's results from the first page to the last and hands each page's rows to fn. It returns how many rows it read and how many it did not hand over (a row module 1 marks as a
 // repeat of an earlier address is the PLATFORM's duplicate, which the store never submits: handing it over as module 1's verdict would charge the address twice, and as the platform's outcome
 // it would be refused by the store, so it is counted and left to the engine's completeness check).
-func (m *m1Module) walk(ctx context.Context, ref string, fn func([]jobs.ResultItem) error) (read, skipped int, err error) {
+func (m *m1Module) walk(ctx context.Context, ref, policy string, fn func([]jobs.ResultItem) error) (read, skipped int, err error) {
 	cursor := ""
 	for page := 0; ; page++ {
 		if page >= maxM1Pages {
 			return read, skipped, Wait(fmt.Sprintf("m1 observe: the results listing did not end within %d pages", maxM1Pages))
 		}
-		rows, next, err := m.ad.Results(ctx, ref, cursor, m1.MaxPageLimit)
+		rows, next, err := m.ad.ResultsUnder(ctx, ref, cursor, m1.MaxPageLimit, policy)
 		if err != nil {
 			return read, skipped, err
 		}

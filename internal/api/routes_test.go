@@ -13,8 +13,8 @@ func concretePath(pattern string) string { return strings.ReplaceAll(pattern, "{
 
 func TestRoutes_TheTableIsTheWholeSurfaceAndEveryRouteSitsBehindAuthentication(t *testing.T) {
 	r := newRig(t)
-	if len(routes) != 13 || len(Routes()) != 13 {
-		t.Fatalf("the route table has %d routes, the documented surface is 13: a route added or removed is a decision (Docs/jobs-api.md)", len(routes))
+	if len(routes) != 15 || len(Routes()) != 15 {
+		t.Fatalf("the route table has %d routes, the documented surface is 15 (thirteen of the jobs and the two of the settings): a route added or removed is a decision (Docs/jobs-api.md)", len(routes))
 	}
 	for _, rt := range routes {
 		path := concretePath(rt.pattern)
@@ -45,6 +45,9 @@ func TestRoutes_AWrongVerbOrPathIsTheEnvelopeOf404And405(t *testing.T) {
 	for pattern, methods := range allowed {
 		path := concretePath(pattern)
 		for _, wrong := range []string{http.MethodPut, http.MethodPatch, http.MethodDelete} {
+			if contains(methods, wrong) {
+				continue // the settings path is served for PUT: it is not a wrong verb there (it is one for PATCH and DELETE)
+			}
 			resp, body := r.do(req{method: wrong, path: path, token: r.token(loginA)})
 			e := r.wantError(resp, body, http.StatusMethodNotAllowed, "method_not_allowed")
 			if e.Message != "This method is not allowed on this path." {
@@ -109,11 +112,11 @@ func TestRoutes_EachVerbAndPathIsListedOnce(t *testing.T) {
 			t.Errorf("route %q is listed twice", s)
 		}
 		seen[s] = true
-		if !strings.HasPrefix(s, "GET /v1/jobs") && !strings.HasPrefix(s, "POST /v1/jobs") {
-			t.Errorf("route %q is outside /v1/jobs", s)
+		if !strings.HasPrefix(s, "GET /v1/jobs") && !strings.HasPrefix(s, "POST /v1/jobs") && s != "GET /v1/settings" && s != "PUT /v1/settings" {
+			t.Errorf("route %q is outside /v1/jobs and /v1/settings", s)
 		}
 	}
-	if len(seen) != 13 {
-		t.Errorf("%d distinct routes, want 13", len(seen))
+	if len(seen) != 15 {
+		t.Errorf("%d distinct routes, want 15", len(seen))
 	}
 }

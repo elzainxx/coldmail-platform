@@ -81,7 +81,15 @@ var declaredClasses = map[string]privClass{
 	"job_settlement_drift": classOf(privSelect, privSelect),
 	// platform_0013: every change of a unit's reachable flag (written by trigger; the flag is written only by platform.set_unit_reachable)
 	"unit_reachability_history": classOf(privSelect, privSelect),
-	"ledger":                    classOf(privSelectInsert, privSelectInsert),
+	// platform_0020 (Phase 5 S6): the per-user settings (platform_app inserts a row and updates exactly the value and its time, never the user; platform_admin reads; nobody deletes) and their history (written by the
+	// settings' trigger only: both roles read it and nobody writes it, so no role holds INSERT; append-only for everybody)
+	"user_settings": {
+		Owner:        "platform_owner",
+		Grants:       map[string][]string{"platform_app": privSelectInsert, "platform_admin": privSelect},
+		ColumnGrants: map[string]map[string][]string{"platform_app": {"UPDATE": {"vendor_fallback_opt_out", "updated_at"}}},
+	},
+	"user_settings_history": classOf(privSelect, privSelect),
+	"ledger":                classOf(privSelectInsert, privSelectInsert),
 	// platform_0006: platform.m3_entitlements is written only by the ledger trigger (m3_enable, m3_disable, m3_expire); platform_app lost INSERT and UPDATE, and both roles read it
 	"m3_entitlements": classOf(privSelect, privSelect),
 	"suppressions":    classOf(privSelectInsert, privSelect),

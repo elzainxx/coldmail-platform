@@ -160,7 +160,13 @@ func (s *Store) settle(ctx context.Context, tx pgx.Tx, req SettleReq) (SettleRes
 			if !ok {
 				// Phase 4 (platform_0013): the snapshot holds only the units that were REACHABLE when the job was confirmed. An answer the module gave under another configuration (module 1's vendor answer while the
 				// platform believed the fallback off) cannot be priced and is never charged: it is flagged to the caller (the engine records a job event) and the credits stay in the reserve until release.
-				res.Unmapped = append(res.Unmapped, UnmappedItem{ItemRef: it.ItemRef, Rule: d.Rule, Note: fmt.Sprintf("unit %s has no price in this job's frozen snapshot (it was not reachable when the job was confirmed): not charged", d.Unit)})
+				// Phase 5 S6: the same path holds a result of a job that is OPTED OUT of the vendor fallback and still maps to a unit that needs the vendor (it must not happen: module 1 was told not to use the
+				// vendor). Its snapshot never had that unit, so the result is unpriced, never charged above what the customer agreed to, and flagged.
+				why := "it was not reachable when the job was confirmed"
+				if job.optOut {
+					why = "the job is opted out of the vendor fallback, so its snapshot never held it"
+				}
+				res.Unmapped = append(res.Unmapped, UnmappedItem{ItemRef: it.ItemRef, Rule: d.Rule, Note: fmt.Sprintf("unit %s has no price in this job's frozen snapshot (%s): not charged", d.Unit, why)})
 				continue
 			}
 			pending = append(pending, pendingCharge{ref: it.ItemRef, unit: d.Unit, price: p})

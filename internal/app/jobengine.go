@@ -118,7 +118,7 @@ func preChecksOf(a moduleAdapters) jobs.PreChecks {
 
 // newModuleRegistry builds the registry the engine reaches the modules through: the adapters, the tenant resolver (module 1's per-user key), the privileged-function ensurer of module 1's caller
 // rows and PLATFORM_JOB_SUBMIT_CONCURRENCY. (Module 1's job reference is not read here: it arrives on the job the store hands the engine, jobs.EngineJob.ModuleRef.)
-func newModuleRegistry(pool *pgxpool.Pool, cfg config.Config, a moduleAdapters, res *tenant.Resolver, log *slog.Logger) *jobengine.Registry {
+func newModuleRegistry(pool *pgxpool.Pool, cfg config.Config, a moduleAdapters, res *tenant.Resolver, log *slog.Logger, optOut jobs.OptOutPolicySource) *jobengine.Registry {
 	return jobengine.NewRegistry(jobengine.RegistryDeps{
 		Resolver:          res,
 		M1:                a.M1,
@@ -127,6 +127,7 @@ func newModuleRegistry(pool *pgxpool.Pool, cfg config.Config, a moduleAdapters, 
 		Provisioner:       tenant.NewM1CallerEnsurer(res, pool),
 		SubmitConcurrency: cfg.JobSubmitConcurrency,
 		Log:               log,
+		OptOutPolicy:      optOut, // module 1's opt-out policy key (Phase 5 S6): nil when module 1 cannot be asked in this process, and an opted-out job then waits
 	})
 }
 
@@ -144,6 +145,9 @@ func engineConfig(cfg config.Config) jobengine.Config {
 		SubmitBatchFor: map[string]int{jobs.ModuleVerify: moduleOneBatch},
 		StepTimeout:    cfg.JobStepTimeout,
 		BackoffCap:     cfg.JobBackoffCap,
+		// the two housekeeping rules (internal/jobengine sweep.go): the pause limit (PLATFORM_JOB_PAUSE_MAX_DAYS) and the content retention (PLATFORM_CONTENT_RETENTION_DAYS)
+		PauseMax:       cfg.JobPauseMax,
+		RetentionAfter: cfg.ContentRetention,
 	}
 }
 

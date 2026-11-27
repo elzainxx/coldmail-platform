@@ -153,8 +153,8 @@ func (s *Store) CancelBeforeStart(ctx context.Context, userID, jobID string) (Jo
 //   - a scheduled job: its start is deferred until the user resumes it; nothing was submitted, the slot and the reserve are held;
 //   - a RUNNING job of a module that can pause one (modules 2 and 3): the job is paused the moment this returns, with paused_from = running. The store tells the module nothing: the engine does, at its
 //     next tick (Module.Pause until the module's own report says paused), so the module stops claiming within one engine tick of this call, and the items it had already claimed finish and are reported
-//     once. Nothing is submitted to the module while the job is paused. The reserve and the slot stay held, and there is NO automatic expiry of this pause: a job paused while running holds its
-//     credits until the user resumes or cancels it;
+//     once. Nothing is submitted to the module while the job is paused. The reserve and the slot stay held until the user resumes or cancels it or, after PLATFORM_JOB_PAUSE_MAX_DAYS
+//     (Phase 5 S7: pause_limit.go, by the database's clock from paused_at), the engine cancels it;
 //   - a RUNNING job of a module that cannot (module 1): refused as ErrNotAllowed, Reason job_module_cannot_pause (the API words it pause_not_supported). The store does not fake a pause by cancel and
 //     resubmit (a duplicate-send risk), and no Go branch decides which module may: the capability is a row.
 //

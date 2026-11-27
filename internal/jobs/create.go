@@ -2,7 +2,6 @@ package jobs
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 
 	"github.com/jackc/pgx/v5"
@@ -14,7 +13,8 @@ const rowBatch = 5000
 
 // CreateDraft makes a job in status draft with its rows, in ONE transaction: the job, its `created` event (actor: the user) and every row, classified once.
 //
-// The request. Module is m1, m2 or m3 and active in platform.modules. A send job (m2, m3) carries Content, valid (validateContent); a verify job (m1) carries none. The list is Rows, between
+// The request. Module is m1, m2 or m3 and active in platform.modules. A send job (m2, m3) carries Content, valid (validateContent) and, in a store with a template renderer (WithPreparer), written in the
+// template language (a syntax error is a *TemplateError, an ErrBadRequest that names the part, the line and the column); a verify job (m1) carries none. The list is Rows, between
 // 1 and the store's limit (ErrBadRequest for none, ErrTooManyRows for more); each row's merge data is size-capped (64 keys, 4 KiB). For a send chained to a verify job (SourceJobID) the list
 // is NOT supplied (Rows must be empty): the source must be the user's own succeeded m1 job, and the rows are its module results (origin 'module'), one row per result in the source's order,
 // pending when the verdict is selected (valid and risky always, unknown when Settings.UnknownChoice is include, invalid never) and excluded (reason: the verdict) when not. A source that is
@@ -40,11 +40,13 @@ func (s *Store) CreateDraft(ctx context.Context, userID string, req CreateReq) (
 		if content, err = validateContent(req.Content); err != nil {
 			return Job{}, opErr("create", err)
 		}
+		// the templates are compiled HERE, before anything is written: a mistake of syntax is a 400 that names the part, the line, the column and the message (template.go). This is the one place a send
+		// job gets its content (no other path replaces it: a draft's content is frozen), and any path that comes to replace it must call checkTemplates too.
+		if err := s.checkTemplates(content); err != nil {
+			return Job{}, opErr("create", err)
+		}
 	}
-	frozen, err := json.Marshal(frozenSettings{Settings: settings, Content: content})
-	if err != nil {
-		return Job{}, opErr("create", err)
-	}
+	// the frozen settings are made INSIDE the transaction below (freezeVendorChoice): a module 1 job reads the user's vendor opt-out there, once, and freezes it with the other choices
 
 	// the supplied list is classified before the transaction opens: it is pure work and holds nothing
 	var rows []classified
@@ -74,6 +76,11 @@ func (s *Store) CreateDraft(ctx context.Context, userID string, req CreateReq) (
 			rows = classifyChain(res, settings.UnknownChoice, newUUID)
 		}
 
+		// Phase 5 S6: the one frozen choice that is not the caller's. A module 1 job reads the user's vendor opt-out NOW, once (never trusting the request), and freezes it; any other module never reads it
+		frozen, _, err := freezeVendorChoice(ctx, tx, userID, req.Module, settings, content)
+		if err != nil {
+			return s.fail(err)
+		}
 		var jobID string
 		if err := tx.QueryRow(ctx, `INSERT INTO platform.jobs (user_id, module_id, source_job_id, frozen_settings)
 			VALUES ($1::uuid, $2, NULLIF($3, '')::uuid, $4::jsonb) RETURNING id::text`, userID, req.Module, req.SourceJobID, string(frozen)).Scan(&jobID); err != nil {

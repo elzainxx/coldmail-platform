@@ -23,6 +23,11 @@
 #                 the confirm reserves 2 per row, frozen into the job's price snapshot with the vendor unit; OFF again: 1 per row, and the job confirmed under ON keeps its reserve and its snapshot. Last, module 1 is
 #                 STOPPED: a preview says it was not read (vendor_reachable_known false) at the rate of the stored flag, and says it is read again once module 1 is back. Every assertion prints `J6 OK <name>`
 #                 (JOBS_J6_OKS), each exactly once, and the summary is red without them.
+#   J7 opt-out    (Phase 5 S6, the per-user vendor opt-out) module 1's vendor fallback is ON and wired to module 1's own ZeroBounce stand-in (service zbstub, which counts every request it gets). Two customers run the same
+#                 kind of list (addresses module 1 routes to its vendor stage): the one who OPTED OUT (PUT /v1/settings before the job exists) holds 1 credit a row in a snapshot with no vendor unit, every one of module 1's
+#                 results says it was made under the opt-out policy module 1's own describe publishes, and the stand-in received NOT ONE request; the one who did not (the paired control) holds 2 a row with the vendor unit,
+#                 the stand-in received a request for every row and every answer was charged at the vendor's price. Every assertion prints `J7 OK <name>` (JOBS_J7_OKS), each exactly once (jobs_j7_summary). The two jobs are
+#                 verified like J1's (the same invariants) but their runs are kept out of J1-J4's fixed counts.
 #   evidence      every `verify` prints one `OK <name>` line per invariant (JOBS_VERIFY_OKS); a run that prints fewer, more or other lines is RED, and so is a run with fewer `verify` runs than the stages make; J6's
 #                 `J6 OK` lines are counted the same way.
 #
@@ -637,6 +642,132 @@ jobs_j6() {
   echo "  module 1 is back: the next preview says vendor_reachable_known = true"
 }
 
+# ── J7: the per-user vendor opt-out (Phase 5 S6) ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+# WHAT IT PROVES, from places that cannot agree by accident (the platform's API and engine, module 1's own results and describe, the ledger and price snapshot, and module 1's OWN vendor stand-in, which counts every
+# request it gets): two customers run the same kind of list (addresses module 1 routes to its vendor stage) with module 1's vendor fallback ON and wired to the stand-in. The one who OPTED OUT (PUT /v1/settings
+# before the job is created) holds 1 credit a row in a snapshot with no vendor unit, every one of module 1's results says it was made under the opt-out policy module 1 itself publishes, and the stand-in received
+# NOT ONE request for the job. The one who did not (the paired control) holds 2 a row with the vendor unit, the stand-in received a request for every row, and every row is a vendor answer, charged. Without the control
+# the zero would prove nothing (a vendor that cannot be reached also receives nothing).
+JOBS_J7_ROWS="${JOBS_J7_ROWS:-24}"           # J7: a list of 24 lines, 2 malformed and 2 repeats: 20 pending rows, so 1 credit a row is 20 and 2 a row is 40
+# the lines stage J7 must print, one each, as `J7 OK <name>` (jobs_j7_ok; jobs_j7_summary counts them)
+JOBS_J7_OKS=(
+  the_vendor_stand_in_is_wired_and_module_1_says_its_vendor_is_reachable
+  opted_out_job_holds_1_credit_a_row_and_no_vendor_unit
+  opted_out_job_ran_to_the_end_with_every_row_under_module_1s_opt_out_policy
+  opted_out_job_reached_the_vendor_not_once
+  opted_in_job_holds_2_credits_a_row_with_the_vendor_unit
+  opted_in_job_is_not_under_the_opt_out_policy
+  opted_in_job_reached_the_vendor_and_was_charged_for_every_answer
+)
+jobs_j7_ok() {
+  echo "  J7 OK $1"
+  echo "J7 OK $1" >> "$WORK/jobs-j7.log"
+}
+
+# jobs_m1j_vendor_stub: (re-)creates module 1 (service m1j) with its vendor fallback ON as jobs_m1j_vendor on does AND its vendor base URL pointing at the stand-in (http://zbstub:8080), waits until it is healthy and
+# PROVES from `docker inspect` that the container got the base URL and the minted key (the key only as present and equal, never printed). The log of the container that goes is kept first, like J6's.
+jobs_m1j_vendor_stub() {
+  local cid env_out got_key
+  [ -n "$JOBS_VENDOR" ] || die "jobs_m1j_vendor_stub: the stand-in vendor key was not minted (jobs_mint): module 1 would see no key and the vendor would stay unreachable"
+  JOBS_M1J_GEN=$(( ${JOBS_M1J_GEN:-0} + 1 ))
+  if [ -n "$(jobs_cid m1j)" ]; then
+    DC logs --no-color m1j > "$WORK/jobs-m1j-before-switch-$JOBS_M1J_GEN.log" 2>&1 || die "could not keep the log of module 1 before it is re-created"
+  fi
+  ( export H_M1J_FALLBACK_MODE=enabled H_M1J_DPA_CONFIRMED=true H_M1J_DAILY_SPEND_CAP=100 H_M1J_VENDOR_KEY="$JOBS_VENDOR" H_M1J_VENDOR_BASE="http://zbstub:8080"
+    DC up -d --no-deps --force-recreate --wait --wait-timeout 240 m1j ) > "$WORK/jobs-up-m1j.log" 2>&1 || { sed 's/^/     | /' "$WORK/jobs-up-m1j.log" | tail -20; die "module 1 (m1j) did not become healthy with its vendor fallback on and the stand-in as its vendor"; }
+  cid="$(jobs_cid m1j)"; [ -n "$cid" ] || die "module 1 (m1j) has no container after it was re-created"
+  env_out="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$cid" 2>/dev/null)"
+  [ -n "$env_out" ] || die "could not read the environment of module 1's container"
+  printf '%s\n' "$env_out" | grep -qx "TM_FALLBACK_MODE=enabled" || die "module 1's container does not have TM_FALLBACK_MODE=enabled"
+  printf '%s\n' "$env_out" | grep -qx "TM_EXTERNAL_DPA_CONFIRMED=true" || die "module 1's container does not have TM_EXTERNAL_DPA_CONFIRMED=true"
+  printf '%s\n' "$env_out" | grep -qx "TM_EXTERNAL_DAILY_SPEND_CAP=100" || die "module 1's container does not have TM_EXTERNAL_DAILY_SPEND_CAP=100"
+  printf '%s\n' "$env_out" | grep -qx "TM_EXTERNAL_ZEROBOUNCE_BASE_URL=http://zbstub:8080" || die "module 1's container does not have TM_EXTERNAL_ZEROBOUNCE_BASE_URL=http://zbstub:8080: the vendor would be the real one, which the network cannot reach"
+  got_key="$(printf '%s\n' "$env_out" | sed -n 's/^JOBS_VENDOR_VAR=//p')"
+  [ -n "$got_key" ] && [ "$got_key" = "$JOBS_VENDOR" ] || die "module 1's key variable JOBS_VENDOR_VAR is not the minted stand-in key (it is ${#got_key} characters long)"
+  got_key=""
+  echo "  module 1 (m1j) was re-created with its vendor fallback ON and http://zbstub:8080 as its vendor (the stand-in key present, not shown)"
+}
+
+# jobs_j7_verify <label> <job>: the invariants of a finished job, every one printed and every one held, exactly as jobs_verify makes them, but kept apart from the evidence of J1-J4 (their counts are asserted by
+# jobs_summary against fixed numbers): each name of JOBS_VERIFY_OKS exactly once and no other OK line
+jobs_j7_verify() {
+  local label="$1" job="$2" name c total
+  jobs_scn verify --job "$job"
+  jobs_need "$label: verify of job $job"
+  for name in "${JOBS_VERIFY_OKS[@]}"; do
+    c="$(printf '%s\n' "$JOBS_OUT" | grep -cx "OK $name" || true)"
+    [ "$c" = 1 ] || die "$label: the scenario program printed 'OK $name' $c time(s), want exactly once: the check did not run (or ran twice)"
+  done
+  total="$(printf '%s\n' "$JOBS_OUT" | grep -c '^OK ' || true)"
+  [ "$total" = "${#JOBS_VERIFY_OKS[@]}" ] || die "$label: the scenario program printed $total OK line(s), want exactly ${#JOBS_VERIFY_OKS[@]}"
+  echo "  $label: job $job holds ${#JOBS_VERIFY_OKS[@]} of ${#JOBS_VERIFY_OKS[@]} invariants"
+}
+
+jobs_j7() {
+  STAGE=jobs-optout; banner J7 "the per-user vendor opt-out: with module 1's vendor fallback ON and wired to its own stand-in, an opted-out customer's job holds 1 credit a row, runs under module 1's opt-out policy and reaches the vendor not once; an opted-in customer's job (the control) holds 2 a row and reaches it for every row"
+  local f jo ji po pi t0 t1
+  : > "$WORK/jobs-j7.log"
+  DC up -d --no-deps --wait --wait-timeout 180 zbstub > "$WORK/jobs-up-zbstub.log" 2>&1 || { sed 's/^/     | /' "$WORK/jobs-up-zbstub.log" | tail -20; die "J7: the vendor stand-in (zbstub) did not become healthy"; }
+  jobs_m1j_vendor_stub
+  jobs_vendor_says true "J7: the stand-in is the vendor"
+  jobs_remember_wait
+  jobs_scn stub; jobs_need "J7: the vendor stand-in's counters"
+  t0="$(jobs_get "$(jobs_fact stub)" total)"
+  [ -n "$t0" ] || die "J7: the vendor stand-in's total is not readable: $(jobs_fact stub)"
+  jobs_j7_ok the_vendor_stand_in_is_wired_and_module_1_says_its_vendor_is_reachable
+
+  # (a) the customer who OPTED OUT: the same list, the setting stated before the job exists
+  jobs_scn setup --api "$JOBS_API_A" --rows "$JOBS_J7_ROWS" --bad 2 --dup 2 --vendor-tag oo --optout
+  jobs_need "J7 opted out: the setting, the list and the confirm"
+  f="$(jobs_fact created)"; jo="$(jobs_get "$f" job)"; po="$(jobs_get "$f" pending)"
+  [ -n "$jo" ] && [ "$po" = "$((JOBS_J7_ROWS - 4))" ] || die "J7 opted out: the 'created' fact has no job or $po pending rows, want $((JOBS_J7_ROWS - 4)): $f"
+  jobs_scn reserve --job "$jo" --expect "reserve_rows=1,unit_cost=1,units=$po,reserved_credits=$po,snapshot_units=2,snapshot_vendor=0,rate_unit!=m1_vendor"
+  jobs_need "J7 opted out: the reserve of job $jo"
+  jobs_j7_ok opted_out_job_holds_1_credit_a_row_and_no_vendor_unit
+  jobs_wait_terminal "$jo" 300
+  jobs_j7_verify "J7 opted out" "$jo"
+  jobs_scn policy --job "$jo" --expect "rows=$po,key_known=1,all_under_key=1,external_verified=0,provider_no_smtp=$po"
+  jobs_need "J7 opted out: module 1's results of job $jo"
+  jobs_j7_ok opted_out_job_ran_to_the_end_with_every_row_under_module_1s_opt_out_policy
+  jobs_scn stub --expect "total=$t0"
+  jobs_need "J7 opted out: the vendor stand-in's counters after the job"
+  jobs_j7_ok opted_out_job_reached_the_vendor_not_once
+
+  # (b) the CONTROL: the customer who did not opt out, the same kind of list, the same module 1, the same vendor
+  jobs_scn setup --api "$JOBS_API_A" --rows "$JOBS_J7_ROWS" --bad 2 --dup 2 --vendor-tag oi
+  jobs_need "J7 opted in: the list and the confirm"
+  f="$(jobs_fact created)"; ji="$(jobs_get "$f" job)"; pi="$(jobs_get "$f" pending)"
+  [ -n "$ji" ] && [ "$pi" = "$((JOBS_J7_ROWS - 4))" ] || die "J7 opted in: the 'created' fact has no job or $pi pending rows, want $((JOBS_J7_ROWS - 4)): $f"
+  jobs_scn reserve --job "$ji" --expect "reserve_rows=1,unit_cost=2,units=$pi,reserved_credits=$((pi * 2)),snapshot_units=3,snapshot_vendor=2,rate_unit=m1_vendor"
+  jobs_need "J7 opted in: the reserve of job $ji"
+  jobs_j7_ok opted_in_job_holds_2_credits_a_row_with_the_vendor_unit
+  jobs_wait_terminal "$ji" 300
+  jobs_j7_verify "J7 opted in" "$ji"
+  jobs_scn policy --job "$ji" --expect "rows=$pi,key_known=1,all_under_key=0,external_verified=$pi,provider_no_smtp=0"
+  jobs_need "J7 opted in: module 1's results of job $ji"
+  jobs_j7_ok opted_in_job_is_not_under_the_opt_out_policy
+  jobs_scn reserve --job "$ji" --expect "charged=$((pi * 2))"
+  jobs_need "J7 opted in: the vendor answers were charged"
+  jobs_scn stub; jobs_need "J7 opted in: the vendor stand-in's counters after the job"
+  t1="$(jobs_get "$(jobs_fact stub)" total)"
+  [ -n "$t1" ] && [ "$t1" -ge "$((t0 + pi))" ] || die "J7 opted in: the vendor stand-in received $((t1 - t0)) request(s) for $pi rows: the vendor is not reached by an opted-in job, so the zero of the opted-out job proves nothing"
+  jobs_j7_ok opted_in_job_reached_the_vendor_and_was_charged_for_every_answer
+  echo "  the stand-in received $((t1 - t0)) request(s) in all: none for the $po rows of the opted-out job, $((t1 - t0)) for the $pi rows of the opted-in job"
+}
+
+# jobs_j7_summary: the J7 evidence: every name of JOBS_J7_OKS printed exactly once and nothing else, by the lines jobs_j7_ok kept
+jobs_j7_summary() {
+  local name c total
+  [ -s "$WORK/jobs-j7.log" ] || die "no J7 line was kept: stage J7 proved nothing (it did not run, or it printed no assertion)"
+  for name in "${JOBS_J7_OKS[@]}"; do
+    c="$(grep -cx "J7 OK $name" "$WORK/jobs-j7.log" || true)"
+    [ "$c" = 1 ] || die "J7 printed 'J7 OK $name' $c time(s), want exactly once: the assertion did not run (or ran twice)"
+  done
+  total="$(grep -c '^J7 OK ' "$WORK/jobs-j7.log" || true)"
+  [ "$total" = "${#JOBS_J7_OKS[@]}" ] || die "J7 printed $total 'J7 OK' line(s), want exactly ${#JOBS_J7_OKS[@]}: it printed an assertion this stage does not know"
+  echo "  J7: ${#JOBS_J7_OKS[@]} of ${#JOBS_J7_OKS[@]} assertions held (the per-user vendor opt-out: an opted-out job holds 1 a row and never reaches the vendor, the opted-in control holds 2 and reaches it)"
+}
+
 # ── the end: evidence, leak scan, exposure ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 jobs_summary() {
   local want n
@@ -690,7 +821,7 @@ jobs_exposure() {
   STAGE=exposure; banner 8 "scope jobs: no service publishes a port; the network is internal"
   local ids id pb cnt=0
   DC ps --all --format json > "$WORK/ps.json" || die "docker compose ps failed"
-  bash "$HERE/check-exposure.sh" "$WORK/ps.json" postgres m1j jobsdns jobs-a jobs-b || die "a service is reachable from outside the network"
+  bash "$HERE/check-exposure.sh" "$WORK/ps.json" postgres m1j jobsdns zbstub jobs-a jobs-b || die "a service is reachable from outside the network"
   [ "$(docker network inspect "$PROJECT_NET" -f '{{.Internal}}')" = true ] || die "$PROJECT_NET is not an internal network"
   ids="$(DC ps -q)"; [ -n "$ids" ] || die "no running containers to inspect"
   for id in $ids; do
@@ -702,7 +833,7 @@ jobs_exposure() {
 
 # ── the whole stage, and the scope ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 jobs_run() {
-  : > "$WORK/jobs-run.log"; : > "$WORK/jobs-ok.log"; : > "$WORK/jobs-j6.log"
+  : > "$WORK/jobs-run.log"; : > "$WORK/jobs-ok.log"; : > "$WORK/jobs-j6.log"; : > "$WORK/jobs-j7.log"
   rm -f "$WORK"/jobs-m1j-before-switch-*.log
   # in a full run the legacy platform containers (engine OFF) would win the leader lock and hold every job where it is, and the legacy module 1 would drain the same queue: they stop here
   if [ "$SCOPE" = full ]; then DC stop -t 10 platform platform-2 m1 >/dev/null 2>&1 || true; fi
@@ -712,12 +843,14 @@ jobs_run() {
   jobs_j3
   jobs_j4
   jobs_j6
+  jobs_j7
   jobs_summary
+  jobs_j7_summary
   jobs_secret_leak
   jobs_exposure
 }
 
-# H_SCOPE=jobs: Postgres, the four migration chains, the install step after module 1's and the first admin (stages 1-4b ran), then the stages above (J0-J4 and J6) and nothing else (no module 2 or 3, no probe, no outage or
+# H_SCOPE=jobs: Postgres, the four migration chains, the install step after module 1's and the first admin (stages 1-4b ran), then the stages above (J0-J4, J6 and J7) and nothing else (no module 2 or 3, no probe, no outage or
 # leader stage of the full run). Called by run.sh after stage 4b; it never returns (it exits with the run's own status, the EXIT trap tears the stack down).
 jobs_scope_run() {
   STAGE=services; banner 5 "scope jobs: module 1 (m1j), its fixture DNS and two platform instances with the job engine on (modules 2 and 3 are not started)"
@@ -728,7 +861,7 @@ jobs_scope_run() {
   jobs_not_checked
   echo "  - everything outside the job engine: module 2, module 3, the probe, the outage and leader stages of the full run and the ledger check are NOT run in this scope (H_SCOPE=full runs them)"
   echo
-  echo "HARNESS RESULT: GREEN (scope jobs: $JOBS_VERIFIED verified jobs, $(grep -c ' OK ' "$WORK/jobs-ok.log" || true) invariant lines, ${#JOBS_J6_OKS[@]} J6 assertions) — the platform's own process was killed at five points, a leader was killed, module 1 was stopped: every job ended with the books closed; module 1's vendor fallback was switched off, on and off again and the reserve followed it (1, 2, 1 credits a row)"
+  echo "HARNESS RESULT: GREEN (scope jobs: $JOBS_VERIFIED verified jobs, $(grep -c ' OK ' "$WORK/jobs-ok.log" || true) invariant lines, ${#JOBS_J6_OKS[@]} J6 assertions, ${#JOBS_J7_OKS[@]} J7 assertions) — the platform's own process was killed at five points, a leader was killed, module 1 was stopped: every job ended with the books closed; module 1's vendor fallback was switched off, on and off again and the reserve followed it (1, 2, 1 credits a row); and with the vendor ON, a customer who opted out held 1 credit a row and never reached it, the one who did not held 2 and reached it for every row"
   exit 0
 }
 
@@ -748,6 +881,9 @@ jobs_not_checked() {
     answer (module 1 is given a stand-in key and no verification is ever sent to the vendor: the network is internal and J6 starts no job), the charge of a vendor answer (the platform's settlement of m1_vendor is the db-tests'), a
     confirm that module 1's unreadable describe refuses (it needs the seeded flag that module 1 never set, which J1-J4 have already made module 1's word: the db-tests prove it, TestJobsStore_VendorReachabilityFromTheModule*),
     an IMMEDIATE confirm under any of the three states, and more than one platform instance reading module 1 at once.
+  - J7 (the per-user vendor opt-out) runs ONE opted-out and ONE opted-in customer through the real platform and the real module 1 with module 1's own ZeroBounce stand-in as the vendor (its test/zbstub: no real vendor, no real key); NOT exercised: a vendor
+    that errors, times out or is over its cap for an opted-in job, a vendor-derived cache answer that answers an opted-out job (no call is made for it: it is charged at the cache unit by rule M1-01), an opted-out job whose module 1 loses the opt-out policy
+    after the confirm (the unit tests of internal/jobengine hold that it waits, free), the settings routes beyond the one PUT the scenario program makes (the db-tests and the API unit tests hold them), and more than one job per customer.
   - the two instances share one database and one network: a partition between the leader and the database (a leader that is cut off and not killed keeps its server-side session and so the lock), more than two instances and a pass that is
     already running when its instance loses the lock are not exercised; the leader is killed with SIGKILL, so the server sees the closed socket at once.
   - the scenario program mints its users' tokens itself (HS256, the secret both instances were given): GoTrue's own tokens are the gotrue scope's; the program is a harness caller, not a browser.

@@ -13,8 +13,9 @@ import (
 // policy opting in, the kill switch not pulled). The module computes it per request from the one predicate its stage is wired from, so the answer and the stage cannot disagree; it says whether and
 // never how. The platform reads it before it previews or confirms a module 1 job: reachable means a job may be charged the vendor's price, which is what the reserve must cover.
 
-// vendorFallbackShape is the object `vendor_fallback`: `reachable` is a required boolean; a key module 1 adds to it later is tolerated (and not a difference for the drift gate).
-var vendorFallbackShape = modclient.Object(modclient.Req("reachable", modclient.Bool)).Open()
+// vendorFallbackShape is the object `vendor_fallback`: `reachable` is a required boolean; `opt_out_policy` (module 1's ADR-0024, Phase 5 S6: the key of the policy that opts a job out of the vendor, see
+// optout.go) is an optional string, absent from the describe of a module that does not serve the second policy; a key module 1 adds to it later is tolerated (and not a difference for the drift gate).
+var vendorFallbackShape = modclient.Object(modclient.Req("reachable", modclient.Bool), modclient.Opt("opt_out_policy", modclient.Str)).Open()
 
 // VendorReachable is module 1's answer to "can a vendor answer happen now?", as an explicit tri-state: a module whose describe does not carry the field (every module 1 before migration 0020)
 // is Known false, NEVER a silent Reachable false. Reachable means nothing while Known is false (it is the zero value, false, and

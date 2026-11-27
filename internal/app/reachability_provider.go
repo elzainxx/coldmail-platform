@@ -37,19 +37,28 @@ type m1Reachability struct {
 	version int
 }
 
-var _ jobs.VendorReachability = (*m1Reachability)(nil)
+var (
+	_ jobs.VendorReachability = (*m1Reachability)(nil)
+	_ jobs.OptOutPolicySource = (*m1Reachability)(nil)
+)
+
+// adapter registers the service caller (a no-op after the first success of the process), derives its key and builds the module 1 adapter that acts as it. Every failure is an error that carries no key, no
+// digest and no address (the tenant and adapter errors are written so).
+func (p *m1Reachability) adapter(ctx context.Context) (*m1.Adapter, error) {
+	if err := p.ensure.EnsureCaller(ctx, m1ServiceCallerID); err != nil {
+		return nil, fmt.Errorf("register the platform's module 1 service caller: %w", err)
+	}
+	key, err := tenant.DeriveM1KeyVersion(p.secret, p.version, m1ServiceCallerID)
+	if err != nil {
+		return nil, fmt.Errorf("derive the platform's module 1 service key: %w", err)
+	}
+	return p.factory.ForScope(tenant.Scope{M1Key: key})
+}
 
 // M1VendorReachable registers the service caller (a no-op after the first success of the process), derives its key, asks module 1's describe and returns what it says: known is false when the describe
 // has no vendor_fallback (an older module 1). Every failure is an error with no value beside it, and none of them carries a key, a digest or an address (the tenant and adapter errors are written so).
 func (p *m1Reachability) M1VendorReachable(ctx context.Context) (reachable, known bool, err error) {
-	if err := p.ensure.EnsureCaller(ctx, m1ServiceCallerID); err != nil {
-		return false, false, fmt.Errorf("register the platform's module 1 service caller: %w", err)
-	}
-	key, err := tenant.DeriveM1KeyVersion(p.secret, p.version, m1ServiceCallerID)
-	if err != nil {
-		return false, false, fmt.Errorf("derive the platform's module 1 service key: %w", err)
-	}
-	ad, err := p.factory.ForScope(tenant.Scope{M1Key: key})
+	ad, err := p.adapter(ctx)
 	if err != nil {
 		return false, false, err
 	}
@@ -58,6 +67,24 @@ func (p *m1Reachability) M1VendorReachable(ctx context.Context) (reachable, know
 		return false, false, err
 	}
 	return v.Reachable, v.Known, nil
+}
+
+// M1OptOutPolicy is the key of module 1's opt-out policy, from the same describe and as the same service caller (Phase 5 S6: vendor_fallback.opt_out_policy, which module 1 publishes whether or not its vendor
+// is reachable). It returns a valid policy name, or an error: jobs.ErrNoOptOutPolicy when module 1 answered and publishes none (an older module 1), any other error when it could not be asked. It never
+// returns ("", nil): a caller treats every error the same way (no key, no opted-out job), and only the log's word differs.
+func (p *m1Reachability) M1OptOutPolicy(ctx context.Context) (string, error) {
+	ad, err := p.adapter(ctx)
+	if err != nil {
+		return "", err
+	}
+	o, err := ad.OptOutPolicy(ctx)
+	if err != nil {
+		return "", err
+	}
+	if !o.Known {
+		return "", jobs.ErrNoOptOutPolicy
+	}
+	return o.Key, nil
 }
 
 // newVendorProvider builds the provider, or nil when module 1 cannot be asked in this process (PLATFORM_M1_URL or PLATFORM_M1_KEY_SECRET unset): the job store then reads nothing and refuses nothing

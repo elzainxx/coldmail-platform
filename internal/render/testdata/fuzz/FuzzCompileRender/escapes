@@ -1,0 +1,5 @@
+go test fuzz v1
+string("\\{\\{x\\}\\} \\| \\\\ \\n {a\\|b|c} {{x|a\\}\\}b}}")
+uint64(3)
+string("{a|b}")
+int(0)

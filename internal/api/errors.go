@@ -88,10 +88,16 @@ func classify(err error) problem {
 		big   *http.MaxBytesError
 		ucr   *jobs.UnknownChoiceRequiredError
 		stale *jobs.StalePreviewError
+		tmpl  *jobs.TemplateError
 	)
 	switch {
 	case errors.Is(err, jobs.ErrNotFound):
 		return problem{status: http.StatusNotFound, code: codeNotFound, expected: true}
+	case errors.As(err, &tmpl):
+		// a template with a syntax error (Phase 5 S2): the part it is in and the position and the message the template package gives, which repeats at most one character of what the user wrote. It is judged
+		// BEFORE the generic bad request below, which it also is (errors.Is(err, jobs.ErrBadRequest)), so that the position is not lost
+		return problem{status: http.StatusBadRequest, code: codeValidationFailed, expected: true,
+			details: []any{"reason", "the " + safePart(tmpl.Part) + " template has a syntax error", "part", safePart(tmpl.Part), "line", tmpl.Line, "column", tmpl.Column, "message", safeMessage(tmpl.Message)}}
 	case errors.As(err, &bad):
 		return problem{status: http.StatusBadRequest, code: codeValidationFailed, details: []any{"reason", safeReason(bad.Reason)}, expected: true}
 	case errors.Is(err, jobs.ErrBadRequest):
@@ -158,6 +164,10 @@ var notAllowedWords = map[string]string{
 	// platform_0016's walls: a job the module holds ends through the engine, and a job paused before its start never went through it. A user reaches them only through a store function that was
 	// written to skip the engine (the admin surface is such a writer), so the word says what the user should do: the job ends through the engine (cancel it, the platform tells the module).
 	jobs.ReasonSubmittedJobCancelsThroughTheEngine: "submitted_job_ends_through_the_engine",
+	// Phase 5 S3: a send job cannot be confirmed by a service that cannot make an unsubscribe link (PLATFORM_UNSUBSCRIBE_SECRET or PLATFORM_PUBLIC_BASE_URL is unset): the operator's to fix, the word says why
+	jobs.ReasonUnsubscribeNotConfigured: "unsubscribe_not_configured",
+	// Phase 5 S6: an opted-out module 1 job cannot be confirmed until module 1's opt-out policy is known (module 1 cannot be asked, or it is an older module 1): the job stays previewed and nothing is held
+	jobs.ReasonOptOutPolicyUnavailable: "opt_out_policy_unavailable",
 }
 
 // notAllowedWord is the reason a client is told for a refusal of the job's lifecycle. A constraint's name is never sent: it is translated when it has a word (a module that cannot pause or
@@ -182,6 +192,24 @@ func safeReason(reason string) string {
 		reason = reason[:300]
 	}
 	return reason
+}
+
+// safePart is the part of a campaign a template error names: one of the three words, whatever the error says (a part is never the user's text).
+func safePart(part string) string {
+	switch part {
+	case jobs.TemplateSubject, jobs.TemplateHTML, jobs.TemplateText:
+		return part
+	}
+	return "campaign"
+}
+
+// safeMessage is the message of a template error as a client may be told it: the template package's own sentence, which quotes at most one character of the source; cut at 200 bytes (on a character
+// boundary) as the second wall.
+func safeMessage(m string) string {
+	if len(m) <= 200 {
+		return m
+	}
+	return strings.ToValidUTF8(m[:200], "") // a character cut in two at the end is dropped
 }
 
 // safeCauses are the words module 3 names for a campaign that cannot run: at most twenty, each at most 120 bytes, and none that holds an '@' (they are words, never an address).

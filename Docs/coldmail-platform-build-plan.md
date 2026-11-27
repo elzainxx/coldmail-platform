@@ -17,11 +17,10 @@ Ordering principle: the most irreversible parts and the contract test come first
 | P3 Module integration | **done** — `platform@52fe035` (every workflow green on that exact SHA: harness [44246863794](https://github.com/elzainxx/coldmail-platform/actions/runs/44246863794), db-tests [44249664219](https://github.com/elzainxx/coldmail-platform/actions/runs/44249664219), supabase [44249671445](https://github.com/elzainxx/coldmail-platform/actions/runs/44249671445), go [44249655943](https://github.com/elzainxx/coldmail-platform/actions/runs/44249655943), gates [44249659723](https://github.com/elzainxx/coldmail-platform/actions/runs/44249659723), gitleaks [44249651672](https://github.com/elzainxx/coldmail-platform/actions/runs/44249651672), web [44249675190](https://github.com/elzainxx/coldmail-platform/actions/runs/44249675190), platform-check [44249668028](https://github.com/elzainxx/coldmail-platform/actions/runs/44249668028)) and the Part B fault proofs [44249695726](https://github.com/elzainxx/coldmail-platform/actions/runs/44249695726). Part A closed earlier (code head e486dd1, see the spec). Three adapters (`internal/adapters/{m1,sendapi,m2,m3}`) on one plumbing client (`internal/modclient`), driven end to end against the REAL modules in the harness (item-by-item equality, pagination across page boundaries, cross-tenant refusal, outage mid-job, M2 cancel), and a contract drift gate (`internal/contractcheck`) with fixtures recorded from the real modules; findings and the Tier 4 recommendation (the owner decides): `Docs/phase-3-findings.md`; evidence row by row: `Docs/phase-3-spec.md` |
 | P3 close-out (every open decision and noticed item of Phase 3, before P4) | **done** — `platform@2bc21c4` (every workflow green on that exact SHA: harness [44423183589](https://github.com/elzainxx/coldmail-platform/actions/runs/44423183589), db-tests [44423188038](https://github.com/elzainxx/coldmail-platform/actions/runs/44423188038), supabase [44423192568](https://github.com/elzainxx/coldmail-platform/actions/runs/44423192568), go [44423166724](https://github.com/elzainxx/coldmail-platform/actions/runs/44423166724), gates [44423166736](https://github.com/elzainxx/coldmail-platform/actions/runs/44423166736), gitleaks [44423166751](https://github.com/elzainxx/coldmail-platform/actions/runs/44423166751), web [44423196895](https://github.com/elzainxx/coldmail-platform/actions/runs/44423196895), platform-check [44423201437](https://github.com/elzainxx/coldmail-platform/actions/runs/44423201437)) and the four fault-proof dispatches ([44423205785](https://github.com/elzainxx/coldmail-platform/actions/runs/44423205785) p3ca, [44423210661](https://github.com/elzainxx/coldmail-platform/actions/runs/44423210661) p3cb, [44423214938](https://github.com/elzainxx/coldmail-platform/actions/runs/44423214938) p3cc, [44423219384](https://github.com/elzainxx/coldmail-platform/actions/runs/44423219384) p3cd); the three modules at their released heads: `verify@fad942e` ([ci 44352471306](https://github.com/elzainxx/coldmail-verify/actions/runs/44352471306), [gitleaks 44352471259](https://github.com/elzainxx/coldmail-verify/actions/runs/44352471259)), `send-managed@dc2b532` ([real-infra 44354675361](https://github.com/elzainxx/coldmail-send-managed/actions/runs/44354675361), [gitleaks 44354675334](https://github.com/elzainxx/coldmail-send-managed/actions/runs/44354675334)), `send-byo@8855a52` ([real-infra 44371713201](https://github.com/elzainxx/coldmail-send-byo/actions/runs/44371713201), [gitleaks 44371713288](https://github.com/elzainxx/coldmail-send-byo/actions/runs/44371713288)). Every owner ruling is built (module 1: describe, idempotent create, totals, a 400 for a bad job id, node self-promotion, key rotation, one address rule `norm.Validate`; module 2: the worker reconnects forever, a forged cursor is 400, the optional plain-text part; module 3: `POST /v1/cancel`, the run 409 names its causes, no internal text on the wire, the SMTP host destination guard, the plain-text part, `describe` says `items`; the platform: module 3's From-gate ON in the harness, the enforced health action observed, the liveness cell of `Health`, the adapters for all of it), every open decision CLOSED with its evidence, the scratch branches deleted, the not-checked list reprinted with an owner for each line: [`phase-3-closeout-spec.md`](phase-3-closeout-spec.md) |
 | P4 Job engine (with its close-out: owner rulings on module pause, resume and cancel, the vendor field, suppression scope, the unknown choice, fair work order, the sender crash matrix) | **done** — `platform@5c0f2da` (every workflow green on that exact SHA: harness [45907519507](https://github.com/elzainxx/coldmail-platform/actions/runs/45907519507), db-tests [45907519672](https://github.com/elzainxx/coldmail-platform/actions/runs/45907519672), supabase [45907519544](https://github.com/elzainxx/coldmail-platform/actions/runs/45907519544), go [45907519528](https://github.com/elzainxx/coldmail-platform/actions/runs/45907519528), gates [45907519509](https://github.com/elzainxx/coldmail-platform/actions/runs/45907519509), gitleaks [45907519525](https://github.com/elzainxx/coldmail-platform/actions/runs/45907519525), web [45907519506](https://github.com/elzainxx/coldmail-platform/actions/runs/45907519506), platform-check [45907519543](https://github.com/elzainxx/coldmail-platform/actions/runs/45907519543)) and the scope proofs that need a killed process or a stopped container, on the same SHA (jobs [45907586193](https://github.com/elzainxx/coldmail-platform/actions/runs/45907586193), sendjobs [45907594809](https://github.com/elzainxx/coldmail-platform/actions/runs/45907594809), gotrue [45907603019](https://github.com/elzainxx/coldmail-platform/actions/runs/45907603019)) and the fault-proof dispatches (p4a [45907606872](https://github.com/elzainxx/coldmail-platform/actions/runs/45907606872), p4b [45907615376](https://github.com/elzainxx/coldmail-platform/actions/runs/45907615376), p4c [45907623332](https://github.com/elzainxx/coldmail-platform/actions/runs/45907623332)); the three modules at their released heads: `verify@c516f28` ([ci 45868763567](https://github.com/elzainxx/coldmail-verify/actions/runs/45868763567), [gitleaks 45868763610](https://github.com/elzainxx/coldmail-verify/actions/runs/45868763610)), `send-managed@d023fdb` ([real-infra 45869828717](https://github.com/elzainxx/coldmail-send-managed/actions/runs/45869828717), [gitleaks 45869828795](https://github.com/elzainxx/coldmail-send-managed/actions/runs/45869828795)), `send-byo@59b2d2e` ([real-infra 45872669121](https://github.com/elzainxx/coldmail-send-byo/actions/runs/45872669121), [gitleaks 45872669139](https://github.com/elzainxx/coldmail-send-byo/actions/runs/45872669139)); every row of [`phase-4-spec.md`](phase-4-spec.md) is CLOSED with its runs |
-| P5 Templates and rendering | not started |
+| P5 Templates and rendering (with the owner decisions of Phase 4 closed) | in progress — one phase, one session: [`phase-5-spec.md`](phase-5-spec.md) |
 | P6 User app | not started |
 | P7 Admin console | not started |
-| P8 Hardening | not started |
-| P9 Close | not started |
+| P8 Hardening and launch (the former P8 and P9, merged) | not started |
 
 **Keep this table current from the first commit.** The alignment fix plan once claimed it had never been performed while most of it was done; the real state was recoverable only from git logs.
 
@@ -196,12 +195,14 @@ The most irreversible phase.
 - The HTML editor model and plain-text generation
 - Merge fields with fallback; missing-field accounting at preview
 - Seeded spintax and sample renders
-- The unsubscribe link and the public unsubscribe endpoint
+- The unsubscribe link and the public unsubscribe endpoint, with the RFC 8058 headers on every send (modules 2 and 3 carry them)
+- The per-user vendor opt-out (a policy without the `external` block for module 1), the paused-job limit (7 days) and the 7-day content retention (added by the owner rulings of Phase 4)
 
 **Exit criteria**
 - The same job and recipient always render byte-identically
 - A row without a field or fallback is never sent
 - An unsubscribe lands on the suppression list and is excluded from the next job
+- An opted-out user's module 1 job carries no `external` block and reserves at 1; a paused job is cancelled at the limit; content is cleared 7 days after a job ends and outcomes are kept
 
 ### P6 — User app
 **Builds**
@@ -229,27 +230,23 @@ The most irreversible phase.
 - Every admin action appears in the audit log under the named admin
 - Impersonation cannot act, only view
 
-### P8 — Hardening
+### P8 — Hardening and launch (the former P8 Hardening and P9 Close, merged by the owner in Phase 5)
 **Builds**
 - A platform-wide panic switch and per-module kill switches
 - Observability and alerts for the platform itself
 - Backups and a restore drill, including the M3 master key
 - A security review of the public surfaces (login, unsubscribe endpoint)
 - Load test against realistic job sizes
+- The deployment: one public edge (Caddy, automatic HTTPS) in front of the platform API and the web app only, the modules on the private network (the trusted forwarded-for header for the unsubscribe rate limit is set here)
+- Operational docs, the runbook, the go-live checklist, with the dated promotion steps (retention at L+14, account purge at L+28, the shadow safeguards after 14 quiet days)
+- An onboarding runbook for the first hand-picked customers
+- The terms and the disclosure wordings (content monitoring, vendor egress with its opt-out, "your sends train our accuracy", unsubscribe handling)
 
 **Exit criteria**
 - The panic switch halts every module losslessly
 - An instance cut off from the database by a network partition loses the platform's leader role (the expiry and reconcile loops) within the TCP keepalive window, and a second instance takes over; no entitlement is expired or reconciled twice (added by the Phase 2 close-out, E4)
 - Settlement of a job far larger than the harness's (the load test) matches the module report exactly, item by item (added by the Phase 2 close-out, E4)
 - A restore drill passes from backup alone
-
-### P9 — Close
-**Builds**
-- Operational docs, the runbook, the go-live checklist
-- An onboarding runbook for the first hand-picked customers
-- Terms disclosure for content monitoring
-
-**Exit criteria**
 - A clean install reproduced from the docs alone
 - Every open decision closed or moved to future work
 

@@ -240,7 +240,8 @@ func (a *API) preview(w http.ResponseWriter, r *http.Request, p principal) {
 	if !ok {
 		return
 	}
-	if _, err := a.svc.Preview(r.Context(), p.UserID, id, opts...); err != nil {
+	pv, err := a.svc.Preview(r.Context(), p.UserID, id, opts...)
+	if err != nil {
 		a.fail(w, r, err)
 		return
 	}
@@ -249,7 +250,12 @@ func (a *API) preview(w http.ResponseWriter, r *http.Request, p principal) {
 		a.fail(w, r, err)
 		return
 	}
-	a.writeJSON(w, r, http.StatusOK, jobBody{Job: viewJob(j, true)})
+	v := viewJob(j, true)
+	if v.Preview != nil {
+		// the samples are in THIS answer only: they hold the recipients' data, so the store never writes them (jobs.Preview.Samples) and a later GET of the job does not have them
+		v.Preview.Samples = viewSamples(pv.Samples)
+	}
+	a.writeJSON(w, r, http.StatusOK, jobBody{Job: v})
 }
 
 // move runs one of the store's moves that need no body and returns the job it leaves.
@@ -339,10 +345,12 @@ func (a *API) confirm(w http.ResponseWriter, r *http.Request, p principal) {
 		return
 	}
 	a.writeJSON(w, r, http.StatusOK, struct {
-		Job        jobView `json:"job"`
-		Replayed   bool    `json:"replayed"`
-		Reserved   int64   `json:"reserved"`
-		Pending    int     `json:"pending"`
-		Suppressed int     `json:"suppressed"`
-	}{viewJob(res.Job, true), res.Replayed, res.Reserved, res.Pending, res.Suppressed})
+		Job           jobView `json:"job"`
+		Replayed      bool    `json:"replayed"`
+		Reserved      int64   `json:"reserved"`
+		Pending       int     `json:"pending"`
+		Suppressed    int     `json:"suppressed"`
+		MissingFields int     `json:"missing_fields"` // a send job's rows left out, free, because a merge field they need is missing (rule P-09)
+		Unrenderable  int     `json:"unrenderable"`   // a send job's rows left out, free, because their rendered message is refused (rule P-10)
+	}{viewJob(res.Job, true), res.Replayed, res.Reserved, res.Pending, res.Suppressed, res.MissingFields, res.Unrenderable})
 }

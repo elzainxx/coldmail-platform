@@ -50,12 +50,12 @@ var jobLegal = []jobMove{
 	{"scheduled", "failed", []string{"admin", "engine"}},
 	{"paused", "scheduled", []string{"user", "admin"}},
 	{"paused", "running", []string{"user", "admin"}},
-	{"paused", "cancelled", []string{"user", "admin"}},
+	{"paused", "cancelled", []string{"user", "admin", "engine"}}, // platform_0018: the engine too, for a job that paused from SCHEDULED, once its pause outlasted PLATFORM_JOB_PAUSE_MAX_DAYS (the wall of platform_0016 still refuses it for a job paused while running)
 	{"paused", "expired", []string{"engine"}},
 	{"paused", "failed", []string{"admin", "engine"}},
 	// platform_0016: a job paused WHILE RUNNING is held by its module, so its cancel goes through the engine (paused -> cancelling) and, when the module reports every item final while it is held, it ends the
 	// normal way (paused -> completing). The database allows both only for a job that paused from running; a job that paused from scheduled submitted nothing and is cancelled directly (paused -> cancelled).
-	{"paused", "cancelling", []string{"user", "admin"}},
+	{"paused", "cancelling", []string{"user", "admin", "engine"}}, // platform_0018: the engine too, for a job that paused from RUNNING (the wall of platform_0016 still refuses it for one paused before its start)
 	{"paused", "completing", []string{"engine"}},
 	{"running", "paused", []string{"user", "admin"}},
 	{"running", "cancelling", []string{"user", "admin"}},
@@ -418,7 +418,7 @@ var jobFlavorRefusals = map[string][]string{
 }
 
 // TestJobLifecycle_Matrix: for EVERY ordered pair of the twelve statuses (132 pairs) and each of the three kinds of actor (396 cells), a move is accepted exactly when the pair is in the hand-written expected list AND
-// the actor is one the list allows for it (52 cells). The job of each cell is a fresh draft job walked to the starting status (jobWalkTo) inside a savepoint that is rolled back; for a pair of the list what the move
+// the actor is one the list allows for it (54 cells). The job of each cell is a fresh draft job walked to the starting status (jobWalkTo) inside a savepoint that is rolled back; for a pair of the list what the move
 // needs is made true first (a start time that has passed, a deadline that has, a module that can pause), so that the legal twin of every refusal is in the same matrix. A refused cell is refused for ITS reason:
 // from a terminal status jobs_terminal_is_final; a pair that is not in the list job_transition_illegal; a pair in the list taken by the wrong actor job_transition_actor_not_allowed; the moves that depend on how
 // the job got where it is (a pause remembers where it paused from, a cancel decides how a job ends) are tried in each flavor and are accepted in at least one and refused in the others for the one named reason.
@@ -509,8 +509,8 @@ func TestJobLifecycle_Matrix(t *testing.T) {
 	if want := len(jobStates) * (len(jobStates) - 1) * len(kinds); cells != want {
 		t.Fatalf("the matrix tried %d cells, want %d (12 x 11 x 3)", cells, want)
 	}
-	if accepted != wantAccepted || accepted != 52 {
-		t.Fatalf("the matrix accepted %d cells, want %d (one for each actor of each of the 31 legal moves; the expected list says %d)", accepted, 52, wantAccepted)
+	if accepted != wantAccepted || accepted != 54 {
+		t.Fatalf("the matrix accepted %d cells, want %d (one for each actor of each of the 31 legal moves; the expected list says %d)", accepted, 54, wantAccepted)
 	}
 
 	t.Run("a status written back to itself is no move: accepted, and it writes no event", func(t *testing.T) {

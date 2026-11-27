@@ -256,6 +256,9 @@ type createOpts struct {
 	bounce int
 	holdMS int
 	tag    string
+	// stage J7 (optout.go): the user opts out of the vendor fallback before the job is created, and the good addresses of a module 1 list are routed to the vendor stage
+	optOut    bool
+	vendorTag string
 }
 
 // addSendFlags declares the flags of a send job on a create or a setup.
@@ -275,12 +278,15 @@ func createJob(ctx context.Context, d *db, sg *signer, o createOpts) (job, user 
 		return "", "", failf(exitUsage, "module %q is none of m1, m2, m3", o.module)
 	}
 	lines, err := genRows(o.rows, o.bad, o.dup)
+	if o.vendorTag != "" {
+		lines, err = vendorLines(o) // stage J7: the good addresses are routed to the vendor stage (optout.go)
+	}
 	if err != nil {
 		return "", "", err
 	}
 	credits := o.grant
 	if credits <= 0 {
-		credits = 10*o.rows + 1000 // far above any reserve (1 credit a row: module 1's vendor unit is not reachable here)
+		credits = 10*o.rows + 1000 // far above any reserve (1 credit a row, or 2 with the vendor fallback reachable)
 	}
 	user, err = d.newUser(ctx, "scn")
 	if err != nil {
@@ -288,6 +294,11 @@ func createJob(ctx context.Context, d *db, sg *signer, o createOpts) (job, user 
 	}
 	if err := d.grant(ctx, user, credits); err != nil {
 		return "", user, err
+	}
+	if o.optOut { // the setting is stated BEFORE the job exists: the job reads it when it is created
+		if err := stateOptOut(ctx, sg, o.api, user); err != nil {
+			return "", user, err
+		}
 	}
 	job, prev, err := apiDraft(ctx, sg, o, user, lines, nil)
 	if err != nil {
@@ -352,6 +363,7 @@ func cmdCreate(args []string) error {
 	fs.IntVar(&o.dup, "dup", 0, "of which repeats of an earlier address")
 	fs.IntVar(&o.grant, "grant", 0, "credits to grant (default: far more than the job reserves)")
 	addSendFlags(fs, &o)
+	addOptOutFlags(fs, &o)
 	if err := parse(fs, args); err != nil {
 		return err
 	}
@@ -501,6 +513,7 @@ func cmdSetup(args []string) error {
 	fs.IntVar(&c.dup, "dup", 0, "of which repeats of an earlier address")
 	fs.IntVar(&c.grant, "grant", 0, "credits to grant")
 	addSendFlags(fs, &c)
+	addOptOutFlags(fs, &c)
 	fs.IntVar(&scheduledIn, "scheduled-in", 0, "seconds ahead to schedule the start (at least 60), 0 for now")
 	if err := parse(fs, args); err != nil {
 		return err

@@ -57,6 +57,8 @@ services:
       PLATFORM_JWT_SECRET: ${H_JOBS_JWT_SECRET:?}
       PLATFORM_JWT_ISSUER: *jobs-issuer
       PLATFORM_JWT_AUDIENCE: authenticated
+      PLATFORM_UNSUBSCRIBE_SECRET: ${H_JOBS_M1_KEY_SECRET}     # Phase 5 S3: a send job cannot be confirmed without an unsubscribe link. The stage mints three secrets and no more, so this one SHARES the value of the key-derivation secret (the two are
+      PLATFORM_PUBLIC_BASE_URL: https://platform.example.test  # derived under different domain texts, so neither reveals the other); chunk S9 mints a dedicated one with its selftest. The address is the one the links of this scope's messages carry
       PLATFORM_FAULTPOINT: ${H_JOBS_A_FAULT:-}
     # a docker init (tini) is PID 1 and the platform is its child: a process that is PID 1 of its container ignores the SIGKILL it sends itself (the kernel protects init from signals of its own namespace), and the armed fault point would then hang the process instead of killing it (found by the first runner run of this scope)
     init: true
@@ -96,6 +98,8 @@ services:
       PLATFORM_JWT_SECRET: ${H_JOBS_JWT_SECRET:?}
       PLATFORM_JWT_ISSUER: *jobs-issuer
       PLATFORM_JWT_AUDIENCE: authenticated
+      PLATFORM_UNSUBSCRIBE_SECRET: ${H_JOBS_M1_KEY_SECRET}     # Phase 5 S3: a send job cannot be confirmed without an unsubscribe link. The stage mints three secrets and no more, so this one SHARES the value of the key-derivation secret (the two are
+      PLATFORM_PUBLIC_BASE_URL: https://platform.example.test  # derived under different domain texts, so neither reveals the other); chunk S9 mints a dedicated one with its selftest. The address is the one the links of this scope's messages carry
       PLATFORM_FAULTPOINT: ${H_JOBS_B_FAULT:-}
     # a docker init (tini) is PID 1 and the platform is its child: a process that is PID 1 of its container ignores the SIGKILL it sends itself (the kernel protects init from signals of its own namespace), and the armed fault point would then hang the process instead of killing it (found by the first runner run of this scope)
     init: true
@@ -132,6 +136,8 @@ services:
       TM_EXTERNAL_DAILY_SPEND_CAP: ${H_M1J_DAILY_SPEND_CAP:-0}
       TM_EXTERNAL_ZEROBOUNCE_KEY_ENV: JOBS_VENDOR_VAR
       JOBS_VENDOR_VAR: ${H_M1J_VENDOR_KEY:-}
+      # stage J7 only: the vendor's base URL, module 1's own ZeroBounce stand-in (service zbstub below; module 1 accepts http://zbstub under TM_ENV=development). Empty (every other stage, J6 included): module 1's default
+      TM_EXTERNAL_ZEROBOUNCE_BASE_URL: ${H_M1J_VENDOR_BASE:-}
     volumes:
       - ${H_WORK:?}/jobs/resolv.conf:/etc/resolv.conf:ro
     healthcheck:
@@ -142,6 +148,23 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       jobsdns: { condition: service_healthy }
+    networks: [private]
+
+  # ── module 1's own ZeroBounce stand-in (stage J7) ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  # control-plane/test/zbstub of the module-1 checkout, built from the module's OWN recipe (the platform supplies none and patches nothing: its Dockerfile pins both bases by digest). It plays the vendor's validate
+  # API for module 1's ZeroBounce adapter, answers from the LOCAL PART of the address it is asked about and COUNTS every request on arrival (GET /__calls), which is what stage J7 reads: the vendor is reached by an
+  # opted-in job and by no opted-out one. The name `zbstub` is the one host module 1 accepts over http under TM_ENV=development besides loopback. No port is published and no real vendor or key is anywhere near it.
+  zbstub:
+    profiles: [jobs]
+    build: { context: "${H_MODULES_ROOT:?}/coldmail-verify/control-plane/test/zbstub", dockerfile: Dockerfile }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/healthz || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     networks: [private]
 
   # ── the fixture DNS module 1 asks (tests/harness/fx with its dns and api roles only, the zone of tests/harness/jobs/dns.json) ─────────────────────────────────────────────────

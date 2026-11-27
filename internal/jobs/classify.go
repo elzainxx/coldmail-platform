@@ -16,6 +16,10 @@ const (
 	StateDuplicate  = "duplicate"  // repeats an earlier pending row's normalised address (P-07)
 	StateSuppressed = "suppressed" // the user's own suppression list, applied at confirm (P-SUP)
 	StateExcluded   = "excluded"   // a chained send's source verdict that was not selected (P-EXC)
+
+	// The two states a SEND job's confirm gives a pending row its templates cannot be rendered for (Phase 5 S2, platform_0019). Neither is ever given a public.job_items row, reserved or charged.
+	StateMissingField = "missing_field" // the row lacks a merge field the templates need and give no fallback for; the row's reason names the fields, never a value (P-09)
+	StateUnrenderable = "unrenderable"  // the row's rendered message is one the shared table refuses (checkRendered); the row's reason is the word of the refusal (P-10)
 )
 
 // Two malformed reasons the platform adds to norm's words (norm.Reasons, norm.SyntaxReasons) for text the table cannot keep. A reason is always a word, never the address.
@@ -180,7 +184,7 @@ func excludedReason(verdict string) string {
 	return verdict
 }
 
-// resultRule is the rule label of the platform's own result for a row in state: the charge table's row for malformed (P-08), duplicate (P-07) and cancelled (P-01), read from the table
+// resultRule is the rule label of the platform's own result for a row in state: the charge table's row for malformed (P-08), duplicate (P-07), cancelled (P-01), missing_field (P-09) and unrenderable (P-10), read from the table
 // (internal/charge) and required to be FREE there, and the two labels the store owns for suppressed and excluded rows.
 func resultRule(state string) (string, error) {
 	switch state {

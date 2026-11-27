@@ -109,6 +109,27 @@ func reusedKey(err error) error {
 
 type submitBody struct {
 	Items []Item `json:"items"`
+	// Policy is the module 1 policy the job is created under (Phase 5 S6, ADR-0024): empty for the default policy, which is the key being ABSENT from the body (omitempty), byte for byte what Submit has always
+	// sent; the platform sets it only for an opted-out job, to the key module 1's own describe published (vendor_fallback.opt_out_policy), never to a constant.
+	Policy string `json:"policy,omitempty"`
+}
+
+// MaxPolicyKeyBytes is the longest policy key the adapter sends: a name, one header-sized word.
+const MaxPolicyKeyBytes = 64
+
+// ValidPolicyKey says whether key is a policy name the adapter will send or accept from a describe: 1 to MaxPolicyKeyBytes characters of letters, digits and `. _ : -`. Module 1 serves two names and refuses
+// any other with a 400; the adapter refuses a name that is not even a word before a request, and a describe that publishes one is a Contract error.
+func ValidPolicyKey(key string) bool {
+	if len(key) < 1 || len(key) > MaxPolicyKeyBytes {
+		return false
+	}
+	for i := 0; i < len(key); i++ {
+		c := key[i]
+		if !(c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '.' || c == '_' || c == ':' || c == '-') {
+			return false
+		}
+	}
+	return true
 }
 
 // Submit sends the plan's rows as ONE bulk job under key and returns module 1's job id, the counts of its 202 (which must be exactly the plan's Expected counts: a difference is a
@@ -125,6 +146,14 @@ type submitBody struct {
 //
 // The job id is a validated uuid: a 202 whose id is not one is a contract error, because no job route can be called with it.
 func (a *Adapter) Submit(ctx context.Context, plan Plan, key string) (SubmitResult, error) {
+	return a.SubmitUnder(ctx, plan, key, "")
+}
+
+// SubmitUnder is Submit under a named module 1 policy (Phase 5 S6: the per-user vendor opt-out). policy "" is Submit exactly: the body has no `policy` member, so the job runs under module 1's default
+// policy and the request is byte for byte what it always was. A policy is the key module 1 published in its describe (vendor_fallback.opt_out_policy: read it with OptOutPolicy, never write it down): it
+// goes into the body as `policy`, and the SAME Idempotency-Key with the other policy is another request to module 1 (409 idempotency_key_reused, never a replay of the other job). A key that is not a
+// word (ValidPolicyKey) is an Invalid error and no request is made. A module 1 that does not serve the name refuses it (400 validation_failed, field policy): it is a Refused error and nothing was created.
+func (a *Adapter) SubmitUnder(ctx context.Context, plan Plan, key, policy string) (SubmitResult, error) {
 	if plan.refusal != nil {
 		return SubmitResult{}, plan.refusal
 	}
@@ -134,7 +163,10 @@ func (a *Adapter) Submit(ctx context.Context, plan Plan, key string) (SubmitResu
 	if e := checkKey(key); e != nil {
 		return SubmitResult{}, e
 	}
-	res, err := a.submit(ctx, plan.Items, key)
+	if policy != "" && !ValidPolicyKey(policy) {
+		return SubmitResult{}, newErr(modclient.Invalid, routeSubmit, "the policy must be 1 to 64 characters of letters, digits, '.', '_', ':' and '-' (the key module 1's describe published); the request was not sent")
+	}
+	res, err := a.submit(ctx, plan.Items, key, policy)
 	if err != nil {
 		return SubmitResult{}, err
 	}
@@ -171,7 +203,7 @@ func (a *Adapter) SubmitRaw(ctx context.Context, items []Item, key string) (Subm
 	if e := checkKey(key); e != nil {
 		return SubmitResult{}, e
 	}
-	res, err := a.submit(ctx, items, key)
+	res, err := a.submit(ctx, items, key, "")
 	if err != nil {
 		return SubmitResult{}, err
 	}
@@ -180,10 +212,10 @@ func (a *Adapter) SubmitRaw(ctx context.Context, items []Item, key string) (Subm
 
 // submit makes the POST (retried per the dials, with the same key every time) and decodes its 202. On a failure the error is the modclient error as it came, with a 409
 // idempotency_key_reused made findable (ErrIdempotencyKeyReused) and an unconfirmed outcome said so in its message.
-func (a *Adapter) submit(ctx context.Context, items []Item, key string) (SubmitResult, error) {
+func (a *Adapter) submit(ctx context.Context, items []Item, key, policy string) (SubmitResult, error) {
 	resp, err := a.c.Do(ctx, modclient.Request{
 		Module: modclient.M1, Route: routeSubmit, Method: http.MethodPost, Path: "/v1/verify/bulk",
-		Body: submitBody{Items: items}, Expect: []int{http.StatusAccepted},
+		Body: submitBody{Items: items, Policy: policy}, Expect: []int{http.StatusAccepted},
 		Timeout: max(a.timeout, submitTimeoutFloor), Idempotent: true,
 		Header: map[string]string{idempotencyHeader: key},
 	})

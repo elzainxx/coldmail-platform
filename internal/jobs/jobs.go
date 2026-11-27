@@ -50,7 +50,9 @@ type Store struct {
 	maxStartDelay time.Duration
 	pre           PreChecks
 	render        Renderer
-	vendor        vendorHook // module 1's vendor reachability, read before a module 1 preview and confirm (vendor.go)
+	vendor        vendorHook                          // module 1's vendor reachability, read before a module 1 preview and confirm (vendor.go)
+	unsub         func(itemID string) (string, error) // the unsubscribe link of an item (WithUnsubscribe, unsubscribe.go); nil: none is configured
+	prep          Preparer                            // the template renderer (WithPreparer, template.go): when set it is preferred to render; nil: only the Renderer, no template work at all
 }
 
 // Option configures a Store at New.
@@ -85,12 +87,23 @@ func WithMaxStartDelay(d time.Duration) Option { return func(s *Store) { s.maxSt
 // WithPreChecks sets the module 3 pre-check a confirm of a module 3 job makes before its transaction. Without it (or with nil) no pre-check is made.
 func WithPreChecks(p PreChecks) Option { return func(s *Store) { s.pre = p } }
 
-// WithRenderer sets the renderer EnsureJobItems and EnsureModuleItems write a send job's messages through (default PlainRenderer, the identity: the campaign's subject, body and text as given; the
-// merge fields, the spintax and the generated plain-text part of Phase 5 replace it behind the same interface). A nil renderer is ignored.
+// WithRenderer sets the per-row renderer EnsureJobItems and EnsureModuleItems write a send job's messages through (default PlainRenderer, the identity: the campaign's subject, body and text as given). It
+// takes the place of any Preparer given before it (the last of the two options wins): a store with only a Renderer does no template work. A nil renderer is ignored.
 func WithRenderer(r Renderer) Option {
 	return func(s *Store) {
 		if r != nil {
-			s.render = r
+			s.render, s.prep = r, nil
+		}
+	}
+}
+
+// WithPreparer gives the store the template renderer of Phase 5 (TemplateRenderer): the campaign is compiled when a send job is created (a syntax error is a 400), the preview counts the rows that lack a
+// required merge field and shows sample messages, the confirm leaves those rows out, free, and every message is rendered through it. It is preferred to the Renderer, whichever option came first, unless
+// WithRenderer comes after it. A nil preparer is ignored.
+func WithPreparer(p Preparer) Option {
+	return func(s *Store) {
+		if p != nil {
+			s.prep = p
 		}
 	}
 }

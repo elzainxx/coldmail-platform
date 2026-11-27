@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	"github.com/jackc/pgx/v5"
 
@@ -19,6 +20,7 @@ type snapshot struct {
 	rows       int
 	pending    int // rows in state pending
 	suppressed int // rows already in state suppressed (never before confirm; read as pending by the fingerprint)
+	skipped    int // rows already in state missing_field or unrenderable (never before confirm; read as pending by the fingerprint)
 	malformed  int
 	duplicates int
 	excluded   int
@@ -30,6 +32,10 @@ type snapshot struct {
 	selected int
 
 	quote money.RateQuote // zero for a module that is not metered
+
+	// tpl is what the pass over the templates found (template_scan.go): set by computePreview for a send job in a store with a template renderer, zero otherwise. buildPreview reads it; it is not part of the
+	// fingerprint (it is a function of what the fingerprint already names: the rows, their merge data and the campaign).
+	tpl templateScan
 
 	fingerprint string
 }
@@ -43,7 +49,8 @@ func (s *Store) takeSnapshot(ctx context.Context, tx pgx.Tx, j Job, lockPrices b
 		return nil, s.fail(err)
 	}
 	if sn.metered {
-		q, err := s.mny.ReserveRateIn(ctx, tx, j.Module, lockPrices)
+		// Phase 5 S6: the quote is over the units THIS job can produce: an opted-out job's leaves m1_vendor out, the very set ReserveIn freezes (the prices map is in the fingerprint, so the rate a preview shows is the rate a confirm freezes)
+		q, err := s.mny.ReserveRateForIn(ctx, tx, j.Module, lockPrices, j.Settings.VendorOptOut)
 		if err != nil {
 			return nil, err
 		}
@@ -51,8 +58,10 @@ func (s *Store) takeSnapshot(ctx context.Context, tx pgx.Tx, j Job, lockPrices b
 	}
 
 	// the list: counts, the digest of every row and the addresses to ask the suppression list about, in ONE ordered pass
-	rowsDigest := newLineDigest()
-	rows, err := tx.Query(ctx, `SELECT ordinal, state, email_norm, reason FROM platform.job_rows WHERE job_id = $1::uuid AND user_id = $2::uuid ORDER BY ordinal`, j.ID, j.UserID)
+	rowsDigest, fieldsDigest := newLineDigest(), newLineDigest()
+	// fh is the digest of the row's merge data, computed by the database (jsonb text is canonical) so that the data never travels: '' for a row with none. It names the data in the fingerprint of a SEND job, whose
+	// templates (and so its missing-field count) depend on it.
+	rows, err := tx.Query(ctx, `SELECT ordinal, state, email_norm, reason, CASE WHEN fields = '{}'::jsonb THEN '' ELSE md5(fields::text) END FROM platform.job_rows WHERE job_id = $1::uuid AND user_id = $2::uuid ORDER BY ordinal`, j.ID, j.UserID)
 	if err != nil {
 		return nil, s.fail(err)
 	}
@@ -60,12 +69,16 @@ func (s *Store) takeSnapshot(ctx context.Context, tx pgx.Tx, j Job, lockPrices b
 		var ordinal int32
 		var state string
 		var emailNorm, reason *string
-		if err := rows.Scan(&ordinal, &state, &emailNorm, &reason); err != nil {
+		var fh string
+		if err := rows.Scan(&ordinal, &state, &emailNorm, &reason, &fh); err != nil {
 			rows.Close()
 			return nil, s.fail(err)
 		}
 		en, rs := deref(emailNorm), deref(reason)
 		rowsDigest.rowLine(int(ordinal), state, en, rs)
+		if fh != "" && j.Content != nil {
+			fieldsDigest.add(strconv.Itoa(int(ordinal)), fh)
+		}
 		sn.rows++
 		switch state {
 		case StatePending:
@@ -80,6 +93,9 @@ func (s *Store) takeSnapshot(ctx context.Context, tx pgx.Tx, j Job, lockPrices b
 			sn.duplicates++
 		case StateExcluded:
 			sn.excluded++
+		case StateMissingField, StateUnrenderable:
+			// a row the confirm of a send job left out: it exists only after the confirm, which no preview or confirm reads again (the job is no longer previewed); counted as a skipped row, read as pending by the digest
+			sn.skipped++
 		default:
 			rows.Close()
 			return nil, fmt.Errorf("jobs: job %s holds a row in state %q, which this store does not know", j.ID, state)
@@ -132,6 +148,7 @@ func (s *Store) takeSnapshot(ctx context.Context, tx pgx.Tx, j Job, lockPrices b
 		UnknownChoice: j.Settings.UnknownChoice,
 		SourceJobID:   j.SourceJobID,
 		SourceDigest:  sourceDigest,
+		FieldsDigest:  fieldsDigest.sum(),
 		Prices:        sn.quote.Prices,
 	}.fingerprint()
 	return sn, nil

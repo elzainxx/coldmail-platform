@@ -43,7 +43,8 @@ func newJeEnv(t *testing.T, opts ...jobs.Option) *jeEnv {
 	e := &jeEnv{mnyEnv: newMnyEnv(t), users: new(atomic.Int64)}
 	// the tests that hold the (user, module) lock and wait for a call to queue behind it need the store's wait to outlast the polling, whatever the runner's speed
 	e.store = money.New(e.pool, money.WithLockTimeout(45*time.Second))
-	st, err := jobs.New(e.pool, e.store, opts...)
+	// every harness store can make an unsubscribe link (a send job cannot be confirmed without one, Phase 5 S3); a test that wants none passes jobs.WithUnsubscribe(nil), which a later option wins with
+	st, err := jobs.New(e.pool, e.store, append([]jobs.Option{harnessUnsubscribeOption()}, opts...)...)
 	if err != nil {
 		t.Fatalf("jobs.New: %v", err)
 	}

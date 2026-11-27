@@ -27,6 +27,9 @@
 // its history), preview (a job previewed again through the API: the rate, the credits, whether module 1 was read), reserve (what the ledger and the price snapshot of a job hold) and cancel (the user's
 // cancel of a scheduled job).
 //
+// and the two of stage J7 (optout.go; the per-user vendor opt-out): policy (module 1's own results of a job: the policies the rows say they were made under, against the key module 1's describe publishes) and stub (the
+// requests module 1's ZeroBounce stand-in has received), with the flags --optout and --vendor-tag of create and setup.
+//
 // Environment (a missing one fails the command naming it): HARNESS_ADMIN_DATABASE_URL (the harness's superuser connection), JOBS_JWT_SECRET and JOBS_JWT_ISSUER (the platform's PLATFORM_JWT_* of the
 // instances: HS256, minted per run), JOBS_M1_KEY_SECRET (the platform's PLATFORM_M1_KEY_SECRET), and, optional, JOBS_JWT_AUDIENCE (authenticated), JOBS_M1_KEY_VERSION (1), JOBS_M1_URL (http://m1:8080).
 package main
@@ -89,7 +92,7 @@ func mustJSON(v any) []byte {
 	return out
 }
 
-const usageText = `usage: jobscenario <create|confirm|confirm-retry|setup|wait|state|verify|leader|vendor|flag|preview|reserve|cancel|send-prepare|move> [flags]   (see the header of tests/harness/jobscenario/main.go)`
+const usageText = `usage: jobscenario <create|confirm|confirm-retry|setup|wait|state|verify|leader|vendor|flag|preview|reserve|cancel|policy|stub|send-prepare|move> [flags]   (see the header of tests/harness/jobscenario/main.go)`
 
 func main() { os.Exit(run(os.Args[1:])) }
 
@@ -127,6 +130,10 @@ func run(args []string) int {
 		err = cmdReserve(rest)
 	case "cancel":
 		err = cmdCancel(rest)
+	case "policy":
+		err = cmdPolicy(rest)
+	case "stub":
+		err = cmdStub(rest)
 	case "send-prepare":
 		err = cmdSendPrepare(rest)
 	case "move":

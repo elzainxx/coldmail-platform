@@ -1,0 +1,5 @@
+go test fuzz v1
+string("{{x}}{a|b}")
+uint64(11)
+string("<>&")
+int(3)

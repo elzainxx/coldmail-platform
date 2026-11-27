@@ -161,9 +161,9 @@ var pcPausedTable = map[string][]struct{ to, user, admin, engine string }{
 	"scheduled": {
 		{"scheduled", pcOK, pcOK, pcActor},
 		{"running", pcResum, pcResum, pcActor},
-		{"cancelling", pcNoCan, pcNoCan, pcActor},
+		{"cancelling", pcNoCan, pcNoCan, pcNoCan}, // platform_0018: the engine may now take the pair (the pause limit), and the wall of platform_0016 refuses it for a job that never started
 		{"completing", pcActor, pcActor, pcNoCom},
-		{"cancelled", pcOK, pcOK, pcActor},
+		{"cancelled", pcOK, pcOK, pcOK}, // platform_0018: the engine cancels a job paused before its start once the pause outlasted the limit
 		{"failed", pcActor, pcOK, pcOK},
 		{"expired", pcActor, pcActor, pcOK},
 	},
@@ -171,17 +171,17 @@ var pcPausedTable = map[string][]struct{ to, user, admin, engine string }{
 	"running": {
 		{"scheduled", pcResum, pcResum, pcActor},
 		{"running", pcOK, pcOK, pcActor},
-		{"cancelling", pcOK, pcOK, pcActor},
+		{"cancelling", pcOK, pcOK, pcOK}, // platform_0018: the engine takes a job it holds through cancelling once the pause outlasted the limit
 		{"completing", pcActor, pcActor, pcOK},
-		{"cancelled", pcSubCn, pcSubCn, pcActor},
+		{"cancelled", pcSubCn, pcSubCn, pcSubCn}, // platform_0018: the engine may take the pair, and the wall of platform_0016 still refuses it for a job its module holds
 		{"failed", pcActor, pcOK, pcOK},
 		{"expired", pcActor, pcActor, pcIlleg},
 	},
 }
 
 // TestJobPauseCancel_APausedJobTakesOnlyTheMovesItsPauseAllows: for each of modules 2 and 3 (the two that can pause), each place a job can have paused from (before its start; while running), each of the seven
-// statuses a paused job has a row for, and each kind of actor (84 cells), the move is tried in a savepoint that is rolled back and the answer is the hand-written table's: accepted (14 cells for each module...
-// 28 in all), or refused 23001 for ONE named reason, the order of the guard being the pair, then the actor, then the pause walls. The walls of platform_0016 each have their legal twin in the same table: a job paused
+// statuses a paused job has a row for, and each kind of actor (84 cells), the move is tried in a savepoint that is rolled back and the answer is the hand-written table's: accepted (16 cells for each module...
+// 32 in all), or refused 23001 for ONE named reason, the order of the guard being the pair, then the actor, then the pause walls. The walls of platform_0016 each have their legal twin in the same table: a job paused
 // from scheduled is cancelled directly (job_unsubmitted_pause_never_cancelling and job_unsubmitted_pause_never_completing refuse the two moves through the engine) and a job paused from running is taken to
 // cancelling and to completing, never straight to cancelled (job_submitted_pause_cancels_through_the_engine); both resume only where they paused from; only the one that was running never expires.
 // It fails if a wall is missing or fires for the wrong job, if a pair is refused that should pass, or if a refusal comes from another rule.
@@ -231,8 +231,8 @@ func TestJobPauseCancel_APausedJobTakesOnlyTheMovesItsPauseAllows(t *testing.T) 
 	if len(problems) > 0 {
 		t.Fatalf("%d cell(s) of the table are not what the guard says:\n  %s", len(problems), strings.Join(problems, "\n  "))
 	}
-	if cells != 84 || accepted != 28 {
-		t.Fatalf("the table tried %d cells and %d were accepted, want 84 and 28 (2 modules x 2 places x 7 statuses x 3 actors; 7 accepted for each place and module)", cells, accepted)
+	if cells != 84 || accepted != 32 {
+		t.Fatalf("the table tried %d cells and %d were accepted, want 84 and 32 (2 modules x 2 places x 7 statuses x 3 actors; 8 accepted for each place and module since platform_0018 gave the engine the two moves of the pause limit)", cells, accepted)
 	}
 }
 

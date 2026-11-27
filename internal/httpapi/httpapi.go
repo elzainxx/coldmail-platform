@@ -157,11 +157,25 @@ func (s *service) accessLog(next http.Handler) http.Handler {
 		}
 		s.log.LogAttrs(r.Context(), level, "http_request",
 			slog.String("method", r.Method),
-			slog.String("path", r.URL.Path),
+			slog.String("path", loggedPath(r.URL.Path)),
 			slog.Int("status", sw.status),
 			slog.Float64("duration_ms", float64(time.Since(start).Microseconds())/1000),
 		)
 	})
+}
+
+// secretPathPrefixes are the paths whose remainder is a credential: the public unsubscribe routes (/u/{token}, internal/unsubscribe/endpoint) carry a per-recipient token in the path, and the access
+// log must not hold it (a log is read by more people than a link is sent to).
+var secretPathPrefixes = []string{"/u/"}
+
+// loggedPath is the path as the access log records it: the path itself, except that everything after a secret prefix is replaced by [token], whatever it is and whether or not a route took it.
+func loggedPath(path string) string {
+	for _, p := range secretPathPrefixes {
+		if strings.HasPrefix(path, p) {
+			return p + "[token]"
+		}
+	}
+	return path
 }
 
 // recoverer turns a handler panic into a 500 envelope. The panic value and stack go to the log under the

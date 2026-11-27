@@ -512,6 +512,7 @@ type m1Job struct {
 	body            string
 	items           []*m1Item
 	cancelRequested bool
+	policy          string // the `policy` of the submission ("" = the default policy): what every result row says it was made under (Phase 5 S6)
 }
 
 // m1Rig is a stateful stand-in of module 1's three job routes: the idempotent bulk submit (a replay of the same key and body answers the same job with the replay header, the same key with
@@ -533,6 +534,8 @@ type m1Rig struct {
 	miscount atomic.Bool
 	// dupOf marks a settled row as a repeat of the row at this ordinal (module 1's duplicate_of)
 	dupOf map[string]int
+	// ignorePolicy makes the stand-in a module 1 that does not honour the `policy` of a submission (it still accepts it): every row says it was made under the default policy (Phase 5 S6)
+	ignorePolicy atomic.Bool
 }
 
 func newM1Rig(t *testing.T) *m1Rig {
@@ -596,12 +599,16 @@ func (r *m1Rig) submit(w http.ResponseWriter, req *http.Request, b []byte) {
 			ItemID  string `json:"item_id"`
 			Address string `json:"address"`
 		} `json:"items"`
+		Policy string `json:"policy"`
 	}
 	if err := json.Unmarshal(b, &body); err != nil || len(body.Items) == 0 {
 		sendapitest.JSON(w, 400, sendapitest.Envelope("validation_failed", [2]string{"items", "required"}))
 		return
 	}
-	j := &m1Job{id: fmt.Sprintf("00000000-0000-4000-8000-%012d", len(r.jobs)+1), body: string(b)}
+	j := &m1Job{id: fmt.Sprintf("00000000-0000-4000-8000-%012d", len(r.jobs)+1), body: string(b), policy: body.Policy}
+	if r.ignorePolicy.Load() {
+		j.policy = ""
+	}
 	for _, it := range body.Items {
 		j.items = append(j.items, &m1Item{ref: it.ItemID, addr: strings.ToLower(it.Address)})
 	}
@@ -692,8 +699,14 @@ func (r *m1Rig) results(w http.ResponseWriter, req *http.Request, id string) {
 		if !(it.settled || it.cancelled) || ord < start {
 			continue
 		}
+		// HAND-WRITTEN from module 1's contract (Docs/api-contract.md, "Policies"): every row, a cancelled one included, says the policy it was made under in meta.policy and meta.policy_version
+		policy := j.policy
+		if policy == "" {
+			policy = "cold-email"
+		}
+		meta := map[string]any{"policy": policy, "policy_version": 1}
 		if it.cancelled { // HAND-WRITTEN from module 1's contract: a cancelled row has no verdict, an empty flags and signals, and the two non-verdict words
-			rows = append(rows, map[string]any{"ordinal": ord, "item_id": it.ref, "status": "cancelled", "reason": "cancelled_by_caller", "flags": map[string]any{}, "signals": map[string]any{}})
+			rows = append(rows, map[string]any{"ordinal": ord, "item_id": it.ref, "status": "cancelled", "reason": "cancelled_by_caller", "flags": map[string]any{}, "signals": map[string]any{}, "meta": meta})
 			continue
 		}
 		signals := map[string]any{}
@@ -705,7 +718,7 @@ func (r *m1Rig) results(w http.ResponseWriter, req *http.Request, id string) {
 		}
 		row := map[string]any{
 			"ordinal": ord, "item_id": it.ref, "status": it.out.State, "reason": it.out.Reason,
-			"flags": map[string]any{"from_cache": it.out.FromCache}, "signals": signals,
+			"flags": map[string]any{"from_cache": it.out.FromCache}, "signals": signals, "meta": meta,
 		}
 		if d, ok := r.dupOf[it.ref]; ok {
 			row["duplicate_of"] = d

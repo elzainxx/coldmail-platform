@@ -13,7 +13,7 @@ import (
 // and it names the three dials. A document that says what the code does not, or leaves out what it does, fails here.
 
 var (
-	routeRow = regexp.MustCompile("(?m)^\\| `((?:GET|POST) /v1/[^`]+)` \\|")
+	routeRow = regexp.MustCompile("(?m)^\\| `((?:GET|POST|PUT) /v1/[^`]+)` \\|")
 	errorRow = regexp.MustCompile("(?m)^\\| (\\d{3}) \\| `([a-z_]+)` \\|")
 )
 

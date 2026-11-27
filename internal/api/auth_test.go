@@ -281,6 +281,7 @@ func TestAuth_NothingInTheRequestNamesTheUserOfAStoreCall(t *testing.T) {
 	good := map[string][]byte{
 		"POST /v1/jobs":              []byte(`{"module":"m1","rows":[{"email":"a@example.test"}]}`),
 		"POST /v1/jobs/{id}/confirm": []byte(`{"fingerprint":"` + strings.Repeat("a", 64) + `"}`),
+		"PUT /v1/settings":           []byte(`{"vendor_fallback_opt_out":true}`),
 	}
 	for _, rt := range routes {
 		key := rt.method + " " + rt.pattern
@@ -292,9 +293,22 @@ func TestAuth_NothingInTheRequestNamesTheUserOfAStoreCall(t *testing.T) {
 			q.header.Set("Idempotency-Key", "key-1")
 		}
 		r.store.reset()
+		r.settings.reset()
 		resp, body := r.do(q)
 		if resp.StatusCode >= 500 {
 			t.Fatalf("%s: %d %s", key, resp.StatusCode, body)
+		}
+		if rt.pattern == settingsPath { // the settings routes call the settings store, never the job store
+			sc := r.settings.seen()
+			if len(sc) == 0 || len(r.store.seen()) != 0 {
+				t.Errorf("%s: the settings store was reached %d time(s) and the job store %d time(s), want the settings store only", key, len(sc), len(r.store.seen()))
+			}
+			for _, c := range sc {
+				if c.User != userB {
+					t.Errorf("%s: the settings store was called for user %s, want %s (the principal)", key, c.User, userB)
+				}
+			}
+			continue
 		}
 		calls := r.store.seen()
 		if len(calls) == 0 {
@@ -320,15 +334,19 @@ func TestAuth_NothingInTheRequestNamesTheUserOfAStoreCall(t *testing.T) {
 		{"results, user in the query", "GET", "/v1/jobs/" + jobIDA + "/results?user=" + userA, "", nil},
 		{"results.csv, user_id in the query", "GET", "/v1/jobs/" + jobIDA + "/results.csv?user_id=" + userA, "", nil},
 		{"events, user_id in the query", "GET", "/v1/jobs/" + jobIDA + "/events?user_id=" + userA, "", nil},
+		{"settings, user_id in the body", "PUT", "/v1/settings", `{"vendor_fallback_opt_out":true,"user_id":"` + userA + `"}`, nil},
+		{"settings, user_id in the query of a read", "GET", "/v1/settings?user_id=" + userA, "", nil},
+		{"settings, user_id in the query of a write", "PUT", "/v1/settings?user_id=" + userA, `{"vendor_fallback_opt_out":true}`, nil},
 	} {
 		r.store.reset()
+		r.settings.reset()
 		q := req{method: c.method, path: c.path, token: r.token(loginB), header: c.hdr}
 		if c.body != "" {
 			q.body, q.ctype = []byte(c.body), "application/json"
 		}
 		resp, body := r.do(q)
 		r.wantError(resp, body, http.StatusBadRequest, "bad_request")
-		if n := len(r.store.seen()); n != 0 {
+		if n := len(r.store.seen()) + len(r.settings.seen()); n != 0 {
 			t.Errorf("%s: a request naming a user reached the store (%d calls)", c.name, n)
 		}
 	}

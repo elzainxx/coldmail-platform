@@ -44,6 +44,12 @@ type Config struct {
 	// quarter of the module's staleness limit, so a stale job is still noticed on time and a module that recovers is polled again within it). Zero means DefaultBackoffCap; more than MaxBackoffCap is
 	// refused; a negative value switches the backoff off (every idle job is due again at the next tick: for the tests of the engine that tick back to back).
 	BackoffCap time.Duration
+	// PauseMax is how long a job may stay paused, by the DATABASE's clock, before the engine cancels it (Phase 5 S7: PLATFORM_JOB_PAUSE_MAX_DAYS, in days there; the engine takes any duration from a second to 90
+	// days so that a test can use seconds). Zero means DefaultPauseMax. RetentionAfter is how long after a send job ended the engine clears its rendered content (S8: PLATFORM_CONTENT_RETENTION_DAYS; a second to 365
+	// days; zero means DefaultRetentionAfter). SweepEvery is the least wait between two passes of those two steps (sweep.go); zero means DefaultSweepEvery and a negative value every tick (for the tests).
+	PauseMax       time.Duration
+	RetentionAfter time.Duration
+	SweepEvery     time.Duration
 }
 
 func (c Config) withDefaults() (Config, error) {
@@ -88,7 +94,7 @@ func (c Config) withDefaults() (Config, error) {
 	if c.BackoffCap == 0 {
 		c.BackoffCap = DefaultBackoffCap
 	}
-	return c, nil
+	return c.withSweepDefaults()
 }
 
 // staleAfter is the staleness limit of a module.
@@ -187,6 +193,11 @@ type Engine struct {
 	refusals map[string]time.Time // job id -> when the engine last flagged a refusal of a job whose rows the module holds (memory only)
 	holds    map[string]holdMemo  // job id -> what the module last said about holding the job's campaign, and when the engine told the store (memory only: it only spares a statement)
 
+	// the two housekeeping steps of sweep.go: the pause limit and the content retention. New sets pl and ret from the job store; an engine built without them (the unit tests of the passes over jobs) skips both.
+	pl     pauseLimiter
+	ret    contentRetainer
+	sweeps sweepState
+
 	ticks, standby, steps, waits, conflicts, unexpected, panics, refused atomic.Int64
 }
 
@@ -215,7 +226,12 @@ func New(d Deps, cfg Config) (*Engine, error) {
 	case d.Leader == nil:
 		return nil, errors.New("jobengine: Deps.Leader is required: an engine with no gate would run its loops in every instance")
 	}
-	return newEngine(d.Store, d.Modules, d.Leader, d.Log, d.Now, cfg)
+	e, err := newEngine(d.Store, d.Modules, d.Leader, d.Log, d.Now, cfg)
+	if err != nil {
+		return nil, err
+	}
+	e.pl, e.ret = d.Store, d.Store // the pause limit and the content retention (sweep.go) are the job store's
+	return e, nil
 }
 
 func newEngine(st store, mods Modules, gate Gate, log *slog.Logger, now func() time.Time, cfg Config) (*Engine, error) {
@@ -255,7 +271,7 @@ func (e *Engine) Run(ctx context.Context) error {
 }
 
 // Tick is one pass: ask the gate (a standby does nothing else), read the work, and run each job's step in turn. A step that fails, times out or panics is logged and counted and the next job's
-// step runs; a context that ends stops the pass at once.
+// step runs; a context that ends stops the pass at once. After the jobs, the two housekeeping steps run when their cadence says so (sweep.go: the pause limit and the content retention).
 func (e *Engine) Tick(ctx context.Context) {
 	if !e.leads(ctx) {
 		e.standby.Add(1)
@@ -274,6 +290,7 @@ func (e *Engine) Tick(ctx context.Context) {
 		}
 		e.safely(ctx, j)
 	}
+	e.sweep(ctx) // after the pass over the due jobs, never before it: the pause limit and the content retention (sweep.go)
 }
 
 // leads asks the gate and turns a panic in it into "not the leader": the failure of the election can no more end the loop than the failure of a step.
@@ -639,8 +656,8 @@ func (e *Engine) running(ctx context.Context, j jobs.EngineJob) (bool, error) {
 //     handed over (the pause came before the engine had submitted them all) it stays paused: the rest is the resume's.
 //
 // The lag between the API's answer and the module's acknowledgement is visible as the `module_paused` note the engine writes when the report first says paused (and `module_resumed` when it stops
-// saying so); the job's own `paused` transition event is the API's answer. The reserve and the slot stay held for as long as the job is paused, and nothing ends a pause but the user (resume, cancel)
-// or an administrator: there is no automatic expiry.
+// saying so); the job's own `paused` transition event is the API's answer. The reserve and the slot stay held for as long as the job is paused, and nothing ends a pause but the user (resume, cancel),
+// an administrator, or the PAUSE LIMIT (Phase 5 S7, sweep.go: a pause older than PLATFORM_JOB_PAUSE_MAX_DAYS by the database's clock is cancelled through cancelling at the end of a tick, never by this step).
 func (e *Engine) pausedRunning(ctx context.Context, j jobs.EngineJob) (bool, error) {
 	mod, err := e.mods.For(ctx, j.UserID, j.Module)
 	if err != nil {

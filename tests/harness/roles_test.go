@@ -109,6 +109,19 @@ var roleStatements = []roleStmt{
 	{"platform.unit_reachability_history", "DELETE", `DELETE FROM platform.unit_reachability_history`, "23001", "append-only", ""},
 	{"platform.unit_reachability_history", "TRUNCATE", `TRUNCATE platform.unit_reachability_history`, "23001", "append-only", ""},
 
+	// platform_0020: the per-user settings (platform_app inserts a row and updates its value and its time, never the user; nobody deletes: the superuser's DELETE finds no row to meet and its TRUNCATE meets the refusing
+	// trigger) and their history (no role writes it: the trigger of the settings does; the superuser's UPDATE and DELETE find no row here, its TRUNCATE meets the append-only trigger; tests/harness/usersettings_test.go
+	// proves the row triggers against rows)
+	{"platform.user_settings", "INSERT", `INSERT INTO platform.user_settings (user_id, vendor_fallback_opt_out) VALUES ({U2}, true)`, "", "", ""},
+	{"platform.user_settings", "UPDATE", `UPDATE platform.user_settings SET user_id = user_id`, "", "", ""},
+	{"platform.user_settings", "DELETE", `DELETE FROM platform.user_settings`, "", "", ""},
+	{"platform.user_settings", "TRUNCATE", `TRUNCATE platform.user_settings`, "23001", "append-only", ""},
+	{"platform.user_settings", "UPDATE(vendor_fallback_opt_out,updated_at)", `UPDATE platform.user_settings SET vendor_fallback_opt_out = vendor_fallback_opt_out, updated_at = updated_at`, "", "", "platform_app"},
+	{"platform.user_settings_history", "INSERT", `INSERT INTO platform.user_settings_history (user_id, setting, old_value, new_value, actor_user_id) VALUES ({U2}, 'vendor_fallback_opt_out', false, true, {U2})`, "", "", ""},
+	{"platform.user_settings_history", "UPDATE", `UPDATE platform.user_settings_history SET new_value = new_value`, "", "", ""},
+	{"platform.user_settings_history", "DELETE", `DELETE FROM platform.user_settings_history`, "", "", ""},
+	{"platform.user_settings_history", "TRUNCATE", `TRUNCATE platform.user_settings_history`, "23001", "append-only", ""},
+
 	{"platform.balances", "INSERT", `INSERT INTO platform.balances (user_id, module_id) VALUES ({U2}, 'm1')`, "", "", ""},
 	{"platform.balances", "UPDATE", `UPDATE platform.balances SET available = available + 1`, "", "", ""},
 	{"platform.balances", "DELETE", `DELETE FROM platform.balances`, "", "", ""},
@@ -186,7 +199,7 @@ var roleExpectations = map[string]map[string]string{
 		"platform.suppressions": "SI", "platform.admin_audit": "SI", "platform.balance_drift": "S", "platform.reserve_overdrawn": "S", "platform.listable_users": "S",
 		"platform.reserves": "S", "platform.m3_sync": "S", // m3_sync: plus UPDATE of nine columns (the column-level statement), which a table-level letter cannot say
 		"platform.job_transitions": "S", "platform.job_events": "SI",
-		"platform.job_rows": "SID", "platform.job_results": "SI", "platform.job_settlement_drift": "S", "platform.unit_reachability_history": "S", // job_rows: plus UPDATE of eight columns (the column-level statement)
+		"platform.job_rows": "SID", "platform.job_results": "SI", "platform.job_settlement_drift": "S", "platform.unit_reachability_history": "S", "platform.user_settings": "SI", "platform.user_settings_history": "S", // user_settings: plus UPDATE of two columns (the column-level statement); job_rows: plus UPDATE of eight columns (the column-level statement)
 		"public.users": "SIU", "public.job_items": "SIU",
 	},
 	"platform_admin": {
@@ -195,7 +208,7 @@ var roleExpectations = map[string]map[string]string{
 		"platform.suppressions": "S", "platform.admin_audit": "SI", "platform.balance_drift": "S", "platform.reserve_overdrawn": "S", "platform.listable_users": "S",
 		"platform.reserves": "S", "platform.m3_sync": "S",
 		"platform.job_transitions": "S", "platform.job_events": "S",
-		"platform.job_rows": "S", "platform.job_results": "S", "platform.job_settlement_drift": "S", "platform.unit_reachability_history": "S",
+		"platform.job_rows": "S", "platform.job_results": "S", "platform.job_settlement_drift": "S", "platform.unit_reachability_history": "S", "platform.user_settings": "S", "platform.user_settings_history": "S",
 		"public.users": "S", "public.job_items": "S",
 	},
 }

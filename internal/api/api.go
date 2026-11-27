@@ -14,6 +14,8 @@
 // can return is mapped in ONE function (errors.go: classify) that a table test covers sentinel by sentinel; anything it does not know is a 500 `internal_error` whose text is logged under the
 // request id and never sent.
 //
+// SETTINGS (Phase 5 S6). GET and PUT /v1/settings (settings.go) are the user's own settings, through a second small interface (SettingsService); the user is the same principal and nothing else.
+//
 // STREAMING. results.csv writes through internal/csvsafe a page of results at a time and flushes after each; once the first byte is out a failure can only abort the connection (a status line
 // cannot be taken back), which the client sees as a truncated body, never as a complete-looking file.
 //
@@ -32,6 +34,7 @@ import (
 	"github.com/coldmail-platform/platform/internal/jobs"
 	"github.com/coldmail-platform/platform/internal/logging"
 	"github.com/coldmail-platform/platform/internal/tenant"
+	"github.com/coldmail-platform/platform/internal/usersettings"
 )
 
 // Service is what the API needs of the job store. *jobs.Store satisfies it; the unit tests use a fake. Every method takes the acting user from the authenticated principal.
@@ -81,6 +84,9 @@ type Deps struct {
 	Logger   *slog.Logger
 	// ResultsPageMax is the largest `limit` of GET /v1/jobs/{id}/results (1 to jobs.ResultsPageSize); 0 means DefaultResultsPageMax. It is the dial PLATFORM_RESULTS_PAGE_MAX.
 	ResultsPageMax int
+	// Settings is the user settings store (Phase 5 S6: GET and PUT /v1/settings, settings.go). nil means the two settings routes are not served (a request for one is the 404 of any unknown path) and the
+	// job routes are unaffected: the production wiring (internal/app) always gives it.
+	Settings SettingsService
 }
 
 // API serves the job routes. It holds nothing that changes after New, so it is safe for concurrent use.
@@ -90,6 +96,7 @@ type API struct {
 	resolver Resolver
 	log      *slog.Logger
 	pageMax  int
+	settings SettingsService // nil: the settings routes are not mounted
 }
 
 // New builds the API. A missing dependency or a ResultsPageMax out of range is a wiring bug and an error at start-up, never a route that fails later.
@@ -113,7 +120,11 @@ func New(d Deps) (*API, error) {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	return &API{svc: d.Service, verifier: d.Verifier, resolver: d.Resolver, log: logging.Contextual(log), pageMax: pageMax}, nil
+	var settings SettingsService // optional: nil (or a nil *usersettings.Store) means the settings routes are not mounted
+	if !isNil(d.Settings) {
+		settings = d.Settings
+	}
+	return &API{svc: d.Service, verifier: d.Verifier, resolver: d.Resolver, log: logging.Contextual(log), pageMax: pageMax, settings: settings}, nil
 }
 
 // isNil is true for a nil interface and for an interface holding a nil pointer (a wiring bug that would otherwise panic at the first request).
@@ -128,6 +139,8 @@ func isNil(v any) bool {
 		return p == nil
 	case *tenant.Resolver:
 		return p == nil
+	case *usersettings.Store:
+		return p == nil
 	}
 	return false
 }
@@ -138,6 +151,10 @@ type route struct {
 	pattern string // the path, with {id} where a job id goes
 	handle  func(a *API, w http.ResponseWriter, r *http.Request, p principal)
 }
+
+// settingsPath is the one path of the settings store (settings.go): its routes are mounted only when the API was given a store (Deps.Settings), so a service built without it answers the path with the
+// 404 of any unknown path and every other route is unaffected.
+const settingsPath = "/v1/settings"
 
 // routes is the whole surface of the API.
 var routes = []route{
@@ -154,6 +171,8 @@ var routes = []route{
 	{http.MethodGet, "/v1/jobs/{id}/events", (*API).events},
 	{http.MethodGet, "/v1/jobs/{id}/results", (*API).results},
 	{http.MethodGet, "/v1/jobs/{id}/results.csv", (*API).resultsCSV},
+	{http.MethodGet, settingsPath, (*API).getSettings},
+	{http.MethodPut, settingsPath, (*API).putSettings},
 }
 
 // Routes lists the routes as "METHOD /path", in the order they are registered.
@@ -168,6 +187,9 @@ func Routes() []string {
 // Mount registers every route on the mux, each behind the authentication middleware. It is httpapi.Deps.Mount.
 func (a *API) Mount(mux *http.ServeMux) {
 	for _, r := range routes {
+		if r.pattern == settingsPath && a.settings == nil {
+			continue // no settings store was given: these two routes are not here
+		}
 		h := r.handle
 		mux.Handle(r.method+" "+r.pattern, a.authenticated(func(w http.ResponseWriter, req *http.Request, p principal) { h(a, w, req, p) }))
 	}

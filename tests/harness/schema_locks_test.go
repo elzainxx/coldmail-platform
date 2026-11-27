@@ -621,10 +621,10 @@ func phase2CatalogCheck(ctx context.Context, q querier) ([]string, error) {
 		{"platform.job_events", "job_events_reason_not_blank", []string{"btrim(reason)"}},
 		// platform_0012: the list of a job (five states, the normalised address is NULL exactly for a malformed row, a duplicate names the row it repeats, a malformed or excluded row says why, only a pending row is
 		// submitted, the fields are an object, the raw address is bounded) and its results (a charged result names its unit, the vocabularies, nothing blank)
-		{"platform.job_rows", "job_rows_state_vocabulary", []string{"'pending'", "'malformed'", "'duplicate'", "'suppressed'", "'excluded'"}},
+		{"platform.job_rows", "job_rows_state_vocabulary", []string{"'pending'", "'malformed'", "'duplicate'", "'suppressed'", "'excluded'", "'missing_field'", "'unrenderable'"}}, // platform_0019 added the last two
 		{"platform.job_rows", "job_rows_email_norm_shape", []string{"'malformed'", "email_norm IS NULL"}},
 		{"platform.job_rows", "job_rows_duplicate_shape", []string{"'duplicate'", "duplicate_of IS NOT NULL"}},
-		{"platform.job_rows", "job_rows_reason_shape", []string{"'malformed'", "'excluded'", "reason IS NOT NULL", "btrim(reason)"}},
+		{"platform.job_rows", "job_rows_reason_shape", []string{"'malformed'", "'excluded'", "'missing_field'", "'unrenderable'", "reason IS NOT NULL", "btrim(reason)"}},
 		{"platform.job_rows", "job_rows_only_pending_is_submitted", []string{"submitted_at IS NULL", "'pending'"}},
 		{"platform.job_rows", "job_rows_fields_is_an_object", []string{"jsonb_typeof(fields)", "'object'"}},
 		{"platform.job_rows", "job_rows_email_raw_bounded", []string{"octet_length(email_raw)", "4096"}},
@@ -641,6 +641,13 @@ func phase2CatalogCheck(ctx context.Context, q querier) ([]string, error) {
 		{"platform.job_rows", "job_rows_suppressed_state_has_the_flag", []string{"'suppressed'", "OR suppressed"}},
 		{"platform.job_rows", "job_rows_flag_only_on_listable_rows", []string{"NOT suppressed", "'pending'", "'suppressed'"}},
 		{"platform.job_results", "job_results_suppressed_platform_outcome", []string{"'platform'", "'suppressed'", "OR suppressed"}},
+		// platform_0020: the frozen key of the vendor opt-out is a JSON boolean (a job with no key passes by IS NULL, stated) and only a module 1 job has one; the settings table never holds the system user; the history is a change made by the user
+		{"platform.jobs", "jobs_vendor_opt_out_is_boolean", []string{"vendor_opt_out", "IS NULL", "jsonb_typeof", "'boolean'"}},
+		{"platform.jobs", "jobs_vendor_opt_out_only_on_module_one", []string{"vendor_opt_out", "IS NULL", "'m1'"}},
+		{"platform.user_settings", "user_settings_not_the_system_user", []string{"user_id <>", "00000000-0000-0000-0000-000000000000"}},
+		{"platform.user_settings_history", "user_settings_history_setting_vocabulary", []string{"'vendor_fallback_opt_out'"}},
+		{"platform.user_settings_history", "user_settings_history_a_change", []string{"old_value <> new_value"}},
+		{"platform.user_settings_history", "user_settings_history_the_user_is_the_actor", []string{"actor_user_id = user_id"}},
 	} {
 		rows, err := phase2Rows(ctx, q, `SELECT c.contype::text, c.convalidated::text, pg_get_constraintdef(c.oid) FROM pg_constraint c WHERE c.conrelid = to_regclass($1::text) AND c.conname::text = $2`, c.rel, c.name)
 		if err != nil {
@@ -736,6 +743,8 @@ func phase2CatalogCheck(ctx context.Context, q querier) ([]string, error) {
 		// platform_0013: BEFORE a snapshot row is written its unit must be reachable; AFTER a change of the flag the history is written (a WHEN: only a changed flag)
 		{"platform.job_unit_prices", "job_unit_prices_only_reachable", 1 + 2 + 4, false},
 		{"platform.unit_costs", "unit_costs_record_reachability", 1 + 16, true},
+		// platform_0020: AFTER a setting row is inserted or updated the history is written (no WHEN: the body compares the old and the new value itself, the default being the old value of a first row)
+		{"platform.user_settings", "user_settings_record_history", 1 + 4 + 16, false},
 	} {
 		rows, err := phase2Rows(ctx, q, `SELECT t.tgtype::int::text, t.tgenabled::text, (t.tgqual IS NOT NULL)::text, p.proname::text FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid
 			WHERE NOT t.tgisinternal AND t.tgrelid = to_regclass($1::text) AND t.tgname::text = $2`, tr.rel, tr.name)
@@ -796,6 +805,8 @@ func phase2CatalogCheck(ctx context.Context, q querier) ([]string, error) {
 		{"job_unit_prices_only_reachable", "", "trigger", false},
 		{"unit_costs_record_reachability", "", "trigger", false},
 		{"set_unit_reachable", "text, boolean, text", "boolean", true},
+		// platform_0020: the settings' history writer is a SECURITY DEFINER trigger function (it writes the history table that platform_app cannot), pinned to pg_catalog, pg_temp
+		{"user_settings_record_history", "", "trigger", true},
 	} {
 		rows, err := phase2Rows(ctx, q, `SELECT p.prosecdef::text, (EXISTS (SELECT 1 FROM unnest(COALESCE(p.proconfig, ARRAY[]::text[])) cfg WHERE cfg = 'search_path=pg_catalog, pg_temp'))::text,
 				pg_get_userbyid(p.proowner), p.prorettype::regtype::text
@@ -847,7 +858,7 @@ func phase2CatalogCheck(ctx context.Context, q querier) ([]string, error) {
 		fn     string
 		tokens []string
 	}{
-		{"ledger_check_reserve", []string{"reserve_at_the_dearest_price", "reserve_needs_the_complete_snapshot", "job_unit_prices", "unit_costs", "reachable"}},
+		{"ledger_check_reserve", []string{"reserve_at_the_dearest_price", "reserve_needs_the_complete_snapshot", "job_unit_prices", "unit_costs", "reachable", "needs_vendor", "vendor_opt_out", "reserve_no_vendor_unit_for_an_opted_out_job"}},
 		{"ledger_check_release", []string{"release_is_the_remainder", "platform.reserves"}},
 		{"ledger_apply_to_reserves", []string{"platform.reserves", "charged", "released", "reserve_row_exists"}},
 		{"ledger_apply_to_entitlements", []string{"m3_expire_is_due", "platform.m3_entitlements", "m3_enable", "m3_disable", "m3_expire"}},
@@ -867,6 +878,8 @@ func phase2CatalogCheck(ctx context.Context, q querier) ([]string, error) {
 		{"job_unit_prices_only_reachable", []string{"snapshot_only_reachable_units", "platform.unit_costs", "reachable"}},
 		{"unit_costs_record_reachability", []string{"platform.unit_reachability_history", "reachable_source"}},
 		{"set_unit_reachable", []string{"22023", "P0002", "FOR UPDATE", "platform.unit_costs", "reachable_source", "reachable_changed_at"}},
+		// platform_0020: the history writer names the table it writes and compares the old and the new value; the reserve check now also names the key of the job's own choice, the unit flag and its own refusal
+		{"user_settings_record_history", []string{"platform.user_settings_history", "vendor_fallback_opt_out", "IS DISTINCT FROM", "TG_OP"}},
 		{"jobs_guard", []string{"never change", "frozen", "IS DISTINCT FROM", "'draft'", "'previewed'", "preview_fingerprint", "confirm_key", "frozen_settings"}},
 	} {
 		rows, err := phase2Rows(ctx, q, `SELECT p.prosrc FROM pg_proc p WHERE p.pronamespace = 'platform'::regnamespace AND p.proname::text = $1`, b.fn)

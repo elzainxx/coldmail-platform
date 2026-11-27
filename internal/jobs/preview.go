@@ -20,9 +20,9 @@ const reasonPreviewStatus = "job_status_has_no_preview"
 // The counts: rows, pending, malformed (with a count per reason), duplicates, excluded, suppressed (the pending rows whose address is on the user's suppression list: counted here, left in
 // place; Confirm is what applies the list), and for a chained send the source job's verdict counts, how many of them are `unknown` (and so need the user's choice) and how many the choice
 // selects. For a metered module (m1, m2) the credits a confirm would hold: the units that would reach the module times the dearest REACHABLE unit's price (the very rate ReserveIn freezes), the
-// user's balance and the shortfall. For a SEND job the units are the pending rows the suppression list does not hold; for a VERIFY job they are every pending row: a suppressed address is
-// still verified and charged, and the preview says so (SuppressedStillVerified). Module 3 holds no credits (Metered false). A send list that suppression leaves empty is a valid preview (the
-// numbers are the answer); Confirm refuses it.
+// user's balance and the shortfall. For a SEND job the units are the pending rows the suppression list does not hold AND that can be rendered (not missing a required merge field, not unrenderable: see MissingFields, Unrenderable and template_scan.go); for a VERIFY job they are every pending row: a suppressed address is
+// still verified and charged, and the preview says so (SuppressedStillVerified). Module 3 holds no credits (Metered false). A send list that suppression and the templates leave empty is a
+// valid preview (the numbers are the answer); Confirm refuses it. A store with a template renderer also returns up to SampleCount sample messages (Preview.Samples), which are never stored.
 //
 // PreviewUnknownChoice records the user's choice for the `unknown` verdicts of a chained send BEFORE the preview is computed: the job's frozen settings change and its unknown rows are
 // reclassified (pending for include, excluded for exclude), both only while the job is draft or previewed, so the answer is the snapshot of the list under the choice, with the fingerprint that
@@ -67,6 +67,7 @@ func (s *Store) Preview(ctx context.Context, userID, jobID string, opts ...Previ
 			return err
 		}
 		p.VendorReachableKnown = vendorKnown && j.Module == ModuleVerify
+		p.VendorOptOut = j.Settings.VendorOptOut && j.Module == ModuleVerify // the job's own frozen choice (optout.go): the rate above is then the non-vendor price and module 1's vendor was not asked about
 		doc, err := json.Marshal(p)
 		if err != nil {
 			return err
@@ -145,7 +146,24 @@ func (s *Store) computePreview(ctx context.Context, tx pgx.Tx, j Job, lockPrices
 			return Preview{}, err
 		}
 	}
-	return buildPreview(sn, j.Settings.UnknownChoice, inList, bal, s.now().UTC()), nil
+	// a SEND job in a store with a template renderer: the same pass the confirm makes over the rows (template_scan.go), counting instead of writing, over the rows the suppression list does not hold. It finds
+	// the rows that lack a required merge field and the rows whose message the shared table refuses, and keeps the ordinals of the rows that would be sent, from which the samples are chosen
+	var samples []Sample
+	if j.Content != nil && s.prep != nil && sn.pending > 0 {
+		prep, err := s.prepare(j.ID, *j.Content) // a *TemplateError for a campaign saved before the templates existed and not valid in them: a 400, nothing is stored
+		if err != nil {
+			return Preview{}, err
+		}
+		if sn.tpl, err = s.scanTemplates(ctx, tx, j, prep, scanOpts{skipAddr: found, eligible: true}); err != nil {
+			return Preview{}, err
+		}
+		if samples, err = s.sampleMessages(ctx, tx, j, prep, pickSamples(sn.tpl.eligible)); err != nil {
+			return Preview{}, err
+		}
+	}
+	p := buildPreview(sn, j.Settings.UnknownChoice, inList, bal, s.now().UTC())
+	p.Samples = samples
+	return p, nil
 }
 
 // buildPreview is the pure part: the snapshot, the choice recorded on the job, the number of pending rows the suppression list holds and the balance, as the Preview the user sees.
@@ -159,7 +177,6 @@ func buildPreview(sn *snapshot, unknownChoice string, onSuppressionList int, bal
 		Excluded:                sn.excluded,
 		Suppressed:              sn.suppressed + onSuppressionList,
 		SuppressedStillVerified: sn.module == ModuleVerify,
-		MissingFields:           0,
 		Verdicts:                sn.verdicts,
 		Selected:                sn.selected,
 		UnknownChoice:           unknownChoice,
@@ -172,8 +189,13 @@ func buildPreview(sn *snapshot, unknownChoice string, onSuppressionList int, bal
 	if p.MalformedReasons == nil {
 		p.MalformedReasons = map[string]int{}
 	}
-	// a send job leaves its suppressed rows out; a verify job verifies and charges them like any other row (the results flag them)
-	p.Units = p.Pending - p.Suppressed
+	// the rows a send job's templates cannot be rendered for (template_scan.go): counted here, left out at the confirm; the names are the fields' (never a value). A verify job has no templates: the pass is not made
+	p.MissingFields, p.MissingFieldNames, p.MissingFieldNamesTruncated, p.Unrenderable = sn.tpl.missing, sn.tpl.names, sn.tpl.namesTruncated, sn.tpl.unrenderable
+	if p.MissingFieldNames == nil {
+		p.MissingFieldNames = []string{} // an array, never null
+	}
+	// a send job leaves its suppressed rows, its rows with a missing field and its unrenderable rows out; a verify job verifies and charges them like any other row (the results flag them)
+	p.Units = p.Pending - p.Suppressed - p.MissingFields - p.Unrenderable
 	if p.SuppressedStillVerified {
 		p.Units = p.Pending
 	}

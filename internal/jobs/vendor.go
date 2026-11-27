@@ -66,6 +66,8 @@ func (s *Store) VendorReachability() VendorReachability { return s.vendor.provid
 type vendorHook struct {
 	provider VendorReachability
 	ttl      time.Duration
+	// optOut is where a confirm of an opted-out job learns module 1's opt-out policy key (optout.go); nil: none is known, and no opted-out job can be confirmed.
+	optOut OptOutPolicySource
 
 	mu   sync.Mutex
 	last *vendorReading
@@ -137,18 +139,33 @@ func vendorRefuses(immediate bool, stored money.UnitReachability) bool {
 // job that is not a module 1 job. For a module 1 job it reads module 1 and: on a known answer it makes the stored flag equal to it (known true is returned); on an unreadable one it keeps the stored
 // flag, returns known false and, for an immediate confirm only, refuses by vendorRefuses with ErrModuleUnavailable. Its other errors are the money store's (a lock timeout while a reserve in
 // progress holds the unit rows, a connection) and stop the call before anything is held.
+//
+// A module 1 job that is OPTED OUT of the vendor (Phase 5 S6, optout.go) is priced without the vendor unit whatever module 1 says, so for it module 1's reachability is NOT read and nothing about it can
+// refuse the job: known is false (nothing was read for it), the stored flag is left alone, and a confirm is refused only by requireOptOutPolicy (module 1's opt-out policy key must be known). A store with a
+// provider OR a source for that key looks at the job first (one small read) and holds an opted-out job to that rule; a store with neither (module 1 is not configured in this process) reads nothing at all
+// and refuses nothing: the job waits for its module, and the engine will not submit an opted-out job without the key either.
 func (s *Store) syncVendor(ctx context.Context, userID, jobID string, confirm, immediate bool) (known bool, err error) {
-	if s.vendor.provider == nil {
-		return false, nil
+	if s.vendor.provider == nil && s.vendor.optOut == nil {
+		return false, nil // module 1 is not configured in this process: nothing is read and nothing is refused (the job waits for its module like every module 1 job of an unconfigured platform)
 	}
 	var module string
-	switch err := s.pool.QueryRow(ctx, `SELECT module_id FROM platform.jobs WHERE id = $1::uuid AND user_id = $2::uuid`, jobID, userID).Scan(&module); {
+	var optOut bool
+	switch err := s.pool.QueryRow(ctx, `SELECT module_id, COALESCE((frozen_settings #>> '{settings,vendor_opt_out}')::boolean, false) FROM platform.jobs WHERE id = $1::uuid AND user_id = $2::uuid`, jobID, userID).Scan(&module, &optOut); {
 	case errors.Is(err, pgx.ErrNoRows):
 		return false, nil
 	case err != nil:
 		return false, s.fail(err)
 	}
 	if module != ModuleVerify {
+		return false, nil
+	}
+	if optOut {
+		if confirm {
+			return false, s.requireOptOutPolicy(ctx, jobID)
+		}
+		return false, nil
+	}
+	if s.vendor.provider == nil {
 		return false, nil
 	}
 	r, fresh := s.readVendor(ctx)

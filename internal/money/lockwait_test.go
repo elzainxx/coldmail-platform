@@ -213,7 +213,7 @@ func (f *fakeTx) sqls() []string {
 func TestEveryOperationBeginsWithTheBoundThenTakesTheLock(t *testing.T) {
 	const wait = 300 * time.Millisecond
 	jobID := "0b000000-0000-4000-8000-000000000001"
-	job := func(status string) []any { return []any{lockUserA, "m2", status, true} }
+	job := func(status string) []any { return []any{lockUserA, "m2", status, true, false} } // user, module, status, metered, opted out of the vendor (platform_0020)
 	entry := entryReq{kind: kindGrant, userID: lockUserA, module: "m2", amount: 5, adminID: lockUserB, reason: "r", key: "k"}
 
 	ops := []struct {
@@ -302,7 +302,7 @@ func TestRelease_OnlyAnEndedJobGetsAsFarAsTheLock(t *testing.T) {
 	s := New(nil, WithLockTimeout(300*time.Millisecond))
 	atTheLock := 0
 	for _, status := range statuses {
-		tx := &fakeTx{lockErr: pgErr("55P03", ""), job: []any{lockUserA, "m2", status, true}}
+		tx := &fakeTx{lockErr: pgErr("55P03", ""), job: []any{lockUserA, "m2", status, true, false}}
 		_, err := s.release(context.Background(), tx, jobID)
 		got := tx.sqls()
 		if ended[status] {

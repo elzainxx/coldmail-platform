@@ -1,0 +1,5 @@
+go test fuzz v1
+string("Hello {{first_name|there}}, {we|I} {saw|read} your {post|note|reply}. <b>{{x}}</b>")
+uint64(42)
+string("<i>Ann</i> & co")
+int(0)

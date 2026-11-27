@@ -17,7 +17,8 @@ import (
 //
 //  0. the key is validated (1 to 128 characters of letters, digits and . _ : -) and, before the transaction, the cheap replay is answered: a job of this user that already holds the key is
 //     returned as Replayed when it is this job (its status as it is now, nothing written) and ErrConfirmKeyReused when it is another. A module 3 job is pre-checked (PreChecks.M3Feasibility,
-//     never an HTTP call under the lock): the module could not be asked is ErrModuleUnavailable for an immediate confirm (ignored for a scheduled one), a campaign it cannot run is ErrInfeasible.
+//     never an HTTP call under the lock). Before that, a SEND job (m2, m3) in a store that has no unsubscribe link maker (WithUnsubscribe) is ErrNotAllowed with ReasonUnsubscribeNotConfigured: a send
+//     without a working link is not allowed (a verify job is not asked). The module could not be asked is ErrModuleUnavailable for an immediate confirm (ignored for a scheduled one), a campaign it cannot run is ErrInfeasible.
 //     A module 1 job reads module 1's vendor reachability in the same place (syncVendor, vendor.go): the stored flag becomes module 1's current answer, so the reserve below is made at the rate it can
 //     really charge, and a price the platform cannot know (module 1 unreadable and the flag off but never set by module 1) is refused the same way for an immediate confirm.
 //  1. BEGIN; the (user, module) advisory lock FIRST (money.Store.LockIn), then the job row FOR UPDATE, scoped by the user (ErrNotFound). The job must be previewed: one that was already confirmed
@@ -30,6 +31,11 @@ import (
 //  3. the user's suppression list is applied NOW, as the module's kind of job needs (owner ruling OD-3). A SEND job (m2, m3): the pending rows whose address is on the list become state suppressed
 //     (and carry the flag), are left out of the reserve and never reach the module; no pending row left is ErrNothingToDo. A VERIFY job (m1): the same rows only get the flag, stay pending, are
 //     verified and charged like any other row and are flagged `suppressed` in the results; a verify list that the suppression covers entirely is not ErrNothingToDo (every row is verified).
+//     THEN, for a SEND job in a store with a template renderer (WithPreparer), the rows the templates cannot be rendered for are left out the same way (template_scan.go): a pending row that lacks a merge
+//     field its templates need and give no fallback for becomes state missing_field (reason: the field names), and a pending row whose rendered message the shared table refuses (checkRendered, the very
+//     render EnsureJobItems will make) becomes state unrenderable (reason: the word of the refusal). Both are left out of the reserve, never given a public.job_items row and written as free platform
+//     results in step 6 (P-09, P-10); no pending row left (all suppressed, missing or unrenderable) is ErrNothingToDo and the transaction rolls back, the suppression pass with it. A verify job has
+//     no templates and is not touched.
 //  4. a metered module (m1, m2): money.ReserveIn holds credits for exactly the rows that reach the module (a verify job's suppressed rows among them), freezing the price snapshot of the reachable units; a list the balance does not cover is
 //     ErrInsufficientCredits with the exact shortfall and the transaction rolls back. Module 3: the entitlement must be enabled and unexpired by the database's clock (ErrNoEntitlement) and the
 //     user not observed suspended (ErrSuspended).
@@ -38,7 +44,7 @@ import (
 //     reason): the guard sets confirmed_at itself. The slot is the unique index jobs_one_active_per_user_module: a loser gets ErrSlotTaken (23505) and the whole transaction rolls back, the
 //     reserve with it; a key held by another job is ErrConfirmKeyReused (23505).
 //  6. AFTER the move (the table refuses results before the job is confirmed) the platform's own results are written, free, one per row that is not pending: malformed (P-08), duplicate (P-07),
-//     suppressed (P-SUP) and excluded (P-EXC). Their suppressed flag is derived from the row by the database (platform_0014), not stated here.
+//     suppressed (P-SUP), excluded (P-EXC), missing_field (P-09) and unrenderable (P-10). Their suppressed flag is derived from the row by the database (platform_0014), not stated here.
 //
 // The slot is not checked in Go, on purpose: the index is what decides (the concurrency test shows both confirms succeed when it is dropped).
 func (s *Store) Confirm(ctx context.Context, userID string, req ConfirmReq) (ConfirmResult, error) {
@@ -73,6 +79,12 @@ func (s *Store) Confirm(ctx context.Context, userID string, req ConfirmReq) (Con
 		return res, opErr("confirm", err)
 	case !errors.Is(err, pgx.ErrNoRows):
 		return ConfirmResult{}, opErr("confirm", s.fail(err))
+	}
+	// a send job needs a working unsubscribe link (Phase 5 S3): a store that cannot make one refuses it here, before module 3 is asked anything and before anything is held (unsubscribe.go); a replay
+	// of a job that was confirmed under a key is answered above, whatever the configuration is now
+	if err := s.requireUnsubscribe(ctx, userID, req.JobID); err != nil {
+		s.log.Info("confirm refused", "job", req.JobID, "reason", refusalWord(err))
+		return ConfirmResult{}, opErr("confirm", err)
 	}
 	if err := s.preCheck(ctx, userID, req); err != nil {
 		return ConfirmResult{}, opErr("confirm", err)
@@ -140,7 +152,7 @@ func (s *Store) Confirm(ctx context.Context, userID string, req ConfirmReq) (Con
 		if err != nil {
 			return err
 		}
-		var suppressed, pending int
+		var suppressed, pending, missing, unrenderable int
 		if j.Module == ModuleVerify {
 			if suppressed, err = s.flagRows(ctx, tx, j.ID, userID, found); err != nil {
 				return err
@@ -151,6 +163,19 @@ func (s *Store) Confirm(ctx context.Context, userID string, req ConfirmReq) (Con
 				return err
 			}
 			pending = sn.pending - suppressed
+			// 3b. the templates (a send job): the rows that lack a required field or render to a message the table refuses are left out now, in this transaction, next to the suppression list
+			if j.Content != nil && s.prep != nil && pending > 0 {
+				prep, err := s.prepare(j.ID, *j.Content)
+				if err != nil {
+					return err
+				}
+				ts, err := s.scanTemplates(ctx, tx, j, prep, scanOpts{apply: true})
+				if err != nil {
+					return err
+				}
+				missing, unrenderable = ts.missing, ts.unrenderable
+				pending -= missing + unrenderable
+			}
 		}
 		if pending < 1 {
 			return ErrNothingToDo
@@ -193,7 +218,7 @@ func (s *Store) Confirm(ctx context.Context, userID string, req ConfirmReq) (Con
 		if err != nil {
 			return err
 		}
-		res = ConfirmResult{Job: confirmed, Reserved: reserved, Pending: pending, Suppressed: suppressed + sn.suppressed}
+		res = ConfirmResult{Job: confirmed, Reserved: reserved, Pending: pending, Suppressed: suppressed + sn.suppressed, MissingFields: missing, Unrenderable: unrenderable}
 		faultpoint.Hit("confirm.before_commit")
 		return nil
 	})
@@ -201,7 +226,7 @@ func (s *Store) Confirm(ctx context.Context, userID string, req ConfirmReq) (Con
 		s.log.Info("confirm refused", "job", req.JobID, "reason", refusalWord(err))
 		return ConfirmResult{}, opErr("confirm", err)
 	}
-	s.log.Info("confirm done", "job", res.Job.ID, "module", res.Job.Module, "status", res.Job.Status, "replayed", res.Replayed, "reserved", res.Reserved, "pending", res.Pending, "suppressed", res.Suppressed)
+	s.log.Info("confirm done", "job", res.Job.ID, "module", res.Job.Module, "status", res.Job.Status, "replayed", res.Replayed, "reserved", res.Reserved, "pending", res.Pending, "suppressed", res.Suppressed, "missing_fields", res.MissingFields, "unrenderable", res.Unrenderable)
 	return res, nil
 }
 
@@ -326,11 +351,12 @@ func (s *Store) checkEntitlement(ctx context.Context, tx pgx.Tx, userID string) 
 	return nil
 }
 
-// writePlatformResults records the platform's own outcome of every row that is not pending, free: malformed (P-08), duplicate (P-07), suppressed (P-SUP), excluded (P-EXC). One statement; the
+// writePlatformResults records the platform's own outcome of every row that is not pending, free: malformed (P-08), duplicate (P-07), suppressed (P-SUP), excluded (P-EXC), missing_field (P-09) and
+// unrenderable (P-10): the row's reason is the result's (field names or a refusal word for the last two, never a value). One statement; the
 // job must already be confirmed (the table refuses a result for a draft or previewed job). The rule labels of malformed and duplicate come from the charge table, not from this file.
 func (s *Store) writePlatformResults(ctx context.Context, tx pgx.Tx, jobID, userID string) error {
 	rules := map[string]string{}
-	for _, st := range []string{StateMalformed, StateDuplicate, StateSuppressed, StateExcluded} {
+	for _, st := range []string{StateMalformed, StateDuplicate, StateSuppressed, StateExcluded, StateMissingField, StateUnrenderable} {
 		r, err := resultRule(st)
 		if err != nil {
 			return err
@@ -339,9 +365,9 @@ func (s *Store) writePlatformResults(ctx context.Context, tx pgx.Tx, jobID, user
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO platform.job_results (job_id, user_id, item_ref, ordinal, email, origin, module_state, reason, decision, rule)
 		SELECT r.job_id, r.user_id, r.id, r.ordinal, COALESCE(r.email_norm, r.email_raw), 'platform', r.state, r.reason, 'free',
-			CASE r.state WHEN 'malformed' THEN $3::text WHEN 'duplicate' THEN $4::text WHEN 'suppressed' THEN $5::text WHEN 'excluded' THEN $6::text END
+			CASE r.state WHEN 'malformed' THEN $3::text WHEN 'duplicate' THEN $4::text WHEN 'suppressed' THEN $5::text WHEN 'excluded' THEN $6::text WHEN 'missing_field' THEN $7::text WHEN 'unrenderable' THEN $8::text END
 		FROM platform.job_rows r WHERE r.job_id = $1::uuid AND r.user_id = $2::uuid AND r.state <> 'pending'`,
-		jobID, userID, rules[StateMalformed], rules[StateDuplicate], rules[StateSuppressed], rules[StateExcluded]); err != nil {
+		jobID, userID, rules[StateMalformed], rules[StateDuplicate], rules[StateSuppressed], rules[StateExcluded], rules[StateMissingField], rules[StateUnrenderable]); err != nil {
 		return s.fail(err)
 	}
 	return nil
@@ -351,13 +377,13 @@ func (s *Store) writePlatformResults(ctx context.Context, tx pgx.Tx, jobID, user
 // ledger and the rows). Nothing is written.
 func (s *Store) replayResult(ctx context.Context, q querier, j Job) (ConfirmResult, error) {
 	var reserved int64
-	var pending, suppressed int
+	var pending, suppressed, missing, unrenderable int
 	if err := q.QueryRow(ctx, `SELECT COALESCE((SELECT reserved_delta FROM platform.ledger WHERE job_id = $1::uuid AND kind = 'reserve'), 0)`, j.ID).Scan(&reserved); err != nil {
 		return ConfirmResult{}, s.fail(err)
 	}
-	if err := q.QueryRow(ctx, `SELECT count(*) FILTER (WHERE state = 'pending'), count(*) FILTER (WHERE suppressed)
-		FROM platform.job_rows WHERE job_id = $1::uuid AND user_id = $2::uuid`, j.ID, j.UserID).Scan(&pending, &suppressed); err != nil {
+	if err := q.QueryRow(ctx, `SELECT count(*) FILTER (WHERE state = 'pending'), count(*) FILTER (WHERE suppressed), count(*) FILTER (WHERE state = 'missing_field'), count(*) FILTER (WHERE state = 'unrenderable')
+		FROM platform.job_rows WHERE job_id = $1::uuid AND user_id = $2::uuid`, j.ID, j.UserID).Scan(&pending, &suppressed, &missing, &unrenderable); err != nil {
 		return ConfirmResult{}, s.fail(err)
 	}
-	return ConfirmResult{Job: j, Replayed: true, Reserved: reserved, Pending: pending, Suppressed: suppressed}, nil
+	return ConfirmResult{Job: j, Replayed: true, Reserved: reserved, Pending: pending, Suppressed: suppressed, MissingFields: missing, Unrenderable: unrenderable}, nil
 }

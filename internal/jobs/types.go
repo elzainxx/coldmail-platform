@@ -74,6 +74,10 @@ type Settings struct {
 	// classified excluded, the safe reading, and Confirm refuses a job whose source holds any until a choice is given). It is meaningful only for a chained send: any choice on a job with no source is
 	// refused as a bad request. The choice is part of the frozen settings and of the preview's fingerprint.
 	UnknownChoice string `json:"unknown_choice"`
+	// VendorOptOut is the user's opt-out of module 1's paid vendor fallback AS IT WAS when this module 1 job was created (Phase 5 S6, optout.go): read once, in the creating transaction, from the user's own
+	// setting and never from the request (a CreateReq's value is overwritten), then frozen. A later change of the setting never alters this job. It is false for a job that has no such key (every job created
+	// before platform_0020) and for every send job, which has no vendor and never reads the setting. An opted-out job is priced without the vendor unit and created at module 1 under its opt-out policy.
+	VendorOptOut bool `json:"vendor_opt_out,omitempty"`
 }
 
 // Content is the campaign a send job (modules 2 and 3) carries, frozen in platform.jobs.frozen_settings under the key "content". A verify job has none.
@@ -108,13 +112,20 @@ type Preview struct {
 	Duplicates       int            `json:"duplicates"`        // rows that repeat an earlier row's normalised address
 	Excluded         int            `json:"excluded"`          // a chained send's rows whose source verdict was not selected
 	Suppressed       int            `json:"suppressed"`        // pending rows on the user's suppression list: counted here; a send job leaves them out at confirm, a verify job does not (SuppressedStillVerified)
-	MissingFields    int            `json:"missing_fields"`    // 0 until phase 5 (merge fields)
+	// MissingFields is how many pending rows lack a merge field the job's templates need and give no fallback for (Docs/templates.md): the rows the confirm leaves out, free, as state missing_field. It counts only the
+	// rows the user's suppression list does not hold (the list is applied first, at the confirm too), so it is exactly what a confirm would skip for this reason. 0 for a verify job (it has no templates) and for a
+	// store with no template renderer. MissingFieldNames is the NAMES of those fields (never a value), sorted, at most MaxMissingFieldNames of them; MissingFieldNamesTruncated says there were more. Unrenderable is how
+	// many of the other pending rows render to a message the shared table refuses (a blank subject, a part over the size limit, no body): left out at the confirm too, as state unrenderable (P-10).
+	MissingFields              int      `json:"missing_fields"`
+	MissingFieldNames          []string `json:"missing_field_names"`
+	MissingFieldNamesTruncated bool     `json:"missing_field_names_truncated"`
+	Unrenderable               int      `json:"unrenderable"`
 
 	// SuppressedStillVerified is true for a verify job (module 1): its suppressed rows are NOT skipped. They are verified and charged like any other row (they are in Units and Credits) and the
 	// results flag them `suppressed` (owner ruling OD-3). False for a send job, whose suppressed rows are left out at confirm.
 	SuppressedStillVerified bool `json:"suppressed_still_verified"`
 
-	Units int `json:"units"` // rows that would reach the module: Pending - Suppressed for a send job, Pending for a verify job
+	Units int `json:"units"` // rows that would reach the module: Pending - Suppressed - MissingFields - Unrenderable for a send job, Pending for a verify job
 
 	// Chained sends only: the source job's module results by verdict (all four keys present) and how many the choice selects.
 	Verdicts map[string]int `json:"verdicts,omitempty"`
@@ -137,9 +148,18 @@ type Preview struct {
 	// current answer: RateUnit and UnitCost above). It is false when module 1 could not be read (it is down, or an older module 1 that does not say): the numbers are then computed from the flag the
 	// platform last stored, and nobody should read them as fresh. It is also false for every job that is not a module 1 job, where the question does not arise.
 	VendorReachableKnown bool `json:"vendor_reachable_known"`
+	// VendorOptOut is true when the job is opted out of module 1's paid vendor fallback (Phase 5 S6: the user's setting as it was when the job was created, frozen in Settings.VendorOptOut). The rate above is then
+	// the NON-VENDOR price whatever module 1's vendor says, module 1 was not asked about the vendor for this preview (VendorReachableKnown is false), and the confirm sends the job to module 1 under its opt-out policy.
+	// False for an opted-in job and for every job that is not a module 1 job.
+	VendorOptOut bool `json:"vendor_opt_out"`
 
 	Fingerprint string    `json:"fingerprint"`
 	ComputedAt  time.Time `json:"computed_at"` // the store's clock (WithClock); informational, never part of the fingerprint
+
+	// Samples are up to SampleCount real rows of the list rendered EXACTLY as they will be sent (same job, same row, same seed). They hold the recipients' data, so they are returned by Preview and shown in
+	// the response of the preview route and are NEVER written into platform.jobs.preview (json:"-": the stored document is what Get returns, and it keeps no recipient's data) and never part of the fingerprint
+	// (they are a function of what the fingerprint already names: the list, its merge data and the campaign). Empty for a verify job and for a store with no template renderer.
+	Samples []Sample `json:"-"`
 }
 
 // ConfirmReq confirms a previewed job. Fingerprint is the fingerprint of the preview the user saw; Key is the client's idempotency key (the API's Idempotency-Key).
@@ -163,6 +183,10 @@ type ConfirmResult struct {
 	// Suppressed is how many rows hold the user's suppression flag: for a send job, the rows left out (state suppressed, never sent); for a verify job, the rows that are STILL verified and charged
 	// and flagged in the results.
 	Suppressed int
+	// MissingFields and Unrenderable are how many rows of a SEND job the confirm left out, free, because the templates could not be rendered for them (states missing_field and unrenderable, rules P-09 and
+	// P-10): not in Pending, not reserved, never given to a module. Both 0 for a verify job and for a store with no template renderer.
+	MissingFields int
+	Unrenderable  int
 }
 
 // PreviewOption changes what Preview does; the zero call (no option) recomputes the preview of the job as it is.
@@ -224,4 +248,19 @@ type Feasibility struct {
 	Feasible    bool
 	Causes      []string
 	Unavailable bool
+}
+
+// SampleCount is the most sample messages a preview carries.
+const SampleCount = 3
+
+// MaxMissingFieldNames is the most field names a preview lists (the rest are counted by MissingFieldNamesTruncated).
+const MaxMissingFieldNames = 50
+
+// Sample is one real row of the list rendered exactly as it will be sent: its position, the subject, the HTML and the text. It never names the address (the row is found by its ordinal) but its text
+// holds whatever the row's merge data put there: it is shown to the owner of the job and kept nowhere (Preview.Samples).
+type Sample struct {
+	Ordinal int
+	Subject string
+	HTML    string
+	Text    string
 }
