@@ -660,8 +660,8 @@ func TestJobPauseCancel_Down0016RefusesAJobTheOlderLifecycleCannotEnd(t *testing
 
 	// up again restores the migration over the jobs that were left behind
 	mustExit(t, runMigrator(t, env, "up"), 0, "up after the down 0016")
-	if got := appliedVersions(t, admin); !sameStrings(got, chain[:at+1]) {
-		t.Fatalf("after up again: applied = %v, want %v", got, chain[:at+1])
+	if got := appliedVersions(t, admin); !sameStrings(got, chain) {
+		t.Fatalf("after up again: applied = %v, want %v", got, chain)
 	}
 	unchanged("after up again")
 }

@@ -878,7 +878,7 @@ func TestJobsEngine_EnsureModuleItemsWritesWhatTheRendererReturnsAndRefusesWhatI
 	perRow := jeRenderer(func(c jobs.Content, row jobs.EngineRow) (string, string, string, error) {
 		return fmt.Sprintf("%s #%d", c.Subject, row.Ordinal), "<p>" + row.EmailNorm + "</p>", "text for " + row.EmailNorm, nil
 	})
-	st, err := jobs.New(e.pool, e.store, jobs.WithRenderer(perRow))
+	st, err := jobs.New(e.pool, e.store, jobs.WithRenderer(perRow), harnessUnsubscribeOption())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -903,7 +903,7 @@ func TestJobsEngine_EnsureModuleItemsWritesWhatTheRendererReturnsAndRefusesWhatI
 			return "S", strings.Repeat("a", jobs.MaxBodyBytes+1), "", nil
 		},
 	} {
-		bad, err := jobs.New(e.pool, e.store, jobs.WithRenderer(fn))
+		bad, err := jobs.New(e.pool, e.store, jobs.WithRenderer(fn), harnessUnsubscribeOption())
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -68,6 +68,7 @@ INSERT INTO platform.m3_entitlements (user_id, enabled, changed_by) VALUES ({U1}
 INSERT INTO platform.suppressions (user_id, email, source) VALUES ({U1}, 'seed@example.com', 'manual');
 INSERT INTO platform.admin_audit (admin_id, entry_type, action, target_type, target_id, reason) VALUES ({ADM}, 'action', 'roles-seed', 'user', 'x', 'seeding');
 INSERT INTO public.job_items (campaign_id, user_id, recipient_email, rendered_subject, rendered_body) VALUES ({U1}, {U1}, 'seed@example.com', 'subject', 'body');
+INSERT INTO platform.user_settings (user_id, vendor_fallback_opt_out) VALUES ({U1}, true);
 `
 
 // rolesBegin opens the transaction every role proof runs in (never committed) and checks that its session is a superuser running as itself, so the seeding and the controls

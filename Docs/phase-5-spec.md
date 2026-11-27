@@ -1,6 +1,6 @@
 # Phase 5 — Owner decisions closed, then Templates and rendering: spec
 
-Roadmap: [`coldmail-platform-build-plan.md`](coldmail-platform-build-plan.md). Previous: [`phase-4-spec.md`](phase-4-spec.md) (platform code `5c0f2da`, docs `8ec7e3e`; verify `c516f28`, send-managed `d023fdb`, send-byo `59b2d2e`; parent `039f28a`). One phase, one session, one report: nothing is deferred to a close-out. Evidence is run ids only; the verified head and its eight runs are cited once, here, when the phase ends.
+Roadmap: [`coldmail-platform-build-plan.md`](coldmail-platform-build-plan.md). Previous: [`phase-4-spec.md`](phase-4-spec.md) (platform code `5c0f2da`, docs `8ec7e3e`; verify `c516f28`, send-managed `d023fdb`, send-byo `59b2d2e`; the parent repository pinned them at its Phase 4 re-pin). One phase, one session, one report: nothing is deferred to a close-out. Evidence is run ids only; the verified head and its eight runs are cited once, here, when the phase ends.
 
 **Verified head:** _filled at the end (all eight workflows on one SHA)._
 
