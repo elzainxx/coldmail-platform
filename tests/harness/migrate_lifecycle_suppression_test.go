@@ -46,27 +46,31 @@ func lifecycleSuppressionRemoval(t *testing.T, c *pgx.Conn, enforced bool, when 
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
-	ledgerSeed(t, tx)
-	ledgerMust(t, tx, "INSERT INTO platform.suppressions (user_id, email, source, created_at) VALUES ($1, 'life@example.com', 'unsubscribe', timestamptz '2026-02-03 04:05:06+00')", ledgerUserA)
+	// a user of its own, fresh per call: the database may already hold the ledger fixtures (a test that committed them, then calls this at its own height), and a second ledgerSeed would collide with them
+	u := ledgerString(t, tx, "SELECT gen_random_uuid()::text")
+	mail := "sprm-" + u + "@example.test"
+	ledgerMust(t, tx, "INSERT INTO auth.users (id, email) VALUES ($1, $2)", u, mail)
+	ledgerMust(t, tx, "INSERT INTO public.users (id, auth_user_id, email) VALUES ($1, $1, $2)", u, mail)
+	ledgerMust(t, tx, "INSERT INTO platform.suppressions (user_id, email, source, created_at) VALUES ($1, 'life@example.com', 'unsubscribe', timestamptz '2026-02-03 04:05:06+00')", u)
 	ledgerSwitchRole(t, tx, "platform_app")
 	const del = "DELETE FROM platform.suppressions WHERE user_id = $1 AND email = 'life@example.com'"
 	if !enforced {
-		ledgerExpectRefused(t, tx, when+": platform_app removing a row (the privilege is gone)", "42501", ledgerWhy{Message: "permission denied for table suppressions"}, del, ledgerUserA)
+		ledgerExpectRefused(t, tx, when+": platform_app removing a row (the privilege is gone)", "42501", ledgerWhy{Message: "permission denied for table suppressions"}, del, u)
 		ledgerResetRole(t, tx)
 		ledgerExpectRefused(t, tx, when+": the history (the table is gone)", "42P01", ledgerWhy{Message: "suppression_removals"}, "SELECT count(*) FROM platform.suppression_removals")
 		return
 	}
-	ledgerExpectOK(t, tx, when+": platform_app removing a row of the list", del, ledgerUserA)
+	ledgerExpectOK(t, tx, when+": platform_app removing a row of the list", del, u)
 	ledgerResetRole(t, tx)
 	if got := ledgerInt64(t, tx, `SELECT count(*) FROM platform.suppression_removals WHERE user_id = $1 AND email = 'life@example.com' AND source = 'unsubscribe'
-		AND entry_created_at = timestamptz '2026-02-03 04:05:06+00'`, ledgerUserA); got != 1 {
+		AND entry_created_at = timestamptz '2026-02-03 04:05:06+00'`, u); got != 1 {
 		t.Fatalf("%s: %d history row(s) with the entry's own source and time after a removal, want one", when, got)
 	}
 	// a removal that finds nothing writes nothing
 	ledgerSwitchRole(t, tx, "platform_app")
-	ledgerExpectOK(t, tx, when+": platform_app removing a row that is not there", del, ledgerUserA)
+	ledgerExpectOK(t, tx, when+": platform_app removing a row that is not there", del, u)
 	ledgerResetRole(t, tx)
-	if got := ledgerInt64(t, tx, "SELECT count(*) FROM platform.suppression_removals WHERE user_id = $1", ledgerUserA); got != 1 {
+	if got := ledgerInt64(t, tx, "SELECT count(*) FROM platform.suppression_removals WHERE user_id = $1", u); got != 1 {
 		t.Fatalf("%s: a removal that removed nothing left %d history row(s), want still one", when, got)
 	}
 }

@@ -310,6 +310,9 @@ func TestContentRetention_TheResultsJSONAndCSVOfAClearedJobAreByteForByteWhatThe
 			csv:     e.callAs(user, "GET", "/v1/jobs/"+id+"/results.csv", "", nil).Body,
 		}
 	}
+	// the jobs are made old FIRST (finished_at moves back by two hours: it is the database's, written here with the guard off), so that the two snapshots differ in nothing but what the purge does
+	e.jrtAgeEnd(verify, 2*time.Hour)
+	e.jrtAgeEnd(send, 2*time.Hour)
 	before := map[string]view{verify: fetch(A, verify), send: fetch(B, send)}
 	for id, v := range before {
 		if jrtObj(t, v.job)["job"].(map[string]any)["content_cleared_at"] != nil {
@@ -329,8 +332,6 @@ func TestContentRetention_TheResultsJSONAndCSVOfAClearedJobAreByteForByteWhatThe
 		}
 	}
 
-	e.jrtAgeEnd(verify, 2*time.Hour)
-	e.jrtAgeEnd(send, 2*time.Hour)
 	res, err := e.jobs.ClearRetainedContent(ctx, time.Hour, 0, 0)
 	if err != nil || res.Found != 2 || res.Cleared != 2 || res.Rows != 6 || res.Items != 3 {
 		t.Fatalf("the purge: %+v, %v; want two jobs cleared, 6 rows of merge data and the 3 messages of the send job", res, err)
@@ -422,6 +423,17 @@ func TestContentRetentionSchema_PlatformAppMayEmptyTheMergeDataAndClearTheTempla
 		ledgerTrial(t, tx, func(sp pgx.Tx) {
 			job := build(sp, s)
 			ledgerSwitchRole(t, sp, "platform_app")
+			// the fixture is what the cases below need it to be: a template that is entirely real, and merge data that is not empty
+			for _, q := range []struct{ sql, want string }{
+				{"SELECT frozen_settings #>> '{content,subject}' FROM platform.jobs WHERE id = $1", "Real subject"},
+				{"SELECT frozen_settings #>> '{content,html}' FROM platform.jobs WHERE id = $1", "<p>Real</p>"},
+				{"SELECT frozen_settings #>> '{content,text}' FROM platform.jobs WHERE id = $1", "Real text"},
+				{"SELECT count(*)::text FROM platform.job_rows WHERE job_id = $1 AND fields <> '{}'::jsonb", "2"},
+			} {
+				if got := ledgerString(t, sp, q.sql, job); got != q.want {
+					t.Fatalf("the fixture of a %s job: %q is %q, want %q", s, q.sql, got, q.want)
+				}
+			}
 			rowCases := []struct {
 				what, set string
 				ok        bool   // accepted in this status
@@ -435,35 +447,49 @@ func TestContentRetentionSchema_PlatformAppMayEmptyTheMergeDataAndClearTheTempla
 				{"the merge data replaced by an array", "fields = '[]'::jsonb", false, "23514", "job_rows_fields_is_an_object"},
 			}
 			for _, c := range rowCases {
+				c := c
 				sql := "UPDATE platform.job_rows SET " + c.set + " WHERE job_id = $1"
-				switch {
-				case c.ok:
-					ledgerExpectOK(t, sp, fmt.Sprintf("%s, a %s job", c.what, s), sql, job)
-				case editable[s] && c.editState != "": // the list is still the user's to edit: the guard of the list lets it through and the row's own CHECK answers
-					ledgerExpectRefused(t, sp, fmt.Sprintf("%s, a %s job", c.what, s), c.editState, ledgerWhy{Constraint: c.editWhy}, sql, job)
-				default:
-					ledgerExpectRefused(t, sp, fmt.Sprintf("%s, a %s job", c.what, s), "23001", frozen, sql, job)
-				}
+				ledgerTrial(t, sp, func(sp2 pgx.Tx) { // each case on the rows as they were built: an accepted one must not change what the next is judged against
+					switch {
+					case c.ok:
+						ledgerExpectOK(t, sp2, fmt.Sprintf("%s, a %s job", c.what, s), sql, job)
+					case editable[s] && c.editState != "": // the list is still the user's to edit: the guard of the list lets it through and the row's own CHECK answers
+						ledgerExpectRefused(t, sp2, fmt.Sprintf("%s, a %s job", c.what, s), c.editState, ledgerWhy{Constraint: c.editWhy}, sql, job)
+					default:
+						ledgerExpectRefused(t, sp2, fmt.Sprintf("%s, a %s job", c.what, s), "23001", frozen, sql, job)
+					}
+				})
 			}
+			const (
+				subj = `jsonb_set(frozen_settings, '{content,subject}', '"[removed]"'::jsonb)`
+				html = `jsonb_set(frozen_settings, '{content,html}', '"[removed]"'::jsonb)`
+			)
 			docCases := []struct {
 				what, set string
 				ok        bool
 			}{
-				{"the template cleared", "frozen_settings = " + cleared, ended || editable[s]},
+				// the FULL cleared form is the one value an ended job's document may become (the control of every refusal below); a PARTIAL clearing is not: the guard compares with the whole of it
+				{"the template cleared in full", "frozen_settings = " + cleared, ended || editable[s]},
+				{"the text emptied and nothing else (subject and html still real)", `frozen_settings = jsonb_set(frozen_settings, '{content,text}', '""'::jsonb)`, editable[s]},
+				{"the subject cleared and nothing else", "frozen_settings = " + subj, editable[s]},
+				{"the html cleared and nothing else", "frozen_settings = " + html, editable[s]},
+				{"the subject and the html cleared and the text left", "frozen_settings = jsonb_set(" + subj + ", '{content,html}', '\"[removed]\"'::jsonb)", editable[s]},
 				{"the template cleared and reply_to changed", "frozen_settings = jsonb_set(" + cleared + ", '{content,reply_to}', '\"other@example.test\"')", editable[s]},
 				{"the subject changed to another value", `frozen_settings = jsonb_set(frozen_settings, '{content,subject}', '"changed"')`, editable[s]},
-				{"the text emptied and nothing else", `frozen_settings = jsonb_set(frozen_settings, '{content,text}', '""')`, editable[s]},
 				{"the template cleared and a setting changed beside it", "frozen_settings = jsonb_set(" + cleared + ", '{settings,unknown_choice}', '\"include\"')", editable[s]},
 				{"the whole document replaced", `frozen_settings = '{}'::jsonb`, editable[s]},
 				{"the template cleared and the preview changed beside it", "frozen_settings = " + cleared + `, preview = '{"x":1}'::jsonb`, editable[s]},
 			}
 			for _, c := range docCases {
+				c := c
 				sql := "UPDATE platform.jobs SET " + c.set + " WHERE id = $1"
-				if c.ok {
-					ledgerExpectOK(t, sp, fmt.Sprintf("%s, a %s job", c.what, s), sql, job)
-				} else {
-					ledgerExpectRefused(t, sp, fmt.Sprintf("%s, a %s job", c.what, s), "23001", frozenDoc, sql, job)
-				}
+				ledgerTrial(t, sp, func(sp2 pgx.Tx) {
+					if c.ok {
+						ledgerExpectOK(t, sp2, fmt.Sprintf("%s, a %s job", c.what, s), sql, job)
+					} else {
+						ledgerExpectRefused(t, sp2, fmt.Sprintf("%s, a %s job", c.what, s), "23001", frozenDoc, sql, job)
+					}
+				})
 			}
 		})
 	}
@@ -511,8 +537,14 @@ func retentionTemplateObjects(t *testing.T, c *pgx.Conn, present bool, when stri
 		"SELECT count(*) FROM pg_proc WHERE pronamespace = 'platform'::regnamespace AND proname::text = 'jobs_guard' AND prosrc LIKE '%THE RETENTION PURGE%'")
 	expect("the retention index that covers every ended job (no jsonb_exists in its predicate)", 1,
 		"SELECT count(*) FROM pg_indexes WHERE schemaname = 'platform' AND indexname::text = 'jobs_content_retention_idx' AND indexdef NOT LIKE '%jsonb_exists%'")
-	expect("the retention index of platform_0018 (limited to jobs with a campaign)", 0,
-		"SELECT count(*) FROM pg_indexes WHERE schemaname = 'platform' AND indexname::text = 'jobs_content_retention_idx' AND indexdef LIKE '%jsonb_exists%'")
+	// platform_0018's index (limited to jobs with a campaign) is there exactly when platform_0021 is NOT: lifecycleCounter counts what a migration ADDS, and this is what its down puts back, so it is counted by hand
+	wantOld := int64(1)
+	if present {
+		wantOld = 0
+	}
+	if got := ledgerInt64(t, c, "SELECT count(*) FROM pg_indexes WHERE schemaname = 'platform' AND indexname::text = 'jobs_content_retention_idx' AND indexdef LIKE '%jsonb_exists%' AND indexdef LIKE '%content_cleared_at IS NULL%'"); got != wantOld {
+		t.Fatalf("%s: the retention index of platform_0018 (limited to jobs with a campaign) exists %d times, want %d", when, got, wantOld)
+	}
 	if got := ledgerInt64(t, c, "SELECT count(*) FROM pg_indexes WHERE schemaname = 'platform' AND indexname::text = 'jobs_content_retention_idx'"); got != 1 {
 		t.Fatalf("%s: the retention index exists %d times, want 1 in either state", when, got)
 	}
