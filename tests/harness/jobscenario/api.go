@@ -256,6 +256,8 @@ type createOpts struct {
 	bounce int
 	holdMS int
 	tag    string
+	// the senders only: how the campaign's text part is made (send_content.go): explicit (a text template of its own, the default) or generated (a blank text template: the platform makes the text from the HTML)
+	textMode string
 	// stage J7 (optout.go): the user opts out of the vendor fallback before the job is created, and the good addresses of a module 1 list are routed to the vendor stage
 	optOut    bool
 	vendorTag string
@@ -266,6 +268,7 @@ func addSendFlags(fs *flag.FlagSet, o *createOpts) {
 	fs.IntVar(&o.bounce, "bounce", 0, "a send job: how many of the good recipients the controllable sink rejects at RCPT TO with 550 (module 2 and 3 report them bounced)")
 	fs.IntVar(&o.holdMS, "hold-ms", 0, "a send job: milliseconds the controllable sink holds the final reply of every message to the job's recipients (so that a send is in flight on demand)")
 	fs.StringVar(&o.tag, "tag", "", "a send job: a word naming the scenario (in the campaign's subject)")
+	fs.StringVar(&o.textMode, "text-mode", textExplicit, "a send job: explicit (the campaign has a text template of its own) or generated (a blank text template: the platform makes the text part from the HTML)")
 }
 
 // createJob makes a fresh user with credits, then creates and previews a draft of the list through the API, and prints the facts. It returns the job and the user.
@@ -300,7 +303,7 @@ func createJob(ctx context.Context, d *db, sg *signer, o createOpts) (job, user 
 			return "", user, err
 		}
 	}
-	job, prev, err := apiDraft(ctx, sg, o, user, lines, nil)
+	job, prev, err := apiDraft(ctx, sg, o, user, lines, nil, nil)
 	if err != nil {
 		return job, user, err
 	}
@@ -310,13 +313,20 @@ func createJob(ctx context.Context, d *db, sg *signer, o createOpts) (job, user 
 }
 
 // apiDraft creates the draft of the list through the API as the user (with the campaign's content for a send job), previews it, and requires the preview to classify the list as the scenario built
-// it (rows, and pending = rows - malformed - repeats). It returns the job and the preview's answer.
-func apiDraft(ctx context.Context, sg *signer, o createOpts, user string, lines []string, content map[string]string) (string, jobBody, error) {
+// it (rows, and pending = rows - malformed - repeats). It returns the job and the preview's answer. fields, when it is not nil, is parallel to lines: the merge data of each line (nil or empty for a line
+// that has none); a module 1 job passes nil.
+func apiDraft(ctx context.Context, sg *signer, o createOpts, user string, lines []string, fields []map[string]string, content map[string]string) (string, jobBody, error) {
 	hc := httpClient(2 * time.Minute)
 	tok := sg.mint(user, time.Now())
-	items := make([]map[string]string, len(lines))
+	if fields != nil && len(fields) != len(lines) {
+		return "", jobBody{}, failf(exitFail, "the scenario holds merge data for %d line(s) of a list of %d", len(fields), len(lines))
+	}
+	items := make([]map[string]any, len(lines))
 	for i, l := range lines {
-		items[i] = map[string]string{"email": l}
+		items[i] = map[string]any{"email": l}
+		if fields != nil && len(fields[i]) > 0 {
+			items[i]["fields"] = fields[i]
+		}
 	}
 	body := map[string]any{"module": o.module, "rows": items}
 	if content != nil {

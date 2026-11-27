@@ -16,6 +16,10 @@ import (
 // results, ledger and events; the module's own campaign report (through the platform's adapter, every page) and its own jobs table; and the controllable sink, which counts every message and every RCPT
 // answer per recipient. "Nothing sent twice" is the sink's word, never the module's: at most one message per recipient, exactly one for every item the module reports sent, none for an item it reports
 // bounced, failed or cancelled and none for any line the platform ended itself (malformed, a repeat), and the sink's total for the job's recipients equals the number of items the module reports sent.
+// Since Phase 5 the job is TEMPLATED (send_content.go) and two more properties are read from the sink's RAW messages (send_render.go): the message each recipient received (subject, HTML part, text part) is
+// byte-identical to the pure render of that recipient's row for that job id, which this program computes itself from the database after the run through the platform's own public code
+// (rendered_bytes_equal_the_pure_render: the exit criterion that the same job and recipient render the same across retries and a SIGKILL-resume), and every message carries the List-Unsubscribe pair of its own
+// item exactly once (unsubscribe_headers_on_every_message).
 var sendVerifyOKs = []string{
 	"rows_equal_results",
 	"every_pending_row_has_one_result",
@@ -34,6 +38,8 @@ var sendVerifyOKs = []string{
 	"sink_at_most_one_message_per_recipient",
 	"sink_one_message_per_sent_item_none_otherwise",
 	"sink_total_equals_sent",
+	"rendered_bytes_equal_the_pure_render",
+	"unsubscribe_headers_on_every_message",
 	"events_follow_the_path_once_each",
 	"nothing_invented",
 	"proof_not_vacuous",
@@ -81,6 +87,10 @@ func toSendItems(p sendapi.Profile, items []sendapi.Item) []sendItem {
 func verifySend(ctx context.Context, d *db, h jobHead, path string) error {
 	sp := sendPaths[path]
 	e, err := loadSendEnv(h.Module)
+	if err != nil {
+		return err
+	}
+	linkOf, err := loadLinkMaker() // the platform's own link maker under the instances' secret and public address (send_render.go)
 	if err != nil {
 		return err
 	}
@@ -196,6 +206,24 @@ func verifySend(ctx context.Context, d *db, h jobHead, path string) error {
 	needReport("sink_one_message_per_sent_item_none_otherwise", sinkPerItem(items, byID, view))
 	needReport("sink_total_equals_sent", sinkTotalEqualsSent(items, view, pendAddr))
 
+	// (f2) the rendered bytes: the message each recipient received, read from the sink's RAW message, against the pure render of that recipient's row for THIS job id. The expectation is computed here, now, from what the
+	// database holds AFTER the run (the job's frozen campaign, the pending rows with their merge data, the item ids): after a kill and a replay the job id and the rows are the same, and nothing is remembered across the kill
+	content, rrows, err := d.renderInputs(ctx, h.ID)
+	if err != nil {
+		return err
+	}
+	exp, expProblems := expectedRenders(h.ID, content, rrows, linkOf)
+	sent, err := e.sinkMessages(ctx, userPrefix(h.User))
+	if err != nil {
+		return err
+	}
+	stored, err := d.storedItems(ctx, h.ID)
+	if err != nil {
+		return err
+	}
+	v.check("rendered_bytes_equal_the_pure_render", concat(expProblems, renderedBytesEqual(exp, sent), storedEqualsPure(exp, stored)))
+	v.check("unsubscribe_headers_on_every_message", unsubscribeHeadersOK(exp, sent))
+
 	// (g) the events
 	evs, err := d.events(ctx, h.ID)
 	if err != nil {
@@ -240,7 +268,7 @@ func verifySend(ctx context.Context, d *db, h jobHead, path string) error {
 		}
 	}
 	v.check("proof_not_vacuous", np)
-	v.check("control_checks_detect_corruption", controlSendDetectsCorruption())
+	v.check("control_checks_detect_corruption", concat(controlSendDetectsCorruption(), liveRenderControl(exp, sent))) // the fixture's control, and the live one: a byte flipped in THIS job's own expected render
 
 	// the sink's evidence, per recipient (the stage prints it)
 	stateOf := map[string]string{}
@@ -257,6 +285,8 @@ func verifySend(ctx context.Context, d *db, h jobHead, path string) error {
 		c := view.Rcpt[a]
 		fact("sink", "job", h.ID, "row", w.Ordinal, "rcpt", a, "module_state", orDash(stateOf[w.ID]), "messages", view.Msgs[a], "rcpt_accepted", c.Accepted, "rcpt_rejected", c.Rejected, "rcpt_deferred", c.Deferred)
 	}
+	compared, distinct := renderStats(exp, sent)
+	fact("rendered", "job", h.ID, "module", h.Module, "compared", compared, "distinct", distinct, "stored", len(stored), "expected", len(exp), "messages", len(sent))
 	fact("verify", "job", h.ID, "module", h.Module, "path", path, "status", h.Status, "ok", len(v.ok), "failed", len(v.failed), "rows", len(rows), "pending", len(pending), "results", len(results),
 		"sent", n["sent"], "bounced", n["bounced"], "failed_items", n["failed"], "cancelled", n["cancelled"], "charge_rows", len(charges), "sink_messages", sinkTotal, "events", len(evs))
 	if len(v.failed) > 0 {
@@ -706,6 +736,7 @@ func controlSendDetectsCorruption() []string {
 	invented[2] = resultInfo{Ref: id(3), Email: b, Origin: "platform", State: "infrastructure_failure", Decision: "free", Rule: "P-04", Ordinal: 3}
 	expect("an invented outcome", nothingInvented(invented, nil, rows, pathNormal))
 	expect("a flag the engine raised", nothingInvented(results, []event{{ID: 9, Kind: "flag"}}, rows, pathNormal))
+	failed = append(failed, controlRenderDetectsCorruption()...) // the rendered bytes, the spin and the List-Unsubscribe pair (send_render.go): each corruption is found for its own reason
 	sort.Strings(failed)
 	return failed
 }

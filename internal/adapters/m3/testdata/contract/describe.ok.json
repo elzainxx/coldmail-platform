@@ -7,6 +7,7 @@
   "capabilities": {
     "click_tracking": false,
     "content_variation": true,
+    "list_unsubscribe": true,
     "open_tracking": false,
     "pause_resume": true,
     "plain_text_alternative": true,

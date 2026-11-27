@@ -14,6 +14,13 @@
 #
 # WHAT IS PROVEN, per sender (SJ_MODS), and how each proof is made unable to pass on a run that did not do the thing (the run is RED at the first failed assertion, naming the stage, the point, the database and
 # the sink):
+#   THE JOB IS TEMPLATED (Phase 5, chunk S9; tests/harness/jobscenario/send_content.go): its subject and HTML (and, but for the control and the outage, its text) are templates with spintax groups of four options and
+#                   merge fields with fallbacks, and every good row carries merge data (first_name and topic, some absent or blank, one markup, one non-ASCII). The rows, the malformed lines, the repeats and the bounces are
+#                   the matrix's own, so every count keeps its meaning. The platform's instances and the scenario program share ONE unsubscribe secret minted for the run (sj_mint, H_SJ_UNSUBSCRIBE_SECRET: mode 600, masked,
+#                   never printed, scanned for by the leak check) and one public address: without both the platform refuses to confirm a send job. `verify` then holds, for every run below, two more properties read from the
+#                   sink's RAW messages: rendered_bytes_equal_the_pure_render (the subject, the HTML part and the text part each recipient received are byte-identical to the pure render of that recipient's row for that job id,
+#                   computed by the scenario program itself from the database AFTER the run through the platform's own TemplateRenderer, internal/render and internal/unsubscribe: the same job and recipient render the same
+#                   across retries and a SIGKILL-resume of the platform) and unsubscribe_headers_on_every_message (one List-Unsubscribe with the recipient's own link and one List-Unsubscribe-Post, on every message).
 #   SJ-C  control   one instance, no fault: a send job of SJ_ROWS lines (SJ_BAD malformed, SJ_DUP repeats, SJ_BOUNCE recipients the sink rejects with 550, every message held SJ_HOLD_MS by the sink) runs to
 #                   `succeeded` and `verify` holds; the program's own control: a verify of a send job that was previewed and never confirmed fails for its reason. It is also the paired control of the outage
 #                   (the same shape, no stop: no `stale` event).
@@ -49,6 +56,8 @@ SJ_VERIFY_OKS=(
   sink_at_most_one_message_per_recipient
   sink_one_message_per_sent_item_none_otherwise
   sink_total_equals_sent
+  rendered_bytes_equal_the_pure_render
+  unsubscribe_headers_on_every_message
   events_follow_the_path_once_each
   nothing_invented
   proof_not_vacuous
@@ -74,6 +83,32 @@ SJ_SETTLE_NTH="${SJ_SETTLE_NTH:-2}"          # settle.after_commit: the kill lan
 SJ_STALE_WAIT="${SJ_STALE_WAIT:-180}"        # seconds to wait for the stale event (the senders' staleness limit is one minute in the instances: docker-compose.sendjobs.yml)
 SJ_VERIFIED=0
 SJ_CONTROL_JOB=""
+SJ_UNSUB=""                                  # set by sj_mint (only the shell's copy: the leak scan looks for it)
+SJ_TEXT_GENERATED="generated"                # the campaign of the control and of the outage has a BLANK text template: the platform makes the text part from the HTML (the kills use a text template of their own)
+
+# ── stage 2: the unsubscribe secret ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+# Since Phase 5 the platform REFUSES to confirm a send job without a link maker (PLATFORM_UNSUBSCRIBE_SECRET of at least 32 bytes and an https PLATFORM_PUBLIC_BASE_URL), and EnsureJobItems writes no item without
+# one: both instances (jobs-a, jobs-b) and the scenario program (which makes the same links with the platform's own internal/unsubscribe to compute what each recipient must have received) are given the SAME secret and
+# the same address by docker-compose.sendjobs.yml. The secret is DEDICATED to this scope (the jobs overlay lends its instances the module-1 key-derivation secret for the `jobs` scope, where no send job runs): called
+# right AFTER jobs_mint (run.sh, stage 2, only when the stage is on), it mints 32 random bytes in hex, masks them BEFORE they are written anywhere, appends one line to the env file (written under umask 077, so mode
+# 600, checked where the host keeps modes), and keeps the shell's copy for the leak scan. It is never printed.
+sj_mint() {
+  local u m other
+  u="$(openssl rand -hex 32)"
+  [ "${#u}" = 64 ] || die "could not mint the senders' unsubscribe secret (openssl rand printed ${#u} characters, want 64)"
+  for other in "${JOBS_JWT:-}" "${JOBS_M1K:-}" "${JOBS_VENDOR:-}"; do
+    [ "$u" != "$other" ] || die "the senders' unsubscribe secret equals another secret of this run: they must be different credentials (the jobs overlay's three are minted first, by jobs_mint)"
+  done
+  mask "$u"                                                              # masked BEFORE it is written anywhere or handed to any command
+  [ -f "$WORK/harness.env" ] || die "the env file is missing: sj_mint runs after run.sh wrote it"
+  if [ "$(uname -s)" = Linux ]; then
+    m="$(stat -c '%a' "$WORK/harness.env" 2>/dev/null)"
+    [ "$m" = 600 ] || die "the env file $WORK/harness.env is mode ${m:-unknown}, expected 600: it holds this run's secrets"
+  fi
+  ( umask 077; echo "H_SJ_UNSUBSCRIBE_SECRET=$u" >> "$WORK/harness.env" ) || die "could not append the senders' unsubscribe secret to the env file"
+  SJ_UNSUB="$u"
+  echo "  minted for the senders' scopes: 1 unsubscribe secret (32 random bytes in hex: it signs the link of every message) — masked, not printed"
+}
 
 sj_res_of() { case "$1" in m2) echo 1;; *) echo 0;; esac; }   # how many reserves a job of the module holds (module 3 is not metered)
 sj_d6_ok() { echo "  SJ D6 OK $1 $2"; echo "SJ D6 OK $1 $2" >> "$WORK/sj-d6.log"; }
@@ -100,8 +135,9 @@ sj_up() {
   jobs_up "$@"
 }
 
-# sj_setup / sj_create <module> <tag> <hold ms>: a user ready to send at the module and a draft of the scope's list (sj_setup also confirms it); sets JOB, PENDING, CREDITS
-sj_args() { echo "--api $JOBS_API_A --module $1 --rows $SJ_ROWS --bad $SJ_BAD --dup $SJ_DUP --bounce $SJ_BOUNCE --hold-ms $3 --tag $2"; }
+# sj_setup / sj_create <module> <tag> <hold ms> [text mode]: a user ready to send at the module and a draft of the scope's (templated) list (sj_setup also confirms it); sets JOB, PENDING, CREDITS. The text mode is
+# `generated` (a blank text template: the platform makes the text from the HTML) or, left out, the campaign's own text template
+sj_args() { echo "--api $JOBS_API_A --module $1 --rows $SJ_ROWS --bad $SJ_BAD --dup $SJ_DUP --bounce $SJ_BOUNCE --hold-ms $3 --tag $2${4:+ --text-mode $4}"; }
 sj_created() {
   local f; f="$(jobs_fact created)"; JOB="$(jobs_get "$f" job)"; PENDING="$(jobs_get "$f" pending)"; CREDITS="$(jobs_get "$f" credits)"
   [ -n "$JOB" ] && [ "$PENDING" = "$((SJ_ROWS - SJ_BAD - SJ_DUP))" ] || die "$1: the 'created' fact has no job or $PENDING pending rows, want $((SJ_ROWS - SJ_BAD - SJ_DUP)): $f"
@@ -124,12 +160,28 @@ sj_expect_oks() {
   printf '%s\n' "$JOBS_OUT" | grep '^OK ' | sed "s/^/$label /" >> "$WORK/sj-ok.log"
 }
 
+# sj_rendered_proof <label> <the `rendered` fact line>: the OK lines say the rendered bytes were held; this says the comparison had a subject (the program's own fact, read back): at least one message of a pending row was
+# compared with its pure render and, from three on, they were not all the same message (a renderer that ignored the seed would give everyone one). A run without the fact, or with nothing compared, is RED.
+sj_rendered_proof() {
+  local label="$1" r="$2" c d
+  [ -n "$r" ] || die "$label: the scenario program printed no 'rendered' fact: the comparison of the rendered bytes with the pure render did not run"
+  c="$(jobs_get "$r" compared)"; d="$(jobs_get "$r" distinct)"
+  case "$c" in ''|*[!0-9]*) die "$label: the 'rendered' fact has no count of compared messages: $(printf '%s' "$r" | cut -c1-300)";; esac
+  [ "$c" -ge 1 ] || die "$label: the scenario program compared $c rendered message(s) with the pure render of their rows: the proof held of an empty set"
+  if [ "$c" -ge 3 ]; then
+    case "$d" in ''|*[!0-9]*) die "$label: the 'rendered' fact has no count of distinct messages: $(printf '%s' "$r" | cut -c1-300)";; esac
+    [ "$d" -ge 2 ] || die "$label: the $c messages compared are all the same message ($d distinct): the spin did not vary from one recipient to the next"
+  fi
+  echo "  $label: the rendered bytes: $c message(s) of pending rows read from the sink's raw messages, ${d:-0} distinct, each equal to the pure render of its row for the job id (and to the module-facing row the platform wrote); each carries its own List-Unsubscribe pair"
+}
+
 # sj_verify <label> <job> <path>: a finished send job's invariants, every one printed and held, and the sink's per-recipient evidence
 sj_verify() {
   local label="$1" job="$2" path="$3" f
   jobs_scn verify --job "$job" --path "$path"
   jobs_need "$label: verify of send job $job (path $path)"
   sj_expect_oks "$label"
+  sj_rendered_proof "$label" "$(jobs_fact rendered)"
   SJ_VERIFIED=$((SJ_VERIFIED+1))
   f="$(jobs_fact verify)"
   echo "  $label: job $job holds ${#SJ_VERIFY_OKS[@]} of ${#SJ_VERIFY_OKS[@]} invariants: $(jobs_get "$f" status) by the path $path; pending $(jobs_get "$f" pending), sent $(jobs_get "$f" sent), bounced $(jobs_get "$f" bounced), cancelled $(jobs_get "$f" cancelled), failed $(jobs_get "$f" failed_items); charge rows $(jobs_get "$f" charge_rows); the sink holds $(jobs_get "$f" sink_messages) message(s) for the job's recipients"
@@ -153,7 +205,7 @@ sj_control() {
   local m="$1"
   STAGE="sendjobs-$m-control"; banner "SJ-C $m" "no fault: a send job of $SJ_ROWS lines at module ${m#m} runs to the end, every invariant holds, the sink holds each sent recipient once; the verifier fails where it must"
   sj_stop_others; sj_up jobs-a ""
-  sj_setup "$m" control "$SJ_OUTAGE_HOLD_MS"
+  sj_setup "$m" control "$SJ_OUTAGE_HOLD_MS" "$SJ_TEXT_GENERATED"
   SJ_CONTROL_JOB="$JOB"
   jobs_wait_terminal "$JOB" 600
   sj_verify "SJ-C $m" "$JOB" normal
@@ -277,7 +329,7 @@ sj_outage() {
   STAGE="sendjobs-$m-outage"; banner "SJ-O $m" "module ${m#m}'s control is STOPPED while a send job runs: the engine records, charges, invents and sends nothing, raises a stale event and waits; the module returns and the job completes exactly once"
   case "$m" in m2) svc=m2;; *) svc=m3;; esac
   sj_stop_others; sj_up jobs-a ""
-  sj_setup "$m" outage "$SJ_OUTAGE_HOLD_MS"
+  sj_setup "$m" outage "$SJ_OUTAGE_HOLD_MS" "$SJ_TEXT_GENERATED"
   JOBS_QUIET=1 jobs_scn wait --job "$JOB" --until running --min-results 1 --timeout 180 --poll-ms 50
   [ "$JOBS_RC" = 0 ] || { cat "$WORK/jobs-scn-last.txt"; die "SJ-O $m: the job did not reach running with a first result recorded: $(printf '%s' "$JOBS_ERR" | tail -2 | tr '\n' ' ')"; }
   if [ "$m" = m2 ]; then
@@ -407,10 +459,11 @@ sj_summary() {
 # the credentials of this run in no log that is kept or printed: the instances (every container, the ones re-created away included), the modules, their workers, the sink and the scenario program's own output
 sj_secret_leak() {
   local svc f logs=() secrets=()
-  for f in "$JOBS_JWT" "$M2_TOKEN" "$M3_TOKEN" "$M3_ADMIN_KEY" "$SINK_PASS" "${M2_ADMIN_KEY:-}" "${M2_WORKER_TOKEN:-}" "$M3_WORKER_TOKEN" "$M3_WORKER2_TOKEN" "$M3_WORKER3_TOKEN"; do
+  for f in "$JOBS_JWT" "$M2_TOKEN" "$M3_TOKEN" "$M3_ADMIN_KEY" "$SINK_PASS" "${M2_ADMIN_KEY:-}" "${M2_WORKER_TOKEN:-}" "$M3_WORKER_TOKEN" "$M3_WORKER2_TOKEN" "$M3_WORKER3_TOKEN" "${SJ_UNSUB:-}"; do
     [ -n "$f" ] && secrets+=("$f")
   done
   [ "${#secrets[@]}" -ge 6 ] || die "only ${#secrets[@]} credential(s) of this run are known to the leak scan: it would look for almost nothing"
+  [ -n "${SJ_UNSUB:-}" ] || die "the senders' unsubscribe secret is not known to the leak scan (sj_mint did not run): the one credential this scope adds would not be looked for"
   for svc in jobs-a smtp-ctl $(sj_has m2 && echo m2 m2-worker) $(sj_has m3 && echo m3 m3-worker m3-worker-2 m3-worker-3); do
     DC logs --no-color "$svc" > "$WORK/sjleak-$svc.log" 2>&1 || die "could not read the logs of $svc"
     case "$svc" in jobs-a|m2|m3) [ -s "$WORK/sjleak-$svc.log" ] || die "the log of $svc, which the leak check must read, is empty: the instrument matched nothing";; esac
@@ -483,6 +536,11 @@ sj_not_checked() {
     and a network partition are not exercised; module 2's worker exits after its own reconnect budget and the stage starts it again (m2w_outage_worker), as module 2's design says the orchestrator does.
   - the modules' dials are the scope's: module 2's retry ladder, attempt cap, pacing and dispatch tick are shortened (send-prepare), module 3 sends on one lane with at most a second between sends, the senders'
     staleness limit is one minute in the instances. A list of more than twelve lines and a job that runs for hours are not exercised.
+  - the RENDERED BYTES are held against the pure render that the platform's own code (jobs.TemplateRenderer, internal/render, internal/unsubscribe) makes of the job as the database holds it after the run: that the footer
+    wording, the text conversion and the grammar are RIGHT is the unit tests' and the live template tests' business, not this proof's. One canonicalisation only: the wire's CR LF line endings are read as line feeds on both
+    sides; every other byte of the subject, the HTML part and the text part must be equal (the senders' variation toggles are all off in this scope: a message a module re-encoded would be red, not normalised).
+    Two templates and nine kinds of row serve every run (a text template of its own for the kills, a blank one made from the HTML for the control and the outage); a template error, a row skipped for a missing field,
+    a link placed by the template itself in the HTML, the public unsubscribe endpoint and a real provider's reading of the List-Unsubscribe pair are not exercised here.
 EOF
-  echo "NOT CHECKED: the two-instance leader kill for the senders (module 1 only), a kill at any instant but the seven points, a SIGKILL or a slow module, deferrals at the sink, more than one lane, a list of more than twelve lines"
+  echo "NOT CHECKED: the two-instance leader kill for the senders (module 1 only), a kill at any instant but the seven points, a SIGKILL or a slow module, deferrals at the sink, more than one lane, a list of more than twelve lines, that the footer and the text conversion are right (the rendered bytes are held against the platform's own pure render only), a template error or a skipped row"
 }

@@ -716,6 +716,7 @@
     }
   },
   "vendor_fallback": {
+    "opt_out_policy": "cold-email-no-vendor",
     "reachable": false
   },
   "vocabularies": {

@@ -4,8 +4,9 @@
 // what the platform, module 1 and the ledger say afterwards, so that the crash, handover and outage stages can be written in bash around a few facts and a verdict.
 //
 // It is NOT a test: it adds nothing to the harness's test count (tests/floors-harness.txt), it is compiled by run.sh next to platform-migrate and run INSIDE the private network (compose service
-// `jobscenario`). It never mocks a module and never imports internal/jobs or internal/jobengine: the platform is the service process it talks to, the database is read with plain SQL, module 1 is
-// asked through its own adapter with the key the platform derives for the user.
+// `jobscenario`). It never mocks a module, never builds a job store and never imports internal/jobengine: the platform is the service process it talks to, the database is read with plain SQL, module 1 is
+// asked through its own adapter with the key the platform derives for the user. The one use of the platform's own job code is send_render.go (Phase 5): jobs.TemplateRenderer, internal/render and
+// internal/unsubscribe, called as PURE functions to compute the message a recipient must have received, never to run anything.
 //
 // Subcommands (flags; one JSON object per line on stdout, a `fact` member names the line; a failure is a non-zero exit with the reason on stderr; a secret and a token are never printed):
 //
@@ -21,7 +22,9 @@
 // and, for the senders (send.go, send_verify.go; scope sendjobs, tests/harness/jobs/send-stage.sh): create and setup with --module m2|m3 (a user with an account at the module, module 2's credits or module 3's
 // entitlement, the controllable sink told which recipients to reject and how long to hold each message, a campaign with a subject and a body), send-prepare (the modules' dials and the sink, once), move (the
 // user's pause, resume or cancel of a job through the API), state of a send job (the module's own tables and the sink; --report adds the module's campaign report) and verify of a send job (--path
-// normal|pause|cancel: the invariants with the sink counted per recipient).
+// normal|pause|cancel: the invariants with the sink counted per recipient). Since Phase 5 the send job is TEMPLATED (send_content.go; create and setup take --text-mode explicit|generated) and verify also reads
+// the sink's RAW messages and holds each against the pure render of its recipient's row for the job id, computed here through the platform's own TemplateRenderer, internal/render and internal/unsubscribe
+// (send_render.go; it needs SENDJOBS_UNSUBSCRIBE_SECRET and SENDJOBS_PUBLIC_BASE_URL, the instances' own PLATFORM_UNSUBSCRIBE_SECRET and PLATFORM_PUBLIC_BASE_URL, and prints a `rendered` fact).
 //
 // and the five of stage J6 (vendor.go; each takes --expect conditions of the syntax of `state`): vendor (module 1's own describe: vendor_fallback.reachable), flag (the platform's stored flag of m1_vendor and
 // its history), preview (a job previewed again through the API: the rate, the credits, whether module 1 was read), reserve (what the ledger and the price snapshot of a job hold) and cancel (the user's

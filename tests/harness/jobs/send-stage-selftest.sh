@@ -3,7 +3,13 @@
 # that the files of the scope agree with each other (the kill points and the registry of internal/faultpoint, the invariants of the stage and of the scenario program, the overlay docker-compose.sendjobs.yml,
 # the environment the scenario program reads, the wiring in run.sh, the refactored stage 5b and the workflow). No Docker, no Go build: the functions are sourced and run against stand-ins. It is run by
 # tests/harness/jobs/stage-selftest.sh (which the gates workflow runs), and can be run alone. What it covers:
-#   sj_expect_oks     green when every OK line of SJ_VERIFY_OKS is printed once; red, naming the line, when ANY ONE is missing (one case per name), printed twice or joined by a line the stage does not know; red on no output
+#   sj_expect_oks     green when every OK line of SJ_VERIFY_OKS is printed once; red, naming the line, when ANY ONE is missing (one case per name, the two Phase 5 lines rendered_bytes_equal_the_pure_render and
+#                     unsubscribe_headers_on_every_message among them), printed twice or joined by a line the stage does not know; red on no output
+#   sj_rendered_proof green when the program's `rendered` fact says it compared messages (and, from three on, that they were not all one message); red, for its reason, without the fact, on nothing compared, on a
+#                     fact with no count, and on three or more messages that are all the same message (a renderer that ignores the seed); green on one or two identical messages (the threshold's control: a cancelled job)
+#   sj_verify         red when the `rendered` fact is missing although every OK line is there
+#   sj_mint           writes exactly one line to the env file (a 64-character hex secret that differs from the jobs overlay's three), masks it BEFORE it is written, never prints it, sets the shell's copy; red for a tool
+#                     that printed nothing or the wrong length, a secret equal to any of the three other secrets, a missing env file and an env file that is mode 644 (the green mode-600 case is its control)
 #   sj_summary        green for one and for two senders with every verify run, every kill and every outage step; red when a verify run is missing, when the OK lines are not runs x invariants, when ANY ONE kill of
 #                     either sender is missing (one case per point) or kept twice, when ANY ONE outage step is missing (one case per name), and on a line the stage does not know
 #   sj_mid            the mid-state of each point names what that point must leave (a kill that landed at the end is red), module 3 holds no reserve, module 2 one; an unknown point is refused
@@ -11,10 +17,15 @@
 #                     job, the kill proven, the mid-state asserted (with the module's report for pause and cancel), the confirm replayed (the first confirm only for confirm.before_commit), the module_paused note
 #                     awaited and the resume, the verify of the path; red when the state does not hold, when the retried confirm is not what the point says
 #   sj_secret_leak    green on clean logs; red, naming the log and never printing it, for a credential in an instance's log (now or kept before a re-create), a module's log, the scenario program's own output, and for
-#                     anything shaped like a JWT; red on an empty instance log and on too few credentials
+#                     anything shaped like a JWT; red on an empty instance log, on too few credentials and on an unsubscribe secret the scan does not know (the eleventh credential: the scope's own)
+#   templates         the matrix's campaign (send_content.go): every spintax group of its templates has at least four options, its braces balance, every merge field but the link carries a fallback, the explicit
+#                     text places the link itself and the HTML does not; the same gate is red for a group of three options, a stray brace and a field with no fallback (its control); the control and the outage
+#                     use a blank text template, the kills a text template of their own
 #   consistency       the stage's invariants are the scenario program's (sendVerifyOKs), in order, each checked once in send_verify.go; the kill points with the module 1 scope's are the registry; every point has a
-#                     mid-state; the outage steps are the calls of sj_outage in order; the overlay publishes no port, builds nothing, gives both instances the same senders' lines and the scenario program every
-#                     SENDJOBS_ variable the program reads, and needs only H_ variables somebody writes; run.sh allows the three scopes without touching the line the other selftests read, sources the stage,
+#                     mid-state; the outage steps are the calls of sj_outage in order; the overlay publishes no port, builds nothing, gives both instances the same senders' lines (the unsubscribe secret and address
+#                     among them: the dedicated secret minted by sj_mint, never the module-1 key-derivation secret of the jobs overlay, the same one for the scenario program, an https address that is one value for all three)
+#                     and the scenario program every SENDJOBS_ variable the program reads, and needs only H_ variables somebody writes; run.sh calls sj_mint once, under the SJ_ON guard, after the jobs overlay's secrets and
+#                     before the build, and allows the three scopes without touching the line the other selftests read, sources the stage,
 #                     builds only what each scope needs, calls the stage only under its guards, merges the overlay only through SJ_DC; the stage is DORMANT in `full` unless FULL_INCLUDES names sendjobs AND
 #                     jobs (the guard block is evaluated); stage 5b is ONE function the full run and the scope call, its probes made through m3w_probe (the platform service unless the scope says jobs-a); the
 #                     harness workflow offers the three scopes; every command the stage gives the scenario program is a command of it
@@ -22,7 +33,7 @@
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"; HARNESS="$(cd "$HERE/.." && pwd)"; ROOT="$(cd "$HARNESS/../.." && pwd)"
 T="$(mktemp -d)" || exit 2; trap 'rm -rf "$T"' EXIT
-MIN=80; cases=0; ok=0; bad=0
+MIN=180; cases=0; ok=0; bad=0
 verdict() { # label want-rc want-substring out rc [forbidden-substring]
   local label="$1" want="$2" sub="$3" out="$4" rc="$5" forbid="${6:-}" n f=0
   cases=$((cases+1))
@@ -43,7 +54,7 @@ src() { . "$T/env.sh"; . "$HERE/stage.sh"; . "$HERE/send-stage.sh"; }   # the or
 # ── sj_expect_oks ──
 oks() { ( . "$HERE/send-stage.sh" >/dev/null 2>&1; printf '%s\n' "${SJ_VERIFY_OKS[@]}" ); }
 nok="$(oks | wc -l | tr -d ' ')"
-[ "$nok" -ge 18 ] || { echo "selftest: RED — send-stage.sh lists only $nok invariants: a send job's verify states at least eighteen"; exit 1; }
+[ "$nok" -ge 23 ] || { echo "selftest: RED — send-stage.sh lists only $nok invariants: a send job's verify states at least twenty-three (the twenty-one of Phase 4 and the two rendered-bytes and unsubscribe-header ones of Phase 5)"; exit 1; }
 good="$(oks | sed 's/^/OK /')"
 expect_run() { ( set -u; W="$T/eo"; rm -rf "$W"; mkdir -p "$W"; WORK="$W"; export WORK; src; JOBS_OUT="$1"; sj_expect_oks "label" && echo "ALL-FOUND $(wc -l < "$W/sj-ok.log" | tr -d ' ') kept" ) 2>&1; }
 out="$(expect_run "$good")"; rc=$?
@@ -60,6 +71,93 @@ out="$(expect_run "")"; rc=$?
 verdict "sj_expect_oks: a program that printed nothing" 1 "the check did not run" "$out" "$rc"
 out="$(expect_run "$(printf '%s\n' "$good" | sed 's/^OK /OK: /')")"; rc=$?
 verdict "sj_expect_oks: 'OK:' is not an OK line" 1 "the check did not run" "$out" "$rc"
+
+# ── sj_rendered_proof and sj_verify: the program's `rendered` fact is read back ──
+rf() { printf '{"fact":"rendered","job":"j","module":"m2","compared":%s,"distinct":%s,"stored":9,"expected":9,"messages":%s}' "$1" "$2" "${3:-$1}"; }
+proof_run() { ( set -u; WORK="$T"; src; sj_rendered_proof "SJ-C m2" "$1" ) 2>&1; }
+out="$(proof_run "$(rf 7 7)")"; rc=$?
+verdict "sj_rendered_proof: seven messages compared, seven different" 0 "7 message(s) of pending rows read from the sink's raw messages, 7 distinct" "$out" "$rc"
+out="$(proof_run "")"; rc=$?
+verdict "sj_rendered_proof: no 'rendered' fact is red" 1 "printed no 'rendered' fact" "$out" "$rc"
+out="$(proof_run "$(rf 0 0)")"; rc=$?
+verdict "sj_rendered_proof: nothing compared is red (the proof held of an empty set)" 1 "compared 0 rendered message(s) with the pure render of their rows" "$out" "$rc"
+out="$(proof_run '{"fact":"rendered","job":"j"}')"; rc=$?
+verdict "sj_rendered_proof: a fact with no count is red" 1 "has no count of compared messages" "$out" "$rc"
+out="$(proof_run '{"fact":"rendered","job":"j","compared":"many","distinct":3}')"; rc=$?
+verdict "sj_rendered_proof: a count that is not a number is red" 1 "has no count of compared messages" "$out" "$rc"
+out="$(proof_run '{"fact":"rendered","job":"j","compared":7}')"; rc=$?
+verdict "sj_rendered_proof: seven compared and no count of distinct ones is red" 1 "has no count of distinct messages" "$out" "$rc"
+out="$(proof_run "$(rf 7 1)")"; rc=$?
+verdict "sj_rendered_proof: seven messages that are all one message is red (a renderer that ignores the seed)" 1 "the 7 messages compared are all the same message (1 distinct)" "$out" "$rc"
+out="$(proof_run "$(rf 3 1)")"; rc=$?
+verdict "sj_rendered_proof: three identical messages are red (the threshold)" 1 "the 3 messages compared are all the same message" "$out" "$rc"
+out="$(proof_run "$(rf 2 1)")"; rc=$?
+verdict "sj_rendered_proof: two identical messages are green (a cancelled job sent two: the control of the case above)" 0 "2 message(s) of pending rows" "$out" "$rc"
+out="$(proof_run "$(rf 1 1)")"; rc=$?
+verdict "sj_rendered_proof: one message compared is green" 0 "1 message(s) of pending rows" "$out" "$rc"
+ver_run() { # <the rendered fact line, empty for none>
+  ( set -u; W="$T/vr"; rm -rf "$W"; mkdir -p "$W"; WORK="$W"; export WORK; src; RF="$1"
+    jobs_scn() { JOBS_RC=0; JOBS_ERR=""; JOBS_OUT="$(for n in "${SJ_VERIFY_OKS[@]}"; do echo "OK $n"; done; [ -z "$RF" ] || echo "$RF"; echo '{"fact":"verify","status":"succeeded","pending":9,"sent":7,"bounced":2,"cancelled":0,"failed_items":0,"charge_rows":9,"sink_messages":7}')"; return 0; }
+    sj_verify "SJ-C m2" 00000000-0000-4000-8000-0000000000aa normal; echo "RC-OF-VERIFY: $?" ) 2>&1
+}
+out="$(ver_run "$(rf 7 7)")"; rc=$?
+verdict "sj_verify: every OK line and a rendered fact that compared seven messages is green" 0 "RC-OF-VERIFY: 0" "$out" "$rc"
+out="$(ver_run "")"; rc=$?
+verdict "sj_verify: every OK line and NO rendered fact is red" 1 "printed no 'rendered' fact" "$out" "$rc" "RC-OF-VERIFY: 0"
+out="$(ver_run "$(rf 0 0)")"; rc=$?
+verdict "sj_verify: every OK line and a rendered fact that compared nothing is red" 1 "the proof held of an empty set" "$out" "$rc" "RC-OF-VERIFY: 0"
+
+# ── sj_mint ──
+cat > "$T/env-mint.sh" <<'EOF'
+die() { echo "DIE: $*"; exit 1; }
+banner() { echo "BANNER [$1] $2"; }
+MASKLOG="$WORK/mask.log"
+mask() { if [ -f "$WORK/harness.env" ] && grep -qF -- "$1" "$WORK/harness.env"; then echo "AFTER_WRITE" >> "$MASKLOG"; else echo "BEFORE_WRITE" >> "$MASKLOG"; fi; }
+DC() { echo "DC called: $*" >&2; return 1; }
+EOF
+smint_run() { # mode: good | empty | short | samejwt | samekey | samevendor | noenv | mode644 | mode600
+  W="$T/sm-$1"; rm -rf "$W"; mkdir -p "$W"; ( umask 077; echo "H_JOBS_JWT_SECRET=$(printf '%064x' 1)" > "$W/harness.env" ); [ "$1" != noenv ] || rm -f "$W/harness.env"
+  ( set -u; WORK="$W"; export WORK; . "$T/env-mint.sh"; . "$HERE/stage.sh"; . "$HERE/send-stage.sh"
+    JOBS_JWT="$(printf '%064x' 1)"; JOBS_M1K="$(printf '%064x' 2)"; JOBS_VENDOR="$(printf '%064x' 3)"   # what jobs_mint left (set after the sourcing, which resets them)
+    case "$1" in
+      empty)      openssl() { :; };;
+      short)      openssl() { printf 'abcd\n'; };;
+      samejwt)    openssl() { printf '%064x\n' 1; };;
+      samekey)    openssl() { printf '%064x\n' 2; };;
+      samevendor) openssl() { printf '%064x\n' 3; };;
+      *)          openssl() { printf '%064x\n' 4; };;
+    esac
+    case "$1" in
+      mode644) uname() { echo Linux; }; stat() { echo 644; };;
+      mode600) uname() { echo Linux; }; stat() { echo 600; };;
+      *)       uname() { echo Other; };;
+    esac
+    sj_mint; echo "SJ_UNSUB-LENGTH: ${#SJ_UNSUB}" ) 2>&1
+}
+out="$(smint_run good)"; rc=$?
+verdict "sj_mint: a good mint" 0 "masked, not printed" "$out" "$rc"
+verdict "sj_mint: ... and the shell keeps a 64-character copy for the leak scan" 0 "SJ_UNSUB-LENGTH: 64" "$out" "$rc"
+senv="$T/sm-good/harness.env"
+verdict "sj_mint: exactly one line is added to the env file, H_SJ_UNSUBSCRIBE_SECRET, after what was there" 0 "one-added" "$([ "$(grep -c '^H_' "$senv")" = 2 ] && [ "$(grep -c '^H_SJ_UNSUBSCRIBE_SECRET=' "$senv")" = 1 ] && [ "$(sed -n '1p' "$senv" | cut -d= -f1)" = H_JOBS_JWT_SECRET ] && echo one-added || echo "$(grep -c '^H_' "$senv") H_ lines")" 0
+verdict "sj_mint: the secret is 64 hexadecimal characters and differs from the three the jobs overlay has" 0 "hex64-different" "$(u="$(sed -n 's/^H_SJ_UNSUBSCRIBE_SECRET=//p' "$senv")"; [ "$(printf '%s\n' "$u" | grep -cE '^[0-9a-f]{64}$')" = 1 ] && [ "$u" != "$(printf '%064x' 1)" ] && [ "$u" != "$(printf '%064x' 2)" ] && [ "$u" != "$(printf '%064x' 3)" ] && echo hex64-different || echo WRONG)" 0
+verdict "sj_mint: masked BEFORE it was written to the env file" 0 "1 before, 0 after" "$(printf '%s before, %s after' "$(grep -c BEFORE_WRITE "$T/sm-good/mask.log")" "$(grep -c AFTER_WRITE "$T/sm-good/mask.log" || true)")" 0
+su="$(sed -n 's/^H_SJ_UNSUBSCRIBE_SECRET=//p' "$senv")"
+case "$out" in *"$su"*) leaked=yes;; *) leaked=no;; esac
+verdict "sj_mint: the output never shows the secret" 0 "no" "$leaked" 0
+out="$(smint_run empty)"; rc=$?
+verdict "sj_mint: a tool that printed nothing is refused" 1 "could not mint the senders' unsubscribe secret" "$out" "$rc"
+out="$(smint_run short)"; rc=$?
+verdict "sj_mint: a secret of the wrong length is refused" 1 "openssl rand printed 4 characters, want 64" "$out" "$rc"
+for other in samejwt samekey samevendor; do
+  out="$(smint_run "$other")"; rc=$?
+  verdict "sj_mint: a secret equal to another credential of the run is refused ($other)" 1 "the senders' unsubscribe secret equals another secret of this run" "$out" "$rc"
+done
+out="$(smint_run noenv)"; rc=$?
+verdict "sj_mint: no env file" 1 "the env file is missing" "$out" "$rc"
+out="$(smint_run mode644)"; rc=$?
+verdict "sj_mint: an env file that is mode 644 (where modes are kept)" 1 "is mode 644, expected 600" "$out" "$rc"
+out="$(smint_run mode600)"; rc=$?
+verdict "sj_mint: the same host with a mode-600 env file is green (the control of the case above)" 0 "masked, not printed" "$out" "$rc"
 
 # ── sj_summary ──
 pts() { ( . "$HERE/send-stage.sh" >/dev/null 2>&1; printf '%s\n' "${SJ_POINTS[@]}" ); }
@@ -147,7 +245,7 @@ jobs_scn() {
     create|setup) JOBS_OUT="$(printf '%s\n%s' '{"fact":"created","job":"00000000-0000-4000-8000-0000000000aa","pending":9,"credits":27}' '{"fact":"confirm","outcome":"ok","replayed":false,"reserved":27}')";;
     confirm-retry) JOBS_OUT="{\"fact\":\"confirm\",\"outcome\":\"ok\",\"replayed\":${KP_REPLAYED:-true},\"reserved\":${KP_RESERVED:-27}}";;
     state) JOBS_OUT='{"fact":"state","job":"00000000-0000-4000-8000-0000000000aa","events_module_paused":1,"sink_msgs":3,"module_terminal":4}';;
-    verify) JOBS_OUT="$(for n in "${SJ_VERIFY_OKS[@]}"; do echo "OK $n"; done; echo '{"fact":"verify","status":"succeeded","pending":9}')";;
+    verify) JOBS_OUT="$(for n in "${SJ_VERIFY_OKS[@]}"; do echo "OK $n"; done; echo '{"fact":"rendered","job":"00000000-0000-4000-8000-0000000000aa","compared":7,"distinct":7,"stored":9,"expected":9,"messages":7}'; echo '{"fact":"verify","status":"succeeded","pending":9}')";;
   esac
   return 0
 }
@@ -159,6 +257,7 @@ out="$(kprun m2 submit.after_module "")"; rc=$?
 verdict "sj_kill_point submit.after_module: green with everything answering" 0 "RC-OF-KP: 0" "$out" "$rc"
 verdict "sj_kill_point: ... the instance is armed with the point, then re-created without it" 0 "up jobs-a [submit.after_module]" "$out" "$rc"
 verdict "sj_kill_point: ... the job is set up as a send job of the module, with its hold and its bounces" 0 "SCN setup --api http://jobs-a:8080 --module m2 --rows 12 --bad 2 --dup 1 --bounce 2 --hold-ms 2000 --tag kill-submit.after_module" "$out" "$rc"
+verdict "sj_kill_point: ... the kill's campaign has a text template of its own (no --text-mode: the control and the outage have the blank one)" 0 "RC-OF-KP: 0" "$out" "$rc" "--text-mode"
 verdict "sj_kill_point: ... the kill is proven for the point at its first hit" 0 "prove jobs-a submit.after_module 1" "$out" "$rc"
 verdict "sj_kill_point: ... the mid-state is asserted" 0 "SCN state --job 00000000-0000-4000-8000-0000000000aa --expect $(mid m2 submit.after_module)" "$out" "$rc"
 verdict "sj_kill_point: ... and the kill is kept for the summary" 0 "KILLS: SJ KILL m2 submit.after_module|" "$out" "$rc"
@@ -199,18 +298,19 @@ verdict "sj_kill_point: a process that never died is red, naming the point" 1 "t
 rnd() { local n="$1" i=0 s=""; while [ "$i" -lt "$n" ]; do s="$s$(printf '%02x' $((RANDOM % 256)))"; i=$((i+1)); done; printf '%s\n' "$s"; }
 b64u() { printf '%s' "$1" | base64 | tr -d '=\n' | tr '+/' '-_'; }
 FAKE_JWT="$(b64u '{"alg":"HS256","typ":"JWT"}').$(b64u '{"sub":"stand-in","role":"authenticated"}').$(b64u 'a-signature-of-some-length')"   # built here, never stored
-S1="$(rnd 24)"; S2="$(rnd 24)"; S3="$(rnd 24)"
-leak_run() { # <jobs-a log> <m2 log> <program output> [kept instance log] [few]
+S1="$(rnd 24)"; S2="$(rnd 24)"; S3="$(rnd 24)"; S4="$(rnd 32)"   # S4 stands in for the senders' unsubscribe secret (sj_mint)
+leak_run() { # <jobs-a log> <m2 log> <program output> [kept instance log] [few] [nounsub]
   rm -rf "$T/lk"; mkdir -p "$T/lk"; printf '%s' "$1" > "$T/lk/jobs-a.txt"; printf '%s' "$2" > "$T/lk/m2.txt"; printf 'worker up' > "$T/lk/m2-worker.txt"; : > "$T/lk/smtp-ctl.txt"; printf '%s\n' "$3" > "$T/lk/jobs-run.log"
   [ -z "${4:-}" ] || printf '%s\n' "$4" > "$T/lk/sj-kept-jobs-a-1.log"
   ( set -u; WORK="$T/lk"; export WORK; src; SJ_MODS="m2"
     DC() { if [ "$1" = logs ]; then cat "$T/lk/${@: -1}.txt"; else return 1; fi; }
     JOBS_JWT="$S1"; M2_TOKEN="$S2"; M3_TOKEN="$S3"; M3_ADMIN_KEY="$(rnd 24)"; SINK_PASS="$(rnd 12)"; M2_ADMIN_KEY="$(rnd 24)"; M2_WORKER_TOKEN="$(rnd 24)"; M3_WORKER_TOKEN="$(rnd 24)"; M3_WORKER2_TOKEN="$(rnd 24)"; M3_WORKER3_TOKEN="$(rnd 24)"
+    SJ_UNSUB="$S4"; [ "${6:-}" != nounsub ] || SJ_UNSUB=""
     if [ -n "${5:-}" ]; then M3_TOKEN=""; M3_ADMIN_KEY=""; SINK_PASS=""; M2_ADMIN_KEY=""; M2_WORKER_TOKEN=""; M3_WORKER_TOKEN=""; M3_WORKER2_TOKEN=""; M3_WORKER3_TOKEN=""; fi
     sj_secret_leak ) 2>&1
 }
 out="$(leak_run 'engine started' 'control up' 'verify ok')"; rc=$?
-verdict "sj_secret_leak: clean logs" 0 "none of the 10 credentials of this run" "$out" "$rc"
+verdict "sj_secret_leak: clean logs" 0 "none of the 11 credentials of this run" "$out" "$rc"
 out="$(leak_run "jwt $S1 here" 'control up' 'verify ok')"; rc=$?
 verdict "sj_secret_leak: the JWT secret in the instance's log is red, names the log, shows nothing" 1 "appears in sjleak-jobs-a.log (the log is not shown" "$out" "$rc" "$S1"
 out="$(leak_run 'engine' "token $S2" 'verify ok')"; rc=$?
@@ -223,6 +323,10 @@ out="$(leak_run '' 'control up' 'verify ok')"; rc=$?
 verdict "sj_secret_leak: an empty instance log is a scan of nothing" 1 "the log of jobs-a, which the leak check must read, is empty" "$out" "$rc"
 out="$(leak_run 'engine' 'control up' 'verify ok' "" few)"; rc=$?
 verdict "sj_secret_leak: too few credentials known" 1 "credential(s) of this run are known to the leak scan" "$out" "$rc"
+out="$(leak_run "the senders' secret: $S4" 'control up' 'verify ok')"; rc=$?
+verdict "sj_secret_leak: the unsubscribe secret in the instance's log is red, names the log, shows nothing" 1 "appears in sjleak-jobs-a.log (the log is not shown" "$out" "$rc" "$S4"
+out="$(leak_run 'engine' 'control up' 'verify ok' "" "" nounsub)"; rc=$?
+verdict "sj_secret_leak: a scan that does not know the unsubscribe secret (sj_mint did not run) is red" 1 "the senders' unsubscribe secret is not known to the leak scan" "$out" "$rc"
 
 # ── sj_not_checked ──
 out="$( WORK="$T"; src; sj_not_checked )"; rc=$?
@@ -255,7 +359,7 @@ verdict "consistency: the overlay publishes no port" 0 "none" "$(grep -qE '^[[:s
 verdict "consistency: the overlay builds nothing and pulls nothing (it only adds environment to services of the other files)" 0 "none" "$(grep -qE '^[[:space:]]*(image|build):' "$COMPOSE" && echo "an image or a build" || echo none)" 0
 verdict "consistency: the overlay touches exactly jobs-a, jobs-b and jobscenario" 0 "three" "$([ "$(grep -E '^  [a-z0-9-]+:$' "$COMPOSE" | tr -d ' :' | tr '\n' ' ')" = "jobs-a jobs-b jobscenario " ] && echo three || grep -E '^  [a-z0-9-]+:$' "$COMPOSE" | tr '\n' ' ')" 0
 blk() { awk -v s="  $1:" '$0==s {p=1; next} p && /^  [a-z0-9]/ {p=0} p' "$COMPOSE" | grep -E '^      [A-Z]'; }
-verdict "consistency: both instances get the same senders' lines (module 2's URL and token, module 3's token, the two staleness limits at one minute)" 0 "same" "$([ -n "$(blk jobs-a)" ] && [ "$(blk jobs-a)" = "$(blk jobs-b)" ] && [ "$(blk jobs-a | wc -l | tr -d ' ')" = 5 ] && blk jobs-a | grep -q 'PLATFORM_JOB_STALE_AFTER_MIN_M2: "1"' && blk jobs-a | grep -q 'PLATFORM_JOB_STALE_AFTER_MIN_M3: "1"' && blk jobs-a | grep -q 'PLATFORM_M2_SERVICE_TOKEN: ${H_M2_TOKEN:?}' && echo same || echo DIFFERENT)" 0
+verdict "consistency: both instances get the same senders' lines (module 2's URL and token, module 3's token, the two staleness limits at one minute, the unsubscribe secret and address)" 0 "same" "$([ -n "$(blk jobs-a)" ] && [ "$(blk jobs-a)" = "$(blk jobs-b)" ] && [ "$(blk jobs-a | wc -l | tr -d ' ')" = 7 ] && blk jobs-a | grep -q 'PLATFORM_JOB_STALE_AFTER_MIN_M2: "1"' && blk jobs-a | grep -q 'PLATFORM_JOB_STALE_AFTER_MIN_M3: "1"' && blk jobs-a | grep -q 'PLATFORM_M2_SERVICE_TOKEN: ${H_M2_TOKEN:?}' && echo same || echo DIFFERENT)" 0
 missing=""; nvars=0
 for v in $(grep -ohE '"SENDJOBS_[A-Z0-9_]+"' "$HERE"/../jobscenario/*.go | tr -d '"' | sort -u); do
   nvars=$((nvars+1)); blk jobscenario | grep -q "^      $v:" || missing="$missing $v"
@@ -263,14 +367,51 @@ done
 verdict "consistency: the scenario program's container is given every SENDJOBS_ variable the program names (and it names at least eight)" 0 "given" "$([ -z "$missing" ] && [ "$nvars" -ge 8 ] && echo given || echo "missing:$missing, the program names $nvars")" 0
 missing=""
 for v in $(grep -o '\${H_[A-Z0-9_]*' "$COMPOSE" | sed 's/^\${//' | sort -u); do
-  grep -q "^$v=" "$RUNSH" || grep -q "echo \"$v=" "$HARNESS/m2worker/stage.sh" || grep -q "echo \"$v=" "$HERE/stage.sh" || missing="$missing $v"
+  grep -q "^$v=" "$RUNSH" || grep -q "echo \"$v=" "$HARNESS/m2worker/stage.sh" || grep -q "echo \"$v=" "$HERE/stage.sh" || grep -q "echo \"$v=" "$STG" || missing="$missing $v"
 done
-verdict "consistency: every H_ variable the overlay needs is written by run.sh, m2w_mint or jobs_mint" 0 "written" "$([ -z "$missing" ] && echo written || echo "nobody writes:$missing")" 0
+verdict "consistency: every H_ variable the overlay needs is written by run.sh, m2w_mint, jobs_mint or sj_mint" 0 "written" "$([ -z "$missing" ] && echo written || echo "nobody writes:$missing")" 0
+verdict "consistency: the overlay needs H_SJ_UNSUBSCRIBE_SECRET, which sj_mint writes (the instances would not start without it)" 0 "needed-and-written" "$(grep -q '${H_SJ_UNSUBSCRIBE_SECRET:?}' "$COMPOSE" && grep -q 'echo "H_SJ_UNSUBSCRIBE_SECRET=' "$STG" && echo needed-and-written || echo WRONG)" 0
+verdict "consistency: both instances and the scenario program hold the SCOPE's unsubscribe secret, never the module-1 key-derivation secret the jobs overlay lends its instances" 0 "dedicated" "$([ "$(blk jobs-a | grep -c '^      PLATFORM_UNSUBSCRIBE_SECRET: ${H_SJ_UNSUBSCRIBE_SECRET:?}$')" = 1 ] && [ "$(blk jobs-b | grep -c '^      PLATFORM_UNSUBSCRIBE_SECRET: ${H_SJ_UNSUBSCRIBE_SECRET:?}$')" = 1 ] && [ "$(blk jobscenario | grep -c '^      SENDJOBS_UNSUBSCRIBE_SECRET: ${H_SJ_UNSUBSCRIBE_SECRET:?}$')" = 1 ] && ! grep -v '^[[:space:]]*#' "$COMPOSE" | grep -q 'H_JOBS_M1_KEY_SECRET' && echo dedicated || echo WRONG)" 0
+verdict "consistency: the public address is ONE https documentation name for both instances and the scenario program (one anchor, used three times)" 0 "one-address" "$([ "$(grep -c '^x-sj-public-base: &sj-public-base "https://[a-z0-9.-]*\.test"$' "$COMPOSE")" = 1 ] && [ "$(grep -c '^      PLATFORM_PUBLIC_BASE_URL: \*sj-public-base$' "$COMPOSE")" = 2 ] && [ "$(grep -c '^      SENDJOBS_PUBLIC_BASE_URL: \*sj-public-base$' "$COMPOSE")" = 1 ] && echo one-address || echo WRONG)" 0
 verdict "consistency: the overlay names no fault point and no build tag (the instances are armed by the jobs overlay alone)" 0 "none" "$(grep -qiE 'faultpoint' "$COMPOSE" && echo "names it" || echo none)" 0
 cmds="$(grep -vE '^[[:space:]]*#' "$STG" | grep -oE 'jobs_scn [a-z][a-z-]*' | awk '{print $2}' | sort -u)"
 miss=""; for c in $cmds; do grep -q "case \"$c\":" "$HERE/../jobscenario/main.go" || miss="$miss $c"; done
 verdict "consistency: every command the stage gives the scenario program is a command of it (at least seven kinds)" 0 "all-commands" "$([ -z "$miss" ] && [ "$(printf '%s\n' "$cmds" | wc -l | tr -d ' ')" -ge 7 ] && echo all-commands || echo "no such command:$miss")" 0
 verdict "consistency: every Go file of the scenario program carries the build tag harness on its first line" 0 "tagged" "$(b=""; for f in "$HERE"/../jobscenario/*.go; do [ "$(head -1 "$f")" = '//go:build harness' ] || b="$b $(basename "$f")"; done; [ -z "$b" ] && echo tagged || echo "not tagged:$b")" 0
+# the templates of the matrix (tests/harness/jobscenario/send_content.go): the grammar's own rules are internal/render's (its tests); what is held HERE is what the matrix promises of its campaign: groups of at least four
+# options, balanced braces, merge fields that carry a fallback, the link placed by the explicit text and not by the HTML
+GOC="$HERE/../jobscenario/send_content.go"
+tmpl_check() { # <template text> -> "ok groups=<n> minopts=<m>", or the reason it is not what the matrix promises (a group of fewer than four options, a brace left over)
+  local s="$1" inner n minopts=0 groups=0
+  s="$(printf '%s' "$s" | sed -E 's/\{\{[A-Za-z_][A-Za-z0-9_]*(\|[^{}]*)?\}\}/F/g')"   # a merge field is one token, its fallback inside it
+  while inner="$(printf '%s' "$s" | grep -oE '\{[^{}]*\}' | head -1)"; [ -n "$inner" ]; do
+    n="$(printf '%s' "$inner" | tr -cd '|' | wc -c | tr -d ' ')"; n=$((n+1))
+    groups=$((groups+1)); if [ "$minopts" = 0 ] || [ "$n" -lt "$minopts" ]; then minopts=$n; fi
+    s="${s/"$inner"/G}"                                                                  # the innermost group is one token: the next pass sees the group around it
+  done
+  case "$s" in *'{'*|*'}'*) echo "a brace is left over (a stray or an unclosed one): $s"; return;; esac
+  [ "$groups" = 0 ] || [ "$minopts" -ge 4 ] || { echo "a group has $minopts options, the matrix promises at least four (groups=$groups)"; return; }
+  echo "ok groups=$groups minopts=$minopts"
+}
+nofb_fields() { printf '%s' "$1" | grep -oE '\{\{[A-Za-z_][A-Za-z0-9_]*\}\}' | tr -d '{}' | grep -vx unsubscribe_url || true; }   # merge fields written with no fallback (the link has none by design)
+verdict "templates: the gate is green on a group of four options with a field that has a fallback" 0 "ok groups=1 minopts=4" "$(tmpl_check 'Hi {a|b|c|d} {{first_name|there}}')" 0
+verdict "templates: ... and on nested groups of four" 0 "ok groups=2 minopts=4" "$(tmpl_check '{a {b|c|d|e}|f|g|h}')" 0
+verdict "templates: CONTROL: a group of three options is red, for its reason" 0 "a group has 3 options" "$(tmpl_check 'Hi {a|b|c}')" 0
+verdict "templates: CONTROL: a stray closing brace is red, for its reason" 0 "a brace is left over" "$(tmpl_check 'Hi {a|b|c|d} }')" 0
+verdict "templates: CONTROL: an unclosed group is red, for its reason" 0 "a brace is left over" "$(tmpl_check 'Hi {a|b|c|d')" 0
+verdict "templates: CONTROL: a field with no fallback is found" 0 "first_name" "$(nofb_fields 'Hi {{first_name}} {{unsubscribe_url}}')" 0
+verdict "templates: ... and the link, which has none by design, is not" 0 "none" "$([ -z "$(nofb_fields 'Click {{unsubscribe_url}}')" ] && echo none || echo found)" 0
+tmpl_lit() { sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*\"\(.*\)\"[[:space:]]*\$/\1/p" "$GOC"; }
+for piece in sjSubjectTemplate sjGreeting sjOpening sjClosing; do
+  lit="$(tmpl_lit "$piece")"
+  verdict "templates: $piece (send_content.go) has groups of at least four options and balanced braces" 0 "ok groups=" "$([ -n "$lit" ] && tmpl_check "$lit" || echo "no such constant: the instrument matched nothing")" 0
+done
+all="$(for piece in sjSubjectTemplate sjGreeting sjOpening sjClosing; do tmpl_lit "$piece"; done | tr '\n' ' ')"
+verdict "templates: the campaign has at least eight spintax groups, every one of at least four options" 0 "ok" "$(r="$(tmpl_check "$all")"; g="$(printf '%s' "$r" | sed -n 's/^ok groups=\([0-9]*\).*/\1/p')"; [ -n "$g" ] && [ "$g" -ge 8 ] && echo ok || echo "$r")" 0
+consts="$(grep -E '^[[:space:]]*(sjSubjectTemplate|sjGreeting|sjOpening|sjClosing|sjHTMLTemplate|sjTextTemplate)[[:space:]]*=' "$GOC")"
+verdict "templates: every merge field of the campaign carries a fallback (but the link)" 0 "all-have-one" "$([ -n "$consts" ] && [ -z "$(nofb_fields "$consts")" ] && echo all-have-one || echo "no fallback: $(nofb_fields "$consts" | tr '\n' ' ')")" 0
+verdict "templates: at least two different fields carry a fallback (the subject, the HTML and the text use them)" 0 "two-or-more" "$([ "$(printf '%s' "$consts" | grep -oE '\{\{[A-Za-z_][A-Za-z0-9_]*\|' | sort -u | wc -l | tr -d ' ')" -ge 2 ] && echo two-or-more || echo fewer)" 0
+verdict "templates: the HTML never places {{unsubscribe_url}} (the platform's footer is added to it), the explicit text places it once (nothing is added to it): the footer rule is per part" 0 "per-part" "$([ "$(printf '%s\n' "$consts" | grep -E '^[[:space:]]*(sjSubjectTemplate|sjGreeting|sjOpening|sjClosing|sjHTMLTemplate)' | grep -c 'unsubscribe_url')" = 0 ] && [ "$(printf '%s\n' "$consts" | grep -E '^[[:space:]]*sjTextTemplate' | grep -o '{{unsubscribe_url}}' | wc -l | tr -d ' ')" = 1 ] && echo per-part || echo WRONG)" 0
 # run.sh
 verdict "consistency: run.sh allows the three scopes and keeps the line the other stages' selftests read" 0 "allowed" "$(grep -q 'case "\$SCOPE" in full|m1node|m2worker|gotrue|jobs) ;; sendjobs|sendjobs-m2|sendjobs-m3) ;;' "$RUNSH" && echo allowed || echo NOT-ALLOWED)" 0
 verdict "consistency: run.sh sources the stage after the module 1 stage it builds on" 0 "sourced" "$(a="$(grep -n '^\. "\$HERE/jobs/stage.sh"' "$RUNSH" | cut -d: -f1)"; b="$(grep -n '^\. "\$HERE/jobs/send-stage.sh"' "$RUNSH" | cut -d: -f1)"; c="$(grep -n '^\. "\$HERE/m2worker/stage.sh"' "$RUNSH" | cut -d: -f1)"; [ -n "$a" ] && [ -n "$b" ] && [ -n "$c" ] && [ "$b" -gt "$a" ] && [ "$b" -gt "$c" ] && echo sourced || echo "jobs $a send $b m2worker $c")" 0
@@ -278,9 +419,12 @@ for sc in "sendjobs|m2 m2-worker m3 m3-worker m3-worker-2 m3-worker-3 smtp-ctl m
   name="${sc%%|*}"; want="migrate-platform migrate-m1 migrate-m2 migrate-m3 ${sc#*|}"
   verdict "consistency: the scope $name builds only what it needs" 0 "scoped" "$(grep -qE "^  $name\) +BUILD_ONLY=\"$want\";;" "$RUNSH" && echo scoped || echo missing)" 0
 done
-unguarded="$(grep -nE '(^|[^_a-z])sj_(run|scope_run|not_checked)( |$)' "$RUNSH" | grep -vE '^[0-9]+:[[:space:]]*#' | grep -vE '\[ "\$SJ_ON" = 1 \] &&' | head -5)"
+unguarded="$(grep -nE '(^|[^_a-z])sj_(run|scope_run|not_checked|mint)( |$)' "$RUNSH" | grep -vE '^[0-9]+:[[:space:]]*#' | grep -vE '\[ "\$SJ_ON" = 1 \] &&' | head -5)"
 verdict "consistency: every call of a stage function in run.sh is under the SJ_ON guard" 0 "all-guarded" "$([ -z "$unguarded" ] && echo all-guarded || echo "UNGUARDED: $unguarded")" 0
 verdict "consistency: run.sh calls the scope run, the full run's stage and its NOT CHECKED lines, once each" 0 "three" "$([ "$(grep -cE '^\[ "\$SJ_ON" = 1 \] && (\[ "\$SCOPE" (!=|=) full \] && )?sj_(scope_run|run|not_checked)' "$RUNSH")" = 3 ] && echo three || echo WRONG)" 0
+verdict "consistency: run.sh calls sj_mint once, under the SJ_ON guard, after the jobs overlay's secrets are minted and before the build" 0 "minted-in-stage-2" "$(m="$(grep -nE '^\[ "\$SJ_ON" = 1 \] && sj_mint( |$)' "$RUNSH" | cut -d: -f1)"; j="$(grep -nE '^\[ "\$JOBS_ON" = 1 \] && jobs_mint( |$)' "$RUNSH" | cut -d: -f1)"; b="$(grep -n '^STAGE=build; banner 3' "$RUNSH" | cut -d: -f1)"; [ "$(printf '%s\n' "$m" | grep -c .)" = 1 ] && [ -n "$j" ] && [ -n "$b" ] && [ "$m" -gt "$j" ] && [ "$m" -lt "$b" ] && echo minted-in-stage-2 || echo "sj_mint at [$m], jobs_mint at [$j], the build at [$b]")" 0
+verdict "consistency: the leak scan and the mint share one variable (SJ_UNSUB): sj_mint sets it, sj_secret_leak reads it" 0 "shared" "$([ "$(sed -n '/^sj_mint() {/,/^}/p' "$STG" | grep -c 'SJ_UNSUB="\$u"')" = 1 ] && [ "$(sed -n '/^sj_secret_leak() {/,/^}/p' "$STG" | grep -c 'SJ_UNSUB')" -ge 2 ] && echo shared || echo WRONG)" 0
+verdict "consistency: the control and the outage send a blank text template (the platform makes the text from the HTML), the kills a text template of their own" 0 "wired" "$([ "$( . "$STG" >/dev/null 2>&1; echo "$SJ_TEXT_GENERATED" )" = generated ] && grep -q 'textGenerated = "generated"' "$HERE/../jobscenario/send_content.go" && sed -n '/^sj_control() {/,/^}/p' "$STG" | grep -q 'sj_setup "\$m" control "\$SJ_OUTAGE_HOLD_MS" "\$SJ_TEXT_GENERATED"' && sed -n '/^sj_outage() {/,/^}/p' "$STG" | grep -q 'sj_setup "\$m" outage "\$SJ_OUTAGE_HOLD_MS" "\$SJ_TEXT_GENERATED"' && ! sed -n '/^sj_kill_point() {/,/^}/p' "$STG" | grep -q 'SJ_TEXT_GENERATED\|text-mode' && echo wired || echo WRONG)" 0
 verdict "consistency: the docker compose function merges the overlay only through SJ_DC" 0 "merged" "$(grep -q '\${SJ_DC\[@\]+"\${SJ_DC\[@\]}"}' "$RUNSH" && grep -q 'SJ_DC=(-f "\$HERE/docker-compose.sendjobs.yml")' "$RUNSH" && echo merged || echo missing)" 0
 verdict "consistency: the senders' scopes switch on the instances' overlay (JOBS_ON) and module 2's credentials (M2W_ON)" 0 "on" "$(grep -q 'case "\$SCOPE" in jobs|sendjobs|sendjobs-m2|sendjobs-m3) JOBS_ON=1;; esac' "$RUNSH" && grep -q 'case "\$SCOPE" in m2worker|sendjobs|sendjobs-m2|sendjobs-m3) M2W_ON=1;; esac' "$RUNSH" && echo on || echo missing)" 0
 # DORMANCY, executed on the real text of run.sh

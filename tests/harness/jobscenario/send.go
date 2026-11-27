@@ -243,6 +243,7 @@ type sinkMode struct {
 }
 
 type sinkMsg struct {
+	Seq       int64    `json:"seq"`
 	To        []string `json:"to"`
 	MessageID string   `json:"message_id"`
 }
@@ -543,9 +544,11 @@ func createSendJob(ctx context.Context, d *db, sg *signer, o createOpts) (job, u
 	}
 	var pending []string
 	seen := map[string]bool{}
-	for _, l := range lines {
+	merge := make([]map[string]string, len(lines)) // the merge data of every good address (send_content.go); a malformed line and a repeat carry none
+	for i, l := range lines {
 		if strings.HasPrefix(l, prefix) && strings.HasSuffix(l, "@example.test") && !seen[l] {
 			seen[l] = true
+			merge[i] = sendMergeData(len(pending))
 			pending = append(pending, l)
 		}
 	}
@@ -588,13 +591,17 @@ func createSendJob(ctx context.Context, d *db, sg *signer, o createOpts) (job, u
 	if tag == "" {
 		tag = "job"
 	}
-	job, prev, err := apiDraft(ctx, sg, o, user, lines, map[string]string{"subject": "[sendjobs] " + tag, "html": "<p>sendjobs: " + tag + "</p>", "text": "sendjobs: " + tag})
+	content, err := sendContent(tag, o.textMode) // a TEMPLATED campaign (spintax groups of four options, merge fields with fallbacks) and merge data on every good row
+	if err != nil {
+		return "", user, err
+	}
+	job, prev, err := apiDraft(ctx, sg, o, user, lines, merge, content)
 	if err != nil {
 		return job, user, err
 	}
 	p := prev.Job.Preview
 	fact("created", "user", user, "job", job, "module", o.module, "rows", o.rows, "malformed", o.bad, "duplicates", o.dup, "pending", p.Pending, "credits", p.Credits, "granted", credits,
-		"fingerprint", prev.Job.PreviewFingerprint, "prefix", prefix, "bounce", len(bounced), "hold_ms", o.holdMS, "account", account)
+		"fingerprint", prev.Job.PreviewFingerprint, "prefix", prefix, "bounce", len(bounced), "hold_ms", o.holdMS, "account", account, "text_mode", orDefault(o.textMode, textExplicit))
 	return job, user, nil
 }
 

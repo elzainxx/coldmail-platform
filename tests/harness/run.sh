@@ -250,6 +250,7 @@ echo "  minted: 5 database/app passwords, 1 pepper, 1 module-1 queue key, 1 modu
 [ "$M2W_ON" = 1 ] && m2w_mint   # module 2's real worker (only when it is on): the operator key and the worker's id and token (+ hashes), minted with module 2's own provision-worker, masked, appended to the env file (tests/harness/m2worker/stage.sh)
 [ "$M1N_ON" = 1 ] && m1n_mint   # module 1's node stack (only when it is on): the node's token (masked), a per-run CA and the api.ipify.org certificate (keys mode 600, never printed), two resolv.conf files, the fixture network prefix; appended to the env file (tests/harness/m1node/m1node.sh)
 [ "$JOBS_ON" = 1 ] && jobs_mint   # the job engine's proofs (only when they are on): the JWT secret of the two instances and the secret module 1's per-user keys are derived from, masked, appended to the env file (tests/harness/jobs/stage.sh)
+[ "$SJ_ON" = 1 ] && sj_mint   # the senders' crash matrix (only when it is on; after the jobs overlay's own three secrets are minted, which it must differ from): the secret both instances and the scenario program sign and read the unsubscribe links with, masked, appended to the env file (tests/harness/jobs/send-stage.sh)
 [ "$GT_ON" = 1 ] && gotrue_mint   # a real GoTrue (only when it is on): its JWT secret (48 random bytes in hex) and the password of its database role, masked, appended to the env file (tests/harness/gotrue/stage.sh)
 
 # ── 3. build ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

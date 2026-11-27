@@ -9,7 +9,16 @@
 # send left behind: each module's URL, service token and operator key (three credentials of each module, minted per run by run.sh stage 2 and m2w_mint, never printed), the controllable sink's control
 # API and the SMTP password the accounts use (the sink accepts any credential).
 #
+# THE UNSUBSCRIBE LINK (Phase 5). The platform REFUSES to confirm a send job without a link maker (PLATFORM_UNSUBSCRIBE_SECRET of at least 32 bytes and an https PLATFORM_PUBLIC_BASE_URL), and writes no
+# module-facing item without one: every send scope would break. Both instances are given the two dials here, and the scenario program the SAME two values, because it makes each item's link itself with the
+# platform's own code (internal/unsubscribe) to compute the message every recipient must have received (tests/harness/jobscenario/send_render.go). The secret is DEDICATED to this scope: minted per run by
+# sj_mint (tests/harness/jobs/send-stage.sh) as H_SJ_UNSUBSCRIBE_SECRET, 32 random bytes in hex, masked, mode 600, never printed. It REPLACES the value the jobs overlay lends its instances (the module-1 key-derivation
+# secret: the `jobs` scope confirms no send job), so the two secrets of this scope are never one value. The public address is a fixed documentation name (.test, RFC 2606): no request is ever made to it, it
+# only appears in the links of the messages (an anchor, so that the instances and the scenario program cannot be given two).
+#
 # Keep jobs-b in step with jobs-a. NO port is published here (the exposure check lists the services; docker inspect is the second instrument).
+
+x-sj-public-base: &sj-public-base "https://platform.example.test"
 
 services:
   jobs-a:
@@ -19,6 +28,8 @@ services:
       PLATFORM_M3_SERVICE_TOKEN: ${H_M3_TOKEN:?}
       PLATFORM_JOB_STALE_AFTER_MIN_M2: "1"
       PLATFORM_JOB_STALE_AFTER_MIN_M3: "1"
+      PLATFORM_UNSUBSCRIBE_SECRET: ${H_SJ_UNSUBSCRIBE_SECRET:?}
+      PLATFORM_PUBLIC_BASE_URL: *sj-public-base
 
   jobs-b:
     environment:
@@ -27,6 +38,8 @@ services:
       PLATFORM_M3_SERVICE_TOKEN: ${H_M3_TOKEN:?}
       PLATFORM_JOB_STALE_AFTER_MIN_M2: "1"
       PLATFORM_JOB_STALE_AFTER_MIN_M3: "1"
+      PLATFORM_UNSUBSCRIBE_SECRET: ${H_SJ_UNSUBSCRIBE_SECRET:?}
+      PLATFORM_PUBLIC_BASE_URL: *sj-public-base
 
   jobscenario:
     environment:
@@ -38,3 +51,5 @@ services:
       SENDJOBS_M3_ADMIN_KEY: ${H_M3_ADMIN_KEY:?}
       SENDJOBS_CTL_URL: http://smtp-ctl:8025
       SENDJOBS_SINK_PASSWORD: ${H_SINK_PASSWORD:?}
+      SENDJOBS_UNSUBSCRIBE_SECRET: ${H_SJ_UNSUBSCRIBE_SECRET:?}
+      SENDJOBS_PUBLIC_BASE_URL: *sj-public-base
