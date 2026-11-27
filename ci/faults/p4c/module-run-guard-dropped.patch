@@ -1,10 +1,8 @@
-diff --git a/services/control/internal/platformapi/store.go b/services/control/internal/platformapi/store.go
-index 0a054ba..34213c3 100644
 --- a/services/control/internal/platformapi/store.go
 +++ b/services/control/internal/platformapi/store.go
-@@ -35,7 +35,7 @@ const (
+@@ -35,7 +35,7 @@
  	 SELECT ji.id, ji.campaign_id, ji.user_id, ji.recipient_email,
- 	        ji.rendered_subject, ji.rendered_body, ji.rendered_text, ji.reply_to, 'queued', NOW()
+ 	        ji.rendered_subject, ji.rendered_body, ji.rendered_text, ji.unsubscribe_url, ji.reply_to, 'queued', NOW()
  	 FROM public.job_items ji
 -	 WHERE ji.id = $1 AND ji.user_id = $2 AND ji.status IS DISTINCT FROM 'cancelled'
 +	 WHERE ji.id = $1 AND ji.user_id = $2

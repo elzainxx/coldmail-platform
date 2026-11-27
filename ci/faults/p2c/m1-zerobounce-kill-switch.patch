@@ -1,11 +1,11 @@
 --- a/control-plane/internal/orchestrator/external_stage.go
 +++ b/control-plane/internal/orchestrator/external_stage.go
-@@ -72,7 +72,7 @@
- func (o *Orchestrator) runExternal(ctx context.Context, addr string, cheap policy.Verdict, class external.ResidueClass, def *policy.Definition, jobID, workItemID string, emailHash []byte) externalStageOutcome {
+@@ -83,7 +83,7 @@
+ 	pe := def.External
  	ext := o.external
  	// Layer OFF entirely, or the global kill-switch pulled (§ global-fallback-kill): no egress, ever.
 -	if ext == nil || ext.Vendor == nil || ext.GloballyDisabled {
 +	if ext == nil || ext.Vendor == nil {
  		return externalStageOutcome{}
  	}
- 	// The policy must OPT IN to fallback (the `external` block) AND to THIS residue class (route_when).
+ 
