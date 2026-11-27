@@ -1,7 +1,63 @@
 /*
  * Tailwind v4, CSS-first. Class scanning is limited to this directory plus index.html,
  * and test files are excluded, so a utility only reaches the built CSS if app code uses it.
+ * Every colour, size, radius and shadow comes from design/tokens.css (the one tokens file).
  */
 @import "tailwindcss" source("./");
+@import "./design/tokens.css";
 @source "../index.html";
 @source not "./**/*.test.{ts,tsx}";
+
+@layer base {
+  html {
+    background-color: var(--c-surface);
+    color: var(--c-text);
+    font-family: var(--font-sans);
+    font-size: 100%;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    font-size: var(--text-base);
+    line-height: var(--text-base--line-height);
+    background-color: var(--c-surface);
+    color: var(--c-text);
+  }
+
+  /* One visible focus ring for everything that takes focus by keyboard. */
+  :focus-visible {
+    outline: 2px solid var(--c-focus);
+    outline-offset: 2px;
+  }
+
+  /* The page heading takes focus on navigation (src/router.tsx): a programmatic focus needs no ring. */
+  h1[tabindex="-1"]:focus,
+  main[tabindex="-1"]:focus {
+    outline: none;
+  }
+
+  a {
+    color: var(--c-accent);
+    text-underline-offset: 2px;
+  }
+
+  a:hover {
+    color: var(--c-accent-hover);
+  }
+
+  ::selection {
+    background-color: var(--c-accent);
+    color: var(--c-accent-text);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}

@@ -1,0 +1,183 @@
+# The browser end-to-end scope (Phase 6, chunk A9; Docs/phase-6-spec.md decisions 1, 2 and 9): a compose override file that run.sh merges after docker-compose.yml and the files of the stages it needs
+# (`-f docker-compose.e2e.yml --profile e2e`) ONLY under H_SCOPE=e2e. In the full run, and in every other scope, this file is not read at all, so nothing here exists (run.sh: E2E_ON; the scope is NOT
+# nameable in FULL_INCLUDES: it ends with its own `exit`, on a stack of its own).
+#
+# WHAT RUNS (all on the private network, `internal: true`, NO published port; the exposure check lists every service below and docker inspect is the second instrument):
+#   postgres + the four migration chains   the harness's own (docker-compose.yml)
+#   gotrue                                 a REAL, digest-pinned GoTrue (docker-compose.gotrue.yml), here only RE-ADDRESSED: its public name, its site url and its issuer are the https names of this scope
+#   m1j, jobsdns, zbstub                   module 1 asked by the fixture DNS (docker-compose.jobs.yml), with its vendor fallback ON and wired to module 1's own ZeroBounce stand-in (overridden below)
+#   m2, m2-worker, m3, m3-worker x3,       modules 2 and 3 with their workers, the controllable sink smtp-ctl, Mailpit and the From-gate's fixture DNS m3dns (docker-compose.yml, .m2worker.yml)
+#   smtp-ctl, smtp-sink, m3dns
+#   e2e-platform                           ONE platform instance, the job engine ON, serving the built web app and the API from ONE origin (PLATFORM_WEB_DIR, decision 1)
+#   e2e-edge                               nginx, the TLS terminator (the choice and the reasons are in tests/harness/e2e/nginx.conf)
+#   e2e-runner                             Playwright's Chromium, in this network, from a digest-pinned image
+#
+# NAMES. The browser reaches the platform at https://app.harness.test and GoTrue at https://auth.harness.test/auth/v1 (the path a hosted Supabase project serves it at). Both are aliases of e2e-edge. The
+# two strings are written ONCE below (the two anchors) and held equal to nginx.conf, the certificate's names and the stage by tests/harness/e2e/stage-selftest.sh. The web app calls GoTrue at the `supabase_url` of
+# /config.json exactly as it is given (web/src/auth/gotrue.ts gotrueBase: only a bare *.supabase.co origin gets /auth/v1 added), so PLATFORM_PUBLIC_SUPABASE_URL is the whole https://auth.harness.test/auth/v1.
+#
+# THE SECRETS are minted per run (tests/harness/e2e/stage.sh e2e_mint, jobs_mint, gotrue_mint, m2w_mint, run.sh stage 2), written mode 600 to the env file and masked in the log: the platform's JWT secret IS
+# GoTrue's (H_JWT_SECRET: one secret signs the tokens and verifies them), the issuer is the one GoTrue stamps into every token, the unsubscribe secret is a value of its own (H_E2E_UNSUBSCRIBE_SECRET), the
+# anon key is a token of role anon signed with GoTrue's secret (H_E2E_ANON_KEY: the one key the browser is ever given, PUBLIC by design). The service-role key the stage calls GoTrue's admin routes with, the
+# passwords of the test users and the invite links never reach a compose file: they live in shell variables of the stage and in a mode-600 file under $H_WORK/e2e-fixtures.
+#
+# THE PLAYWRIGHT IMAGE is `mcr.microsoft.com/playwright:v<the version of @playwright/test in web/package.json>-noble@sha256:<the index digest>`. The digest was read from the registry on 2026-11-28 with no
+# tool but curl: `curl -sI -H 'Accept: application/vnd.oci.image.index.v1+json' https://mcr.microsoft.com/v2/playwright/manifests/v1.65.1-noble` and its `Docker-Content-Digest` header (MCR needs no token;
+# the same GET of the body lists the linux/amd64 and linux/arm64 manifests the index holds). The nginx digest came the same way from Docker Hub: a token from
+# `https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/nginx:pull`, then a HEAD of `https://registry-1.docker.io/v2/library/nginx/manifests/1.30.8-alpine` with the same Accept
+# header (`stable-alpine` answered the same digest). The stage selftest holds the Playwright tag equal to the version pinned in web/package.json and in the lockfile: bumping one without the others is red.
+# The browsers in the image are the ones that version of Playwright drives; `npm ci` on the runner downloads none (PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD is not needed: @playwright/test has no install script).
+
+x-e2e-app: &e2e-app "https://app.harness.test"
+x-e2e-issuer: &e2e-issuer "https://auth.harness.test/auth/v1"
+
+services:
+  # ── GoTrue, re-addressed (the service itself is docker-compose.gotrue.yml's) ─────────────────────────────────────────────────────────────────────────────────────────
+  # API_EXTERNAL_URL is what GoTrue writes into the link it generates (the invite's action_link): the browser opens it, so it is the https name with the hosted project's /auth/v1 path. GOTRUE_SITE_URL is where
+  # GoTrue sends the browser after it verified the link (the tokens come back in the fragment): the web app. GOTRUE_JWT_ISSUER is the `iss` of every token and the platform is given the same string
+  # (PLATFORM_JWT_ISSUER below). The web app calls GoTrue from another origin (app. to auth.): GoTrue answers the CORS preflight itself, and `apikey` (the header a Supabase client sends with the anon key) is added
+  # to the headers it allows, because GoTrue's default list has no such header (a hosted project's gateway adds it).
+  gotrue:
+    environment:
+      API_EXTERNAL_URL: *e2e-issuer
+      GOTRUE_SITE_URL: *e2e-app
+      GOTRUE_JWT_ISSUER: *e2e-issuer
+      GOTRUE_CORS_ALLOWED_HEADERS: apikey
+
+  # ── module 1, as the browser's jobs meet it: the vendor fallback ON, wired to module 1's own stand-in ───────────────────────────────────────────────────────────────────
+  # docker-compose.jobs.yml's m1j with the five dials the scope jobs' stage J7 sets by re-creating it, set here once for the whole run (the vendor opt-out screen needs a REACHABLE vendor to be anything; the
+  # stand-in answers from the local part of an address and counts every request; the harness network is internal, so no real vendor or key is anywhere near). The key is the jobs scope's minted stand-in key.
+  m1j:
+    environment:
+      TM_FALLBACK_MODE: enabled
+      TM_EXTERNAL_DPA_CONFIRMED: "true"
+      TM_EXTERNAL_DAILY_SPEND_CAP: "100"
+      JOBS_VENDOR_VAR: ${H_JOBS_VENDOR_KEY:?}
+      TM_EXTERNAL_ZEROBOUNCE_BASE_URL: http://zbstub:8080
+
+  # ── the platform: ONE instance, the engine ON, the app and the API from one origin ──────────────────────────────────────────────────────────────────────────────────────
+  # The dials, and where each comes from:
+  #   PLATFORM_WEB_DIR                     the built app, web/dist, built on the runner by the stage (npm ci && npm run build) and mounted read-only at /web (internal/webapp, Phase 6 A2)
+  #   PLATFORM_PUBLIC_SUPABASE_URL         GoTrue AS THE BROWSER SEES IT: the https name with the path a hosted project serves it at (the client uses the value as given); its origin is the one the Content-Security-Policy lets the page connect to
+  #   PLATFORM_PUBLIC_SUPABASE_ANON_KEY    the minted anon key (public by design: /config.json hands it to every visitor)
+  #   PLATFORM_JWT_SECRET / _ISSUER / _AUDIENCE   GoTrue's own: the secret that signs its tokens, the issuer it stamps, the audience it stamps (docker-compose.gotrue.yml: authenticated)
+  #   PLATFORM_UNSUBSCRIBE_SECRET          a secret of its own, minted for this scope (never GoTrue's, never module 1's key-derivation secret)
+  #   PLATFORM_PUBLIC_BASE_URL             the https name of the platform as a recipient's browser reaches it: the unsubscribe link of every message is this and /u/<token>, and the browser of the scope can open it
+  #   PLATFORM_M1_URL / _KEY_SECRET        module 1 (m1j) and the secret the platform derives each user's key at module 1 from (the jobs scope's)
+  #   PLATFORM_M2_URL, PLATFORM_M3_URL     modules 2 and 3, with the service tokens and module 3's operator key the entitlement loops use
+  # The tick, the settle interval and the backoff cap are the jobs scope's (a job moves within seconds, so that a polling page is exercised in seconds). No staleness limit is set: the modules' own defaults stand.
+  # No fault point is armed (no GO_TAGS argument: this is the production build of the service) and the container has no write access to anything.
+  e2e-platform:
+    profiles: [e2e]
+    build:
+      context: "${H_PLATFORM_DIR:?}"
+      dockerfile: Dockerfile
+    environment:
+      PLATFORM_DATABASE_URL: postgres://platform_app:${H_PLATFORM_APP_PASSWORD:?}@postgres:5432/postgres
+      PLATFORM_HTTP_ADDR: ":8080"
+      PLATFORM_ENV: e2e
+      PLATFORM_LOG_LEVEL: info
+      PLATFORM_INSTANCE_ID: e2e-platform
+      PLATFORM_M1_URL: http://m1j:8080
+      PLATFORM_M1_KEY_SECRET: ${H_JOBS_M1_KEY_SECRET:?}
+      PLATFORM_M1_KEY_VERSION: "1"
+      PLATFORM_M2_URL: http://m2:8080
+      PLATFORM_M2_SERVICE_TOKEN: ${H_M2_TOKEN:?}
+      PLATFORM_M3_URL: http://m3:8080
+      PLATFORM_M3_SERVICE_TOKEN: ${H_M3_TOKEN:?}
+      PLATFORM_M3_ADMIN_TOKEN: ${H_M3_ADMIN_KEY:?}
+      PLATFORM_ENTITLEMENT_EXPIRE_INTERVAL_SEC: "2"
+      PLATFORM_M3_RECONCILE_INTERVAL_SEC: "2"
+      PLATFORM_JOB_ENGINE_ENABLED: "true"
+      PLATFORM_JOB_TICK_MS: "200"
+      PLATFORM_JOB_SETTLE_INTERVAL_SEC: "1"
+      PLATFORM_JOB_BACKOFF_CAP_SEC: "2"
+      PLATFORM_JWT_SECRET: ${H_JWT_SECRET:?}
+      PLATFORM_JWT_ISSUER: *e2e-issuer
+      PLATFORM_JWT_AUDIENCE: authenticated
+      PLATFORM_UNSUBSCRIBE_SECRET: ${H_E2E_UNSUBSCRIBE_SECRET:?}
+      PLATFORM_PUBLIC_BASE_URL: *e2e-app
+      PLATFORM_WEB_DIR: /web
+      PLATFORM_PUBLIC_SUPABASE_URL: *e2e-issuer
+      PLATFORM_PUBLIC_SUPABASE_ANON_KEY: ${H_E2E_ANON_KEY:?}
+    volumes:
+      - ${H_PLATFORM_DIR:?}/web/dist:/web:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/readyz || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    depends_on: { postgres: { condition: service_healthy } }
+    networks: [private]
+    restart: "no"
+
+  # ── the TLS edge (nginx; why it exists and what it does: tests/harness/e2e/nginx.conf) ───────────────────────────────────────────────────────────────────────────────────
+  # Runs as the run's own user (the key the stage wrote is mode 600 and owned by it), port 443 through the namespaced sysctl (as the fixture DNS binds 53), no capability, a read-only file system and a
+  # tmpfs for the paths nginx writes. The certificate and its key are made by the stage for this run (tests/harness/e2e/stage.sh e2e_tls) in $H_WORK/e2e/tls and thrown away with it. The health check is the
+  # plain-http port 8081 of nginx.conf (no TLS client is needed in the image). The two aliases are the names of the scope.
+  e2e-edge:
+    profiles: [e2e]
+    image: nginx:1.30.8-alpine@sha256:8eb04fe3b385090e9aa02961f77398ad09b6bf33ab07f6669a5bb7acce22c0d3
+    user: "${H_HOST_UID:?}:${H_HOST_GID:?}"
+    volumes:
+      - ${H_PLATFORM_DIR:?}/tests/harness/e2e/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ${H_WORK:?}/e2e/tls:/tls:ro
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: "0"
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8081/healthz || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    depends_on:
+      e2e-platform: { condition: service_healthy }
+      gotrue: { condition: service_healthy }
+    networks:
+      private:
+        aliases: [app.harness.test, auth.harness.test]
+    restart: "no"
+
+  # ── the browser: Playwright's Chromium, INSIDE the private network ──────────────────────────────────────────────────────────────────────────────────────────────────────
+  # `docker compose run --rm -T --no-deps e2e-runner` (the stage). The repository's web/ is mounted read-only (the specs, the config, the node_modules `npm ci` made on the runner, the copy deny-list); the
+  # fixtures the stage made (the users, their invite links and passwords: mode 600, owned by the run's user) are mounted read-only at /fixtures; the artifacts (screenshots, traces, the HTML and JSON
+  # reports) are written to /artifacts, which is $H_WORK/e2e-artifacts on the runner and what the workflow uploads. It runs as the run's own user so that those files are readable and uploadable;
+  # HOME and every path Chromium or Playwright's loader writes are under the tmpfs /tmp. No service-role key, no JWT secret and no database credential is in its environment: it holds the anon key and
+  # the names, as a browser would.
+  e2e-runner:
+    profiles: [e2e]
+    image: mcr.microsoft.com/playwright:v1.65.1-noble@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579
+    user: "${H_HOST_UID:?}:${H_HOST_GID:?}"
+    working_dir: /work/web
+    command: ["node_modules/.bin/playwright", "test"]
+    init: true
+    shm_size: 1gb
+    environment:
+      HOME: /tmp
+      CI: "1"
+      E2E_BASE_URL: *e2e-app
+      E2E_GOTRUE_URL: *e2e-issuer
+      E2E_ANON_KEY: ${H_E2E_ANON_KEY:?}
+      E2E_SINK_URL: http://smtp-ctl:8025
+      E2E_M3_SINK_HOST: 10.smtp-ctl.example.test
+      E2E_FIXTURES: /fixtures/fixtures.json
+      E2E_ARTIFACTS_DIR: /artifacts
+      E2E_SHOTS_DIR: /artifacts/shots
+    volumes:
+      - ${H_PLATFORM_DIR:?}/web:/work/web:ro
+      - ${H_WORK:?}/e2e-fixtures:/fixtures:ro
+      - ${H_WORK:?}/e2e-artifacts:/artifacts
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    depends_on:
+      e2e-edge: { condition: service_healthy }
+    networks: [private]
+    restart: "no"

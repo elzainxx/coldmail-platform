@@ -1,0 +1,13 @@
+email,first_name,company
+ana@free.example.test,Ana,Free Co
+ben@free.example.test,Ben,Free Co
+cara@free.example.test,Cara,Free Co
+dan@free.example.test,Dan,Free Co
+eve@d1.example.test,Eve,Dee One
+fay@d2.example.test,Fay,Dee Two
+gus@d3.example.test,Gus,Dee Three
+hal@d4.example.test,Hal,Dee Four
+not-an-address,Ivy,Broken
+ANA@free.example.test,Ana again,Free Co
+valid+e2e00001@provider.example.test,Jo,Provider
+valid+e2e00002@provider.example.test,Kit,Provider

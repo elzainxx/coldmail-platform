@@ -16,6 +16,7 @@
 #   5d gotrue    a REAL, digest-pinned GoTrue (Phase 4, B15; dormant until proven: only under H_SCOPE=gotrue, or in `full` once FULL_INCLUDES names it): its database role's password minted per run, its own migrations on the real auth schema, a per-run JWT secret; the platform's token verification (internal/auth) and login resolution (internal/tenant) are run against tokens it ISSUED (tests/harness/gotrue/stage.sh, TestGoTrue_*)
 #   5e jobs      the job engine's crash, handover and outage proofs (Phase 4, B17a; dormant until proven: only under H_SCOPE=jobs, or in `full` once FULL_INCLUDES names it): module 1 asked by a fixture DNS, TWO platform instances with the engine on and the fault points armed by name; the platform's own process is killed at five points, the leader is killed, module 1 is stopped, and every job ends with the books closed (tests/harness/jobs/stage.sh, the scenario program tests/harness/jobscenario)
 #   5f sendjobs  the senders' crash matrix and real outages (Phase 4 close-out D5, D6; dormant until proven: only under H_SCOPE=sendjobs, sendjobs-m2 or sendjobs-m3, or in `full` once FULL_INCLUDES names `sendjobs` and `jobs`): modules 2 and 3 with their workers and the controllable sink, the platform instance jobs-a with the engine on and the fault points armed by name, killed at seven points of a send job and the senders stopped mid-job; nothing lost, nothing sent twice at the sink (tests/harness/jobs/send-stage.sh)
+#   5g e2e       the browser end-to-end scope (Phase 6, A9; DORMANT: only under H_SCOPE=e2e, never in `full`): the web app built on the runner, a REAL GoTrue, module 1 (fixture DNS, vendor stand-in), modules 2 and 3 with their workers and the controllable sink, ONE platform instance serving the app and the API from one origin behind a TLS edge (a per-run self-signed certificate), four users made through GoTrue's admin route and the platform's own ledger, and Playwright's Chromium (a digest-pinned image) inside the private network running web/e2e/*.spec.ts; screenshots, traces and reports under $H_WORK/e2e-artifacts (tests/harness/e2e/stage.sh)
 #   scope        H_SCOPE=m2worker runs stages 1-4b, then only module 2's Control, its worker, the sink, the TestM2Worker tests and the exposure check (m2w_scope_run); H_SCOPE=gotrue runs stages 1-4b, then only GoTrue, the TestGoTrue tests and the exposure check (gotrue_scope_run); H_SCOPE=jobs runs stages 1-4b, then only module 1 (m1j) with its fixture DNS, two platform instances and the scenario program J1-J4 (jobs_scope_run); H_SCOPE=full (the default) runs everything except the dormant stages
 #   9b m3-outage module 3 stopped while an entitlement expires: the platform retries, claims no convergence it did not see, converges when module 3 is back
 #   9b-adapter   module 3's Domain A API stopped in the middle of a campaign of the adapter's (Phase 3, B12; tests/harness/m3adapter/outage.sh): three test phases with the stop and the start between them, nothing settled or invented, the campaign completes exactly once
@@ -28,7 +29,7 @@ PINS_ONLY=0; [ "${1:-}" = "--pins-only" ] && PINS_ONLY=1   # stage 1 only: used 
 # H_SCOPE (the workflow's `scope` input): full = every stage; m2worker = Postgres + the migrations + module 2 + its real worker + the controllable sink + only the TestM2Worker tests (tests/harness/m2worker/stage.sh, m2w_scope_run);
 # m1node = module 1's real node (its own stage file); gotrue = a real GoTrue (tests/harness/gotrue/stage.sh) and only the TestGoTrue tests. A scope builds and starts only what it needs: BUILD_ONLY is the list stage 3 builds (empty = every service).
 SCOPE="${H_SCOPE:-full}"
-case "$SCOPE" in full|m1node|m2worker|gotrue|jobs) ;; sendjobs|sendjobs-m2|sendjobs-m3) ;; *) echo "H_SCOPE must be full, m1node, m2worker, gotrue, jobs, sendjobs, sendjobs-m2 or sendjobs-m3 (got '$SCOPE')"; exit 2;; esac
+case "$SCOPE" in full|m1node|m2worker|gotrue|jobs) ;; sendjobs|sendjobs-m2|sendjobs-m3) ;; e2e) ;; *) echo "H_SCOPE must be full, m1node, m2worker, gotrue, jobs, sendjobs, sendjobs-m2, sendjobs-m3 or e2e (got '$SCOPE')"; exit 2;; esac
 BUILD_ONLY=""
 case "$SCOPE" in
   gotrue)   BUILD_ONLY="migrate-platform migrate-m1 migrate-m2 migrate-m3";;   # stage 4 runs every migration chain; GoTrue itself is an image (docker-compose.gotrue.yml), pulled by digest, never built
@@ -38,6 +39,7 @@ case "$SCOPE" in
   sendjobs)    BUILD_ONLY="migrate-platform migrate-m1 migrate-m2 migrate-m3 m2 m2-worker m3 m3-worker m3-worker-2 m3-worker-3 smtp-ctl m3dns jobs-a jobs-b";;   # both senders, their workers, the controllable sink, the From-gate's DNS and the two instances; Mailpit is an image
   sendjobs-m2) BUILD_ONLY="migrate-platform migrate-m1 migrate-m2 migrate-m3 m2 m2-worker smtp-ctl jobs-a jobs-b";;   # module 2 only (tests/harness/jobs/send-stage.sh says why the scope splits)
   sendjobs-m3) BUILD_ONLY="migrate-platform migrate-m1 migrate-m2 migrate-m3 m3 m3-worker m3-worker-2 m3-worker-3 smtp-ctl m3dns jobs-a jobs-b";;   # module 3 only
+  e2e)         BUILD_ONLY="migrate-platform migrate-m1 migrate-m2 migrate-m3 m1j jobsdns zbstub m2 m2-worker m3 m3-worker m3-worker-2 m3-worker-3 smtp-ctl m3dns e2e-platform";;   # the browser scope (tests/harness/e2e/stage.sh): module 1 as m1j with its fixture DNS and vendor stand-in, modules 2 and 3 with their workers, the sink, the From-gate DNS and the ONE platform instance e2e-platform; GoTrue, nginx and Playwright are images (docker-compose.gotrue.yml, docker-compose.e2e.yml), pulled by digest, never built
 esac
 # FULL_INCLUDES: the optional stages the `full` run ALSO runs, once a runner has proven each in its own scope. It was EMPTY until the first scoped runs were green: a stage of a scope is DORMANT in `full` (it does not compile into the test binary, add a compose
 # file, start a container, mint a credential or print a line), so the full harness is exactly what it was before the stage existed. (Both stages have since been proven and included, see the value below.) THE ONE PLACE TO FLIP: name the stage here (FULL_INCLUDES="m2worker m1node"); a stage
@@ -88,7 +90,18 @@ SJ_ON=0; SJ_DC=(); SJ_MODS=""
 case "$SCOPE" in sendjobs) SJ_ON=1; SJ_MODS="m2 m3";; sendjobs-m2) SJ_ON=1; SJ_MODS="m2";; sendjobs-m3) SJ_ON=1; SJ_MODS="m3";; esac
 case " ${FULL_INCLUDES:-} " in *" sendjobs "*) case " ${FULL_INCLUDES:-} " in *" jobs "*) [ "$SCOPE" = full ] && { SJ_ON=1; SJ_MODS="m2 m3"; };; esac;; esac
 [ "$SJ_ON" = 1 ] && SJ_DC=(-f "$HERE/docker-compose.sendjobs.yml")
-DC() { docker compose --project-directory "$HERE" -f "$HERE/docker-compose.yml" ${M2W_DC[@]+"${M2W_DC[@]}"} ${GT_DC[@]+"${GT_DC[@]}"} ${JOBS_DC[@]+"${JOBS_DC[@]}"} ${SJ_DC[@]+"${SJ_DC[@]}"} ${M1N_FILES[@]+"${M1N_FILES[@]}"} --env-file "$WORK/harness.env" --profile probe --profile tests "$@"; }
+# The browser end-to-end scope (tests/harness/e2e/stage.sh, docker-compose.e2e.yml, web/e2e; Phase 6 chunk A9) is DORMANT in the same way and more strictly: E2E_ON is 1 under H_SCOPE=e2e and NOWHERE else (it is not nameable in
+# FULL_INCLUDES: it runs a stack of its own, module 1 as m1j and one platform instance with the app served, and ends with its own exit). Its overlay, its secrets (e2e_mint), its image pulls (e2e_pull) and its stages exist only then.
+# It needs three stages of its own scope-mates, switched on here once (their compose files, their credentials, their exposure names): module 2 with its worker, a real GoTrue, and module 1 with its fixture DNS (the jobs overlay).
+E2E_ON=0; E2E_DC=()
+case "$SCOPE" in e2e) E2E_ON=1;; esac
+if [ "$E2E_ON" = 1 ]; then
+  M2W_ON=1; M2W_DC=(-f "$HERE/docker-compose.m2worker.yml" --profile m2worker); M2W_EXPOSE="m2-worker"
+  GT_ON=1; GT_DC=(-f "$HERE/docker-compose.gotrue.yml" --profile gotrue); GT_EXPOSE="gotrue"
+  JOBS_ON=1; JOBS_DC=(-f "$HERE/docker-compose.jobs.yml" --profile jobs)
+  E2E_DC=(-f "$HERE/docker-compose.e2e.yml" --profile e2e)
+fi
+DC() { docker compose --project-directory "$HERE" -f "$HERE/docker-compose.yml" ${M2W_DC[@]+"${M2W_DC[@]}"} ${GT_DC[@]+"${GT_DC[@]}"} ${JOBS_DC[@]+"${JOBS_DC[@]}"} ${SJ_DC[@]+"${SJ_DC[@]}"} ${M1N_FILES[@]+"${M1N_FILES[@]}"} ${E2E_DC[@]+"${E2E_DC[@]}"} --env-file "$WORK/harness.env" --profile probe --profile tests "$@"; }
 banner() { echo; echo "================ [$1] $2"; }
 # drift_evidence LOG: the contract drift gate's own output (internal/contractcheck Session, tests TestM*_ZContractDrift): everything the session printed, whole (the differences, the undeclared calls, the contracts no response reached with the reason
 # of each allowance, the coverage and what it cannot see). In record mode (CONTRACT_RECORD=1, the dispatch input contract_record) the session prints each CONTRACT-FIXTURE block as test log lines: those are printed RAW (no prefix) so that
@@ -98,7 +111,7 @@ drift_evidence() {
   awk '/^=== RUN +Test[A-Za-z0-9]+_ZContractDrift/{r=1} r && /CONTRACT-FIXTURE BEGIN/{b=1} b{print; if (/CONTRACT-FIXTURE END/) b=0; next} r{print "  | " substr($0,1,600)} /^--- (PASS|FAIL|SKIP): Test[A-Za-z0-9]+_ZContractDrift/{r=0}' "$1"
   return 0
 }
-dump_logs() { echo "---- service logs (tail) ----"; DC logs --no-color --tail=120 2>&1 | sed 's/^/  | /' || true; DC ps --all 2>&1 | sed 's/^/  | /' || true; }
+dump_logs() { [ "${E2E_NO_DUMP:-0}" = 1 ] && { echo "---- service logs NOT dumped: the browser scope found a secret of this run in a log (a workflow log is public) ----"; return 0; }; echo "---- service logs (tail) ----"; DC logs --no-color --tail=120 2>&1 | sed 's/^/  | /' || true; DC ps --all 2>&1 | sed 's/^/  | /' || true; }
 STAGE="start"
 die() { echo; echo "HARNESS RED at stage [$STAGE]: $*"; dump_logs; exit 1; }
 cleanup() { rc=$?; DC down -v --remove-orphans -t 10 >/dev/null 2>&1 || true; exit $rc; }
@@ -111,6 +124,7 @@ lockpin() { tr -d '\r' < "$LOCK" | awk -v r="$1" '/^[[:space:]]*#/ || NF==0 {nex
 . "$HERE/jobs/stage.sh"   # the job engine's crash, handover and outage proofs (Phase 4, chunk B17a): functions only (jobs_mint, jobs_run, jobs_scope_run, jobs_not_checked, then the stages and helpers they call)
 . "$HERE/jobs/send-stage.sh"   # the senders' crash matrix and real outages (Phase 4 close-out D5, D6): functions only (sj_run, sj_scope_run, sj_not_checked, then the stages and helpers they call); it uses the helpers of the two files above
 . "$HERE/gotrue/stage.sh"   # a real GoTrue (Phase 4, chunk B15): functions only (gotrue_mint, gotrue_pull, gotrue_stage, gotrue_evidence, gotrue_require_pass, gotrue_secret_leak, gotrue_scope_run, gotrue_not_checked)
+. "$HERE/e2e/stage.sh"   # the browser end-to-end scope (Phase 6, chunk A9): functions only (e2e_mint, e2e_pull, e2e_scope_run, then the stages and helpers they call); it uses the helpers of the gotrue, jobs and m2worker stages above
 
 # ── stage 5b, as functions: the full run calls m3w_stage_5b at stage 5b, the senders' scopes from their own stage (tests/harness/jobs/send-stage.sh, sj_infra) ─────────────────────────────────────────────────────
 psql_su() { DC exec -T postgres psql -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -tAc "$1"; }
@@ -252,12 +266,14 @@ echo "  minted: 5 database/app passwords, 1 pepper, 1 module-1 queue key, 1 modu
 [ "$JOBS_ON" = 1 ] && jobs_mint   # the job engine's proofs (only when they are on): the JWT secret of the two instances and the secret module 1's per-user keys are derived from, masked, appended to the env file (tests/harness/jobs/stage.sh)
 [ "$SJ_ON" = 1 ] && sj_mint   # the senders' crash matrix (only when it is on; after the jobs overlay's own three secrets are minted, which it must differ from): the secret both instances and the scenario program sign and read the unsubscribe links with, masked, appended to the env file (tests/harness/jobs/send-stage.sh)
 [ "$GT_ON" = 1 ] && gotrue_mint   # a real GoTrue (only when it is on): its JWT secret (48 random bytes in hex) and the password of its database role, masked, appended to the env file (tests/harness/gotrue/stage.sh)
+[ "$E2E_ON" = 1 ] && e2e_mint   # the browser scope (only when it is on; after gotrue_mint: its anon and service-role keys are signed with GoTrue's secret): the unsubscribe secret, the two keys and the test users' passwords, masked, two lines appended to the env file (tests/harness/e2e/stage.sh)
 
 # ── 3. build ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 STAGE=build; banner 3 "build every image from source, no cache"
 DC build --pull --no-cache $BUILD_ONLY || die "an image failed to build"
 echo "  built from the pinned sources${BUILD_ONLY:+ (scope $SCOPE: only $BUILD_ONLY)}; base images are the digests pinned in each Dockerfile"
 [ "$GT_ON" = 1 ] && gotrue_pull   # a real GoTrue (only when it is on): its digest-pinned image is pulled now, so that a runner that cannot pull THAT digest is red before the migrations spend minutes (tests/harness/gotrue/stage.sh)
+[ "$E2E_ON" = 1 ] && e2e_pull   # the browser scope (only when it is on): the digest-pinned nginx and Playwright images are pulled now, so that a runner that cannot pull THAT digest is red before the migrations spend minutes (tests/harness/e2e/stage.sh)
 
 # ── 4. database ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 STAGE=database; banner 4 "one real Postgres (supabase/postgres), the required provisioning step, four migration chains — all as the non-superuser postgres"
@@ -327,6 +343,7 @@ echo "  first admin created as postgres on the real auth schema; a second run re
 [ "$SCOPE" = jobs ] && jobs_scope_run      # H_SCOPE=jobs (JOBS_ON is 1): module 1 with its fixture DNS, two platform instances, the scenario program, stages J0-J6, the evidence, leak and exposure checks, then the end of the run: it never returns
 [ "$SJ_ON" = 1 ] && [ "$SCOPE" != full ] && sj_scope_run   # H_SCOPE=sendjobs, sendjobs-m2 or sendjobs-m3 (SJ_ON is 1): the senders, their workers, the sink, the instance jobs-a, stages SJ-0 to SJ-S, the evidence, leak and exposure checks, then the end of the run: it never returns
 [ "$SCOPE" = gotrue ] && gotrue_scope_run  # H_SCOPE=gotrue (GT_ON is 1): GoTrue (5d), the TestGoTrue tests, the secret-leak and exposure checks, then the end of the run: it never returns
+[ "$SCOPE" = e2e ] && e2e_scope_run          # H_SCOPE=e2e (E2E_ON is 1): the web app built, GoTrue, modules 1 to 3, the platform behind the TLS edge, the users, the browser (stages E1 to E9), the evidence, leak and exposure checks, then the end of the run: it never returns
 
 # ── 5. services ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 STAGE=services; banner 5 "the three Controls and the platform (two instances of it), healthy on the private network"

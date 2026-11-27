@@ -1,0 +1,204 @@
+/*
+ * THE design tokens: the one place a colour, a size, a radius or a shadow is decided.
+ *
+ *   1. Runtime variables (--c-*, including --c-shadow-*) for the light theme, then the dark theme twice:
+ *      once under the system preference (unless the user chose light) and once under
+ *      [data-theme="dark"] (the user's explicit choice, see src/shell/theme.ts).
+ *   2. A Tailwind @theme block that maps those variables to utilities (bg-surface, text-fg,
+ *      border-border, text-status-valid, bg-status-valid-bg, ...). It is `inline` so the utility
+ *      reads the runtime variable and a theme switch needs no rebuild.
+ *
+ * Rules (src/design/tokens.test.ts holds them):
+ *   - every colour is a #rrggbb hex, so contrast can be computed from this file;
+ *   - the two dark blocks are identical, every light variable has a dark value;
+ *   - body text, muted text, link text, button text and every status badge are 4.5:1 or better in
+ *     both themes; focus ring and input borders are 3:1 or better.
+ * Change a value here and the tests say whether it is still allowed. A page never writes a colour.
+ */
+
+:root {
+  color-scheme: light;
+
+  --c-surface: #f6f7f9;
+  --c-surface-raised: #ffffff;
+  --c-surface-sunken: #eef0f4;
+  --c-surface-hover: #e8ebf0;
+  --c-border: #dde1e8;
+  --c-border-strong: #7a8496;
+  --c-text: #12151c;
+  --c-text-muted: #4f5868;
+  --c-accent: #3451d1;
+  --c-accent-hover: #2b44b3;
+  --c-accent-text: #ffffff;
+  --c-focus: #2f4bd0;
+  --c-danger: #b3261e;
+  --c-danger-hover: #961e17;
+  --c-danger-text: #ffffff;
+  --c-scrim: #12151c;
+
+  --c-status-valid-fg: #0f6b3a;
+  --c-status-valid-bg: #e2f4e9;
+  --c-status-risky-fg: #7d4400;
+  --c-status-risky-bg: #fcefd6;
+  --c-status-invalid-fg: #b3261e;
+  --c-status-invalid-bg: #fde7e5;
+  --c-status-unknown-fg: #4a5363;
+  --c-status-unknown-bg: #eaedf2;
+  --c-status-sent-fg: #1a5bbd;
+  --c-status-sent-bg: #e3edfb;
+  --c-status-bounced-fg: #85309a;
+  --c-status-bounced-bg: #f3e6f7;
+  --c-status-failed-fg: #a0124f;
+  --c-status-failed-bg: #fbe5ee;
+
+  --c-shadow-sm: 0 1px 2px rgb(18 21 28 / 0.06);
+  --c-shadow-md: 0 4px 12px rgb(18 21 28 / 0.1);
+  --c-shadow-lg: 0 12px 32px rgb(18 21 28 / 0.18);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --c-surface: #0d0f13;
+    --c-surface-raised: #161a20;
+    --c-surface-sunken: #11141a;
+    --c-surface-hover: #1d222a;
+    --c-border: #272d37;
+    --c-border-strong: #6f7a8c;
+    --c-text: #e9ebef;
+    --c-text-muted: #a0a9b8;
+    --c-accent: #8ea3ff;
+    --c-accent-hover: #a9b9ff;
+    --c-accent-text: #0a1030;
+    --c-focus: #9db0ff;
+    --c-danger: #ff8f87;
+    --c-danger-hover: #ffaaa4;
+    --c-danger-text: #2b0a08;
+    --c-scrim: #000000;
+
+    --c-status-valid-fg: #6fdc9a;
+    --c-status-valid-bg: #12301f;
+    --c-status-risky-fg: #f3c26b;
+    --c-status-risky-bg: #3a2a0c;
+    --c-status-invalid-fg: #ff9a92;
+    --c-status-invalid-bg: #3d1715;
+    --c-status-unknown-fg: #b6bdca;
+    --c-status-unknown-bg: #262b34;
+    --c-status-sent-fg: #8fb8ff;
+    --c-status-sent-bg: #14284a;
+    --c-status-bounced-fg: #dcaaed;
+    --c-status-bounced-bg: #35173f;
+    --c-status-failed-fg: #ff9bc2;
+    --c-status-failed-bg: #3f1228;
+
+    --c-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.5);
+    --c-shadow-md: 0 4px 12px rgb(0 0 0 / 0.55);
+    --c-shadow-lg: 0 12px 32px rgb(0 0 0 / 0.65);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --c-surface: #0d0f13;
+  --c-surface-raised: #161a20;
+  --c-surface-sunken: #11141a;
+  --c-surface-hover: #1d222a;
+  --c-border: #272d37;
+  --c-border-strong: #6f7a8c;
+  --c-text: #e9ebef;
+  --c-text-muted: #a0a9b8;
+  --c-accent: #8ea3ff;
+  --c-accent-hover: #a9b9ff;
+  --c-accent-text: #0a1030;
+  --c-focus: #9db0ff;
+  --c-danger: #ff8f87;
+  --c-danger-hover: #ffaaa4;
+  --c-danger-text: #2b0a08;
+  --c-scrim: #000000;
+
+  --c-status-valid-fg: #6fdc9a;
+  --c-status-valid-bg: #12301f;
+  --c-status-risky-fg: #f3c26b;
+  --c-status-risky-bg: #3a2a0c;
+  --c-status-invalid-fg: #ff9a92;
+  --c-status-invalid-bg: #3d1715;
+  --c-status-unknown-fg: #b6bdca;
+  --c-status-unknown-bg: #262b34;
+  --c-status-sent-fg: #8fb8ff;
+  --c-status-sent-bg: #14284a;
+  --c-status-bounced-fg: #dcaaed;
+  --c-status-bounced-bg: #35173f;
+  --c-status-failed-fg: #ff9bc2;
+  --c-status-failed-bg: #3f1228;
+
+  --c-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.5);
+  --c-shadow-md: 0 4px 12px rgb(0 0 0 / 0.55);
+  --c-shadow-lg: 0 12px 32px rgb(0 0 0 / 0.65);
+}
+
+/* The Tailwind side. The default palette is removed on purpose: a screen can only use these. */
+@theme inline {
+  --color-*: initial;
+  --color-surface: var(--c-surface);
+  --color-raised: var(--c-surface-raised);
+  --color-sunken: var(--c-surface-sunken);
+  --color-hover: var(--c-surface-hover);
+  --color-border: var(--c-border);
+  --color-border-strong: var(--c-border-strong);
+  --color-fg: var(--c-text);
+  --color-fg-muted: var(--c-text-muted);
+  --color-accent: var(--c-accent);
+  --color-accent-hover: var(--c-accent-hover);
+  --color-on-accent: var(--c-accent-text);
+  --color-focus: var(--c-focus);
+  --color-danger: var(--c-danger);
+  --color-danger-hover: var(--c-danger-hover);
+  --color-on-danger: var(--c-danger-text);
+  --color-scrim: var(--c-scrim);
+
+  --color-status-valid: var(--c-status-valid-fg);
+  --color-status-valid-bg: var(--c-status-valid-bg);
+  --color-status-risky: var(--c-status-risky-fg);
+  --color-status-risky-bg: var(--c-status-risky-bg);
+  --color-status-invalid: var(--c-status-invalid-fg);
+  --color-status-invalid-bg: var(--c-status-invalid-bg);
+  --color-status-unknown: var(--c-status-unknown-fg);
+  --color-status-unknown-bg: var(--c-status-unknown-bg);
+  --color-status-sent: var(--c-status-sent-fg);
+  --color-status-sent-bg: var(--c-status-sent-bg);
+  --color-status-bounced: var(--c-status-bounced-fg);
+  --color-status-bounced-bg: var(--c-status-bounced-bg);
+  --color-status-failed: var(--c-status-failed-fg);
+  --color-status-failed-bg: var(--c-status-failed-bg);
+
+  /* System font stacks only: the content security policy allows no web font. */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+  /* Type scale: 14px is the base. rem, so the browser's text size setting still works. */
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1.25rem;
+  --text-sm: 0.8125rem;
+  --text-sm--line-height: 1.25rem;
+  --text-base: 0.875rem;
+  --text-base--line-height: 1.375rem;
+  --text-lg: 1rem;
+  --text-lg--line-height: 1.5rem;
+  --text-xl: 1.125rem;
+  --text-xl--line-height: 1.625rem;
+  --text-2xl: 1.375rem;
+  --text-2xl--line-height: 1.875rem;
+
+  /* One spacing unit is 4px (the Tailwind default): p-2 is 8px, gap-3 is 12px. */
+  --spacing: 0.25rem;
+
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+
+  --shadow-sm: var(--c-shadow-sm);
+  --shadow-md: var(--c-shadow-md);
+  --shadow-lg: var(--c-shadow-lg);
+}

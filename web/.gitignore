@@ -2,3 +2,5 @@ node_modules
 dist
 test-results
 *.tsbuildinfo
+e2e-artifacts
+playwright-report

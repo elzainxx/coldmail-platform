@@ -52,6 +52,8 @@ jobs:
           npm --version
 
       - name: Install from the lockfile
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"   # belt and braces: @playwright/test has no install script and downloads no browser (the e2e specs run in the harness scope e2e, in Playwright's own image)
         run: npm ci
 
       - name: Type-check
@@ -63,9 +65,28 @@ jobs:
       - name: The built CSS contains the Tailwind utilities the page uses
         run: npm run check:css
 
+      # The strict CSP of the Go service (decision 1 of Docs/phase-6-spec.md) forbids inline script: the built page must hold none, no event-handler attribute, no javascript: URL and nothing from another origin.
+      # The selftest first (every reject case names its reason), then the real dist.
+      - name: The built page has no inline script (the CSP the service sends would refuse it)
+        run: |
+          node scripts/check-csp.mjs --selftest
+          npm run check:csp
+
+      # The copy gate (chunk A8): the deny-list of internal words is GENERATED from Docs/jobs-api.md (every error code and `not_allowed` reason) and internal/charge/rules.psv; a new code that is not in the committed list
+      # fails here, and the catalogue test (src/copy/copy.test.ts, in the next step) then fails when a code has no user wording or a catalogue string holds an internal word.
+      - name: The deny-list of internal words is up to date with the API and the charge table
+        run: node scripts/gen-internal-words.mjs --check
+
       - name: Tests (JSON result captured for the floor gate)
         run: npm run test:json
 
       - name: Test-count floor
         working-directory: .
         run: bash scripts/check-test-floors.sh --floors tests/floors-web.txt --vitest-json web/test-results/vitest.json
+
+      # The browser specs (web/e2e) run only in the harness scope e2e, which needs Docker and the whole stack; here they are only LISTED, which loads the config and every spec (an import that does not resolve, a syntax error,
+      # a test.only) without a browser. A list of zero is red: the instrument matched nothing.
+      - name: The browser specs still load (listed, not run)
+        run: |
+          npm run e2e:list | tee "$RUNNER_TEMP/e2e-list.txt"
+          grep -qE '^Total: [1-9][0-9]* tests? in [0-9]+ files?' "$RUNNER_TEMP/e2e-list.txt"

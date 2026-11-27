@@ -1,0 +1,7 @@
+email,first_name,topic
+alice@example.test,Alice,payments
+bob@example.test,Bob,
+carol@example.test,,logistics
+dave@example.test,Dave,onboarding
+erin@example.test,Erin,analytics
+bounce@example.test,Frank,returns
