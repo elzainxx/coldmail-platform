@@ -190,7 +190,7 @@ func TestRegistry_TheSubmitConcurrencyDialIsHonouredDefaultedAndCapped(t *testin
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			rig, _, mod := senderModule(t, jobs.ModuleSendBYO, c.dial)
-			rig.delay = 30 * time.Millisecond
+			rig.delay = 150 * time.Millisecond // long enough that the whole ceiling of workers overlaps even on a loaded runner (a 30 ms hold let 60 of 64 overlap once: the test asserts the ceiling is REACHED, so the hold must outlast the scheduling of the workers)
 			if res, err := mod.Submit(ctxT(t), jobOf(jobs.ModuleSendBYO, c.rows), jobenginetestRows(c.rows)); err != nil || len(res.Accepted) != c.rows {
 				t.Fatalf("Submit = %d, %v", len(res.Accepted), err)
 			}
