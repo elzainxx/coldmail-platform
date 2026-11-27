@@ -114,12 +114,12 @@ var roleStatements = []roleStmt{
 	// proves the row triggers against rows)
 	{"platform.user_settings", "INSERT", `INSERT INTO platform.user_settings (user_id, vendor_fallback_opt_out) VALUES ({U2}, true)`, "", "", ""},
 	{"platform.user_settings", "UPDATE", `UPDATE platform.user_settings SET user_id = user_id`, "", "", ""},
-	{"platform.user_settings", "DELETE", `DELETE FROM platform.user_settings`, "", "", ""},
+	{"platform.user_settings", "DELETE", `DELETE FROM platform.user_settings`, "23001", "append-only", ""},
 	{"platform.user_settings", "TRUNCATE", `TRUNCATE platform.user_settings`, "23001", "append-only", ""},
 	{"platform.user_settings", "UPDATE(vendor_fallback_opt_out,updated_at)", `UPDATE platform.user_settings SET vendor_fallback_opt_out = vendor_fallback_opt_out, updated_at = updated_at`, "", "", "platform_app"},
 	{"platform.user_settings_history", "INSERT", `INSERT INTO platform.user_settings_history (user_id, setting, old_value, new_value, actor_user_id) VALUES ({U2}, 'vendor_fallback_opt_out', false, true, {U2})`, "", "", ""},
-	{"platform.user_settings_history", "UPDATE", `UPDATE platform.user_settings_history SET new_value = new_value`, "", "", ""},
-	{"platform.user_settings_history", "DELETE", `DELETE FROM platform.user_settings_history`, "", "", ""},
+	{"platform.user_settings_history", "UPDATE", `UPDATE platform.user_settings_history SET new_value = new_value`, "23001", "append-only", ""},
+	{"platform.user_settings_history", "DELETE", `DELETE FROM platform.user_settings_history`, "23001", "append-only", ""},
 	{"platform.user_settings_history", "TRUNCATE", `TRUNCATE platform.user_settings_history`, "23001", "append-only", ""},
 
 	{"platform.balances", "INSERT", `INSERT INTO platform.balances (user_id, module_id) VALUES ({U2}, 'm1')`, "", "", ""},

@@ -663,5 +663,14 @@ func TestJobPauseCancel_Down0016RefusesAJobTheOlderLifecycleCannotEnd(t *testing
 	if got := appliedVersions(t, admin); !sameStrings(got, chain) {
 		t.Fatalf("after up again: applied = %v, want %v", got, chain)
 	}
-	unchanged("after up again")
+	// up applies the WHOLE chain on disk (later migrations too), so the 0016-only expectations of unchanged() do not apply: what must hold is that the capabilities are platform_0016's again and that the
+	// jobs the down left behind are untouched by the up
+	if got := strings.Join(ledgerRows(t, admin, "SELECT id, can_pause::text, can_cancel::text FROM platform.modules ORDER BY id"), ","); got != "m1|false|true,m2|true|true,m3|true|true" {
+		t.Fatalf("after up again the capabilities are %s, want platform_0016's", got)
+	}
+	for id, want := range map[string]string{ledgerJobB1: "paused", ledgerJobA2: "failed", ledgerJobA0: "failed"} {
+		if got := jobStatus(t, admin, id); got != want {
+			t.Fatalf("after up again job %s is %s, want %s: an up never edits a job", id, got, want)
+		}
+	}
 }
