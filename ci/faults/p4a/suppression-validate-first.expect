@@ -2,12 +2,13 @@
 # "simplifies" the call and drops module 1's syntax layer, so a 65-byte local part or a one-label domain would be stored): the file still compiles, and the gate must say the write is not preceded by a call of
 # norm.Validate( and name the file. The control side is the real repository, which must be green. Needs bash only: no database, no module, no Go.
 # The patch changes ONE line of internal/suppress/store.go (the call), so it applies only to a HEAD whose store.go carries that exact line and its two neighbours; the messages carry no line number, so an edit of
-# the file's comments does not move them.
+# the file's comments does not move them. Since Phase 6 A4 the file holds two more functions that validate (Remove and AddMany), so the fault leaves TWO calls standing and the second message says so: it was
+# "no norm.Validate( call outside a comment" while Add was the file's only function that wrote; the gate still goes red for the same reason, the write of Add is not preceded by a call in its own function.
 GATE=suppression-validate-first
 TARGET=platform
 SETUP=
 STEP=check-suppression-writers on the real repository
 CMD=bash scripts/check-suppression-writers.sh
 MESSAGE=write to platform.suppressions (INSERT INTO) is not preceded by a call of norm.Validate( earlier in the same function
-MESSAGE=no norm.Validate( call outside a comment
+MESSAGE=2 norm.Validate( call(s) outside comments
 MESSAGE=0 write(s) outside internal/suppress/store.go, 1 not preceded by norm.Validate(

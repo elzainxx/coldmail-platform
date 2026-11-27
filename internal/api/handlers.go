@@ -67,7 +67,7 @@ func (a *API) get(w http.ResponseWriter, r *http.Request, p principal) {
 }
 
 func (a *API) list(w http.ResponseWriter, r *http.Request, p principal) {
-	q, ok := a.query(w, r, "cursor", "limit")
+	q, ok := a.query(w, r, "cursor", "limit", "status")
 	if !ok {
 		return
 	}
@@ -75,7 +75,12 @@ func (a *API) list(w http.ResponseWriter, r *http.Request, p principal) {
 	if !ok {
 		return
 	}
-	list, next, err := a.svc.List(r.Context(), p.UserID, jobs.ListOpts{After: q.Get("cursor"), Limit: int(limit)})
+	status := q.Get("status") // "" is every job; `active` is the jobs in flight (jobs.ListStatusActive); another word is refused here and, as the second wall, by the store
+	if !jobs.ValidListStatus(status) {
+		a.refuseRequest(w, r, http.StatusBadRequest, codeValidationFailed, "status must be active, or left out")
+		return
+	}
+	list, next, err := a.svc.List(r.Context(), p.UserID, jobs.ListOpts{After: q.Get("cursor"), Limit: int(limit), Status: status})
 	if err != nil {
 		a.fail(w, r, err)
 		return

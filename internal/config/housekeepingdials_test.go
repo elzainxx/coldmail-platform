@@ -120,7 +120,7 @@ func TestHousekeepingDials_TheDefaultsAndTheTopsAreTheEnginesAndTheStores(t *tes
 func TestHousekeepingDials_TheMeaningSaysWhatTheOwnerMustKnow(t *testing.T) {
 	facts := map[string][]string{
 		config.VarJobPauseMaxDays: {"database's clock", "cancelling", "paused before its start", "released", "slot", "pause_limit", "resumes at the very moment", "1 to 90", "jobengine.Config.PauseMax"},
-		config.VarContentRetentionDays: {"finished_at", "`[removed]`", "`rendered_text`", "`unsubscribe_url`", "kept for ever", "has not ended", "rows that belong to no job", "1 to 365",
+		config.VarContentRetentionDays: {"finished_at", "`[removed]`", "`rendered_text`", "`unsubscribe_url`", "kept for ever", "has not ended", "rows that belong to no job", "1 to 365", "campaign template", "merge data", "`content_cleared_at`", "the CSV download are unchanged",
 			"jobengine.Config.RetentionAfter"},
 	}
 	seen := 0

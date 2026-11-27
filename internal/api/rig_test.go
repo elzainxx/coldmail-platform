@@ -288,6 +288,10 @@ type rig struct {
 	t        *testing.T
 	store    *fakeStore
 	settings *fakeSettings // the user settings store (settings_test.go), mounted with the job routes
+	account  *fakeAccount  // the account service of GET /v1/me and /v1/balances (account_test.go), mounted with the job routes
+	supp     *fakeSuppress // the suppression list (suppressions_test.go), mounted with the job routes
+	m3       *fakeM3       // module 3's account client (m3accounts_test.go), mounted with the job routes
+	m3gate   *fakeM3Gate   // the entitlement gate of the account routes (m3accounts_test.go)
 	res      *fakeResolver
 	mint     *authtest.Minter
 	api      *API
@@ -303,9 +307,11 @@ type rigCfg struct {
 	wrap       func(http.Handler) http.Handler
 	mint       func(testing.TB) *authtest.Minter
 	noSettings bool // build the API with no settings store: its two routes are not mounted
+	noAccount  bool // build the API with no account service: GET /v1/me and GET /v1/balances are not mounted
 }
 
 func withoutSettings() rigOpt { return func(c *rigCfg) { c.noSettings = true } }
+func withoutAccount() rigOpt  { return func(c *rigCfg) { c.noAccount = true } }
 
 func withPageMax(n int) rigOpt                          { return func(c *rigCfg) { c.pageMax = n } }
 func withWrap(w func(http.Handler) http.Handler) rigOpt { return func(c *rigCfg) { c.wrap = w } }
@@ -317,7 +323,7 @@ func newRig(t *testing.T, opts ...rigOpt) *rig {
 	for _, o := range opts {
 		o(&cfg)
 	}
-	r := &rig{t: t, store: newFakeStore(), settings: newFakeSettings(), logs: &syncBuf{}}
+	r := &rig{t: t, store: newFakeStore(), settings: newFakeSettings(), account: newFakeAccount(), logs: &syncBuf{}}
 	r.res = &fakeResolver{
 		users: map[string]tenant.Tenant{
 			loginA: {UserID: userA, AuthUserID: loginA, Active: true},
@@ -331,9 +337,15 @@ func newRig(t *testing.T, opts ...rigOpt) *rig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deps := Deps{Service: r.store, Verifier: r.mint.Verifier(t), Resolver: r.res, Logger: log, ResultsPageMax: cfg.pageMax, Settings: r.settings}
+	r.supp, r.m3, r.m3gate = newFakeSuppress(), newFakeM3(), &fakeM3Gate{}
+	deps := Deps{Service: r.store, Verifier: r.mint.Verifier(t), Resolver: r.res, Logger: log, ResultsPageMax: cfg.pageMax, Settings: r.settings, Suppressions: r.supp, M3Accounts: r.m3, M3Gate: r.m3gate}
 	if cfg.noSettings {
 		deps.Settings = nil
+	}
+	if cfg.noAccount {
+		deps.Account = nil
+	} else {
+		deps.Account = r.account
 	}
 	r.api, err = New(deps)
 	if err != nil {

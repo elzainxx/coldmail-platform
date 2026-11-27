@@ -16,6 +16,10 @@
 //
 // SETTINGS (Phase 5 S6). GET and PUT /v1/settings (settings.go) are the user's own settings, through a second small interface (SettingsService); the user is the same principal and nothing else.
 //
+// ACCOUNT AND TEMPLATE CHECK (Phase 6 A3). GET /v1/me and GET /v1/balances (account.go) are what the app's shell shows about the signed-in user, through AccountService (the address from the database,
+// never a claim of the token; the credits of the two metered modules; module 3's entitlement and the state the platform last saw it in); POST /v1/templates/check (templatecheck.go) runs the job save's own
+// template code on three strings and touches no store. GET /v1/jobs takes `status=active` and a CSV create takes `email_column`.
+//
 // STREAMING. results.csv writes through internal/csvsafe a page of results at a time and flushes after each; once the first byte is out a failure can only abort the connection (a status line
 // cannot be taken back), which the client sees as a truncated body, never as a complete-looking file.
 //
@@ -33,6 +37,7 @@ import (
 	"github.com/coldmail-platform/platform/internal/auth"
 	"github.com/coldmail-platform/platform/internal/jobs"
 	"github.com/coldmail-platform/platform/internal/logging"
+	"github.com/coldmail-platform/platform/internal/suppress"
 	"github.com/coldmail-platform/platform/internal/tenant"
 	"github.com/coldmail-platform/platform/internal/usersettings"
 )
@@ -87,6 +92,15 @@ type Deps struct {
 	// Settings is the user settings store (Phase 5 S6: GET and PUT /v1/settings, settings.go). nil means the two settings routes are not served (a request for one is the 404 of any unknown path) and the
 	// job routes are unaffected: the production wiring (internal/app) always gives it.
 	Settings SettingsService
+	// Account is what GET /v1/me and GET /v1/balances read (Phase 6 A3, account.go). nil means those two routes are not served (the 404 of any unknown path); the production wiring (internal/app) always gives it.
+	Account AccountService
+	// Suppressions is the user's suppression list (Phase 6 A4: GET and POST /v1/suppressions, POST /v1/suppressions/remove and /import, suppressions.go). nil means those routes are not served (the 404 of any unknown path); the
+	// production wiring (internal/app) always gives it.
+	Suppressions SuppressionService
+	// M3Accounts builds module 3's account client for one user (Phase 6 A4: the /v1/m3/accounts routes, m3accounts.go). nil means module 3 is not configured in this process: the routes answer 503 module_unavailable.
+	M3Accounts M3Accounts
+	// M3Gate decides whether a user may add, test or bulk-add accounts (no_entitlement, suspended); nil means no gate.
+	M3Gate M3Gate
 }
 
 // API serves the job routes. It holds nothing that changes after New, so it is safe for concurrent use.
@@ -96,7 +110,11 @@ type API struct {
 	resolver Resolver
 	log      *slog.Logger
 	pageMax  int
-	settings SettingsService // nil: the settings routes are not mounted
+	settings SettingsService    // nil: the settings routes are not mounted
+	account  AccountService     // nil: GET /v1/me and GET /v1/balances are not mounted
+	supp     SuppressionService // nil: the suppression routes are not mounted
+	m3       M3Accounts         // nil: the module 3 account routes answer 503 module_unavailable
+	m3gate   M3Gate             // nil: no entitlement gate
 }
 
 // New builds the API. A missing dependency or a ResultsPageMax out of range is a wiring bug and an error at start-up, never a route that fails later.
@@ -124,7 +142,23 @@ func New(d Deps) (*API, error) {
 	if !isNil(d.Settings) {
 		settings = d.Settings
 	}
-	return &API{svc: d.Service, verifier: d.Verifier, resolver: d.Resolver, log: logging.Contextual(log), pageMax: pageMax, settings: settings}, nil
+	var account AccountService // optional, like the settings: nil means GET /v1/me and GET /v1/balances are not mounted
+	if !isNil(d.Account) {
+		account = d.Account
+	}
+	var supp SuppressionService // optional, like the settings
+	if !isNil(d.Suppressions) {
+		supp = d.Suppressions
+	}
+	var m3a M3Accounts // optional: nil is module 3 not configured
+	if !isNil(d.M3Accounts) {
+		m3a = d.M3Accounts
+	}
+	var m3g M3Gate
+	if !isNil(d.M3Gate) {
+		m3g = d.M3Gate
+	}
+	return &API{svc: d.Service, verifier: d.Verifier, resolver: d.Resolver, log: logging.Contextual(log), pageMax: pageMax, settings: settings, account: account, supp: supp, m3: m3a, m3gate: m3g}, nil
 }
 
 // isNil is true for a nil interface and for an interface holding a nil pointer (a wiring bug that would otherwise panic at the first request).
@@ -140,6 +174,8 @@ func isNil(v any) bool {
 	case *tenant.Resolver:
 		return p == nil
 	case *usersettings.Store:
+		return p == nil
+	case *suppress.Store:
 		return p == nil
 	}
 	return false
@@ -173,6 +209,18 @@ var routes = []route{
 	{http.MethodGet, "/v1/jobs/{id}/results.csv", (*API).resultsCSV},
 	{http.MethodGet, settingsPath, (*API).getSettings},
 	{http.MethodPut, settingsPath, (*API).putSettings},
+	{http.MethodGet, mePath, (*API).me},
+	{http.MethodGet, balancesPath, (*API).balances},
+	{http.MethodPost, templatesCheckPath, (*API).templatesCheck},
+	{http.MethodGet, suppressionsPath, (*API).listSuppressions},
+	{http.MethodPost, suppressionsPath, (*API).addSuppression},
+	{http.MethodPost, suppressionsPath + "/remove", (*API).removeSuppression},
+	{http.MethodPost, suppressionsPath + "/import", (*API).importSuppressions},
+	{http.MethodGet, m3AccountsPath, (*API).listM3Accounts},
+	{http.MethodPost, m3AccountsPath, (*API).addM3Account},
+	{http.MethodPost, m3AccountsPath + "/bulk", (*API).bulkM3Accounts},
+	{http.MethodPost, m3AccountsPath + "/{id}/test", (*API).testM3Account},
+	{http.MethodPost, m3AccountsPath + "/{id}/remove", (*API).removeM3Account},
 }
 
 // Routes lists the routes as "METHOD /path", in the order they are registered.
@@ -189,6 +237,12 @@ func (a *API) Mount(mux *http.ServeMux) {
 	for _, r := range routes {
 		if r.pattern == settingsPath && a.settings == nil {
 			continue // no settings store was given: these two routes are not here
+		}
+		if (r.pattern == mePath || r.pattern == balancesPath) && a.account == nil {
+			continue // no account service was given: these two routes are not here
+		}
+		if isSuppressionRoute(r.pattern) && a.supp == nil {
+			continue // no suppression list was given: these routes are not here
 		}
 		h := r.handle
 		mux.Handle(r.method+" "+r.pattern, a.authenticated(func(w http.ResponseWriter, req *http.Request, p principal) { h(a, w, req, p) }))

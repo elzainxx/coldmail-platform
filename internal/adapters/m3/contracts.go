@@ -115,3 +115,11 @@ func PendingContracts() []modclient.RouteContract { return sendapi.PendingContra
 
 // RecordedPauseFixtures is the value of the switch (sendapi.RecordedPauseFixtures): the recordings are installed and their contracts listed.
 func RecordedPauseFixtures() bool { return sendapi.RecordedPauseFixtures() }
+
+// UncoveredRoutes are the routes the adapter calls that Contracts() does not cover, each with why: the drift gate prints them so that "all contracts match" is never read as "every route is pinned". A test
+// keeps this list and Contracts() exactly complementary over the routes the account methods call.
+func UncoveredRoutes() map[string]string {
+	return map[string]string{
+		RouteAccountsDelete: "added in Phase 6 A4 after the recordings: no recorded answer yet (its tests answer it with a 204 and the 404 envelope that module 3's api-contract.md describes, not with a recording). A record run must record accounts.delete.error.not_found.json (the 404 envelope, as accounts.get.error.not_found.json); the 204 of a success has NO body, which a JSON fixture cannot hold, so the success needs an empty-body case in contractcheck before the route can be listed",
+	}
+}

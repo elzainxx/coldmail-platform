@@ -121,6 +121,10 @@ var chainRelations = map[string][]string{
 	"0019": {},
 	// platform_0020 adds the per-user settings and their append-only history (two tables), the unit flag platform.unit_costs.needs_vendor, two CHECKs on the frozen key of platform.jobs and the amended text of platform.ledger_check_reserve
 	"0020": {"user_settings", "user_settings_history"},
+	// platform_0021 adds no relation: two amended guard functions (platform.job_rows_frozen, platform.jobs_guard) and the retention index recreated without its campaign term; no grant, no function, no CHECK
+	"0021": {},
+	// platform_0022 adds the history of the removals of a user's suppressions (one table, written by a trigger of platform.suppressions), the trigger and its function, the index of the list's paging and one grant (DELETE on platform.suppressions to platform_app)
+	"0022": {"suppression_removals"},
 }
 
 // relationsThrough is the sorted union of what the listed versions add.
@@ -161,6 +165,14 @@ func downStepBefore(t *testing.T, c *pgx.Conn, v string) {
 	t.Helper()
 	when := "before down " + v
 	switch v {
+	case "0022":
+		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015", "0016", "0017", "0018", "0019", "0020", "0021", "0022"), when)
+		suppressionRemovalObjects(t, c, true, when)
+		retentionTemplateObjects(t, c, true, when) // the migration below is whole
+	case "0021":
+		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015", "0016", "0017", "0018", "0019", "0020", "0021"), when)
+		retentionTemplateObjects(t, c, true, when)
+		userSettingsObjects(t, c, true, when) // the migration below is whole
 	case "0020":
 		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015", "0016", "0017", "0018", "0019", "0020"), when)
 		userSettingsObjects(t, c, true, when)
@@ -255,6 +267,18 @@ func downStepAfter(t *testing.T, c *pgx.Conn, v string) {
 	t.Helper()
 	when := "after down " + v
 	switch v {
+	case "0022":
+		// the history table, its trigger and function, the paging index and the grant are gone and the table's comment is platform_0009's again; everything of 0021 and below is untouched
+		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015", "0016", "0017", "0018", "0019", "0020", "0021"), when)
+		suppressionRemovalObjects(t, c, false, when)
+		retentionTemplateObjects(t, c, true, when)
+		userSettingsObjects(t, c, true, when)
+	case "0021":
+		// the two guards are the texts of platform_0014 and platform_0011 again (nothing about a row or the frozen document of an ended job changes) and the retention index is platform_0018's; everything of 0020 and below is untouched
+		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015", "0016", "0017", "0018", "0019", "0020"), when)
+		retentionTemplateObjects(t, c, false, when)
+		userSettingsObjects(t, c, true, when)
+		pauseLimitObjects(t, c, true, when)
 	case "0020":
 		// the two tables, the history trigger and its function, the four refusing triggers, the unit flag and the two CHECKs on the frozen key are gone and the reserve check is platform_0013's text again; everything of 0019 and below is untouched
 		requireRelations(t, c, relationsThrough("0000", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015", "0016", "0017", "0018", "0019"), when)
@@ -1171,7 +1195,7 @@ func TestRunnerLifecycle(t *testing.T) {
 
 	// The executable expectation of the migration chain. scripts/check-migrations.sh reads this literal and fails when the
 	// newest migration is not named in it, so a migration cannot be added without extending this test.
-	wantChain := []string{"0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015", "0016", "0017", "0018", "0019", "0020"}
+	wantChain := []string{"0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015", "0016", "0017", "0018", "0019", "0020", "0021", "0022"}
 
 	dir := repoMigrationsDir(t)
 	if onDisk := chainOnDisk(t, dir); !sameStrings(onDisk, wantChain) {

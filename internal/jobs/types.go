@@ -60,6 +60,9 @@ type Job struct {
 	StartedAt         *time.Time
 	FinishedAt        *time.Time
 	CancelRequestedAt *time.Time
+	// ContentClearedAt is when the content retention finished clearing what the platform kept of the job (the template, the merge data of the rows and, for a send job, the rendered messages): nil until then, and
+	// for ever nil for a job that has not ended (platform.jobs.content_cleared_at, platform_0018 and platform_0021).
+	ContentClearedAt *time.Time
 
 	Settings Settings
 	Content  *Content // the campaign a send job carries (modules 2 and 3); nil for a verify job
@@ -215,10 +218,12 @@ func PreviewChoice(opts ...PreviewOption) (choice string, given bool) {
 	return o.choice, o.choiceGiven
 }
 
-// ListOpts pages the user's jobs, newest first. After is the cursor a previous page returned; Limit is 1..100 (0 means 25).
+// ListOpts pages the user's jobs, newest first. After is the cursor a previous page returned; Limit is 1..100 (0 means 25). Status is "" (every job) or ListStatusActive (only the jobs that are in
+// flight, list_status.go); another value is a bad request.
 type ListOpts struct {
-	After string
-	Limit int
+	After  string
+	Limit  int
+	Status string
 }
 
 // Event is a row of platform.job_events.

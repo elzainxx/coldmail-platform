@@ -40,6 +40,15 @@ type Deps struct {
 	// response, the access log (without the query string) and the panic recovery. nil mounts nothing and the catch-all answers every other path with the 404 envelope, as before. Such a
 	// package writes its errors with WriteError so that they have the envelope of this one.
 	Mount func(mux *http.ServeMux)
+	// Web, when set, is the built web app (internal/webapp, Phase 6 A2): the catch-all offers it every request for a path that is NOT the platform's own (IsPlatformPath) before it answers 404, and
+	// it answers (the app serves GET and HEAD only) or says it did not. nil serves no app and every request is answered exactly as it was before this field existed.
+	Web WebHandler
+}
+
+// WebHandler is the web app as the catch-all sees it. Serve answers the request and returns true, or writes no body and returns false (it may have set response headers), and the catch-all then gives
+// the answer it always gave. *webapp.App satisfies it.
+type WebHandler interface {
+	Serve(w http.ResponseWriter, r *http.Request) bool
 }
 
 type service struct {
@@ -48,6 +57,27 @@ type service struct {
 	draining     func() bool
 	readyTimeout time.Duration
 	now          func() time.Time
+	web          WebHandler
+}
+
+// IsPlatformPath says whether a request path is the platform's own and never the web app's, whatever is mounted on it: `/healthz` and `/readyz`, everything under `/u/` (the public unsubscribe routes)
+// and everything under `/v1/` or any other API version (`/v2/`, `/v10/` ...). The catch-all never offers such a path to Deps.Web, so an unknown `/v1/...` stays the JSON 404 and a wrong verb on a
+// real route stays the 405, byte for byte, with the web app on or off.
+func IsPlatformPath(p string) bool {
+	first, _, _ := strings.Cut(strings.TrimPrefix(p, "/"), "/")
+	switch first {
+	case "u", "healthz", "readyz":
+		return true
+	}
+	if len(first) >= 2 && first[0] == 'v' {
+		for i := 1; i < len(first); i++ {
+			if first[i] < '0' || first[i] > '9' {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 // NewHandler returns the platform's handler.
@@ -63,7 +93,7 @@ func newHandler(d Deps, extra func(*http.ServeMux)) http.Handler {
 	if d.ReadyTimeout <= 0 {
 		panic("httpapi: Deps.ReadyTimeout must be positive")
 	}
-	s := &service{pinger: d.Pinger, draining: d.Draining, readyTimeout: d.ReadyTimeout, now: d.Now}
+	s := &service{pinger: d.Pinger, draining: d.Draining, readyTimeout: d.ReadyTimeout, now: d.Now, web: d.Web}
 	if d.Logger == nil {
 		s.log = slog.New(slog.DiscardHandler)
 	} else {
@@ -218,6 +248,10 @@ var probeMethods = []string{
 // actually registered.
 func (s *service) noRoute(mux *http.ServeMux) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// the web app, when there is one, gets only what is not the platform's own; what it does not serve falls through to the answer below, unchanged
+		if s.web != nil && !IsPlatformPath(r.URL.Path) && s.web.Serve(w, r) {
+			return
+		}
 		rid := logging.RequestID(r.Context())
 		var allowed []string
 		for _, m := range probeMethods {

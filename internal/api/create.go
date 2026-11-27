@@ -84,8 +84,8 @@ func (a *API) create(w http.ResponseWriter, r *http.Request, p principal) {
 	a.writeJSON(w, r, http.StatusCreated, jobBody{Job: viewJob(j, true)})
 }
 
-// csvQueryParams are the parameters of a CSV create. Content is present when any of its four is.
-var csvQueryParams = []string{"module", "source_job_id", "unknown_choice", "subject", "html", "text", "reply_to"}
+// csvQueryParams are the parameters of a CSV create. Content is present when any of its four is. email_column (Phase 6 A3) names the header of the column that is the address; absent or empty, it is `email`.
+var csvQueryParams = []string{"module", "source_job_id", "unknown_choice", "subject", "html", "text", "reply_to", "email_column"}
 
 // createFromCSV reads a CSV create: the campaign and the options from the query, the list from the body. It answers the failure itself.
 func (a *API) createFromCSV(w http.ResponseWriter, r *http.Request) (jobs.CreateReq, bool) {
@@ -104,8 +104,13 @@ func (a *API) createFromCSV(w http.ResponseWriter, r *http.Request) (jobs.Create
 			break
 		}
 	}
+	emailColumn := q.Get("email_column")
+	if emailColumn != "" && strings.TrimSpace(emailColumn) == "" { // present and blank: not the same as absent, which is `email`
+		a.refuseRequest(w, r, http.StatusBadRequest, codeValidationFailed, "email_column must name a column of the header")
+		return jobs.CreateReq{}, false
+	}
 	defer extendReadDeadline(w, createBodyWindow)()
-	rows, err := readCSVRows(http.MaxBytesReader(w, r.Body, maxCreateBody), a.svc.MaxRows(), req.SourceJobID != "")
+	rows, err := readCSVRows(http.MaxBytesReader(w, r.Body, maxCreateBody), a.svc.MaxRows(), req.SourceJobID != "", emailColumn)
 	if err != nil {
 		a.csvFailed(w, r, err)
 		return jobs.CreateReq{}, false
@@ -137,10 +142,21 @@ func (e *csvError) Error() string { return "csv: " + e.reason }
 
 func csvRefused(reason string) error { return &csvError{reason: reason} }
 
-// readCSVRows reads the list: the first record is the header and must name an `email` column (any letter case, surrounding spaces ignored); every other column becomes the merge field of
-// its name. A record with another number of columns than the header is refused with its line. At most maxRows rows are read: the next one is a *jobs.TooManyRowsError and the rest of the body is
-// left unread. An empty body is an empty list only for a chained send (empty is true), which takes its rows from the source job.
-func readCSVRows(body io.Reader, maxRows int, empty bool) ([]jobs.RowIn, error) {
+// readCSVRows reads the list: the first record is the header and must name the address column exactly once (any letter case, surrounding spaces ignored): `email`, or the header emailColumn names
+// when the create gave one (the query parameter email_column, Phase 6 A3); every other column becomes the merge field of its name. A record with another number of columns than the header is refused
+// with its line. At most maxRows rows are read: the next one is a *jobs.TooManyRowsError and the rest of the body is left unread. An empty body is an empty list only for a chained send (empty is
+// true), which takes its rows from the source job.
+//
+// WITH AN EXPLICIT ADDRESS COLUMN (one that is not `email`) THE TWO RESERVED NAMES ARE REFUSED AS MERGE COLUMNS. A column named `email` or `unsubscribe_url` (any letter case) that is not the address
+// would become a merge field of that name, and the renderer always supplies those two itself (the row's address and its unsubscribe link): the column's values would be dead data, silently shadowed in
+// every template that names them, and `{{email}}` would show the address column's value where the author meant the other column. The create is refused instead, in words that name no value, and the
+// author renames the column. With `email` as the address (the default, or email_column=email) nothing changes: a column named `unsubscribe_url` is accepted and shadowed as it always was.
+func readCSVRows(body io.Reader, maxRows int, empty bool, emailColumn string) ([]jobs.RowIn, error) {
+	want := strings.TrimSpace(emailColumn)
+	explicit := want != "" && !strings.EqualFold(want, "email")
+	if want == "" {
+		want = "email"
+	}
 	br := bufio.NewReader(body)
 	if head, err := br.Peek(3); err == nil && bytes.Equal(head, []byte{0xEF, 0xBB, 0xBF}) {
 		_, _ = br.Discard(3) // a byte order mark, which a spreadsheet writes before the header
@@ -163,12 +179,19 @@ func readCSVRows(body io.Reader, maxRows int, empty bool) ([]jobs.RowIn, error) 
 	for i, h := range header {
 		name := strings.TrimSpace(h)
 		switch {
-		case strings.EqualFold(name, "email"):
+		case strings.EqualFold(name, want):
 			if emailCol >= 0 {
+				if explicit {
+					return nil, csvRefused("the header names the email_column column twice")
+				}
 				return nil, csvRefused("the header names the email column twice")
 			}
 			emailCol = i
 			continue
+		case explicit && strings.EqualFold(name, "email"):
+			return nil, csvRefused("the header has a column named email that is not the address column: email is reserved for the address, so rename that column")
+		case explicit && strings.EqualFold(name, "unsubscribe_url"):
+			return nil, csvRefused("the header has a column named unsubscribe_url: that name is reserved for the unsubscribe link, so rename that column")
 		case name == "":
 			return nil, csvRefused("column " + strconv.Itoa(i+1) + " of the header has no name")
 		case seen[name]:
@@ -178,6 +201,9 @@ func readCSVRows(body io.Reader, maxRows int, empty bool) ([]jobs.RowIn, error) 
 		names[i] = name
 	}
 	if emailCol < 0 {
+		if explicit {
+			return nil, csvRefused("the header has no column named by email_column")
+		}
 		return nil, csvRefused("the header has no email column")
 	}
 	var rows []jobs.RowIn

@@ -126,7 +126,11 @@ func normaliseSettings(s Settings, chained bool) (Settings, error) {
 
 // validateContent checks a send job's campaign: a subject (one line, at most 998 bytes), a body (html or text, each at most 1 MiB, at least one of them not blank) and an optional reply-to
 // that is one address. It returns the content as it will be stored (the subject and the reply-to trimmed). The reasons never quote the content.
-func validateContent(c *Content) (*Content, error) {
+func validateContent(c *Content) (*Content, error) { return validateContentAs(c, true) }
+
+// validateContentAs is validateContent with one switch: complete false is a campaign that is still being written (the template check of POST /v1/templates/check, Phase 6 A3), where a blank subject and a
+// campaign with no body yet are allowed and every other rule (the text, the sizes, the one-line subject, the reply-to) is the save's own, from this one function. A save is always complete.
+func validateContentAs(c *Content, complete bool) (*Content, error) {
 	if c == nil {
 		return nil, badRequest("content is required for a send job")
 	}
@@ -138,7 +142,7 @@ func validateContent(c *Content) (*Content, error) {
 			return nil, badRequest("content.%s must be valid UTF-8 text without NUL", f.name)
 		}
 	}
-	if out.Subject == "" {
+	if complete && out.Subject == "" {
 		return nil, badRequest("content.subject must not be blank")
 	}
 	if len(out.Subject) > MaxSubjectBytes {
@@ -153,7 +157,7 @@ func validateContent(c *Content) (*Content, error) {
 	if len(out.Text) > MaxBodyBytes {
 		return nil, badRequest("content.text is %d bytes, the limit is %d", len(out.Text), MaxBodyBytes)
 	}
-	if strings.TrimSpace(out.HTML) == "" && strings.TrimSpace(out.Text) == "" {
+	if complete && strings.TrimSpace(out.HTML) == "" && strings.TrimSpace(out.Text) == "" {
 		return nil, badRequest("content needs a body: html or text must not be blank")
 	}
 	if out.ReplyTo != "" {

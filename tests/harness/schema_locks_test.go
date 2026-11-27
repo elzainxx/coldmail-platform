@@ -648,6 +648,9 @@ func phase2CatalogCheck(ctx context.Context, q querier) ([]string, error) {
 		{"platform.user_settings_history", "user_settings_history_setting_vocabulary", []string{"'vendor_fallback_opt_out'"}},
 		{"platform.user_settings_history", "user_settings_history_a_change", []string{"old_value <> new_value"}},
 		{"platform.user_settings_history", "user_settings_history_the_user_is_the_actor", []string{"actor_user_id = user_id"}},
+		// platform_0022: the history of a removed suppression never names the system user and its source is one of the list's three words
+		{"platform.suppression_removals", "suppression_removals_not_the_system_user", []string{"user_id <>", "00000000-0000-0000-0000-000000000000"}},
+		{"platform.suppression_removals", "suppression_removals_source_vocabulary", []string{"'unsubscribe'", "'manual'", "'import'"}},
 	} {
 		rows, err := phase2Rows(ctx, q, `SELECT c.contype::text, c.convalidated::text, pg_get_constraintdef(c.oid) FROM pg_constraint c WHERE c.conrelid = to_regclass($1::text) AND c.conname::text = $2`, c.rel, c.name)
 		if err != nil {
@@ -745,6 +748,8 @@ func phase2CatalogCheck(ctx context.Context, q querier) ([]string, error) {
 		{"platform.unit_costs", "unit_costs_record_reachability", 1 + 16, true},
 		// platform_0020: AFTER a setting row is inserted or updated the history is written (no WHEN: the body compares the old and the new value itself, the default being the old value of a first row)
 		{"platform.user_settings", "user_settings_record_history", 1 + 4 + 16, false},
+		// platform_0022: AFTER a row of the suppression list is removed (FOR EACH ROW, whoever removes it) the history is written; the body copies the removed row, so no WHEN
+		{"platform.suppressions", "suppressions_record_removal", 1 + 8, false},
 	} {
 		rows, err := phase2Rows(ctx, q, `SELECT t.tgtype::int::text, t.tgenabled::text, (t.tgqual IS NOT NULL)::text, p.proname::text FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid
 			WHERE NOT t.tgisinternal AND t.tgrelid = to_regclass($1::text) AND t.tgname::text = $2`, tr.rel, tr.name)
@@ -807,6 +812,8 @@ func phase2CatalogCheck(ctx context.Context, q querier) ([]string, error) {
 		{"set_unit_reachable", "text, boolean, text", "boolean", true},
 		// platform_0020: the settings' history writer is a SECURITY DEFINER trigger function (it writes the history table that platform_app cannot), pinned to pg_catalog, pg_temp
 		{"user_settings_record_history", "", "trigger", true},
+		// platform_0022: the suppression list's removal writer is a SECURITY DEFINER trigger function too (it writes the history table that platform_app cannot), pinned to pg_catalog, pg_temp
+		{"suppressions_record_removal", "", "trigger", true},
 	} {
 		rows, err := phase2Rows(ctx, q, `SELECT p.prosecdef::text, (EXISTS (SELECT 1 FROM unnest(COALESCE(p.proconfig, ARRAY[]::text[])) cfg WHERE cfg = 'search_path=pg_catalog, pg_temp'))::text,
 				pg_get_userbyid(p.proowner), p.prorettype::regtype::text
@@ -880,6 +887,8 @@ func phase2CatalogCheck(ctx context.Context, q querier) ([]string, error) {
 		{"set_unit_reachable", []string{"22023", "P0002", "FOR UPDATE", "platform.unit_costs", "reachable_source", "reachable_changed_at"}},
 		// platform_0020: the history writer names the table it writes and compares the old and the new value; the reserve check now also names the key of the job's own choice, the unit flag and its own refusal
 		{"user_settings_record_history", []string{"platform.user_settings_history", "vendor_fallback_opt_out", "IS DISTINCT FROM", "TG_OP"}},
+		// platform_0022: the removal writer names the history table and copies the removed row's user, address, source and creation time (a no-op body would keep the trigger and every catalog fact above)
+		{"suppressions_record_removal", []string{"platform.suppression_removals", "OLD.user_id", "OLD.email", "OLD.source", "OLD.created_at"}},
 		{"jobs_guard", []string{"never change", "frozen", "IS DISTINCT FROM", "'draft'", "'previewed'", "preview_fingerprint", "confirm_key", "frozen_settings"}},
 	} {
 		rows, err := phase2Rows(ctx, q, `SELECT p.prosrc FROM pg_proc p WHERE p.pronamespace = 'platform'::regnamespace AND p.proname::text = $1`, b.fn)

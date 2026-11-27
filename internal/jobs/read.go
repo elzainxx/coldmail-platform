@@ -13,7 +13,7 @@ import (
 // jobColumns is the select list of a job, in the order scanJob reads it.
 const jobColumns = `j.id::text, j.user_id::text, j.module_id, j.status, COALESCE(j.source_job_id::text, ''), j.scheduled_start, j.start_deadline,
 	j.preview, COALESCE(j.preview_fingerprint, ''), COALESCE(j.confirm_key, ''), COALESCE(j.paused_from, ''), j.frozen_settings,
-	j.previewed_at, j.confirmed_at, j.started_at, j.finished_at, j.cancel_requested_at, j.created_at, j.updated_at`
+	j.previewed_at, j.confirmed_at, j.started_at, j.finished_at, j.cancel_requested_at, j.created_at, j.updated_at, j.content_cleared_at`
 
 // frozenSettings is the shape of platform.jobs.frozen_settings: the settings and, for a send job, the campaign.
 type frozenSettings struct {
@@ -38,12 +38,13 @@ func scanJobWith(row pgx.Row, extra ...any) (Job, error) {
 	var preview, frozen []byte
 	dest := []any{&j.ID, &j.UserID, &j.Module, &j.Status, &j.SourceJobID, &j.ScheduledStart, &j.StartDeadline,
 		&preview, &j.PreviewFingerprint, &j.ConfirmKey, &j.PausedFrom, &frozen,
-		&j.PreviewedAt, &j.ConfirmedAt, &j.StartedAt, &j.FinishedAt, &j.CancelRequestedAt, &j.CreatedAt, &j.UpdatedAt}
+		&j.PreviewedAt, &j.ConfirmedAt, &j.StartedAt, &j.FinishedAt, &j.CancelRequestedAt, &j.CreatedAt, &j.UpdatedAt, &j.ContentClearedAt}
 	if err := row.Scan(append(dest, extra...)...); err != nil {
 		return Job{}, err
 	}
 	j.ScheduledStart, j.StartDeadline, j.PreviewedAt, j.ConfirmedAt = utc(j.ScheduledStart), utc(j.StartDeadline), utc(j.PreviewedAt), utc(j.ConfirmedAt)
 	j.StartedAt, j.FinishedAt, j.CancelRequestedAt = utc(j.StartedAt), utc(j.FinishedAt), utc(j.CancelRequestedAt)
+	j.ContentClearedAt = utc(j.ContentClearedAt)
 	j.CreatedAt, j.UpdatedAt = j.CreatedAt.UTC(), j.UpdatedAt.UTC()
 	if len(preview) > 0 {
 		var p Preview
@@ -98,16 +99,22 @@ func (s *Store) List(ctx context.Context, userID string, opts ListOpts) ([]Job, 
 	if err != nil {
 		return nil, "", opErr("list", err)
 	}
+	statuses, err := listStatusFilter(opts.Status) // nil: no filter (a NULL parameter keeps every status)
+	if err != nil {
+		return nil, "", opErr("list", err)
+	}
 	var rows pgx.Rows
 	if opts.After == "" {
-		rows, err = s.pool.Query(ctx, `SELECT `+jobColumns+` FROM platform.jobs j WHERE j.user_id = $1::uuid ORDER BY j.created_at DESC, j.id DESC LIMIT $2`, userID, limit+1)
+		rows, err = s.pool.Query(ctx, `SELECT `+jobColumns+` FROM platform.jobs j WHERE j.user_id = $1::uuid AND ($3::text[] IS NULL OR j.status = ANY($3::text[]))
+			ORDER BY j.created_at DESC, j.id DESC LIMIT $2`, userID, limit+1, statuses)
 	} else {
 		at, id, derr := decodeCursor(opts.After)
 		if derr != nil {
 			return nil, "", opErr("list", derr)
 		}
 		rows, err = s.pool.Query(ctx, `SELECT `+jobColumns+` FROM platform.jobs j WHERE j.user_id = $1::uuid AND (j.created_at, j.id) < ($2::timestamptz, $3::uuid)
-			ORDER BY j.created_at DESC, j.id DESC LIMIT $4`, userID, at, id, limit+1)
+			AND ($5::text[] IS NULL OR j.status = ANY($5::text[]))
+			ORDER BY j.created_at DESC, j.id DESC LIMIT $4`, userID, at, id, limit+1, statuses)
 	}
 	if err != nil {
 		return nil, "", opErr("list", s.fail(err))

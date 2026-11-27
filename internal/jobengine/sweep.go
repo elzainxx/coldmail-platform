@@ -15,8 +15,8 @@ import (
 // stop or keep from running in two instances. They are STEPS and not a loop of their own because that is the cheapest way to hold all of that, and because a test that ticks the engine then runs them with the rest.
 //   - THE PAUSE LIMIT (jobs.Store.CancelOverLimitPaused): a job paused for longer than Config.PauseMax by the DATABASE's clock is cancelled; one that its module holds goes through cancelling, which this engine's
 //     own cancelling step then settles on the next tick (the status change wakes the job).
-//   - CONTENT RETENTION (jobs.Store.ClearRetainedContent): the rendered content of an ended send job is cleared Config.RetentionAfter after it ended, a bounded number of pages per pass, so a job of 100,000
-//     rows is cleared over a few passes and no pass holds the others up.
+//   - CONTENT RETENTION (jobs.Store.ClearRetainedContent): what the platform kept of an ended job (the template, the merge data of its rows and, for a send job, the rendered messages) is cleared
+//     Config.RetentionAfter after it ended, a bounded number of pages per pass, so a job of 100,000 rows is cleared over a few passes and no pass holds the others up.
 //
 // THE CADENCE is Config.SweepEvery by the engine's own clock (a throttle, like SettleEvery: every deadline and every comparison is the database's). A step is bounded by Config.StepTimeout, a failure is
 // counted and logged and never ends the tick, and a panic is recovered. Both are idempotent and safe in two instances at once, so a deposed leader that finishes a sweep while its successor starts one is harmless.
@@ -76,8 +76,8 @@ type sweepState struct {
 	pauseAt     time.Time
 	retentionAt time.Time
 
-	pauseSweeps, pauseCancelled, pauseCancelling, pauseFailed      atomic.Int64
-	retentionSweeps, contentCleared, contentItems, retentionFailed atomic.Int64
+	pauseSweeps, pauseCancelled, pauseCancelling, pauseFailed                   atomic.Int64
+	retentionSweeps, contentCleared, contentItems, contentRows, retentionFailed atomic.Int64
 }
 
 // SweepStats counts what the two steps have done since the engine was built (for the logs and the tests).
@@ -88,7 +88,8 @@ type SweepStats struct {
 	PauseFailed     int64 // paused jobs the lifecycle or the database refused
 	RetentionSweeps int64 // passes of the retention step that ran
 	ContentCleared  int64 // ended jobs whose content was cleared and marked
-	ContentItems    int64 // rows of public.job_items cleared
+	ContentItems    int64 // rows of public.job_items cleared (the rendered messages of send jobs)
+	ContentRows     int64 // rows of platform.job_rows whose merge data was cleared
 	RetentionFailed int64 // jobs the database stopped
 }
 
@@ -96,7 +97,7 @@ type SweepStats struct {
 func (e *Engine) SweepStats() SweepStats {
 	s := &e.sweeps
 	return SweepStats{PauseSweeps: s.pauseSweeps.Load(), PauseCancelled: s.pauseCancelled.Load(), PauseCancelling: s.pauseCancelling.Load(), PauseFailed: s.pauseFailed.Load(),
-		RetentionSweeps: s.retentionSweeps.Load(), ContentCleared: s.contentCleared.Load(), ContentItems: s.contentItems.Load(), RetentionFailed: s.retentionFailed.Load()}
+		RetentionSweeps: s.retentionSweeps.Load(), ContentCleared: s.contentCleared.Load(), ContentItems: s.contentItems.Load(), ContentRows: s.contentRows.Load(), RetentionFailed: s.retentionFailed.Load()}
 }
 
 // sweep runs the two steps that are due. It is called by Tick, by the leader only.
@@ -157,9 +158,10 @@ func (e *Engine) retentionPass(ctx context.Context) error {
 	e.sweeps.retentionSweeps.Add(1)
 	e.sweeps.contentCleared.Add(int64(res.Cleared))
 	e.sweeps.contentItems.Add(res.Items)
+	e.sweeps.contentRows.Add(res.Rows)
 	e.sweeps.retentionFailed.Add(int64(res.Failed))
-	if res.Cleared > 0 || res.Items > 0 {
-		e.log.InfoContext(ctx, "the rendered content of ended jobs was cleared", "jobs", res.Cleared, "rows", res.Items, "unfinished", res.Unfinished, "after", e.cfg.RetentionAfter.String())
+	if res.Cleared > 0 || res.Items > 0 || res.Rows > 0 {
+		e.log.InfoContext(ctx, "the template, the merge data and the rendered messages of ended jobs were cleared", "jobs", res.Cleared, "messages", res.Items, "rows", res.Rows, "unfinished", res.Unfinished, "after", e.cfg.RetentionAfter.String())
 	}
 	return err
 }

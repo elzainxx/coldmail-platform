@@ -26,24 +26,30 @@ func migration0018(t *testing.T, name string) string {
 	return strings.ReplaceAll(string(b), "\r\n", "\n")
 }
 
-// guardBody is the body of the CREATE OR REPLACE FUNCTION platform.jobs_transition_guard() a migration carries, between its AS $fn$ and its closing $fn$.
-func guardBody(t *testing.T, sql string) string {
+// functionBody is the body of the CREATE OR REPLACE FUNCTION platform.<name>() a migration carries, between its AS $fn$ and its closing $fn$.
+func functionBody(t *testing.T, sql, name string) string {
 	t.Helper()
-	i := strings.Index(sql, "CREATE OR REPLACE FUNCTION platform.jobs_transition_guard()")
+	i := strings.Index(sql, "CREATE OR REPLACE FUNCTION platform."+name+"()")
 	if i < 0 {
-		t.Fatal("the migration does not replace jobs_transition_guard")
+		t.Fatalf("the migration does not replace %s", name)
 	}
 	rest := sql[i:]
 	open := strings.Index(rest, "AS $fn$")
 	if open < 0 {
-		t.Fatal("the guard has no $fn$ body")
+		t.Fatalf("%s has no $fn$ body", name)
 	}
 	rest = rest[open+len("AS $fn$"):]
 	end := strings.Index(rest, "$fn$;")
 	if end < 0 {
-		t.Fatal("the guard's body does not end")
+		t.Fatalf("the body of %s does not end", name)
 	}
 	return rest[:end]
+}
+
+// guardBody is the body of the CREATE OR REPLACE FUNCTION platform.jobs_transition_guard() a migration carries.
+func guardBody(t *testing.T, sql string) string {
+	t.Helper()
+	return functionBody(t, sql, "jobs_transition_guard")
 }
 
 func trimmedLines(s string) map[string]bool {
@@ -120,17 +126,10 @@ func TestPlatform0018_NamesTheColumnsConstraintsAndIndexesTheGoCodeRelaysOn(t *t
 	if flat := strings.Join(strings.Fields(up), " "); !strings.Contains(flat, "NEW.paused_at := CASE WHEN NEW.status = 'paused' THEN now() ELSE NULL END;") {
 		t.Error("the guard of platform_0018 does not set paused_at to the database's now() at the move into paused and NULL out of it")
 	}
-	// the index of the purge says the same words as every statement of the purge (retentionDue): the planner can only use a partial index for a query that repeats its predicate
-	for _, w := range []struct{ index, purge string }{
-		{"content_cleared_at IS NULL", "j.content_cleared_at IS NULL"},
-		{"status IN ('succeeded', 'failed', 'cancelled', 'expired')", "j.status IN ('succeeded', 'failed', 'cancelled', 'expired')"},
-		{"jsonb_exists(frozen_settings, 'content')", "jsonb_exists(j.frozen_settings, 'content')"},
-	} {
-		if !strings.Contains(up, w.index) {
-			t.Errorf("the index jobs_content_retention_idx does not say %q", w.index)
-		}
-		if !strings.Contains(retentionDue, w.purge) {
-			t.Errorf("the purge's conditions (retentionDue) do not say %q: the partial index would not serve it", w.purge)
+	// the index of platform_0018 covers the jobs that carry a campaign; platform_0021 replaced it (see TestPlatform0021_*), because the purge now covers every ended job
+	for _, w := range []string{"content_cleared_at IS NULL", "status IN ('succeeded', 'failed', 'cancelled', 'expired')", "jsonb_exists(frozen_settings, 'content')"} {
+		if !strings.Contains(up, w) {
+			t.Errorf("the index jobs_content_retention_idx does not say %q", w)
 		}
 	}
 	// the control: a name nobody creates is reported

@@ -72,9 +72,10 @@ func TestContentPlaceholder_IsANonBlankOneLineString(t *testing.T) {
 	}
 }
 
-// THE PURGE NEVER TOUCHES AN OUTCOME. retention.go is read as text: the only tables it writes are public.job_items and, for the mark, platform.jobs; no statement of it names the rows, the results, the events or the
-// ledger as the target of a write. (The harness test compares a digest of those tables before and after; this holds the source to the same promise.)
-func TestRetentionSource_WritesNothingButJobItemsAndTheMark(t *testing.T) {
+// THE PURGE NEVER TOUCHES AN OUTCOME. retention.go is read as text: the only tables it writes are public.job_items (the rendered messages), platform.job_rows (the merge data, `fields` and nothing else) and
+// platform.jobs (the template and the mark, in one statement); no statement of it names the results, the events or the ledger as the target of a write. (The harness test compares a digest of those tables before
+// and after; this holds the source to the same promise.)
+func TestRetentionSource_WritesNothingButTheRenderedItemsTheMergeDataAndTheTemplateWithItsMark(t *testing.T) {
 	b, err := os.ReadFile("retention.go")
 	if err != nil {
 		t.Fatal(err)
@@ -89,28 +90,36 @@ func TestRetentionSource_WritesNothingButJobItemsAndTheMark(t *testing.T) {
 		t.Fatal("found no write in retention.go: the instrument matched nothing")
 	}
 	for tbl := range targets {
-		if tbl != "public.job_items" && tbl != "platform.jobs" {
-			t.Errorf("retention.go writes %s: only public.job_items and the mark on platform.jobs are its to write", tbl)
+		if tbl != "public.job_items" && tbl != "platform.job_rows" && tbl != "platform.jobs" {
+			t.Errorf("retention.go writes %s: only the rendered items, the merge data of the rows and the template with its mark are its to write", tbl)
 		}
 	}
-	if targets["public.job_items"] != 1 || targets["platform.jobs"] != 1 {
-		t.Errorf("retention.go has %v writes, want exactly one statement on public.job_items and one on platform.jobs", targets)
+	if targets["public.job_items"] != 1 || targets["platform.job_rows"] != 1 || targets["platform.jobs"] != 1 {
+		t.Errorf("retention.go has %v writes, want exactly one statement on each of public.job_items, platform.job_rows and platform.jobs", targets)
 	}
-	// the mark sets one column and the page sets exactly the four of the spec
-	if !strings.Contains(src, "SET content_cleared_at = now()") || !strings.Contains(src, "SET rendered_subject = $3, rendered_body = $3, rendered_text = NULL, unsubscribe_url = NULL") {
-		t.Error("retention.go no longer sets what the spec says: subject and body to the placeholder, text and link to NULL, and the mark")
+	// what each statement sets: the four columns of an item, the one column of a row, and the template with the mark
+	for _, want := range []string{
+		"SET rendered_subject = $3, rendered_body = $3, rendered_text = NULL, unsubscribe_url = NULL",
+		"UPDATE platform.job_rows w SET fields = '{}'::jsonb FROM page",
+		"UPDATE platform.jobs j SET frozen_settings = `+templateCleared+`, content_cleared_at = now()",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("retention.go no longer says %q: the purge does not set what the ruling says", want)
+		}
 	}
-	if strings.Contains(src, "reply_to") && strings.Contains(strings.ReplaceAll(src, "`reply_to`", ""), "reply_to =") {
-		t.Error("retention.go writes reply_to: it is not content of the body and stays")
-	}
-	// the control: the matcher sees a forbidden write
-	if m := write.FindStringSubmatch("UPDATE platform.job_results SET x = 1"); m == nil || m[3] != "platform.job_results" {
-		t.Error("the matcher does not see a write to platform.job_results: it cannot fail")
+	// the control: the matcher sees a forbidden write, and a write of the results' columns would be found
+	for _, bad := range []string{"UPDATE platform.job_results SET x = 1", "DELETE FROM platform.job_events", "INSERT INTO platform.ledger"} {
+		if m := write.FindStringSubmatch(bad); m == nil || m[3] == "platform.job_rows" || m[3] == "platform.jobs" || m[3] == "public.job_items" {
+			t.Errorf("the matcher does not see %q as a write outside the three tables: it cannot fail", bad)
+		}
 	}
 }
 
 // Every statement of the purge holds the job's own conditions (terminal, old enough, not marked, with content): what makes the items of a job that has not ended safe from a caller that names the wrong job.
 func TestRetentionDue_SaysTerminalOldEnoughAndNotMarked(t *testing.T) {
+	if strings.Contains(retentionDue, "jsonb_exists") {
+		t.Error("retentionDue limits the purge to jobs with a campaign: since platform_0021 it covers every ended job (a verify job's rows carry merge data too)")
+	}
 	for _, w := range []string{"j.content_cleared_at IS NULL", "'succeeded', 'failed', 'cancelled', 'expired'", "j.finished_at IS NOT NULL", "j.finished_at <= now() - make_interval(secs => $%d::double precision)"} {
 		if !strings.Contains(retentionDue, w) {
 			t.Errorf("retentionDue no longer says %q", w)

@@ -158,6 +158,12 @@ var roleStatements = []roleStmt{
 	{"platform.suppressions", "UPDATE", `UPDATE platform.suppressions SET source = 'import'`, "", "", ""},
 	{"platform.suppressions", "DELETE", `DELETE FROM platform.suppressions`, "", "", ""},
 	{"platform.suppressions", "TRUNCATE", `TRUNCATE platform.suppressions`, "", "", ""},
+	// platform_0022: every removal of an entry of the list, written by the list's trigger (no role writes it), append-only for everybody (the superuser's INSERT below stands in for the trigger's row, so the UPDATE and
+	// the DELETE that follow it meet one; the DELETE of the list above already wrote a row of its own, which the statement rows of this test roll back with the rest)
+	{"platform.suppression_removals", "INSERT", `INSERT INTO platform.suppression_removals (user_id, email, source, entry_created_at) VALUES ({U2}, 'roles-proof@example.com', 'manual', now())`, "", "", ""},
+	{"platform.suppression_removals", "UPDATE", `UPDATE platform.suppression_removals SET source = 'import'`, "23001", "append-only", ""},
+	{"platform.suppression_removals", "DELETE", `DELETE FROM platform.suppression_removals`, "23001", "append-only", ""},
+	{"platform.suppression_removals", "TRUNCATE", `TRUNCATE platform.suppression_removals`, "23001", "append-only", ""},
 
 	{"platform.admin_audit", "INSERT", `INSERT INTO platform.admin_audit (admin_id, entry_type, action, target_type, target_id, reason) VALUES ({ADM}, 'action', 'roles-proof', 'user', 'x', 'proof')`, "", "", ""},
 	{"platform.admin_audit", "UPDATE", `UPDATE platform.admin_audit SET reason = 'edited'`, "23001", "append-only", ""},
@@ -196,7 +202,7 @@ var roleExpectations = map[string]map[string]string{
 	"platform_app": {
 		"platform.schema_migrations": "S", "platform.admins": "S", "platform.modules": "S", "platform.unit_costs": "S", "platform.unit_cost_history": "S",
 		"platform.jobs": "SIU", "platform.job_unit_prices": "SI", "platform.balances": "S", "platform.ledger": "SI", "platform.m3_entitlements": "S",
-		"platform.suppressions": "SI", "platform.admin_audit": "SI", "platform.balance_drift": "S", "platform.reserve_overdrawn": "S", "platform.listable_users": "S",
+		"platform.suppressions": "SID", "platform.suppression_removals": "S", "platform.admin_audit": "SI", "platform.balance_drift": "S", "platform.reserve_overdrawn": "S", "platform.listable_users": "S", // suppressions: DELETE since platform_0022
 		"platform.reserves": "S", "platform.m3_sync": "S", // m3_sync: plus UPDATE of nine columns (the column-level statement), which a table-level letter cannot say
 		"platform.job_transitions": "S", "platform.job_events": "SI",
 		"platform.job_rows": "SID", "platform.job_results": "SI", "platform.job_settlement_drift": "S", "platform.unit_reachability_history": "S", "platform.user_settings": "SI", "platform.user_settings_history": "S", // user_settings: plus UPDATE of two columns (the column-level statement); job_rows: plus UPDATE of eight columns (the column-level statement)
@@ -205,7 +211,7 @@ var roleExpectations = map[string]map[string]string{
 	"platform_admin": {
 		"platform.schema_migrations": "S", "platform.admins": "S", "platform.modules": "S", "platform.unit_costs": "S", "platform.unit_cost_history": "S",
 		"platform.jobs": "S", "platform.job_unit_prices": "S", "platform.balances": "S", "platform.ledger": "SI", "platform.m3_entitlements": "S",
-		"platform.suppressions": "S", "platform.admin_audit": "SI", "platform.balance_drift": "S", "platform.reserve_overdrawn": "S", "platform.listable_users": "S",
+		"platform.suppressions": "S", "platform.suppression_removals": "S", "platform.admin_audit": "SI", "platform.balance_drift": "S", "platform.reserve_overdrawn": "S", "platform.listable_users": "S",
 		"platform.reserves": "S", "platform.m3_sync": "S",
 		"platform.job_transitions": "S", "platform.job_events": "S",
 		"platform.job_rows": "S", "platform.job_results": "S", "platform.job_settlement_drift": "S", "platform.unit_reachability_history": "S", "platform.user_settings": "S", "platform.user_settings_history": "S",

@@ -309,13 +309,16 @@ func Vars() []Var {
 		{Name: VarJobPauseMaxDays, Default: "7",
 			Doc: fmt.Sprintf("Days a job may stay paused before the engine cancels it, counted by the database's clock from the moment it was paused (a job that is resumed and paused again starts a new count). A job paused while it was running is cancelled through `cancelling`: its module cancels the items it has not claimed, every item already sent stays sent and charged, and the job ends `cancelled`; a job paused before its start is cancelled at once. Either way the items not sent are cancelled and free, the credits not consumed are released, the user's one-active-job slot is freed, and an event whose reason begins `pause_limit` says why, with the limit in its detail. A user who resumes at the very moment the engine cancels meets exactly one of the two outcomes: the resume wins, or it is refused as a resume of a job that is not paused. Integer, 1 to %d. Consumed by `internal/app` (`jobengine.Config.PauseMax`, in the engine of the instance that leads).", maxJobPauseDays)},
 		{Name: VarContentRetentionDays, Default: "7",
-			Doc: fmt.Sprintf("Days after a send job ended (succeeded, failed, cancelled or expired), counted from its `finished_at` by the database's clock, before the engine clears the message the platform kept for it in `public.job_items`: `rendered_subject` and `rendered_body` become `[removed]`, `rendered_text` and `unsubscribe_url` become empty (`reply_to` and the recipient stay). The job's outcomes (its rows, results, events and charges) are kept for ever, and so are the items of a job that has not ended and the rows that belong to no job. A job of 100000 rows is cleared a few thousand rows at a time over several passes, and the job is marked once the last page is done. Integer, 1 to %d. Consumed by `internal/app` (`jobengine.Config.RetentionAfter`, in the engine of the instance that leads).", maxContentRetentionDays)},
+			Doc: fmt.Sprintf("Days after a job ended (succeeded, failed, cancelled or expired), counted from its `finished_at` by the database's clock, before the engine clears what the platform kept of what the user uploaded and wrote: the campaign template (its subject and HTML become `[removed]`, its text becomes empty, `reply_to` stays) and the merge data of every uploaded row (emptied), for every job, and, for a send job, the message rendered for each recipient in `public.job_items` (`rendered_subject` and `rendered_body` become `[removed]`, `rendered_text` and `unsubscribe_url` become empty; `reply_to` and the recipient stay). The recipient addresses, the result of every item (so the results and the CSV download are unchanged), the charges, the job's dates and counts and its events are kept for ever, and so are the items of a job that has not ended and the rows that belong to no job. A job of 100000 rows is cleared a few thousand rows at a time over several passes, and the job is marked (`content_cleared_at`, shown by the job API) in the transaction of the last page. Integer, 1 to %d. Consumed by `internal/app` (`jobengine.Config.RetentionAfter`, in the engine of the instance that leads).", maxContentRetentionDays)},
 		{Name: VarUnsubscribeSecret, Default: unsetMarker, Secret: true,
 			Doc: fmt.Sprintf("The secret the unsubscribe links of sent messages are signed with: a link's token names one item of a send job and carries the first 24 bytes of the HMAC-SHA256, under this secret, of the text unsub, v1 and the item's id, each part set off by a vertical bar (the format is in Docs/unsubscribe.md). At least %d bytes of printable ASCII with no spaces (64 random hexadecimal characters are plenty). The default (unset) means no link can be made: the service still starts, but a send job (module 2 or 3) cannot be confirmed (409 `not_allowed`, reason `unsubscribe_not_configured`) and the `/u/{token}` routes are not served. It works only together with PLATFORM_PUBLIC_BASE_URL. There is no rotation: changing it makes every link already sent answer the not-found page, so keep it. Consumed by `internal/app` (`unsubscribe.NewSigner`, `jobs.WithUnsubscribe` and the public endpoint). Never printed or logged.", MinUnsubscribeSecretBytes)},
 		{Name: VarPublicBaseURL, Default: unsetMarker,
 			Doc: fmt.Sprintf("The public address of this platform as the recipients of its messages reach it, for example `https://app.example.com`: the unsubscribe link of every message is this, `/u/` and the item's token. `https://` in lower case, then a host name of letters, digits, dots and hyphens, an optional port and an optional path of letters, digits and `._~-/`; no credentials, query or fragment, at most %d characters; trailing slashes are dropped. The default (unset) means no link can be made (see PLATFORM_UNSUBSCRIBE_SECRET). Whatever stands at this address must pass `/u/` on to this service unchanged. Consumed by `internal/app` (`unsubscribe.Link`, through `jobs.WithUnsubscribe`).", maxPublicBaseURL)},
 		{Name: VarUnsubscribeRatePerMin, Default: "30",
 			Doc: fmt.Sprintf("How many requests one client address may make to the public `/u/{token}` routes in a minute before they answer 429 with a `Retry-After`: a token bucket per address (an IPv6 address counts as its /64) that holds this many requests at most and refills evenly; at most 10000 addresses are remembered. Behind a reverse proxy the address is the proxy's until a trusted forwarded-for header is configured (a later phase), so every recipient shares one bucket there. Integer, 1 to %d. Consumed by `internal/app` (`endpoint.Config.RatePerMin`).", maxUnsubscribeRate)},
+		{Name: VarWebDir, Default: unsetMarker, Doc: webDirDoc},
+		{Name: VarPublicSupabaseURL, Default: unsetMarker, Doc: webURLDoc},
+		{Name: VarPublicSupabaseAnonKey, Default: unsetMarker, Doc: webKeyDoc},
 		{Name: VarInstanceID, Default: instanceIDDefault,
 			Doc: fmt.Sprintf("Name of this platform instance, 1 to %d printable ASCII characters. With more than one instance running, only the one holding the leader lock runs the expiry and reconcile loops; the name is the application_name of the database session that holds it (pg_stat_activity) and appears in the loop log lines. Each instance needs its own. The default (hostname) means this machine's host name.", maxInstanceIDBytes)},
 	}
@@ -379,6 +382,10 @@ type Config struct {
 	UnsubscribeSecret     Secret // the secret the unsubscribe tokens are signed with; "" means not configured (internal/app: unsubscribe.NewSigner)
 	PublicBaseURL         string // the public https address the unsubscribe link starts with, no trailing slash; "" means not configured (internal/app: unsubscribe.Link)
 	UnsubscribeRatePerMin int    // requests per minute one client address may make to the public endpoint (internal/app: endpoint.Config.RatePerMin)
+
+	WebDir                string // the directory of the built web app; "" means the app is not served (internal/app: webapp.New)
+	PublicSupabaseURL     string // the browser-facing Supabase address, trailing slashes dropped; "" means not configured, and is required when WebDir is set (internal/webapp: /config.json and the CSP)
+	PublicSupabaseAnonKey string // the PUBLIC anon key given to the browser by /config.json; "" means not configured, and is required when WebDir is set (internal/webapp: /config.json)
 
 	InstanceID string // this instance's name; "" means the default, the host name, which the service resolves (internal/entitlements ResolveInstanceID)
 }
@@ -681,6 +688,31 @@ func Load(getenv func(string) string) (Config, error) {
 			if n, ok := intIn(v.Name, raw, 1, maxUnsubscribeRate); ok {
 				c.UnsubscribeRatePerMin = n
 			}
+		case VarWebDir:
+			if raw != v.Default { // the default stands for "the app is not served" (see unsetMarker)
+				if !validWebDir(raw) {
+					fail(v.Name, fmt.Sprintf("must be a directory path of 1 to %d bytes of text with no control character", maxWebDirBytes))
+					continue
+				}
+				c.WebDir = raw
+			}
+		case VarPublicSupabaseURL:
+			if raw != v.Default {
+				full, _, ok := ParsePublicURL(raw)
+				if !ok {
+					fail(v.Name, fmt.Sprintf("must be an http or https URL with a host name, an optional port and an optional path of letters, digits and ._~-/, no credentials, query or fragment, at most %d characters, for example https://abcdefgh.supabase.co", maxPublicSupabaseURL))
+					continue
+				}
+				c.PublicSupabaseURL = full
+			}
+		case VarPublicSupabaseAnonKey:
+			if raw != v.Default {
+				if !validClaimText(raw, maxAnonKeyBytes) {
+					fail(v.Name, fmt.Sprintf("must be printable ASCII with no spaces, at most %d bytes", maxAnonKeyBytes))
+					continue
+				}
+				c.PublicSupabaseAnonKey = raw
+			}
 		case VarInstanceID:
 			if raw != v.Default { // the default stands for the host name, which Load does not read (see instanceIDDefault)
 				if !validInstanceID(raw) {
@@ -693,6 +725,9 @@ func Load(getenv func(string) string) (Config, error) {
 			// A Var that Load has no case for would be read and then dropped: a dial with no consumer.
 			fail(v.Name, "is declared in Vars() but Load does not consume it (programming error)")
 		}
+	}
+	if len(problems) == 0 { // the cross-check reads the fields the loop filled: it is only meaningful when every dial was valid
+		problems = webCrossCheck(c)
 	}
 	if len(problems) > 0 {
 		return Config{}, &Error{Problems: problems}
@@ -883,6 +918,9 @@ func (c Config) attrs() []slog.Attr {
 		slog.String("unsubscribe_secret", secretState(c.UnsubscribeSecret)),
 		slog.String("public_base_url", urlState(c.PublicBaseURL)),
 		slog.Int("unsubscribe_rate_per_min", c.UnsubscribeRatePerMin),
+		slog.String("web_dir", urlState(c.WebDir)),
+		slog.String("public_supabase_url", urlState(c.PublicSupabaseURL)),
+		slog.String("public_supabase_anon_key", publicKeyState(c.PublicSupabaseAnonKey)), // public by design, but never needed in a log line: only whether it is set
 		slog.String("instance_id", c.InstanceID),
 	}
 }

@@ -168,7 +168,7 @@ func newOutageRig(t *testing.T, v Verifier) *outageRig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, err := New(Deps{Service: r.store, Verifier: v, Resolver: res, Logger: log, Settings: newFakeSettings()}) // the settings routes are behind the same authentication: the test walks every route
+	a, err := New(Deps{Service: r.store, Verifier: v, Resolver: res, Logger: log, Settings: newFakeSettings(), Account: newFakeAccount(), Suppressions: newFakeSuppress(), M3Accounts: newFakeM3()}) // the settings, account, suppression and module 3 routes are behind the same authentication: the test walks every route
 	if err != nil {
 		t.Fatal(err)
 	}

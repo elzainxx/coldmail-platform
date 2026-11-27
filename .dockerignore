@@ -1,0 +1,7 @@
+# What the platform image's build context leaves out (Dockerfile). A developer's own web/node_modules would replace the one `npm ci` makes in the image (and hold another platform's native binaries), and
+# a local web/dist or test result is not the build's. CI builds from a clean checkout, where none of this exists; the entries keep a local build the same build.
+.git
+web/node_modules
+web/dist
+web/test-results
+**/node_modules

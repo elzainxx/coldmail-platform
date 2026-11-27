@@ -9,7 +9,7 @@ set -u
 export LC_ALL=C
 HERE="$(cd "$(dirname "$0")" && pwd)"; GATE="$HERE/check-suppression-writers.sh"
 T="$(mktemp -d)" || exit 2; trap 'rm -rf "$T"' EXIT
-MIN_CASES=77; cases=0; ok=0; bad_expect=0
+MIN_CASES=81; cases=0; ok=0; bad_expect=0
 
 SAN=internal/suppress/store.go
 OUT_TAIL="outside the sanctioned writer $SAN — write through suppress.Add, which validates the address first"
@@ -441,6 +441,68 @@ func Insert(email string) {
 }
 EOF
                 expect "the validate call in a helper function ABOVE the writing function is not credited to it" 1 "$(vfirst 10 'INSERT INTO')@@1 norm.Validate( call(s) outside comments" "$d"
+d=$(mk delok);  put "$d" internal/suppress/store.go <<'XEOF'
+package suppress
+
+import "github.com/coldmail-platform/platform/internal/norm"
+
+func Add(email string) error {
+	n, err := norm.Validate(email)
+	if err != nil {
+		return err
+	}
+	exec(`INSERT INTO platform.suppressions (user_id, email, source) VALUES ($1, $2, $3)`, n)
+	return nil
+}
+
+func Remove(user, email string) (bool, error) {
+	n, err := norm.Validate(email)
+	if err != nil {
+		return false, err
+	}
+	exec(`DELETE FROM platform.suppressions WHERE user_id = $1::uuid AND email = $2`, user, n)
+	return true, nil
+}
+XEOF
+                expect "CONTROL: a removal in the sanctioned writer that validates first, in its own function, is green (two writes, both after a call)" 0 "check-suppression-writers: OK@@sanctioned writer $SAN: 2 write statement(s), 2 norm.Validate( call(s) outside comments" "$d"
+d=$(mk delfirst); put "$d" internal/suppress/store.go <<'XEOF'
+package suppress
+
+import "github.com/coldmail-platform/platform/internal/norm"
+
+func Remove(user, email string) (bool, error) {
+	exec(`DELETE FROM platform.suppressions WHERE user_id = $1::uuid AND email = $2`, user, email)
+	n, err := norm.Validate(email)
+	if err != nil {
+		return false, err
+	}
+	_ = n
+	return true, nil
+}
+XEOF
+                expect "a removal that runs BEFORE the validate call of its own function is red (line 6, kind DELETE FROM)" 1 "$(vfirst 6 'DELETE FROM')@@1 norm.Validate( call(s) outside comments@@RED — 1 problem(s)" "$d"
+d=$(mk delnbr); put "$d" internal/suppress/store.go <<'XEOF'
+package suppress
+
+import "github.com/coldmail-platform/platform/internal/norm"
+
+func Add(email string) error {
+	n, err := norm.Validate(email)
+	if err != nil {
+		return err
+	}
+	exec(`INSERT INTO platform.suppressions (user_id, email, source) VALUES ($1, $2, $3)`, n)
+	return nil
+}
+
+func Remove(user, email string) (bool, error) {
+	exec(`DELETE FROM platform.suppressions WHERE user_id = $1::uuid AND email = $2`, user, email)
+	return true, nil
+}
+XEOF
+                expect "a removal with NO validate call of its own, after a function that validates, is red: the call is not credited to a neighbour (line 15, not line 10)" 1 "$(vfirst 15 'DELETE FROM')@@!suppress/store.go:10:@@RED — 1 problem(s)" "$d"
+d=$(mk delout); w "$d" internal/jobs/purge.go '"DELETE FROM platform.suppressions WHERE user_id = $1"'
+                expect "a removal written outside the sanctioned writer, in a package that is not suppress, is red (only store.go may write)" 1 "$(outside internal/jobs/purge.go 3 'DELETE FROM')@@RED — 1 problem(s)" "$d"
 d=$(mk afterfn); put "$d" internal/suppress/store.go <<'EOF'
 package suppress
 

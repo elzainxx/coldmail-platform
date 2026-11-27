@@ -44,10 +44,13 @@ func (e *jeEnv) jcrItems(campaign string) []string {
 		|| '|' || COALESCE(reply_to, '<null>') || '|' || status FROM public.job_items WHERE campaign_id = $1::uuid ORDER BY id`, campaign)
 }
 
-// jcrOutcomes is a digest of everything the platform keeps as the OUTCOME of jobs: the rows, the results, the events, the ledger and the reserves. The purge must leave it exactly as it was.
+// jcrOutcomes is a digest of everything the platform keeps as the OUTCOME of jobs and must keep: the rows WITHOUT their merge data (the addresses, the states, the reasons, the stamps), the ended jobs WITHOUT their
+// template, their mark and their update time (the job's dates, counts, status and everything else), the results, the events, the ledger and the reserves. The purge must leave it exactly as it was.
 func (e *jeEnv) jcrOutcomes() string {
 	e.t.Helper()
-	return e.str(`SELECT md5(COALESCE((SELECT string_agg(t::text, E'\n' ORDER BY t::text) FROM platform.job_rows t), ''))
+	return e.str(`SELECT md5(COALESCE((SELECT string_agg((to_jsonb(t) - 'fields')::text, E'\n' ORDER BY (to_jsonb(t) - 'fields')::text) FROM platform.job_rows t), ''))
+		|| md5(COALESCE((SELECT string_agg((to_jsonb(t) - 'frozen_settings' - 'content_cleared_at' - 'updated_at')::text, E'\n' ORDER BY (to_jsonb(t) - 'frozen_settings' - 'content_cleared_at' - 'updated_at')::text)
+		                 FROM platform.jobs t WHERE t.status IN ('succeeded', 'failed', 'cancelled', 'expired')), ''))
 		|| md5(COALESCE((SELECT string_agg(t::text, E'\n' ORDER BY t::text) FROM platform.job_results t), ''))
 		|| md5(COALESCE((SELECT string_agg(t::text, E'\n' ORDER BY t::text) FROM platform.job_events t), ''))
 		|| md5(COALESCE((SELECT string_agg(t::text, E'\n' ORDER BY t::text) FROM platform.ledger t), ''))
@@ -223,8 +226,12 @@ func TestContentRetention_AJobOfMoreThanOnePageIsClearedPageByPageByDifferentIns
 	e := newJeEnv(t)
 	ctx := testCtx(t)
 	u := e.newUser()
-	const rows = 12001 // pages of 5,000, 5,000 and 2,001
-	j := e.confirmRows(u, "m2", jeAddrs(rows, "p"), jeConfirmOpts{Content: jcrRealContent(), Fund: 20000})
+	const rows = 12001 // pages of 5,000, 5,000 and 2,001, for the messages and again for the merge data
+	list := make([]jobs.RowIn, rows)
+	for i := range list {
+		list[i] = jobs.RowIn{Email: fmt.Sprintf("p%05d@example.test", i+1), Fields: map[string]string{"first_name": fmt.Sprintf("Name%d", i+1), "city": "Oslo"}}
+	}
+	j := e.confirmRows(u, "m2", list, jeConfirmOpts{Content: jcrRealContent(), Fund: 20000})
 	if _, err := e.jobs.Start(ctx, j.ID, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -237,40 +244,60 @@ func TestContentRetention_AJobOfMoreThanOnePageIsClearedPageByPageByDifferentIns
 	e.jcrDress(j.ID)
 	e.jcrAgeEnd(j.ID, 2*time.Hour)
 	outcomes := e.jcrOutcomes()
-	cleared := func() int64 {
+	itemsCleared := func() int64 {
 		return e.int("SELECT count(*) FROM public.job_items WHERE campaign_id = $1::uuid AND rendered_subject = '[removed]' AND rendered_body = '[removed]' AND rendered_text IS NULL AND unsubscribe_url IS NULL", j.ID)
+	}
+	rowsCleared := func() int64 {
+		return e.int("SELECT count(*) FROM platform.job_rows WHERE job_id = $1::uuid AND fields = '{}'::jsonb", j.ID)
+	}
+	subject := func() string {
+		return e.str("SELECT frozen_settings #>> '{content,subject}' FROM platform.jobs WHERE id = $1::uuid", j.ID)
 	}
 	marked := func() bool {
 		return ledgerBool(t, e.admin, "SELECT content_cleared_at IS NOT NULL FROM platform.jobs WHERE id = $1", j.ID)
 	}
-	if cleared() != 0 || marked() {
+	if itemsCleared() != 0 || rowsCleared() != 0 || marked() || subject() != "Real subject" {
 		t.Fatal("the fixture: the job is cleared or marked before the purge")
 	}
-	// every call is another store instance (a restarted process, the next leader) bounded to ONE page: nothing carries over but what the items say
+	// every call is another store instance (a restarted process, the next leader) bounded to ONE page: nothing carries over but what the rows and the items say. The messages come first (three pages), then the
+	// merge data (three pages), and the page that is the last of all clears the template and sets the mark in its own transaction: not one page sooner
 	steps := []struct {
-		items      int64
-		cleared    int64
-		unfinished int
-		done       int
-	}{{5000, 5000, 1, 0}, {5000, 10000, 1, 0}, {2001, 12001, 0, 1}}
+		items, rows            int64 // what the call changed
+		itemsDone, rowsDone    int64 // what is cleared after it, in all
+		unfinished, cleared    int
+		templateGone, markedAt bool
+	}{
+		{5000, 0, 5000, 0, 1, 0, false, false},
+		{5000, 0, 10000, 0, 1, 0, false, false},
+		{2001, 0, 12001, 0, 1, 0, false, false}, // the last page of messages; the merge data waits for the next call
+		{0, 5000, 12001, 5000, 1, 0, false, false},
+		{0, 5000, 12001, 10000, 1, 0, false, false},
+		{0, 2001, 12001, 12001, 0, 1, true, true}, // the last page of all: the template and the mark with it
+	}
 	for i, want := range steps {
 		st, err := jobs.New(e.pool, money.New(e.pool))
 		if err != nil {
 			t.Fatal(err)
 		}
 		res, err := st.ClearRetainedContent(ctx, time.Hour, 0, 1)
-		if err != nil || res.Found != 1 || res.Pages != 1 || res.Items != want.items || res.Unfinished != want.unfinished || res.Cleared != want.done {
-			t.Fatalf("call %d: %+v, %v; want one page and %d items (unfinished %d, cleared %d)", i+1, res, err, want.items, want.unfinished, want.done)
+		if err != nil || res.Found != 1 || res.Pages != 1 || res.Items != want.items || res.Rows != want.rows || res.Unfinished != want.unfinished || res.Cleared != want.cleared {
+			t.Fatalf("call %d: %+v, %v; want one page (%d messages, %d rows; unfinished %d, cleared %d)", i+1, res, err, want.items, want.rows, want.unfinished, want.cleared)
 		}
-		if got := cleared(); got != want.cleared {
-			t.Fatalf("after call %d %d items are cleared, want %d", i+1, got, want.cleared)
+		if got := itemsCleared(); got != want.itemsDone {
+			t.Fatalf("after call %d %d messages are cleared, want %d", i+1, got, want.itemsDone)
 		}
-		if marked() != (want.done == 1) {
-			t.Fatalf("after call %d the job's mark is %v: it must come with the last page and not before", i+1, marked())
+		if got := rowsCleared(); got != want.rowsDone {
+			t.Fatalf("after call %d the merge data of %d rows is cleared, want %d", i+1, got, want.rowsDone)
+		}
+		if (subject() == "[removed]") != want.templateGone || marked() != want.markedAt {
+			t.Fatalf("after call %d the template is cleared: %v, the mark is set: %v; want %v and %v (the template and the mark come with the last page of all, in one transaction)", i+1, subject() == "[removed]", marked(), want.templateGone, want.markedAt)
 		}
 	}
 	if n := e.int("SELECT count(*) FROM public.job_items WHERE campaign_id = $1::uuid", j.ID); n != rows {
 		t.Errorf("%d items after the purge, want %d: nothing is deleted", n, rows)
+	}
+	if n := e.int("SELECT count(*) FROM platform.job_rows WHERE job_id = $1::uuid", j.ID); n != rows {
+		t.Errorf("%d rows after the purge, want %d: nothing is deleted", n, rows)
 	}
 	if got := e.jcrOutcomes(); got != outcomes {
 		t.Error("the purge of a job of three pages changed an outcome")

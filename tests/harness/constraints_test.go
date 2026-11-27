@@ -1206,11 +1206,15 @@ func TestConstraints_Suppressions(t *testing.T) {
 		ledgerExpectRefused(t, tx, "a user that does not exist", "23503", ledgerWhy{Constraint: "suppressions_user_id_fkey"}, ins, ledgerNoSuchID, "x@example.com", "manual")
 	})
 
-	t.Run("who may touch the table: the app inserts and reads, nobody updates or deletes, the break-glass role reads", func(t *testing.T) {
+	t.Run("who may touch the table: the app inserts, reads and removes a row (platform_0022), nobody updates, the break-glass role reads", func(t *testing.T) {
 		ledgerSwitchRole(t, tx, "platform_app")
 		ledgerExpectOK(t, tx, "control: platform_app INSERT", ins, a, "app@example.com", "manual")
 		why := ledgerWhy{Message: "permission denied for table suppressions"}
-		ledgerExpectRefused(t, tx, "platform_app DELETE", "42501", why, "DELETE FROM platform.suppressions")
+		// platform_0022: the application may remove a row of the list (the user's own removal; every one is recorded by the table's trigger), and may still not change one
+		ledgerExpectOK(t, tx, "control: platform_app INSERT of the row it removes next", ins, a, "app-removed@example.com", "manual")
+		if tag := ledgerExpectOK(t, tx, "platform_app DELETE of its own row", "DELETE FROM platform.suppressions WHERE user_id = $1 AND email = 'app-removed@example.com'", a); tag.RowsAffected() != 1 {
+			t.Fatalf("platform_app's DELETE removed %d row(s), want 1", tag.RowsAffected())
+		}
 		ledgerExpectRefused(t, tx, "platform_app UPDATE", "42501", why, "UPDATE platform.suppressions SET source = 'manual'")
 		ledgerResetRole(t, tx)
 		ledgerSwitchRole(t, tx, "platform_admin")
@@ -1218,6 +1222,7 @@ func TestConstraints_Suppressions(t *testing.T) {
 			t.Fatalf("platform_admin sees %d suppressions", n)
 		}
 		ledgerExpectRefused(t, tx, "platform_admin INSERT", "42501", why, ins, a, "adm@example.com", "manual")
+		ledgerExpectRefused(t, tx, "platform_admin DELETE", "42501", why, "DELETE FROM platform.suppressions")
 	})
 }
 

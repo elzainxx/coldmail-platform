@@ -213,10 +213,10 @@ func TestSweep_AFailureOrAPanicIsCountedAndNeverStopsTheOtherStepNorTheTick(t *t
 func TestSweepStats_CountWhatTheStepsReport(t *testing.T) {
 	r, f := sweepRig(t, Config{SweepEvery: -1})
 	f.pauseRes = jobs.PauseLimitResult{Found: 4, Cancelled: 1, Cancelling: 2, Failed: 1, Jobs: []jobs.PauseLimitJob{{JobID: jobA, Module: "m2", PausedFrom: "running", To: "cancelling"}}}
-	f.keepRes = jobs.RetentionResult{Found: 3, Cleared: 2, Items: 12000, Failed: 1}
+	f.keepRes = jobs.RetentionResult{Found: 3, Cleared: 2, Items: 12000, Rows: 700, Failed: 1}
 	r.e.Tick(context.Background())
 	r.e.Tick(context.Background())
-	want := SweepStats{PauseSweeps: 2, PauseCancelled: 2, PauseCancelling: 4, PauseFailed: 2, RetentionSweeps: 2, ContentCleared: 4, ContentItems: 24000, RetentionFailed: 2}
+	want := SweepStats{PauseSweeps: 2, PauseCancelled: 2, PauseCancelling: 4, PauseFailed: 2, RetentionSweeps: 2, ContentCleared: 4, ContentItems: 24000, ContentRows: 1400, RetentionFailed: 2}
 	if got := r.e.SweepStats(); got != want {
 		t.Errorf("sweep stats %+v, want %+v", got, want)
 	}

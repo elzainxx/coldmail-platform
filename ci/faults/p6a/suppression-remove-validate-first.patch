@@ -1,0 +1,11 @@
+--- a/internal/suppress/store.go
++++ b/internal/suppress/store.go
+@@ -110,7 +110,7 @@
+ // An address the table can never hold (a NUL, bytes that are not UTF-8) is on nobody's list: the answer is false and no statement is issued. The removal is recorded by the database (platform_0022: a
+ // trigger writes the entry, with its source and its creation time, to platform.suppression_removals in the same statement), so a caller that removes an entry cannot leave no trace of it.
+ func Remove(ctx context.Context, q Execer, userID, email string) (bool, error) {
+-	normalised, err := norm.Validate(email)
++	normalised, err := norm.Normalize(email)
+ 	if err != nil {
+ 		return false, opErr("remove", invalidAddress(err))
+ 	}

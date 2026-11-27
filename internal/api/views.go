@@ -92,6 +92,7 @@ type jobView struct {
 	StartedAt          *string      `json:"started_at"`
 	FinishedAt         *string      `json:"finished_at"`
 	CancelRequestedAt  *string      `json:"cancel_requested_at"`
+	ContentClearedAt   *string      `json:"content_cleared_at"` // null until the content retention cleared the template, the merge data and the rendered messages of the job
 	CreatedAt          string       `json:"created_at"`
 	UpdatedAt          string       `json:"updated_at"`
 }
@@ -104,8 +105,8 @@ func viewJob(j jobs.Job, withContent bool) jobView {
 		Settings:           settingsView{UnknownChoice: strPtr(j.Settings.UnknownChoice), VendorOptOut: vendorOptOutOf(j)},
 		PreviewFingerprint: strPtr(j.PreviewFingerprint),
 		PreviewedAt:        stampPtr(j.PreviewedAt), ConfirmedAt: stampPtr(j.ConfirmedAt), StartedAt: stampPtr(j.StartedAt), FinishedAt: stampPtr(j.FinishedAt),
-		CancelRequestedAt: stampPtr(j.CancelRequestedAt),
-		CreatedAt:         stamp(j.CreatedAt), UpdatedAt: stamp(j.UpdatedAt),
+		CancelRequestedAt: stampPtr(j.CancelRequestedAt), ContentClearedAt: stampPtr(j.ContentClearedAt),
+		CreatedAt: stamp(j.CreatedAt), UpdatedAt: stamp(j.UpdatedAt),
 	}
 	if withContent && j.Content != nil {
 		v.Content = &contentView{Subject: j.Content.Subject, HTML: j.Content.HTML, Text: j.Content.Text, ReplyTo: j.Content.ReplyTo}

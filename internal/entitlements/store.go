@@ -68,7 +68,9 @@ const (
 	sqlInsertExpiry = `INSERT INTO platform.ledger (user_id, module_id, kind, available_delta, reserved_delta, acting_admin_id, reason, idempotency_key)
 		VALUES ($1::uuid, 'm3', 'm3_expire', 0, 0, NULL, $2, $3) RETURNING id`
 
-	sqlGetEntitlement = `SELECT enabled, enabled_until, changed_by::text, changed_at FROM platform.m3_entitlements WHERE user_id = $1::uuid`
+	// `current` is what the job store's confirm accepts (jobs.checkEntitlement): enabled and not past its end by the DATABASE's clock. The row's own `enabled` stays true after the end until the expiry loop writes
+	// the m3_expire that ends it (at most one pass later), and the API must not say "on" for that stretch.
+	sqlGetEntitlement = `SELECT enabled, enabled_until, changed_by::text, changed_at, enabled AND (enabled_until IS NULL OR enabled_until > clock_timestamp()) FROM platform.m3_entitlements WHERE user_id = $1::uuid`
 
 	sqlGetSync = `SELECT want_suspended, want_version, converged_version, observed, observed_at, observed_version, m3_version, attempts, last_attempt_at, last_error, updated_at
 		FROM platform.m3_sync WHERE user_id = $1::uuid`
@@ -141,9 +143,12 @@ type Entry struct {
 // Entitlement is a user's current entitlement (platform.m3_entitlements). Exists is false for a user who has
 // never been enabled, disabled or expired.
 type Entitlement struct {
-	UserID    string
-	Exists    bool
-	Enabled   bool
+	UserID  string
+	Exists  bool
+	Enabled bool
+	// Current is Enabled and not past Until, judged by the database's clock at the read: whether a job of module 3 would be accepted now. Enabled alone stays true from Until to the next pass of the
+	// expiry loop. False for a user with no entitlement.
+	Current   bool
 	Until     *time.Time
 	ChangedBy *string
 	ChangedAt time.Time
@@ -555,7 +560,7 @@ func (s *Store) Get(ctx context.Context, userID string) (Entitlement, error) {
 	}
 	e := Entitlement{UserID: user}
 	var until *time.Time
-	err := s.pool.QueryRow(ctx, sqlGetEntitlement, user).Scan(&e.Enabled, &until, &e.ChangedBy, &e.ChangedAt)
+	err := s.pool.QueryRow(ctx, sqlGetEntitlement, user).Scan(&e.Enabled, &until, &e.ChangedBy, &e.ChangedAt, &e.Current)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Entitlement{UserID: user}, nil
 	}

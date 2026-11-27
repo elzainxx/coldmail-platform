@@ -344,8 +344,8 @@ func topLevelColumns(list string) int {
 // scan error on a database nobody has at hand.
 func TestEngineJobColumns_DropTheCampaignAndKeepTheOrder(t *testing.T) {
 	base := topLevelColumns(jobColumns)
-	if base != 19 {
-		t.Fatalf("jobColumns has %d columns, scanJobWith scans 19: update both together", base)
+	if base != 20 {
+		t.Fatalf("jobColumns has %d columns, scanJobWith scans 20: update both together", base)
 	}
 	if got := topLevelColumns(engineJobColumns); got != base+16 {
 		t.Errorf("engineJobColumns has %d columns, want %d (jobColumns plus the sixteen the engine adds)", got, base+16)

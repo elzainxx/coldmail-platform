@@ -10,9 +10,11 @@ import (
 	"github.com/coldmail-platform/platform/internal/api"
 	"github.com/coldmail-platform/platform/internal/auth"
 	"github.com/coldmail-platform/platform/internal/config"
+	"github.com/coldmail-platform/platform/internal/entitlements"
 	"github.com/coldmail-platform/platform/internal/jobengine"
 	"github.com/coldmail-platform/platform/internal/jobs"
 	"github.com/coldmail-platform/platform/internal/money"
+	"github.com/coldmail-platform/platform/internal/suppress"
 	"github.com/coldmail-platform/platform/internal/tenant"
 	"github.com/coldmail-platform/platform/internal/unsubscribe"
 	"github.com/coldmail-platform/platform/internal/unsubscribe/endpoint"
@@ -41,6 +43,8 @@ type apiDeps struct {
 	OptOut jobs.OptOutPolicySource
 	// Settings is the per-user settings store (GET and PUT /v1/settings, Phase 5 S6); the job store reads the same table through usersettings.VendorOptOutOf when a module 1 job is created.
 	Settings *usersettings.Store
+	// Suppress is the user's suppression list (Phase 6 A4: GET and POST /v1/suppressions, /remove and /import); the job store reads the same table through suppress.Filter.
+	Suppress *suppress.Store
 	// Adapters are the three module adapters, built once from the configuration; a nil one is a module whose dials are unset (its jobs wait).
 	Adapters moduleAdapters
 	// Registry is what the job engine reaches the modules through (jobengine.Registry over Adapters).
@@ -121,6 +125,9 @@ func (d *apiDeps) build(pool *pgxpool.Pool, cfg config.Config, log *slog.Logger)
 	if d.Settings, err = usersettings.New(pool); err != nil {
 		return fmt.Errorf("build the user settings store: %w", err)
 	}
+	if d.Suppress, err = suppress.NewStore(pool); err != nil {
+		return fmt.Errorf("build the suppression list: %w", err)
+	}
 	more = append(more, d.unsubscribeOptions(cfg)...) // the link maker (none: the store refuses to confirm a send job)
 	if d.Jobs, err = newJobStore(pool, d.Money, cfg, log, more...); err != nil {
 		return fmt.Errorf("build the job store: %w", err)
@@ -132,7 +139,9 @@ func (d *apiDeps) build(pool *pgxpool.Pool, cfg config.Config, log *slog.Logger)
 	if d.Auth == nil {
 		return nil
 	}
-	if d.API, err = api.New(api.Deps{Service: d.Jobs, Verifier: d.Auth, Resolver: apiResolver(d.Tenants), Logger: log, ResultsPageMax: cfg.ResultsPageMax, Settings: d.Settings}); err != nil {
+	if d.API, err = api.New(api.Deps{Service: d.Jobs, Verifier: d.Auth, Resolver: apiResolver(d.Tenants), Logger: log, ResultsPageMax: cfg.ResultsPageMax, Settings: d.Settings,
+		Account:      accountSource{tenants: d.Tenants, money: d.Money, ents: entitlements.NewStore(pool)},
+		Suppressions: d.Suppress, M3Accounts: api.NewM3Accounts(d.Adapters.M3), M3Gate: api.NewM3Gate(pool)}); err != nil {
 		return fmt.Errorf("build the job API: %w", err)
 	}
 	log.Info("job API mounted", "routes", len(api.Routes()), "max_rows", d.Jobs.MaxRows(), "max_start_delay", d.Jobs.MaxStartDelay().String(), "results_page_max", cfg.ResultsPageMax)

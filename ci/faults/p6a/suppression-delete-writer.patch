@@ -1,0 +1,9 @@
+diff --git a/internal/app/zz_suppression_delete_writer.go b/internal/app/zz_suppression_delete_writer.go
+new file mode 100644
+--- /dev/null
++++ b/internal/app/zz_suppression_delete_writer.go
+@@ -0,0 +1,4 @@
++package app
++
++// FAULT: a second remover of platform.suppressions, one that never calls the validator and records nothing it chose to.
++const zzSuppressionDeleteWriter = `DELETE FROM platform.suppressions WHERE user_id = $1 AND email = $2`

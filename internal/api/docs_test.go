@@ -48,7 +48,7 @@ func docDrift(doc string) []string {
 
 	// every code the API can answer, with its status
 	want := map[string]string{"method_not_allowed": "405"}
-	for _, m := range mappingTable() {
+	for _, m := range append(mappingTable(), extraMappingTable()...) { // the second is the codes of Phase 6 A4 (m3accounts_test.go)
 		want[m.code] = strconv.Itoa(m.status)
 	}
 	for _, code := range []string{codeUnauthenticated, codeBadRequest, codePayloadTooLarge, codeUnsupportedMedia, codeValidationFailed} {

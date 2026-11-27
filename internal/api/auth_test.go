@@ -279,9 +279,14 @@ func TestAuth_NothingInTheRequestNamesTheUserOfAStoreCall(t *testing.T) {
 	r.store.results = []jobs.Result{{Ordinal: 1, Email: "a@example.test", Origin: "module", State: "valid", Decision: "free", Rule: "P-01"}}
 	hostile := http.Header{"X-User-Id": {userA}, "X-Forwarded-User": {userA}, "X-Auth-User": {loginA}, "Cookie": {"user_id=" + userA}}
 	good := map[string][]byte{
-		"POST /v1/jobs":              []byte(`{"module":"m1","rows":[{"email":"a@example.test"}]}`),
-		"POST /v1/jobs/{id}/confirm": []byte(`{"fingerprint":"` + strings.Repeat("a", 64) + `"}`),
-		"PUT /v1/settings":           []byte(`{"vendor_fallback_opt_out":true}`),
+		"POST /v1/jobs":                []byte(`{"module":"m1","rows":[{"email":"a@example.test"}]}`),
+		"POST /v1/jobs/{id}/confirm":   []byte(`{"fingerprint":"` + strings.Repeat("a", 64) + `"}`),
+		"PUT /v1/settings":             []byte(`{"vendor_fallback_opt_out":true}`),
+		"POST /v1/suppressions":        []byte(`{"email":"a@example.test"}`),
+		"POST /v1/suppressions/remove": []byte(`{"email":"a@example.test"}`),
+		"POST /v1/suppressions/import": []byte("email\na@example.test\n"),
+		"POST /v1/m3/accounts":         []byte(`{"smtp_host":"smtp.example.test","smtp_username":"u","smtp_secret":"s","from_address":"u@example.test"}`),
+		"POST /v1/m3/accounts/bulk":    []byte(`{"accounts":[{"smtp_host":"smtp.example.test","smtp_username":"u","smtp_secret":"s","from_address":"u@example.test"}]}`),
 	}
 	for _, rt := range routes {
 		key := rt.method + " " + rt.pattern
@@ -292,8 +297,14 @@ func TestAuth_NothingInTheRequestNamesTheUserOfAStoreCall(t *testing.T) {
 		if key == "POST /v1/jobs/{id}/confirm" {
 			q.header.Set("Idempotency-Key", "key-1")
 		}
+		if key == "POST /v1/suppressions/import" {
+			q.ctype = "text/csv"
+		}
 		r.store.reset()
 		r.settings.reset()
+		r.account.reset()
+		r.supp.reset()
+		r.m3.reset()
 		resp, body := r.do(q)
 		if resp.StatusCode >= 500 {
 			t.Fatalf("%s: %d %s", key, resp.StatusCode, body)
@@ -306,6 +317,45 @@ func TestAuth_NothingInTheRequestNamesTheUserOfAStoreCall(t *testing.T) {
 			for _, c := range sc {
 				if c.User != userB {
 					t.Errorf("%s: the settings store was called for user %s, want %s (the principal)", key, c.User, userB)
+				}
+			}
+			continue
+		}
+		if rt.pattern == mePath || rt.pattern == balancesPath { // the account service (Phase 6 A3), never the job store
+			ac := r.account.seen()
+			if len(ac) == 0 || len(r.store.seen()) != 0 {
+				t.Errorf("%s: the account service was reached %d time(s) and the job store %d time(s), want the account service only", key, len(ac), len(r.store.seen()))
+			}
+			for _, c := range ac {
+				if c.User != userB {
+					t.Errorf("%s: the account service was called for user %s, want %s (the principal)", key, c.User, userB)
+				}
+			}
+			continue
+		}
+		if rt.pattern == templatesCheckPath { // the template check reads nothing of any user: no service of any kind is reached
+			if n := len(r.store.seen()) + len(r.account.seen()) + len(r.settings.seen()); n != 0 {
+				t.Errorf("%s: a store was reached %d time(s) by the template check", key, n)
+			}
+			continue
+		}
+		if isSuppressionRoute(rt.pattern) || strings.HasPrefix(rt.pattern, m3AccountsPath) { // the suppression list and module 3's client (Phase 6 A4), never the job store
+			var sc []call
+			if isSuppressionRoute(rt.pattern) {
+				sc = r.supp.seen()
+			} else {
+				r.m3.mu.Lock()
+				for _, u := range r.m3.fors {
+					sc = append(sc, call{User: u})
+				}
+				r.m3.mu.Unlock()
+			}
+			if len(sc) == 0 || len(r.store.seen()) != 0 {
+				t.Errorf("%s: its service was reached %d time(s) and the job store %d time(s), want the service only", key, len(sc), len(r.store.seen()))
+			}
+			for _, c := range sc {
+				if c.User != userB {
+					t.Errorf("%s: its service was given user %s, want %s (the principal)", key, c.User, userB)
 				}
 			}
 			continue

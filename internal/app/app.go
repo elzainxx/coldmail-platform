@@ -94,6 +94,14 @@ func Run(ctx context.Context, getenv func(string) string, logw io.Writer) error 
 		return err
 	}
 
+	// The built web app (Phase 6 A2), when PLATFORM_WEB_DIR is set: opened here, before the pool, so that a directory that is not the app is a configuration error (exit status 2) and not a service that starts
+	// and answers 404 to every page.
+	web, closeWeb, err := newWebApp(cfg, log)
+	if err != nil {
+		return err
+	}
+	defer closeWeb()
+
 	m3, err := newSuspender(cfg)
 	if err != nil {
 		return err
@@ -142,6 +150,7 @@ func Run(ctx context.Context, getenv func(string) string, logw io.Writer) error 
 		ReadyTimeout: cfg.ReadyzTimeout,
 		Now:          time.Now,
 		Mount:        deps.mount(), // the job API's routes, or nil: then every one of them is the catch-all's 404
+		Web:          web,          // the built web app, or nil: then every path no route took is the catch-all's 404
 	})
 
 	// The startup line names what an operator needs and nothing from the Config struct as a whole.

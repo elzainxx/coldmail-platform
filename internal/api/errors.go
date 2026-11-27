@@ -74,6 +74,8 @@ type problem struct {
 	details []any // key/value pairs for httpapi.WriteError; nil when the code has nothing to say
 	// expected is false for a problem that is the server's fault (it is logged as an error with the cause); true for a refusal the client caused.
 	expected bool
+	// retryAfter is the Retry-After header of the answer, in whole seconds; "" for none (rate_limited, errors_extra.go)
+	retryAfter string
 }
 
 // classify is THE mapping from what the store (and its dependencies) return to what the client is told: the one function, covered by a table test of every sentinel. An error it does not
@@ -90,6 +92,9 @@ func classify(err error) problem {
 		stale *jobs.StalePreviewError
 		tmpl  *jobs.TemplateError
 	)
+	if p, ok := classifyExtra(err); ok { // the suppression list and module 3's accounts (Phase 6 A4): errors_extra.go
+		return p
+	}
 	switch {
 	case errors.Is(err, jobs.ErrNotFound):
 		return problem{status: http.StatusNotFound, code: codeNotFound, expected: true}
@@ -238,6 +243,9 @@ func (a *API) fail(w http.ResponseWriter, r *http.Request, err error) {
 	}
 	if p.code == codeBusy {
 		w.Header().Set("Retry-After", "1")
+	}
+	if p.retryAfter != "" {
+		w.Header().Set("Retry-After", p.retryAfter)
 	}
 	if p.code == codeAuthUnavailable {
 		w.Header().Set("Retry-After", authRetryAfter)

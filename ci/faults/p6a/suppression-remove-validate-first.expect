@@ -1,0 +1,14 @@
+# Phase 6, chunk A4: the removal of a suppression (internal/suppress/store.go, Remove) must call norm.Validate before it removes a row, like Add before it writes one, because the table's CHECK cannot see the
+# two punycode shapes and the Go validator is the only wall (a removal that skips it would take a row of a spelling the rule refuses: the harness test TestSuppressRemoval_RemoveValidatesTheAddressBeforeAskingTheDatabase
+# shows that behaviour against the database; THIS fault shows that the gate sees the source change). The fault replaces Remove's call with norm.Normalize (a "simplification" that drops module 1's syntax layer):
+# the file still compiles, and the gate must say the DELETE FROM is not preceded by a call of norm.Validate( in the same function and name the file; Add and AddMany still validate, which is why only one write is red
+# and two calls remain. The control side is the real repository, which must be green. Needs bash only: no database, no module, no Go.
+# The patch changes ONE line of internal/suppress/store.go (the call in Remove), so it applies only to a HEAD whose store.go carries that line and its neighbours; the messages carry no line number.
+GATE=suppression-remove-validate-first
+TARGET=platform
+SETUP=
+STEP=check-suppression-writers on the real repository
+CMD=bash scripts/check-suppression-writers.sh
+MESSAGE=write to platform.suppressions (DELETE FROM) is not preceded by a call of norm.Validate( earlier in the same function
+MESSAGE=2 norm.Validate( call(s) outside comments
+MESSAGE=0 write(s) outside internal/suppress/store.go, 1 not preceded by norm.Validate(

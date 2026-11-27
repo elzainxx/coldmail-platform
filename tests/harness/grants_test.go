@@ -92,8 +92,11 @@ var declaredClasses = map[string]privClass{
 	"ledger":                classOf(privSelectInsert, privSelectInsert),
 	// platform_0006: platform.m3_entitlements is written only by the ledger trigger (m3_enable, m3_disable, m3_expire); platform_app lost INSERT and UPDATE, and both roles read it
 	"m3_entitlements": classOf(privSelect, privSelect),
-	"suppressions":    classOf(privSelectInsert, privSelect),
-	"admin_audit":     classOf(privSelectInsert, privSelectInsert),
+	// platform_0022 (Phase 6 A4): a user removes their own entry (platform_app holds DELETE besides SELECT and INSERT; rows are still never updated), and every removal is recorded in the history, written by
+	// the list's trigger only (both roles read it, nobody writes it)
+	"suppressions":         classOf([]string{"SELECT", "INSERT", "DELETE"}, privSelect),
+	"suppression_removals": classOf(privSelect, privSelect),
+	"admin_audit":          classOf(privSelectInsert, privSelectInsert),
 	// platform_0005: what each reserve held, charged and released; written ONLY by the ledger trigger, so both roles read it and nothing else
 	"reserves": classOf(privSelect, privSelect),
 	// platform_0006: delivery of each entitlement to module 3. Both roles read it; platform_app may record what the reconcile loop observed (these nine columns, and no others (platform_0008 added observed_version and m3_version to the seven of platform_0006): want_suspended,

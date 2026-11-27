@@ -11,10 +11,17 @@ import (
 
 func concretePath(pattern string) string { return strings.ReplaceAll(pattern, "{id}", jobIDA) }
 
+// wantRoutes is the documented surface by group: the thirteen of the jobs, the two of the settings, the three of Phase 6 A3 (/v1/me, /v1/balances and /v1/templates/check) and the nine of Phase 6 A4 (the four of the
+// suppression list, the five of module 3's accounts). A route added or removed changes one of the numbers, on purpose.
+const (
+	wantRoutes    = 13 + 2 + 3 + 4 + 5
+	wantRoutesWhy = "thirteen of the jobs, two of the settings, three of the account and the templates, four of the suppression list, five of module 3's accounts"
+)
+
 func TestRoutes_TheTableIsTheWholeSurfaceAndEveryRouteSitsBehindAuthentication(t *testing.T) {
 	r := newRig(t)
-	if len(routes) != 15 || len(Routes()) != 15 {
-		t.Fatalf("the route table has %d routes, the documented surface is 15 (thirteen of the jobs and the two of the settings): a route added or removed is a decision (Docs/jobs-api.md)", len(routes))
+	if len(routes) != wantRoutes || len(Routes()) != wantRoutes {
+		t.Fatalf("the route table has %d routes, the documented surface is %d (%s): a route added or removed is a decision (Docs/jobs-api.md)", len(routes), wantRoutes, wantRoutesWhy)
 	}
 	for _, rt := range routes {
 		path := concretePath(rt.pattern)
@@ -112,11 +119,22 @@ func TestRoutes_EachVerbAndPathIsListedOnce(t *testing.T) {
 			t.Errorf("route %q is listed twice", s)
 		}
 		seen[s] = true
-		if !strings.HasPrefix(s, "GET /v1/jobs") && !strings.HasPrefix(s, "POST /v1/jobs") && s != "GET /v1/settings" && s != "PUT /v1/settings" {
-			t.Errorf("route %q is outside /v1/jobs and /v1/settings", s)
+		if !knownRoutePrefix(s) {
+			t.Errorf("route %q is outside the documented groups (jobs, settings, me, balances, templates, suppressions, module 3 accounts)", s)
 		}
 	}
-	if len(seen) != 15 {
-		t.Errorf("%d distinct routes, want 15", len(seen))
+	if len(seen) != wantRoutes {
+		t.Errorf("%d distinct routes, want %d", len(seen), wantRoutes)
 	}
+}
+
+// knownRoutePrefix says whether a route ("METHOD /path") is in one of the documented groups.
+func knownRoutePrefix(route string) bool {
+	_, path, _ := strings.Cut(route, " ")
+	for _, p := range []string{"/v1/jobs", "/v1/settings", "/v1/me", "/v1/balances", "/v1/templates/check", "/v1/suppressions", "/v1/m3/accounts"} {
+		if path == p || strings.HasPrefix(path, p+"/") {
+			return true
+		}
+	}
+	return false
 }

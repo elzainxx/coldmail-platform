@@ -190,6 +190,10 @@ func TestLoad_DefaultsAreTheDocumentedOnes(t *testing.T) {
 		"PLATFORM_PUBLIC_BASE_URL":          "(unset)",
 		"PLATFORM_UNSUBSCRIBE_RATE_PER_MIN": "30",
 
+		"PLATFORM_WEB_DIR":                  "(unset)",
+		"PLATFORM_PUBLIC_SUPABASE_URL":      "(unset)",
+		"PLATFORM_PUBLIC_SUPABASE_ANON_KEY": "(unset)",
+
 		"PLATFORM_INSTANCE_ID": "(hostname)",
 	}
 	got := map[string]string{}
@@ -328,8 +332,7 @@ func TestLoad_TheReadCheckCanFail(t *testing.T) {
 // untouched (a variable read and then dropped), plus the declared variables that have no alternative
 // value in alt (so a newly added Var forces this table to grow).
 func inert(vars []Var, alt map[string]string, load func(func(string) string) (Config, error)) (dropped, noAlt []string, err error) {
-	baseline, err := load(envOf(base()))
-	if err != nil {
+	if _, err := load(envOf(base())); err != nil {
 		return nil, nil, fmt.Errorf("baseline load: %w", err)
 	}
 	for _, v := range vars {
@@ -338,7 +341,16 @@ func inert(vars []Var, alt map[string]string, load func(func(string) string) (Co
 			noAlt = append(noAlt, v.Name)
 			continue
 		}
-		got, err := load(envOf(with(base(), v.Name, a)))
+		// the dial is judged against the environment that holds ONLY its companions (see companions): they change the Config themselves, so they must be in the reference as well
+		env := base()
+		for k, cv := range companions[v.Name] {
+			env = with(env, k, cv)
+		}
+		baseline, err := load(envOf(env))
+		if err != nil {
+			return nil, nil, fmt.Errorf("%s: the baseline with its companions does not load: %w", v.Name, err)
+		}
+		got, err := load(envOf(with(env, v.Name, a)))
 		if err != nil {
 			return nil, nil, fmt.Errorf("%s=%q is not a valid alternative: %w", v.Name, a, err)
 		}
@@ -347,6 +359,12 @@ func inert(vars []Var, alt map[string]string, load func(func(string) string) (Co
 		}
 	}
 	return dropped, noAlt, nil
+}
+
+// companions are the dials that must be set beside a dial for an environment to load at all: a rule that joins dials (PLATFORM_WEB_DIR needs the two public Supabase dials, web.go). inert compares a
+// dial's alternative with the environment that has its companions and nothing else, so the companions cannot make an inert dial look consumed.
+var companions = map[string]map[string]string{
+	VarWebDir: {VarPublicSupabaseURL: "https://abcdefgh.supabase.co", VarPublicSupabaseAnonKey: "anon-anon-anon-one"},
 }
 
 var alternatives = map[string]string{
@@ -406,6 +424,10 @@ var alternatives = map[string]string{
 	VarUnsubscribeSecret:     strings.Repeat("unsub-", 7), // 42 bytes
 	VarPublicBaseURL:         "https://app.example.test/mail",
 	VarUnsubscribeRatePerMin: "75",
+
+	VarWebDir:                "/srv/web-alternative",
+	VarPublicSupabaseURL:     "https://other.supabase.example/auth",
+	VarPublicSupabaseAnonKey: "anon-anon-anon-two",
 
 	VarInstanceID: "platform-2",
 }

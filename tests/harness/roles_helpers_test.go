@@ -66,6 +66,7 @@ INSERT INTO platform.ledger (user_id, module_id, kind, available_delta, acting_a
 INSERT INTO platform.ledger (user_id, module_id, kind, available_delta, reserved_delta, job_id, unit, units, unit_cost, idempotency_key) VALUES ({U1}, 'm1', 'reserve', -20, 20, {JOB}, 'm1_vendor', 10, 2, 'roles-seed-reserve');
 INSERT INTO platform.m3_entitlements (user_id, enabled, changed_by) VALUES ({U1}, true, {ADM});
 INSERT INTO platform.suppressions (user_id, email, source) VALUES ({U1}, 'seed@example.com', 'manual');
+INSERT INTO platform.suppression_removals (user_id, email, source, entry_created_at) VALUES ({U1}, 'seed-removed@example.com', 'manual', now());
 INSERT INTO platform.admin_audit (admin_id, entry_type, action, target_type, target_id, reason) VALUES ({ADM}, 'action', 'roles-seed', 'user', 'x', 'seeding');
 INSERT INTO public.job_items (campaign_id, user_id, recipient_email, rendered_subject, rendered_body) VALUES ({U1}, {U1}, 'seed@example.com', 'subject', 'body');
 INSERT INTO platform.user_settings (user_id, vendor_fallback_opt_out) VALUES ({U1}, true);

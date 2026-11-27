@@ -10,3 +10,4 @@ Docs/phase-3-spec.md
 Docs/phase-3-closeout-spec.md
 Docs/phase-4-spec.md
 Docs/phase-5-spec.md
+Docs/phase-6-spec.md

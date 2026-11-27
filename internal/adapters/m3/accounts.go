@@ -18,7 +18,9 @@ import (
 // The account surface the user app needs (research m3 section 8; Domain A, under /v1/send-byo/accounts): list, get, create, the test button, bulk add and an account's events. Every
 // route is tenant scoped: user_id is in the body of create and bulk add and in the query of everything else, and every account an answer names must be the Client's tenant's.
 //
-// Not covered, deliberately: change (PATCH), delete and the lifecycle verbs (disable, enable, pause, unpause, unquarantine), test-send, settings, usage and notifications. They are
+// Delete (the module's SOFT delete, 204) is here since Phase 6 A4 because the accounts screen removes an account; it has no recorded answer yet (UncoveredRoutes says so).
+//
+// Not covered, deliberately: change (PATCH), the lifecycle verbs (disable, enable, pause, unpause, unquarantine), test-send, settings, usage and notifications. They are
 // pass-throughs the user app does not need to SEE account state; the lead adds one when a screen needs it, on the same helpers.
 
 // The route labels of the account surface (the `Route` of a modclient request and of an error).
@@ -29,6 +31,7 @@ const (
 	routeTest   = "m3.accounts.test"
 	routeBulk   = "m3.accounts.bulk"
 	routeEvents = "m3.accounts.events"
+	routeDelete = "m3.accounts.delete"
 )
 
 // The routes as the contracts name them: the method and the path template (never a real URL).
@@ -39,6 +42,8 @@ const (
 	RouteAccountsTest   = "POST /v1/send-byo/accounts/{id}/test"
 	RouteAccountsBulk   = "POST /v1/send-byo/accounts/bulk"
 	RouteAccountsEvents = "GET /v1/send-byo/accounts/{id}/events"
+	// RouteAccountsDelete is the module's soft delete of an account (Phase 6 A4). It has no contract yet: UncoveredRoutes names it with the reason.
+	RouteAccountsDelete = "DELETE /v1/send-byo/accounts/{id}"
 )
 
 const (
@@ -788,4 +793,21 @@ func (c VerifyCode) HostRefusal() error {
 		return nil
 	}
 	return fmt.Errorf("%w: %w", ErrHostForbidden, &modclient.Error{Kind: modclient.Refused, Module: modclient.M3, Route: routeTest, Message: "the module refused the account's SMTP host as a destination at connect time", Sent: true})
+}
+
+// ---- delete -------------------------------------------------------------------------------------------------------------
+
+// DeleteAccount removes one of the tenant's accounts (DELETE /v1/send-byo/accounts/{id}?user_id=...): the module's SOFT delete, which answers 204 with no body. The row is kept for the module's
+// retention window and the account is at once unusable through every route and out of dispatch. A 404 is modclient.NotFound and says one thing: the account does not exist FOR THIS TENANT (it never did, it is
+// deleted already, or it is another tenant's: the module answers the three the same). The request is never retried by the adapter, because the module's answer to a repeat is that 404: after an error for
+// which MaybeApplied is true, read the accounts before telling anybody the account is still there. It has the shared budget (the module's database steps are bounded at ten seconds).
+func (c *Client) DeleteAccount(ctx context.Context, accountID string) error {
+	if !sendapi.CanonicalUUID(accountID) {
+		return invalid(routeDelete, "the account id is not a lower-case uuid")
+	}
+	_, err := c.Module().Do(ctx, modclient.Request{
+		Module: modclient.M3, Route: routeDelete, Method: http.MethodDelete, Path: pathAccounts + "/" + url.PathEscape(accountID),
+		Query: url.Values{"user_id": {c.UserID()}}, Expect: []int{http.StatusNoContent},
+	})
+	return err
 }

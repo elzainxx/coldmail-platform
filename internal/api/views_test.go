@@ -18,7 +18,7 @@ func fullJob() jobs.Job {
 		ScheduledStart: &at, StartDeadline: &at, PausedFrom: "scheduled",
 		Preview:            &jobs.Preview{Rows: 5, Pending: 4, Malformed: 1, MalformedReasons: nil, Units: 4, Metered: true, RateUnit: "m1_syntax", UnitCost: 1, Credits: 4, Available: 10, Fingerprint: strings.Repeat("a", 64), ComputedAt: at},
 		PreviewFingerprint: strings.Repeat("a", 64), ConfirmKey: strings.Repeat("c", 24),
-		PreviewedAt: &at, ConfirmedAt: &at, StartedAt: &at, FinishedAt: &at, CancelRequestedAt: &at,
+		PreviewedAt: &at, ConfirmedAt: &at, StartedAt: &at, FinishedAt: &at, CancelRequestedAt: &at, ContentClearedAt: &at,
 		Settings: jobs.Settings{UnknownChoice: "include"}, Content: &jobs.Content{Subject: "s", HTML: "h", Text: "t", ReplyTo: "r@example.test"},
 		CreatedAt: at, UpdatedAt: at,
 	}
@@ -49,7 +49,7 @@ func TestViews_EveryFieldOfTheStoresTypesIsShownOrLeftOutOnPurpose(t *testing.T)
 	shown := map[string]string{ // Go field -> JSON member
 		"ID": "id", "Module": "module", "Status": "status", "SourceJobID": "source_job_id", "ScheduledStart": "scheduled_start", "StartDeadline": "start_deadline", "PausedFrom": "paused_from",
 		"Preview": "preview", "PreviewFingerprint": "preview_fingerprint", "PreviewedAt": "previewed_at", "ConfirmedAt": "confirmed_at", "StartedAt": "started_at", "FinishedAt": "finished_at",
-		"CancelRequestedAt": "cancel_requested_at", "Settings": "settings", "Content": "content", "CreatedAt": "created_at", "UpdatedAt": "updated_at",
+		"CancelRequestedAt": "cancel_requested_at", "ContentClearedAt": "content_cleared_at", "Settings": "settings", "Content": "content", "CreatedAt": "created_at", "UpdatedAt": "updated_at",
 	}
 	omitted := map[string]string{"UserID": "the owner: a client knows who it is, and the id of a user is not the client's to learn", "ConfirmKey": "the client's own idempotency key"}
 	checkAccounted(t, reflect.TypeOf(jobs.Job{}), shown, omitted)
@@ -143,7 +143,7 @@ func TestViews_TimesAreUTCStringsAndWhatDoesNotApplyIsNull(t *testing.T) {
 	raw, _ := json.Marshal(v)
 	var m map[string]any
 	_ = json.Unmarshal(raw, &m)
-	for _, k := range []string{"scheduled_start", "start_deadline", "previewed_at", "confirmed_at", "started_at", "finished_at", "cancel_requested_at", "created_at", "updated_at"} {
+	for _, k := range []string{"scheduled_start", "start_deadline", "previewed_at", "confirmed_at", "started_at", "finished_at", "cancel_requested_at", "content_cleared_at", "created_at", "updated_at"} {
 		s, _ := m[k].(string)
 		if !strings.HasSuffix(s, "Z") || strings.Contains(s, "+") {
 			t.Errorf("%s = %q, want an RFC 3339 time in UTC", k, s)
@@ -162,7 +162,7 @@ func TestViews_TimesAreUTCStringsAndWhatDoesNotApplyIsNull(t *testing.T) {
 	d := viewJob(jobs.Job{ID: jobIDA, Module: "m1", Status: jobs.StatusDraft, CreatedAt: t0, UpdatedAt: t0}, true)
 	raw, _ = json.Marshal(d)
 	_ = json.Unmarshal(raw, &m)
-	for _, k := range []string{"source_job_id", "scheduled_start", "start_deadline", "paused_from", "preview", "preview_fingerprint", "previewed_at", "confirmed_at", "started_at", "finished_at", "cancel_requested_at"} {
+	for _, k := range []string{"source_job_id", "scheduled_start", "start_deadline", "paused_from", "preview", "preview_fingerprint", "previewed_at", "confirmed_at", "started_at", "finished_at", "cancel_requested_at", "content_cleared_at"} {
 		if v, has := m[k]; !has || v != nil {
 			t.Errorf("a draft's %s = %v (present %v), want null", k, v, has)
 		}

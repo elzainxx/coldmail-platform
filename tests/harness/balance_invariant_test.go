@@ -633,7 +633,7 @@ func TestBalance_TriggerFunctionsAreSafeDefiners(t *testing.T) {
 	// What must be a definer, owned by platform_owner: the two writers of Phase 1 and, from platform_0004, the audit-row writer and the admin check (it reads platform.admins FOR SHARE,
 	// which the application roles cannot do); from platform_0005 the two reserve checks (they read the price snapshot and platform.reserves), the writer of platform.reserves and the
 	// release check; from platform_0006 the writer of platform.m3_entitlements (the ledger trigger) and the writer of platform.m3_sync (the entitlement trigger).
-	want := []string{"admin_audit_require_active_admin|platform_owner", "job_events_check_actor|platform_owner", "ledger_apply_to_balance|platform_owner", "ledger_apply_to_entitlements|platform_owner", "ledger_apply_to_reserves|platform_owner", "ledger_audit_adjustment|platform_owner", "ledger_check_release|platform_owner", "ledger_check_reserve|platform_owner", "ledger_require_active_admin|platform_owner", "m3_entitlements_raise_sync|platform_owner", "m3_entitlements_require_active_admin|platform_owner", "require_active_admin|platform_owner", "set_unit_reachable|platform_owner", "unit_costs_guard|platform_owner", "unit_costs_record_history|platform_owner", "user_settings_record_history|platform_owner"}
+	want := []string{"admin_audit_require_active_admin|platform_owner", "job_events_check_actor|platform_owner", "ledger_apply_to_balance|platform_owner", "ledger_apply_to_entitlements|platform_owner", "ledger_apply_to_reserves|platform_owner", "ledger_audit_adjustment|platform_owner", "ledger_check_release|platform_owner", "ledger_check_reserve|platform_owner", "ledger_require_active_admin|platform_owner", "m3_entitlements_raise_sync|platform_owner", "m3_entitlements_require_active_admin|platform_owner", "require_active_admin|platform_owner", "set_unit_reachable|platform_owner", "unit_costs_guard|platform_owner", "suppressions_record_removal|platform_owner", "unit_costs_record_history|platform_owner", "user_settings_record_history|platform_owner"}
 	// The four functions that call platform.require_active_admin are definers too (platform_0004): they are trigger functions that run for the CALLER, and no role holds EXECUTE on
 	// require_active_admin, so without SECURITY DEFINER every application write would fail 42501 (TestConstraints_DisabledAdminThroughTheRoles proves the behaviour). Anything else is a
 	// definer nobody reviewed.
@@ -679,7 +679,9 @@ func TestBalance_TriggerFunctionsAreSafeDefiners(t *testing.T) {
 			// function of the two a role CAN call (platform_app, a SECURITY DEFINER: it is in the definer list above)
 			"platform.job_rows_frozen()", "platform.job_results_after_confirm()", "platform.job_unit_prices_only_reachable()", "platform.unit_costs_record_reachability()",
 			// platform_0020: the settings' history writer, a SECURITY DEFINER trigger function (it writes the history table that platform_app cannot) that no role calls by hand
-			"platform.user_settings_record_history()"} {
+			"platform.user_settings_record_history()",
+			// platform_0022: the suppression list's removal writer, a SECURITY DEFINER trigger function (it writes the history table that platform_app cannot) that no role calls by hand
+			"platform.suppressions_record_removal()"} {
 			for _, role := range []string{"platform_app", "platform_admin"} {
 				if ledgerBool(t, tx, "SELECT has_function_privilege($1::text, $2::text, 'EXECUTE')", role, fn) {
 					t.Fatalf("%s can EXECUTE %s", role, fn)
