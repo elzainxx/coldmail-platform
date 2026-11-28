@@ -183,15 +183,31 @@ e2e_m1() {
 }
 
 # ── E4: module 2 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-# e2e_m2_call <method> <path> <json body>: one request to module 2's operator surface from INSIDE module 2's container (curl, as its own health check uses). Sets E2E_HTTP_CODE and E2E_HTTP_BODY (the body with
-# every credential of the request taken out of it). The operator key and the body are on the container's command line only, never on the runner's output.
+# e2e_describe_body: stdin is an answer's body; prints what SHAPE it has and nothing it SAYS: its size in bytes and, for a JSON object, the NAMES of its top-level keys (never a value: a body may hold a token, a
+# link or a credential), or that it is empty, a JSON array or scalar, or not JSON at all (with the kind of character it starts with). This is what a red run prints when it could not read an answer.
+e2e_describe_body() {
+  node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const n=Buffer.byteLength(s);if(n===0){process.stdout.write("0 bytes, empty");return}try{const j=JSON.parse(s);if(j!==null&&typeof j==="object"&&!Array.isArray(j)){const k=Object.keys(j).sort();process.stdout.write(n+" bytes, a JSON object with "+(k.length?"the keys: "+k.join(", "):"no keys"))}else{process.stdout.write(n+" bytes, a JSON "+(Array.isArray(j)?"array":j===null?"null":typeof j))}}catch{const c=s.trimStart().charAt(0);process.stdout.write(n+" bytes, NOT JSON (it starts with "+("{[<\"".includes(c)&&c!==""?"a "+c+" character":"another character")+")")}})'
+}
+
+# e2e_http_what: one phrase for the last answer of e2e_m2_call, for a message: the HTTP status, and the shape of the body (e2e_describe_body); when no status came (curl failed) what curl said.
+e2e_http_what() {
+  local w="HTTP $E2E_HTTP_CODE, $(printf '%s' "$E2E_HTTP_BODY" | e2e_describe_body)"
+  [ "$E2E_HTTP_CODE" != 000 ] || w="$w; curl said: ${E2E_HTTP_ERR:-nothing}"
+  printf '%s' "$w"
+}
+
+# e2e_m2_call <method> <path> <json body>: one request to module 2's operator surface from INSIDE module 2's container (curl, as its own health check uses). Sets E2E_HTTP_CODE (three digits, 000 when none came),
+# E2E_HTTP_BODY (the WHOLE body, with every credential of the request taken out of it: it is parsed, so it is never cut) and E2E_HTTP_ERR (what curl said on its stderr, cut to 200 characters). curl's stderr is kept
+# apart from the body (a warning must not become part of it) and its status is the last line, after a newline of its own (-w): the body is everything before that line, however many newlines it has. The operator
+# key and the request body are on the container's command line only, never on the runner's output; a message about the answer carries its SHAPE (e2e_http_what), never its text.
 e2e_m2_call() {
   local out rc
-  out="$(DC exec -T m2 curl -sS -m 30 -X "$1" -H "Authorization: Bearer $M2_ADMIN_KEY" -H 'Content-Type: application/json' -d "$3" -w '\n%{http_code}' "http://127.0.0.1:8080$2" 2>&1)"; rc=$?
-  E2E_HTTP_CODE="${out##*$'\n'}"; E2E_HTTP_BODY="${out%$'\n'*}"
+  out="$(DC exec -T m2 curl -sS -m 30 -X "$1" -H "Authorization: Bearer $M2_ADMIN_KEY" -H 'Content-Type: application/json' -d "$3" -w '\n%{http_code}' "http://127.0.0.1:8080$2" 2> "$WORK/e2e-curl.err")"; rc=$?
+  E2E_HTTP_ERR="$(head -c 200 "$WORK/e2e-curl.err" 2>/dev/null | tr '\r\n' '  ')"
+  E2E_HTTP_CODE="${out##*$'\n'}"
+  case "$out" in *$'\n'*) E2E_HTTP_BODY="${out%$'\n'*}";; *) E2E_HTTP_BODY="";; esac
   [ -z "${SINK_PASS:-}" ] || E2E_HTTP_BODY="${E2E_HTTP_BODY//$SINK_PASS/[redacted]}"
   [ -z "${M2_ADMIN_KEY:-}" ] || E2E_HTTP_BODY="${E2E_HTTP_BODY//$M2_ADMIN_KEY/[redacted]}"
-  E2E_HTTP_BODY="${E2E_HTTP_BODY:0:300}"
   case "$E2E_HTTP_CODE" in [0-9][0-9][0-9]) ;; *) E2E_HTTP_CODE="000";; esac
   return "$rc"
 }
@@ -205,7 +221,7 @@ e2e_m2() {
   for d in "${E2E_M2_DIALS[@]}"; do
     key="${d%%|*}"; val="${d#*|}"
     e2e_m2_call PUT "/v1/admin/config/$key" "{\"value\":$val}" || true
-    [ "$E2E_HTTP_CODE" = 200 ] || e2e_fail m2 "module 2 answered $E2E_HTTP_CODE to the dial $key (want 200): ${E2E_HTTP_BODY:-no body}"
+    [ "$E2E_HTTP_CODE" = 200 ] || e2e_fail m2 "module 2 answered $E2E_HTTP_CODE to the dial $key (want 200): $(e2e_http_what)"
   done
   echo "  module 2: ${#E2E_M2_DIALS[@]} global dials set (two failed attempts end a job, a one-second retry ladder, no pause between sends, one lane per user, a 250 ms tick)"
 }
@@ -270,16 +286,17 @@ e2e_platform() {
 # an m3_enable ledger row that the platform's own reconcile loop delivers to module 3 (waited for: converged and observed active), and a dedicated pool and one account at module 2 naming the controllable
 # sink's private address (module 2's operator surface; the credential is write-only). The module 3 account is NOT made: the specs add it through the screens. Nothing here prints a link, a token or a password.
 e2e_user() {   # <tag> <funded: 1|0>
-  local tag="$1" funded="$2" email id link body n m pool acct sink_ip
+  local tag="$1" funded="$2" email id link body shape n m pool acct sink_ip
   email="e2e-$tag@example.test"
   body="$(DC exec -T gotrue wget -q -O - --header "Authorization: Bearer $E2E_SERVICE" --header 'Content-Type: application/json' --post-data "{\"type\":\"invite\",\"email\":\"$email\"}" http://127.0.0.1:9999/admin/generate_link 2>/dev/null)" \
     || e2e_fail gotrue "GoTrue refused the invite of the user $tag at POST /admin/generate_link (the service-role key is not accepted, or the route answered an error)"
   id="$(printf '%s' "$body" | e2e_json_get id)"; [ -n "$id" ] || id="$(printf '%s' "$body" | e2e_json_get user.id)"
-  link="$(printf '%s' "$body" | e2e_json_get action_link)"; [ -n "$link" ] || link="$(printf '%s' "$body" | e2e_json_get properties.action_link)"; body=""
-  case "$id" in ????????-????-????-????-????????????) ;; *) die "GoTrue's answer to the invite of the user $tag has no user id";; esac
+  link="$(printf '%s' "$body" | e2e_json_get action_link)"; [ -n "$link" ] || link="$(printf '%s' "$body" | e2e_json_get properties.action_link)"
+  shape="HTTP 200 (wget exits non-zero on an HTTP error), $(printf '%s' "$body" | e2e_describe_body)"; body=""
+  case "$id" in ????????-????-????-????-????????????) ;; *) die "GoTrue's answer to the invite of the user $tag has no user id (the stage reads a top-level id, or user.id): $shape";; esac
   case "$link" in
     "$E2E_ISSUER/verify?"*) ;;
-    *) die "the invite link of the user $tag does not start with $E2E_ISSUER/verify? (it starts with '${link%%\?*}'): GoTrue built the link from its external URL and the mailer's URL path (GOTRUE_MAILER_URLPATHS_INVITE=$E2E_VERIFY_PATH: an absolute path replaces the path of the external URL, so /auth/v1 must be IN it), and the browser could not open this one";;
+    *) die "the invite link of the user $tag does not start with $E2E_ISSUER/verify? (it starts with '${link%%\?*}'): GoTrue built the link from its external URL and the mailer's URL path (GOTRUE_MAILER_URLPATHS_INVITE=$E2E_VERIFY_PATH: an absolute path replaces the path of the external URL, so /auth/v1 must be IN it), and the browser could not open this one; the answer was: $shape";;
   esac
   case "$link" in *"type=invite"*) ;; *) die "the link GoTrue made for the user $tag is not an invite link";; esac
   # GoTrue writes redirect_to as it holds it: unencoded when it has no & = or # (internal/mailer encodeRedirectURL), so both spellings are the app's own address
@@ -297,13 +314,13 @@ e2e_user() {   # <tag> <funded: 1|0>
   sink_ip="$(jobs_ip smtp-ctl)"
   case "$sink_ip" in [0-9]*.[0-9]*.[0-9]*.[0-9]*) ;; *) die "could not read the address of smtp-ctl on $PROJECT_NET (got '$sink_ip'): module 2's account names the sink's private address";; esac
   e2e_m2_call POST /v1/admin/pools "{\"kind\":\"dedicated\",\"owner_user_id\":\"$id\",\"name\":\"e2e $tag\"}" || true
-  [ "$E2E_HTTP_CODE" = 201 ] || e2e_fail m2 "module 2 answered $E2E_HTTP_CODE to the pool of the user $tag (want 201): ${E2E_HTTP_BODY:-no body}"
+  [ "$E2E_HTTP_CODE" = 201 ] || e2e_fail m2 "module 2 answered $E2E_HTTP_CODE to the pool of the user $tag (want 201): $(e2e_http_what)"
   pool="$(printf '%s' "$E2E_HTTP_BODY" | e2e_json_get id)"
-  case "$pool" in ????????-????-????-????-????????????) ;; *) die "module 2's answer to the pool of the user $tag has no pool id";; esac
-  e2e_m2_call POST /v1/admin/accounts "{\"pool_id\":\"$pool\",\"smtp_host\":\"$sink_ip\",\"smtp_port\":$E2E_SINK_SMTP_PORT,\"smtp_username\":\"e2e-$tag\",\"smtp_secret\":\"$SINK_PASS\",\"from_address\":\"sender-e2e-$tag@example.test\",\"from_name\":\"Harness\",\"daily_limit\":100000}" || true
-  [ "$E2E_HTTP_CODE" = 201 ] || e2e_fail m2 "module 2 answered $E2E_HTTP_CODE to the sending account of the user $tag (want 201): ${E2E_HTTP_BODY:-no body}"
+  case "$pool" in ????????-????-????-????-????????????) ;; *) e2e_fail m2 "module 2's answer to the pool of the user $tag has no pool id (the stage reads a top-level id, as the scenario program does): $(e2e_http_what)";; esac
+  e2e_m2_call POST /v1/admin/accounts "{\"pool_id\":\"$pool\",\"smtp_host\":\"$sink_ip\",\"smtp_port\":$E2E_SINK_SMTP_PORT,\"smtp_username\":\"e2e-$tag\",\"smtp_secret\":\"$SINK_PASS\",\"from_address\":\"sender-e2e-$tag@example.test\",\"from_name\":\"Harness\",\"daily_limit\":1000}" || true
+  [ "$E2E_HTTP_CODE" = 201 ] || e2e_fail m2 "module 2 answered $E2E_HTTP_CODE to the sending account of the user $tag (want 201): $(e2e_http_what)"
   acct="$(printf '%s' "$E2E_HTTP_BODY" | e2e_json_get id)"
-  [ -n "$acct" ] || die "module 2's answer to the sending account of the user $tag has no account id"
+  [ -n "$acct" ] || e2e_fail m2 "module 2's answer to the sending account of the user $tag has no account id (the stage reads a top-level id): $(e2e_http_what)"
   printf -v "E2E_M2ACCOUNT_$tag" '%s' "$acct"
   echo "  user $tag: invited, a platform user, $E2E_CREDITS credits at module 1 and at module 2 (ledger), module 3 enabled (ledger row written, delivery awaited below), module 2 pool and sending account at the sink"
 }

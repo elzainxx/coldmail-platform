@@ -413,6 +413,7 @@ DC() {
       esac
       return 0;;
     "exec -T m2 curl"*)
+      if [ "${SC_CURL_FAIL:-0}" = 1 ]; then echo "curl: (7) Failed to connect to localhost port 8080" >&2; return 7; fi
       case "$*" in
         *"/v1/admin/pools"*)    printf '%s\n%s' "${SC_POOL_BODY-$POOL_DEFAULT}" "${SC_POOL_CODE:-201}";;
         *"/v1/admin/accounts"*) if [ "${SC_ACCT_ECHO:-0}" = 1 ]; then printf '%s\n%s' "{\"error\":\"bad smtp_secret $SINK_PASS\"}" 400; else printf '%s\n%s' "${SC_ACCT_BODY-$ACCT_DEFAULT}" "${SC_ACCT_CODE:-201}"; fi;;
@@ -445,7 +446,8 @@ verdict "e2e_m2: ... the log of module 2 is printed first" 1 "LOG-MARKER of m2" 
 out="$(SC_UP_FAIL=m2 us_run e2e_m2)"; rc=$?
 verdict "e2e_m2: module 2 that does not become healthy" 1 "module 2 did not become healthy" "$out" "$rc"
 res="$(SC_DIAL_ECHO=1 us_run e2e_m2)"; rc=$?
-verdict "e2e_m2: a refusal that echoes the operator key shows [redacted] and not the key" 1 "[redacted]" "$res" "$rc"
+verdict "e2e_m2: a refusal says its status and the SHAPE of its body, not its text" 1 "answered 500 to the dial job_max_failed_attempts (want 200): HTTP 500, " "$res" "$rc"
+verdict "e2e_m2: ... the key names of that body (the only thing it says of it besides its size)" 1 "a JSON object with the keys: error" "$res" "$rc"
 adm="$(grep -o 'Bearer [0-9a-f]*' "$T/us/dc.log" | head -1 | sed 's/^Bearer //')"
 case "$res" in *"$adm"*) leaked=yes;; *) leaked=no;; esac
 verdict "e2e_m2: ... the key is nowhere in the output" 0 "no" "$leaked" 0
@@ -482,6 +484,8 @@ verdict "e2e_user: GoTrue that refuses the invite" 1 "GoTrue refused the invite 
 verdict "e2e_user: ... the log of GoTrue is printed first" 1 "LOG-MARKER of gotrue" "$out" "$rc"
 out="$(SC_INVITE=noid us_run e2e_user a 1)"; rc=$?
 verdict "e2e_user: an answer with no user id" 1 "has no user id" "$out" "$rc"
+verdict "e2e_user: ... says what it did get: its size and the key names, never a value" 1 "HTTP 200 (wget exits non-zero on an HTTP error), " "$out" "$rc" "a1b2c3"
+verdict "e2e_user: ... the key names of that body" 1 "a JSON object with the keys: action_link" "$out" "$rc"
 out="$(SC_INVITE=defaultpath us_run e2e_user a 1)"; rc=$?
 verdict "e2e_user: the link of the first runner run (our host, no /auth/v1: the mailer's URL path was the default /verify)" 1 "does not start with https://auth.harness.test/auth/v1/verify? (it starts with 'https://auth.harness.test/verify')" "$out" "$rc"
 verdict "e2e_user: ... and the sentence names the variable that is wrong, without the token" 1 "GOTRUE_MAILER_URLPATHS_INVITE=/auth/v1/verify" "$out" "$rc" "a1b2c3"
@@ -507,10 +511,53 @@ verdict "e2e_user: a sending account that module 2 refuses" 1 "module 2 answered
 out="$(SC_ACCT_BODY='{}' us_run e2e_user a 1)"; rc=$?
 verdict "e2e_user: an account answer with no id" 1 "has no account id" "$out" "$rc"
 res="$(SC_ACCT_ECHO=1 us_run e2e_user a 1)"; rc=$?
-verdict "e2e_user: a refusal that echoes the SMTP secret shows [redacted]" 1 "[redacted]" "$res" "$rc"
+verdict "e2e_user: a refusal that echoes the SMTP secret says its status and the key names of its body, never its text" 1 "answered 400 to the sending account of the user a (want 201): HTTP 400, " "$res" "$rc"
+verdict "e2e_user: ... and the key names are all it says of the body" 1 "a JSON object with the keys: error" "$res" "$rc"
 sp="$(grep -o '"smtp_secret":"[0-9a-f]*"' "$T/us/dc.log" | head -1 | sed 's/.*:"\(.*\)"/\1/')"
 case "$res" in *"$sp"*) leaked=yes;; *) leaked=no;; esac
 verdict "e2e_user: ... the secret is nowhere in the output" 0 "no" "$leaked" 0
+
+# ── how the stage reads an answer: the shapes that go wrong (run 46092116199: a body of more than 300 bytes was cut BEFORE it was parsed, and the pool had "no id") ──
+POOL_ID="55555555-5555-4555-8555-555555555555"
+LONG_POOL="$(node -e 'process.stdout.write(JSON.stringify({id:process.argv[1],kind:"dedicated",owner_user_id:"11111111-1111-4111-8111-111111111111",name:"e2e a",created_at:"2026-11-28T10:00:00.000Z",updated_at:"2026-11-28T10:00:00.000Z",notes:"x".repeat(400)}))' "$POOL_ID")"
+LONG_ACCT="$(node -e 'process.stdout.write(JSON.stringify({id:"acct-long",pool_id:process.argv[1],smtp_host:"10.0.0.9",from_address:"a@example.test",notes:"y".repeat(500)}))' "$POOL_ID")"
+m2probe() { e2e_m2_call POST /v1/admin/pools '{}'; echo "CODE=$E2E_HTTP_CODE LEN=${#E2E_HTTP_BODY}"; echo "ID=$(printf '%s' "$E2E_HTTP_BODY" | e2e_json_get id)"; echo "WHAT=$(e2e_http_what)"; }
+desc() { printf '%s' "$1" | ( set -u; . "$HERE/stage.sh"; e2e_describe_body ); }
+verdict "answer parse: CONTROL: the body of the next cases is longer than the 300 bytes the first runner pass cut it to" 0 "longer" "$([ "${#LONG_POOL}" -gt 300 ] && [ "${#LONG_ACCT}" -gt 300 ] && echo longer || echo "${#LONG_POOL}/${#LONG_ACCT}")" 0
+out="$(SC_POOL_BODY="$LONG_POOL" us_run m2probe)"; rc=$?
+verdict "answer parse: a body of ${#LONG_POOL} bytes is kept WHOLE" 0 "CODE=201 LEN=${#LONG_POOL}" "$out" "$rc"
+verdict "answer parse: ... and its id is read" 0 "ID=$POOL_ID" "$out" "$rc"
+out="$(SC_POOL_BODY="$LONG_POOL" SC_ACCT_BODY="$LONG_ACCT" us_run e2e_user a 1)"; rc=$?
+verdict "answer parse: a pool and an account answer of more than 300 bytes each pass e2e_user (the fault of run 46092116199)" 0 "user a: invited" "$out" "$rc"
+out="$(SC_POOL_BODY="{\"id\":\"$POOL_ID\"}"$'\n' us_run m2probe)"; rc=$?
+verdict "answer parse: a body with a trailing newline" 0 "ID=$POOL_ID" "$out" "$rc"
+verdict "answer parse: ... the newline is part of the body, the status is still the last line" 0 "CODE=201 LEN=$((${#POOL_ID} + 10))" "$out" "$rc"
+out="$(SC_POOL_BODY=$'{\n  "id": "'"$POOL_ID"$'",\n  "kind": "dedicated"\n}\n' us_run m2probe)"; rc=$?
+verdict "answer parse: a body printed over several lines" 0 "ID=$POOL_ID" "$out" "$rc"
+verdict "answer parse: ... with the status of its own after it" 0 "CODE=201" "$out" "$rc"
+out="$(SC_POOL_BODY=$'HTTP/1.1 201 Created\r\n\r\n'"{\"id\":\"$POOL_ID\"}" us_run m2probe)"; rc=$?
+verdict "answer parse: a body mixed with a status line is not read as JSON (the id is empty)" 0 "ID=" "$out" "$rc" "ID=$POOL_ID"
+verdict "answer parse: ... and the description says so, with its size and no text" 0 "HTTP 201, " "$out" "$rc" "Created"
+verdict "answer parse: ... NOT JSON, and what it starts with by kind" 0 "NOT JSON (it starts with another character)" "$out" "$rc"
+out="$(SC_POOL_BODY=$'HTTP/1.1 201 Created\r\n\r\n'"{\"id\":\"$POOL_ID\"}" us_run e2e_user a 1)"; rc=$?
+verdict "answer parse: e2e_user on that body dies naming the pool and what it received" 1 "module 2's answer to the pool of the user a has no pool id (the stage reads a top-level id, as the scenario program does): HTTP 201, " "$out" "$rc"
+verdict "answer parse: ... and the log of module 2 is printed first" 1 "LOG-MARKER of m2" "$out" "$rc"
+out="$(SC_POOL_BODY= us_run e2e_user a 1)"; rc=$?
+verdict "answer parse: an empty body with a 201" 1 "HTTP 201, 0 bytes, empty" "$out" "$rc"
+out="$(SC_ACCT_BODY='[]' us_run e2e_user a 1)"; rc=$?
+verdict "answer parse: an account answer that is a JSON array" 1 "has no account id (the stage reads a top-level id): HTTP 201, 2 bytes, a JSON array" "$out" "$rc"
+out="$(SC_CURL_FAIL=1 us_run m2probe)"; rc=$?
+verdict "answer parse: curl that fails: no status, no body" 0 "CODE=000 LEN=0" "$out" "$rc"
+verdict "answer parse: ... what curl said (its stderr, kept apart from the body) is in the description" 0 "WHAT=HTTP 000, 0 bytes, empty; curl said: curl: (7) Failed to connect to localhost port 8080" "$out" "$rc"
+verdict "e2e_describe_body: a JSON object: its size and its key names, sorted" 0 "$(printf '%s' '{"smtp_secret":"VERYSECRETVALUE","id":"i"}' | wc -c | tr -d ' ') bytes, a JSON object with the keys: id, smtp_secret" "$(desc '{"smtp_secret":"VERYSECRETVALUE","id":"i"}')" 0
+verdict "e2e_describe_body: ... and never a value" 0 "no-value" "$(d="$(desc '{"smtp_secret":"VERYSECRETVALUE","id":"i"}')"; case "$d" in *VERYSECRETVALUE*) echo LEAKED;; *) echo no-value;; esac)" 0
+verdict "e2e_describe_body: an empty object" 0 "2 bytes, a JSON object with no keys" "$(desc '{}')" 0
+verdict "e2e_describe_body: an array" 0 "3 bytes, a JSON array" "$(desc '[1]')" 0
+verdict "e2e_describe_body: a scalar" 0 "2 bytes, a JSON number" "$(desc '42')" 0
+verdict "e2e_describe_body: null" 0 "4 bytes, a JSON null" "$(desc 'null')" 0
+verdict "e2e_describe_body: nothing" 0 "0 bytes, empty" "$(desc '')" 0
+verdict "e2e_describe_body: an HTML page" 0 "NOT JSON (it starts with a < character)" "$(desc '<html>nope</html>')" 0
+verdict "e2e_describe_body: a truncated JSON document (what a cut body looks like)" 0 "NOT JSON (it starts with a { character)" "$(desc '{"id":"abc","kind":"dedi')" 0
 
 # ── e2e_users: the four users and the fixtures file ──
 out="$(us_run e2e_users)"; rc=$?
