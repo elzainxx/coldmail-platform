@@ -202,7 +202,9 @@ export function Link({ to, replace, onClick, target, ...rest }: LinkProps) {
     e.preventDefault()
     navigate(to, { replace })
   }
-  return <a {...rest} href={to} target={target} onClick={handle} />
+  // a link that opens another browsing context must not hand it window.opener or the referrer: the default is the safe one, an explicit rel still wins
+  const rel = rest.rel ?? (target !== undefined && target !== '_self' ? 'noopener noreferrer' : undefined)
+  return <a {...rest} href={to} target={target} rel={rel} onClick={handle} />
 }
 
 export interface LayoutProps {

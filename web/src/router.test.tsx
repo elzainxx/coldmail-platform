@@ -418,3 +418,20 @@ describe('the guard', () => {
     expect(seen[0]).toBe('/secret?x=1#h')
   })
 })
+
+describe('Link and a new browsing context', () => {
+  it('gives a link with a target the safe rel by default, keeps an explicit rel, and leaves a same-window link alone', () => {
+    render(
+      <>
+        <Link to="/a" target="_blank">out</Link>
+        <Link to="/b" target="_blank" rel="author">own</Link>
+        <Link to="/c">same</Link>
+        <Link to="/d" target="_self">self</Link>
+      </>,
+    )
+    expect(screen.getByText('out').getAttribute('rel')).toBe('noopener noreferrer')
+    expect(screen.getByText('own').getAttribute('rel')).toBe('author')
+    expect(screen.getByText('same').getAttribute('rel')).toBeNull()
+    expect(screen.getByText('self').getAttribute('rel')).toBeNull()
+  })
+})

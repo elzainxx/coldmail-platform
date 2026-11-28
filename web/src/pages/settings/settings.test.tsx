@@ -207,7 +207,7 @@ describe('the vendor opt-out', () => {
     fireEvent.click(box) // the space bar on a focused checkbox is a click
     await screen.findByText(t('settings.vendor.savedOn'))
     expect(requests(fn, 'PUT', '/v1/settings')).toHaveLength(1)
-    expect(box).toHaveFocus() // it was never disabled, so a keyboard user is not thrown out of it
+    await waitFor(() => expect(box).toHaveFocus()) // it was never disabled, so a keyboard user is not thrown out of it
   })
 })
 

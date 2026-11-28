@@ -336,14 +336,14 @@ describe('Remove', () => {
     const fn = await openList({ ...rowWith('unsubscribe'), 'POST /v1/suppressions/remove': { removed: true } })
     let button = await clickRemove()
     const cancel = within(await screen.findByRole('alertdialog')).getByRole('button', { name: t('common.cancel') })
-    expect(cancel).toHaveFocus() // the safe button has focus: Enter does not remove by accident
+    await waitFor(() => expect(cancel).toHaveFocus()) // the safe button has focus: Enter does not remove by accident
     fireEvent.click(cancel)
     await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
-    expect(button).toHaveFocus()
+    await waitFor(() => expect(button).toHaveFocus())
     button = await clickRemove()
     fireEvent.keyDown(await screen.findByRole('alertdialog'), { key: 'Escape' })
     await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
-    expect(button).toHaveFocus()
+    await waitFor(() => expect(button).toHaveFocus())
     expect(requests(fn, 'POST', '/v1/suppressions/remove')).toHaveLength(0)
   })
 

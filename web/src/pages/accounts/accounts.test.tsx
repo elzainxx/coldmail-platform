@@ -324,7 +324,7 @@ describe('Add an account: what it came to', () => {
     expect(within(card).getByText(t(gateWord))).toBeInTheDocument()
     expect(within(card).getByText(t(gateWhy))).toBeInTheDocument()
     expect(screen.queryByRole('heading', { level: 2, name: t('accounts.add.title') })).not.toBeInTheDocument() // the form went away
-    expect(card.parentElement).toHaveFocus() // and the user is taken to the result, so it is read
+    await waitFor(() => expect(card.parentElement).toHaveFocus()) // and the user is taken to the result, so it is read
     expectNoInternalText()
   })
 
@@ -369,7 +369,7 @@ describe('Add an account: the warning that has to be confirmed', () => {
     expect(sent).toHaveLength(1)
     expect(bodyOf(sent[0]!)['acknowledge_from_gate']).not.toBe(true) // the first try does not claim an acknowledgement
     expect(box).not.toBeChecked()
-    expect(box).toHaveFocus()
+    await waitFor(() => expect(box).toHaveFocus())
 
     // control: pressing the button without the box ticked sends nothing
     submitAdd(true)
@@ -465,7 +465,7 @@ describe('Add an account: every refusal is a line of words', () => {
     submitAdd()
     await waitFor(() => expect(field(t('accounts.add.host'))).toHaveAttribute('aria-invalid', 'true'))
     expect(field(t('accounts.add.host'))).toHaveAccessibleDescription(new RegExp(t('error.host_forbidden').slice(0, 30)))
-    expect(field(t('accounts.add.host'))).toHaveFocus()
+    await waitFor(() => expect(field(t('accounts.add.host'))).toHaveFocus())
   })
 
   it('the fields the API refused are marked, each with its word', async () => {
@@ -580,16 +580,16 @@ describe('the password', () => {
     fireEvent.click(addButton)
     await screen.findByRole('heading', { level: 2, name: t('accounts.add.title') })
     expect(addButton).toHaveAttribute('aria-expanded', 'true')
-    expect(field(t('accounts.add.host'))).toHaveFocus() // the first field takes focus, so typing can begin
+    await waitFor(() => expect(field(t('accounts.add.host'))).toHaveFocus()) // the first field takes focus, so typing can begin
     fireEvent.click(screen.getByRole('button', { name: t('common.cancel') }))
     expect(screen.queryByRole('heading', { level: 2, name: t('accounts.add.title') })).not.toBeInTheDocument()
-    expect(addButton).toHaveFocus()
+    await waitFor(() => expect(addButton).toHaveFocus())
     bulkButton.focus()
     fireEvent.click(bulkButton)
     await screen.findByRole('heading', { level: 2, name: t('accounts.bulk.title') })
     fireEvent.click(screen.getByRole('button', { name: t('common.close') }))
     expect(screen.queryByRole('heading', { level: 2, name: t('accounts.bulk.title') })).not.toBeInTheDocument()
-    expect(bulkButton).toHaveFocus()
+    await waitFor(() => expect(bulkButton).toHaveFocus())
   })
 
   it('the form posts to nowhere if it is ever submitted without the handler: it is a POST form, never a GET with the password in the address', async () => {
@@ -695,7 +695,7 @@ describe('Test', () => {
     await within(dialog).findByText(t('accounts.stage.done'))
     fireEvent.keyDown(dialog, { key: 'Escape' })
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
-    expect(button).toHaveFocus()
+    await waitFor(() => expect(button).toHaveFocus())
   })
 
   it('reads the list again after a test, because the account may have changed', async () => {
@@ -877,7 +877,7 @@ describe('Remove', () => {
     const dialog = await screen.findByRole('alertdialog', { name: t('accounts.remove.title', { address: 'ann@example.test' }) })
     expect(within(dialog).getByText(t('accounts.remove.body'))).toBeInTheDocument()
     expect(requests(fn, 'POST', removePath)).toHaveLength(0)
-    expect(within(dialog).getByRole('button', { name: t('common.cancel') })).toHaveFocus() // the safe button has focus: Enter does not remove by accident
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: t('common.cancel') })).toHaveFocus()) // the safe button has focus: Enter does not remove by accident
     fireEvent.click(within(dialog).getByRole('button', { name: t('accounts.remove.confirm') }))
     await waitFor(() => expect(requests(fn, 'POST', removePath)).toHaveLength(1))
     expect(await screen.findByText(t('accounts.remove.done', { address: 'ann@example.test' }))).toBeInTheDocument()
@@ -890,11 +890,11 @@ describe('Remove', () => {
     let button = await clickRemove()
     fireEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: t('common.cancel') }))
     await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
-    expect(button).toHaveFocus()
+    await waitFor(() => expect(button).toHaveFocus())
     button = await clickRemove()
     fireEvent.keyDown(await screen.findByRole('alertdialog'), { key: 'Escape' })
     await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
-    expect(button).toHaveFocus()
+    await waitFor(() => expect(button).toHaveFocus())
     expect(requests(fn, 'POST', removePath)).toHaveLength(0)
   })
 

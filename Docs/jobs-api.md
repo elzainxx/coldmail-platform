@@ -407,6 +407,7 @@ POST /v1/suppressions/remove   {"email": "ann@example.test"}    ->  200 {"remove
 POST /v1/suppressions/import   Content-Type: text/csv           ->  200 {"added": 120, "already_there": 3, "invalid": 2, "invalid_sample": [{"line": 7, "reason": "no_at"}]}
 ```
 
+- **An import that ends with an error** (`500` or `503`, the database or the service went away in the middle) may have written the addresses of the batches before the failure, and the answer carries no counts. Send the same file again: an address that is already on the list is counted as `already_there`, so the repeat is safe and ends with the complete counts.
 - **The list** is newest first (by the time the address was suppressed, then by address, both descending), at most **100** to a page (`limit` 1 to 100, default 50; outside that is `400 validation_failed`). `source` is `unsubscribe` (the
   recipient asked), `manual` (the user added it) or `import`. `next_cursor` is `null` on the last page; a cursor is opaque, and one this API did not give is `400 validation_failed`. **`q` is a search, not a pattern**: it is lower-cased, at most
   254 bytes, and an entry matches when it occurs anywhere in the address (a prefix included). `%`, `_` and `\` are three more characters: no wildcard, no SQL, no regular expression. A search that is longer, holds a NUL or is not UTF-8 is `400 validation_failed`.
