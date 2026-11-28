@@ -28,7 +28,7 @@ E2E_SINK_SMTP_PORT=1025
 E2E_M3_SINK_HOST="10.smtp-ctl.example.test"      # the sink's alias module 3's accounts name (docker-compose.yml): private-looking, below the From domain example.test of tests/harness/m3adapter/m3dns.json
 E2E_USER_TAGS=(a b c s)                          # a, b: signed-in users (b is the other user of the cross-user specs); c: the invitee of the browser's invite flow; s: a user with no credits, no entitlement, no sending account
 E2E_FUNDED_TAGS="a b c"                          # the users who hold credits at modules 1 and 2, an entitlement at module 3 and a sending account at module 2
-E2E_CREDITS=100000                               # per metered module and funded user, through the ledger
+E2E_CREDITS=400000                               # per metered module and funded user, through the ledger
 E2E_MIN_TESTS="${E2E_MIN_TESTS:-38}"             # the floor of this scope: the lead raises it as the screens' specs land (web/e2e/README.md); the smoke spec holds ten tests
 E2E_MIN_SHOTS="${E2E_MIN_SHOTS:-100}"              # pictures the run must have left in E2E_SHOTS_DIR (the smoke spec takes one: the helper is proven; the screens' specs take one per main screen)
 E2E_UNSUB=""; E2E_ANON=""; E2E_SERVICE=""        # set by e2e_mint (only the shell's copies: the leak scans look for them)

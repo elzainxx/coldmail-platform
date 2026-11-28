@@ -54,7 +54,7 @@ const (
 	jlOutageHold    = 20 * time.Second
 	jlOutageMaxHold = 100 * time.Second
 	// jlExpiryDelay is the max start delay of the expiry tests' store: a job the module never takes expires this long after its confirm (the database's clock).
-	jlExpiryDelay = 10 * time.Second
+	jlExpiryDelay = 30 * time.Second // was 10 s: the control job of the expiry test must START inside its own deadline and did not once on a loaded runner (the first start waits for module 3 to take its first run call after the link reopened); a longer deadline lengthens both halves of the test and changes no property it proves
 )
 
 // ---- the link -----------------------------------------------------------------------------------------------------------------------------------------------------------------

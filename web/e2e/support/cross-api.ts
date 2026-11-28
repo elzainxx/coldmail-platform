@@ -12,6 +12,9 @@ export type SendModule = 'm2' | 'm3'
 
 export const FINAL_STATUSES: readonly string[] = ['succeeded', 'cancelled', 'expired', 'failed']
 
+/** A list of 100,000 rows is made, previewed and handed to module 1 in one call each: these three calls get minutes, not the 30 seconds of a small one. */
+const BIG_LIST_MS = 300_000
+
 export const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
 /** The platform's error envelope, as far as a spec reads it: the word and the message (a fixed sentence per code), never the details. */
@@ -105,12 +108,12 @@ export async function createSendDraft(request: APIRequestContext, s: Session, sp
 /** A draft of a verification job from a list of addresses (one column, `email`). */
 export async function createVerifyDraft(request: APIRequestContext, s: Session, addresses: string[]): Promise<Job> {
   const csv = `email\r\n${addresses.join('\r\n')}\r\n`
-  const res = await request.post('/v1/jobs', { headers: { ...bearer(s), 'Content-Type': 'text/csv' }, params: { module: 'm1' }, data: csv })
+  const res = await request.post('/v1/jobs', { headers: { ...bearer(s), 'Content-Type': 'text/csv' }, params: { module: 'm1' }, data: csv, timeout: BIG_LIST_MS })
   return (await okJson<{ job: Job }>(res, 201, 'POST a verification job')).job
 }
 
 export async function previewJob(request: APIRequestContext, s: Session, id: string): Promise<Job> {
-  return (await okJson<{ job: Job }>(await request.post(`/v1/jobs/${id}/preview`, { headers: bearer(s) }), 200, 'POST a preview')).job
+  return (await okJson<{ job: Job }>(await request.post(`/v1/jobs/${id}/preview`, { headers: bearer(s), timeout: BIG_LIST_MS }), 200, 'POST a preview')).job
 }
 
 export async function confirmJob(request: APIRequestContext, s: Session, job: Job): Promise<ConfirmResult> {
@@ -119,6 +122,7 @@ export async function confirmJob(request: APIRequestContext, s: Session, job: Jo
   const res = await request.post(`/v1/jobs/${job.id}/confirm`, {
     headers: { ...bearer(s), 'Idempotency-Key': `e2e-${job.id}` },
     data: { fingerprint },
+    timeout: BIG_LIST_MS,
   })
   return await okJson<ConfirmResult>(res, 200, 'POST a confirm')
 }

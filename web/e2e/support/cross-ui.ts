@@ -4,12 +4,15 @@
 //
 // THE SESSION IS IN MEMORY ONLY (web/README.md): a reload or `page.goto` signs the user out, and the app then asks for a sign in and brings the user back to where they were going (`?next=`). So
 // `signIn(page, request, who, path)` opens the path, signs in on the page that appears, and lands on the path. Nothing here prints a password or a token.
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { expect, type APIRequestContext, type Locator, type Page } from '@playwright/test'
 import type { CopyKey } from '../../src/copy/index.ts'
 import { t } from '../../src/copy/index.ts'
 import { jobStatusText } from '../../src/copy/words.ts'
 import { expectNoA11yViolations, type AxeOptions } from './axe.ts'
 import { expectNoInternalText } from './cross-copy.ts'
+import { shotsDir } from './env.ts'
 import { shot } from './shots.ts'
 import { ready, user, type UserTag } from './users.ts'
 
@@ -86,6 +89,21 @@ export async function checkScreen(page: Page, name: string, options: ScreenCheck
 export async function checkCopy(page: Page): Promise<void> {
   await settled(page)
   await expectNoInternalText(page)
+}
+
+/**
+ * A picture taken NOW and written LATER, or never: for a state that is only worth keeping once the test knows what came of it (a try that may be thrown away). Same folder and same names as `shot`; the
+ * returned function writes the picture under the name and returns its path. Nothing is written until it is called, so a try that is not kept adds nothing to the artifacts.
+ */
+export async function holdShot(page: Page): Promise<(name: string) => string> {
+  const png = await page.screenshot({ fullPage: true, animations: 'disabled', caret: 'hide' })
+  return (name) => {
+    if (!/^[a-z0-9][a-z0-9-]*$/.test(name)) throw new Error(`the screenshot name '${name}' must be lower case letters, digits and hyphens`)
+    mkdirSync(shotsDir(), { recursive: true })
+    const path = join(shotsDir(), `${name}.png`)
+    writeFileSync(path, png)
+    return path
+  }
 }
 
 /**
