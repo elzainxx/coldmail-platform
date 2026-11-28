@@ -11,7 +11,7 @@
     "build": "tsc -b && vite build",
     "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.e2e.json",
     "test": "vitest run",
-    "test:json": "vitest run --reporter=json --outputFile=test-results/vitest.json",
+    "test:json": "vitest run --reporter=default --reporter=json --outputFile.json=test-results/vitest.json",
     "check:css": "node scripts/check-css.mjs",
     "check:csp": "node scripts/check-csp.mjs",
     "e2e": "playwright test",

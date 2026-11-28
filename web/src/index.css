@@ -25,6 +25,12 @@
     color: var(--c-text);
   }
 
+  /* A link inside running text must be told apart by more than colour (axe rule link-in-text-block): underlined by default; a component that wants a bare link (a nav item, a button-like link) says no-underline itself. */
+  a {
+    text-decoration: underline;
+    text-underline-offset: 0.18em;
+  }
+
   /* One visible focus ring for everything that takes focus by keyboard. */
   :focus-visible {
     outline: 2px solid var(--c-focus);

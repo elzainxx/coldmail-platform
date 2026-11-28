@@ -19,7 +19,7 @@ const OUT = fileURLToPath(new URL('../src/copy/internal-words.json', import.meta
 const STATIC = [
   'module_id', 'job_transition', 'job_events', 'job_rows', 'job_results', 'job_items', 'job_unit_prices', 'user_settings', 'user_settings_history',
   'suppression_removals', 'platform_app', 'platform_owner', 'send_managed', 'send_byo', 'idempotency_key', 'preview_fingerprint', 'frozen_settings',
-  'content_cleared_at', 'unsubscribe_url', 'email_norm', 'email_raw', 'public_users', 'auth_users',
+  'content_cleared_at', 'email_norm', 'email_raw', 'public_users', 'auth_users',
 ]
 
 export function buildWords() {
