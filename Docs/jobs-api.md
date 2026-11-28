@@ -122,6 +122,7 @@ had nothing left to cancel still ends `cancelled`: the request was accepted.
     "start_deadline": null,
     "paused_from": null,
     "settings": {"unknown_choice": null, "vendor_opt_out": false},
+    "merge_fields": ["city", "first_name"],
     "preview": {
       "rows": 5, "pending": 3, "malformed": 1, "malformed_reasons": {"no_at": 1}, "duplicates": 1, "excluded": 0, "suppressed": 1, "suppressed_still_verified": true, "missing_fields": 0, "missing_field_names": [], "missing_field_names_truncated": false, "unrenderable": 0,
       "units": 3, "selected": 0, "unknown_choice": null, "unknown_count": 0, "unknown_choice_required": false,
@@ -187,6 +188,17 @@ one: the confirm then **must** carry `unknown_choice`, equal to the one the prev
 `module` is `m1` (verify, no content), `m2` or `m3` (send, content required; its `subject`, `html` and `text` are templates, and a syntax error in one is `400 validation_failed` with `details` `part` (`subject`, `html` or `text`), `line`, `column` and `message`, and nothing is written: [`templates.md`](templates.md)). A send **chained** to a succeeded verify job of the same user names it in `source_job_id` and sends no rows: its rows are that job's results,
 selected by verdict (`valid` and `risky` in, `invalid` out, `unknown` by `settings.unknown_choice`: `include` or `exclude`, **no default**; it may be left out here and given at the preview, see below).
 `fields` values are strings.
+
+**A chained send keeps the merge data of the list it was verified from.** Each row of the send holds the `fields` of the verify job's row it came from, read in the same query that reads the results (no extra
+request per row): every `valid` and `risky` row, and every `unknown` one (the choice at the preview turns such a row into a recipient and must not leave it without data); an `invalid` row, a malformed address and a
+repeat are never sent and hold none. A source row whose merge data the retention cleared (below) holds none, so a send chained to a cleared verify job has the names (`merge_fields`) and no values. The preview of the
+send counts the rows that lack a field its templates need exactly as for an uploaded list, its samples render the carried values, and its fingerprint covers them (a changed value is a stale preview).
+
+**`merge_fields`** (additive, on every job; `[]` for none) is the list of the **names**, never the values, of the merge data the job's rows carry: sorted, unique, at most 200, each a name a template can use (the
+grammar of [`templates.md`](templates.md): a letter or an underscore, then letters, digits and underscores, at most 64 characters; the two names the platform supplies itself, `email` and `unsubscribe_url`, are not
+listed, and a column such as `First name`, which no template can name, is not either). It is computed **once**, when the draft is created, and frozen with the job: for a CSV or JSON list the union of the keys of its
+rows' `fields`; for a chained send the verify job's own `merge_fields` (the union of the keys of its rows read at creation when it has none, as a job made before they were kept). The content retention clears the
+values and keeps the names.
 
 **Or a CSV body** (`Content-Type: text/csv`): a header row is required, the column named `email` (any letter case, surrounding space ignored) is the address and **every other column becomes a merge field** named by its
 header. The rest travels in the query, percent-encoded: `module`, `source_job_id`, `unknown_choice`, `subject`, `html`, `text`, `reply_to`, `email_column` (**64 KiB of query in all**; any other parameter is refused).
@@ -507,7 +519,7 @@ list other than the address) and, for a send job (modules 2 and 3), the **messag
 | the merge data of every row | emptied to `{}` |
 | a send job's rendered messages | the subject and the body read `[removed]`, the plain-text part and the stored unsubscribe link are empty; the recipient and `reply_to` stay |
 
-**Kept for ever:** the recipient address of every row and result, the per-item outcome, the charge, the job's dates and counts and its events. So **the results read the same after day 7**: `GET /v1/jobs/{id}/results`
+**Kept for ever:** the recipient address of every row and result, the per-item outcome, the charge, the job's dates and counts, its events and the **names** of its merge columns (`merge_fields`: names only, never a value). So **the results read the same after day 7**: `GET /v1/jobs/{id}/results`
 and the CSV download hold the address and the outcome of each row (the nine columns above, no merge column, before or after) and are byte for byte what they were. A job that has not ended is never touched. A job of
 100000 rows is cleared a few thousand rows at a time, so no step holds a long lock, and the job is marked in the transaction of the last page. The job's **`content_cleared_at`** says when: `null` until the job has been
 cleared, then the time (UTC). A client uses it to explain why a template reads `[removed]` and why the merge data of an old job is gone. The unsubscribe link inside a message already sent keeps working: it does not

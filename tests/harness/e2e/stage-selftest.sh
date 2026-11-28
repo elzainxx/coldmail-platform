@@ -341,7 +341,7 @@ shots_run() { # <number of pngs> [floor]
   W="$T/sh"; rm -rf "$W"; mkdir -p "$W/e2e-artifacts/shots"; local i=0; while [ "$i" -lt "$1" ]; do head -c 600 /dev/zero > "$W/e2e-artifacts/shots/s$i.png"; i=$((i+1)); done
   ( set -u; WORK="$W"; export WORK; . "$T/scan-env.sh"; . "$HERE/stage.sh"; [ -z "${2:-}" ] || E2E_MIN_SHOTS="$2"; e2e_require_shots ) 2>&1
 }
-out="$(shots_run 1)"; rc=$?
+out="$(shots_run 1 1)"; rc=$?
 verdict "e2e_require_shots: one picture, a floor of one" 0 "1 screenshot(s) in the gallery (floor 1)" "$out" "$rc"
 out="$(shots_run 0)"; rc=$?
 verdict "e2e_require_shots: no picture" 1 "0 screenshot(s)" "$out" "$rc"
@@ -373,7 +373,7 @@ verdict "e2e_secret_leak: no secret of the run known to the shell" 1 "the secret
 
 # ── the stand-ins of the services (module 2's operator surface, GoTrue's admin route, psql, the compose CLI) ──
 INVITE_ID_A="11111111-1111-4111-8111-111111111111"
-LINK_OK_A="https://auth.harness.test/auth/v1/verify?token=a1b2c3&type=invite&redirect_to=https%3A%2F%2Fapp.harness.test"
+LINK_OK_A="https://auth.harness.test/auth/v1/verify?token=a1b2c3&type=invite&redirect_to=https://app.harness.test"   # GoTrue writes redirect_to as it holds it (internal/mailer encodeRedirectURL): unencoded here
 cat > "$T/user-env.sh" <<'EOF'
 die() { echo "DIE: $*"; exit 1; }
 banner() { echo "BANNER [$1] $2"; }
@@ -402,7 +402,9 @@ DC() {
       [ "${SC_WGET_FAIL:-0}" = 1 ] && return 1
       id="$(uuid_of "$*")"; email="$(printf '%s' "$*" | grep -o 'e2e-[a-z]@example.test' | head -1)"
       case "${SC_INVITE:-good}" in
-        good)     printf '{"id":"%s","action_link":"https://auth.harness.test/auth/v1/verify?token=a1b2c3&type=invite&redirect_to=https%%3A%%2F%%2Fapp.harness.test","email":"%s"}' "$id" "$email";;
+        good)     printf '{"id":"%s","action_link":"https://auth.harness.test/auth/v1/verify?token=a1b2c3&type=invite&redirect_to=https://app.harness.test","email":"%s"}' "$id" "$email";;
+        encoded)  printf '{"id":"%s","action_link":"https://auth.harness.test/auth/v1/verify?token=a1b2c3&type=invite&redirect_to=https%%3A%%2F%%2Fapp.harness.test","email":"%s"}' "$id" "$email";;
+        defaultpath) printf '{"id":"%s","action_link":"https://auth.harness.test/verify?token=a1b2c3&type=invite&redirect_to=https://app.harness.test","email":"%s"}' "$id" "$email";;   # what run 46085469192 got: the host is ours, the /auth/v1 is gone
         nested)   printf '{"user":{"id":"%s"},"properties":{"action_link":"https://auth.harness.test/auth/v1/verify?token=a1b2c3&type=invite&redirect_to=https%%3A%%2F%%2Fapp.harness.test"}}' "$id";;
         noid)     printf '{"action_link":"https://auth.harness.test/auth/v1/verify?token=a1b2c3&type=invite&redirect_to=https%%3A%%2F%%2Fapp.harness.test"}';;
         plainhttp) printf '{"id":"%s","action_link":"http://gotrue:9999/verify?token=a1b2c3&type=invite&redirect_to=https%%3A%%2F%%2Fapp.harness.test"}' "$id";;
@@ -480,9 +482,14 @@ verdict "e2e_user: GoTrue that refuses the invite" 1 "GoTrue refused the invite 
 verdict "e2e_user: ... the log of GoTrue is printed first" 1 "LOG-MARKER of gotrue" "$out" "$rc"
 out="$(SC_INVITE=noid us_run e2e_user a 1)"; rc=$?
 verdict "e2e_user: an answer with no user id" 1 "has no user id" "$out" "$rc"
+out="$(SC_INVITE=defaultpath us_run e2e_user a 1)"; rc=$?
+verdict "e2e_user: the link of the first runner run (our host, no /auth/v1: the mailer's URL path was the default /verify)" 1 "does not start with https://auth.harness.test/auth/v1/verify? (it starts with 'https://auth.harness.test/verify')" "$out" "$rc"
+verdict "e2e_user: ... and the sentence names the variable that is wrong, without the token" 1 "GOTRUE_MAILER_URLPATHS_INVITE=/auth/v1/verify" "$out" "$rc" "a1b2c3"
+out="$(SC_INVITE=encoded us_run e2e_user a 1)"; rc=$?
+verdict "e2e_user: a redirect_to that GoTrue URL-encoded (it does so when the address holds & = or #) is the same address" 0 "user a: invited" "$out" "$rc"
 out="$(SC_INVITE=plainhttp us_run e2e_user a 1)"; rc=$?
 verdict "e2e_user: a link under the plain-http name (API_EXTERNAL_URL did not reach GoTrue)" 1 "does not start with https://auth.harness.test/auth/v1/verify? (it starts with 'http://gotrue:9999/verify')" "$out" "$rc"
-verdict "e2e_user: ... the sentence shows no token" 1 "GoTrue did not take API_EXTERNAL_URL" "$out" "$rc" "a1b2c3"
+verdict "e2e_user: ... the sentence shows no token" 1 "GOTRUE_MAILER_URLPATHS_INVITE" "$out" "$rc" "a1b2c3"
 out="$(SC_INVITE=recovery us_run e2e_user a 1)"; rc=$?
 verdict "e2e_user: a link that is not an invite" 1 "is not an invite link" "$out" "$rc"
 out="$(SC_INVITE=badredirect us_run e2e_user a 1)"; rc=$?
@@ -629,7 +636,7 @@ banner() { echo "BANNER [$1] $2"; }
 STAGE=selftest
 jobs_cid() { echo "cid-$1"; }
 e2e_tls() { echo "tls-made"; }
-docker() { if [ "${SC_NOGOTRUE_ENV:-0}" = 1 ]; then printf 'API_EXTERNAL_URL=http://gotrue:9999\nGOTRUE_SITE_URL=http://gotrue:9999\nGOTRUE_JWT_ISSUER=http://gotrue:9999/auth/v1\n'; else printf 'PATH=/bin\nAPI_EXTERNAL_URL=https://auth.harness.test/auth/v1\nGOTRUE_SITE_URL=https://app.harness.test\nGOTRUE_JWT_ISSUER=https://auth.harness.test/auth/v1\n'; fi; }
+docker() { if [ "${SC_NOGOTRUE_ENV:-0}" = 1 ]; then printf 'API_EXTERNAL_URL=http://gotrue:9999\nGOTRUE_SITE_URL=http://gotrue:9999\nGOTRUE_JWT_ISSUER=http://gotrue:9999/auth/v1\n'; elif [ "${SC_NOURLPATH:-0}" = 1 ]; then printf 'PATH=/bin\nAPI_EXTERNAL_URL=https://auth.harness.test/auth/v1\nGOTRUE_API_EXTERNAL_URL=https://auth.harness.test/auth/v1\nGOTRUE_SITE_URL=https://app.harness.test\nGOTRUE_JWT_ISSUER=https://auth.harness.test/auth/v1\n'; else printf 'PATH=/bin\nAPI_EXTERNAL_URL=https://auth.harness.test/auth/v1\nGOTRUE_API_EXTERNAL_URL=https://auth.harness.test/auth/v1\nGOTRUE_SITE_URL=https://app.harness.test\nGOTRUE_JWT_ISSUER=https://auth.harness.test/auth/v1\nGOTRUE_MAILER_URLPATHS_INVITE=/auth/v1/verify\nGOTRUE_MAILER_URLPATHS_RECOVERY=/auth/v1/verify\n'; fi; }
 DC() {
   printf '%s\n' "$*" >> "$WORK/dc.log"
   case "$*" in
@@ -660,6 +667,8 @@ verdict "e2e_platform: an edge that does not become healthy" 1 "the TLS edge (ng
 verdict "e2e_platform: ... the edge's log is printed first" 1 "LOG-MARKER of e2e-edge" "$out" "$rc"
 out="$(SC_NOGOTRUE_ENV=1 pl_run)"; rc=$?
 verdict "e2e_platform: a GoTrue that kept the plain-http names" 1 "GoTrue's container does not have API_EXTERNAL_URL=https://auth.harness.test/auth/v1" "$out" "$rc"
+out="$(SC_NOURLPATH=1 pl_run)"; rc=$?
+verdict "e2e_platform: a GoTrue with the right external URL and no mailer URL path (the fault of the first runner run)" 1 "GoTrue's container does not have GOTRUE_MAILER_URLPATHS_INVITE=/auth/v1/verify" "$out" "$rc"
 out="$(SC_PREFLIGHT_RC=1 pl_run)"; rc=$?
 verdict "e2e_platform: a preflight that fails says which hop" 1 "preflight: https://app.harness.test/config.json answered 404 (want 200): PLATFORM_WEB_DIR is not served" "$out" "$rc"
 verdict "e2e_platform: ... and the edge's log follows" 1 "the preflight from the Playwright image failed" "$out" "$rc"
@@ -698,7 +707,7 @@ verdict "consistency: @axe-core/playwright is pinned to an exact version too" 0 
 verdict "consistency: the Playwright version is not in dependencies (a test tool is a devDependency)" 0 "dev-only" "$(node -e 'const p=require(process.argv[1]);process.stdout.write(Object.keys(p.dependencies||{}).some(k=>/playwright|axe/.test(k))?"in dependencies":"dev-only")' "$ROOT/web/package.json")" 0
 verdict "consistency: the compose file publishes no port" 0 "none" "$(grep -qE '^[[:space:]]*ports:' "$COMPOSE" && echo "a ports: key" || echo none)" 0
 svcs="$(grep -E '^  [a-z0-9-]+:$' "$COMPOSE" | tr -d ' :' | tr '\n' ' ')"
-verdict "consistency: the file touches exactly gotrue, m1j, e2e-platform, e2e-edge and e2e-runner" 0 "five" "$([ "$svcs" = "gotrue m1j e2e-platform e2e-edge e2e-runner " ] && echo five || echo "$svcs")" 0
+verdict "consistency: the file touches exactly gotrue, smtp-sink, m1j, e2e-platform, e2e-edge and e2e-runner" 0 "six" "$([ "$svcs" = "gotrue smtp-sink m1j e2e-platform e2e-edge e2e-runner " ] && echo six || echo "$svcs")" 0
 verdict "consistency: the three services it ADDS are in the profile e2e (they cannot start by accident)" 0 "profiled" "$(n=0; for s in e2e-platform e2e-edge e2e-runner; do blk "$s" | grep -q '^    profiles: \[e2e\]$' && n=$((n+1)); done; [ "$n" = 3 ] && echo profiled || echo "$n of 3")" 0
 verdict "consistency: the three added services are no-new-privileges, drop every capability and sit on the private network only" 0 "hardened" "$(n=0; for s in e2e-platform e2e-edge e2e-runner; do b="$(blk "$s")"; printf '%s\n' "$b" | grep -q 'no-new-privileges:true' && printf '%s\n' "$b" | grep -q 'cap_drop: \[ALL\]' && printf '%s\n' "$b" | grep -qE 'networks: \[private\]|^      private:' && n=$((n+1)); done; [ "$n" = 3 ] && echo hardened || echo "$n of 3")" 0
 verdict "consistency: the platform and the edge have a read-only file system" 0 "read-only" "$(n=0; for s in e2e-platform e2e-edge; do blk "$s" | grep -q '^    read_only: true$' && n=$((n+1)); done; [ "$n" = 2 ] && echo read-only || echo "$n of 2")" 0
@@ -724,6 +733,22 @@ verdict "names: the platform's JWT secret and audience are GoTrue's (one variabl
 verdict "names: the unsubscribe secret is a variable of its own, never GoTrue's or module 1's" 0 "own" "$(grep -q '^      PLATFORM_UNSUBSCRIBE_SECRET: ${H_E2E_UNSUBSCRIBE_SECRET:?}$' "$COMPOSE" && ! grep -q 'PLATFORM_UNSUBSCRIBE_SECRET: ${H_JWT_SECRET\|PLATFORM_UNSUBSCRIBE_SECRET: ${H_JOBS' "$COMPOSE" && echo own || echo wrong)" 0
 verdict "names: the sink alias module 3's accounts name is the one the compose file of the harness gives the sink, and the stage and the runner agree" 0 "alias" "$(grep -q 'aliases: \[smtp.gmail.com, 10.smtp-ctl.example.test\]' "$HARNESS/docker-compose.yml" && . "$STG" && [ "$E2E_M3_SINK_HOST" = 10.smtp-ctl.example.test ] && blk e2e-runner | grep -q '^      E2E_M3_SINK_HOST: 10.smtp-ctl.example.test$' && echo alias || echo wrong)" 0
 verdict "names: the sink's control address is the one the stage writes into the fixtures and the runner is given, on the port the sink's compose file serves it on" 0 "sink" "$(blk e2e-runner | grep -q '^      E2E_SINK_URL: http://smtp-ctl:8025$' && grep -q 'E2E_SINK_URL="http://smtp-ctl:8025"' "$STG" && grep -q 'SINK_HTTP_ADDR: ":8025"' "$HARNESS/docker-compose.yml" && echo sink || echo wrong)" 0
+
+# ── GoTrue's variables: the names its image reads, and the link they make (the fault of the first runner run) ──
+gblk="$(blk gotrue)"
+verdict "gotrue overlay: every variable set on GoTrue is GOTRUE_-prefixed or the one bare name GoTrue's own source names as an alternative (API_EXTERNAL_URL)" 0 "names-ok" "$(bad=""; got=0; for n in $(printf '%s\n' "$gblk" | grep -oE '^      [A-Z0-9_]+' | tr -d ' '); do got=$((got+1)); case "$n" in GOTRUE_*|API_EXTERNAL_URL) ;; *) bad="$bad $n";; esac; done; [ "$got" -ge 8 ] && [ -z "$bad" ] && echo names-ok || echo "read $got, not read by GoTrue:$bad")" 0
+verdict "gotrue overlay: CONTROL: a bare name that GoTrue does not read would be named (the check can fail)" 0 "caught" "$(bad=""; for n in SITE_URL API_EXTERNAL_URL MAILER_URLPATHS_INVITE; do case "$n" in GOTRUE_*|API_EXTERNAL_URL) ;; *) bad="$bad $n";; esac; done; [ "$bad" = " SITE_URL MAILER_URLPATHS_INVITE" ] && echo caught || echo "$bad")" 0
+verdict "gotrue overlay: the external URL is set under both of its names, to the issuer anchor" 0 "both" "$(printf '%s\n' "$gblk" | grep -q '^      API_EXTERNAL_URL: \*e2e-issuer$' && printf '%s\n' "$gblk" | grep -q '^      GOTRUE_API_EXTERNAL_URL: \*e2e-issuer$' && echo both || echo wrong)" 0
+verdict "gotrue overlay: the four mailer URL paths are the one verify-path anchor" 0 "four" "$(n=0; for k in INVITE CONFIRMATION RECOVERY EMAIL_CHANGE; do printf '%s\n' "$gblk" | grep -q "^      GOTRUE_MAILER_URLPATHS_$k: \*e2e-verify\$" && n=$((n+1)); done; [ "$n" = 4 ] && echo four || echo "$n of 4")" 0
+resolve() { MSYS_NO_PATHCONV=1 node -e 'process.stdout.write(new URL(process.argv[1], process.argv[2]).href)' "$1" "$2"; }   # RFC 3986 resolution: what Go's URL.ResolveReference does in GoTrue's templatemailer
+ext="$(sed -n 's/^x-e2e-issuer: &e2e-issuer "\(.*\)"$/\1/p' "$COMPOSE")"
+vp="$(sed -n 's/^x-e2e-verify: &e2e-verify "\([^"]*\)".*$/\1/p' "$COMPOSE")"
+verdict "gotrue overlay: the link's prefix (the mailer path resolved against the external URL, as GoTrue does) is the issuer plus /verify" 0 "ok" "$([ -n "$ext" ] && [ -n "$vp" ] && [ "$(resolve "$vp" "$ext")" = "$ext/verify" ] && echo ok || echo "ext [$ext] path [$vp] gives [$(resolve "$vp" "$ext")]")" 0
+verdict "gotrue overlay: CONTROL: GoTrue's default mailer path /verify, resolved the same way, LOSES the /auth/v1 (the link of the first runner run), so this check can fail" 0 "lost" "$([ "$(resolve /verify "$ext")" = "https://auth.harness.test/verify" ] && [ "$(resolve /verify "$ext")" != "$ext/verify" ] && echo lost || echo "$(resolve /verify "$ext")")" 0
+verdict "gotrue overlay: the stage's verify path is the compose file's, and the stage checks the running container for the variables that make the link" 0 "checked" "$( . "$STG"; [ "$E2E_VERIFY_PATH" = "$vp" ] && b="$(sed -n '/^e2e_platform() {/,/^}/p' "$STG")" && printf '%s\n' "$b" | grep -q 'GOTRUE_MAILER_URLPATHS_INVITE=\$E2E_VERIFY_PATH' && printf '%s\n' "$b" | grep -q 'GOTRUE_API_EXTERNAL_URL=\$E2E_ISSUER' && echo checked || echo wrong)" 0
+verdict "gotrue overlay: the app origin, and what is under it, is on the redirect allow list besides GoTrue's own site URL" 0 "allowed" "$(printf '%s\n' "$gblk" | grep -qF '      GOTRUE_URI_ALLOW_LIST: "https://app.harness.test,https://app.harness.test/**"' && echo allowed || echo wrong)" 0
+verdict "smtp-sink overlay: Mailpit is told not to look for a newer version (the name v1.33.1 reads), so nothing in the logs depends on api.github.com" 0 "quiet" "$(blk smtp-sink | grep -q '^      MP_DISABLE_VERSION_CHECK: "true"$' && echo quiet || echo wrong)" 0
+verdict "nginx.conf: /auth/v1/ is taken off before GoTrue sees the request, and the query (the invite token) is kept: the trailing slash of proxy_pass, no rewrite that drops it" 0 "strip" "$(grep -q 'location /auth/v1/ { proxy_pass http://gotrue:9999/; }' "$NGINX" && ! grep -qE 'rewrite |proxy_pass .*\$' "$NGINX" && echo strip || echo wrong)" 0
 
 # ── the platform's dials against the Go code that reads them ──
 gonames="$(for f in "$ROOT"/internal/config/*.go; do case "$f" in *_test.go) ;; *) cat "$f";; esac; done | grep -oE '"PLATFORM_[A-Z0-9_]+"' | tr -d '"' | sort -u)"

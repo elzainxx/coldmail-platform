@@ -210,13 +210,13 @@ func TestClassifyRows_FieldsAreKeptAndBounded(t *testing.T) {
 
 func TestClassifyChain_SelectsByVerdictAndNeverSendsAnUnreadableOne(t *testing.T) {
 	res := []sourceResult{
-		{"r1", "v1@example.com", VerdictValid},
-		{"r2", "i1@example.com", VerdictInvalid},
-		{"r3", "k1@example.com", VerdictRisky},
-		{"r4", "u1@example.com", VerdictUnknown},
-		{"r5", "w1@example.com", "teleported"}, // a verdict this store does not know
-		{"r6", "v1@example.com", VerdictValid}, // an impossible repeat: still caught
-		{"r7", "v2@example.com", VerdictValid},
+		{"r1", "v1@example.com", VerdictValid, ""},
+		{"r2", "i1@example.com", VerdictInvalid, ""},
+		{"r3", "k1@example.com", VerdictRisky, ""},
+		{"r4", "u1@example.com", VerdictUnknown, ""},
+		{"r5", "w1@example.com", "teleported", ""}, // a verdict this store does not know
+		{"r6", "v1@example.com", VerdictValid, ""}, // an impossible repeat: still caught
+		{"r7", "v2@example.com", VerdictValid, ""},
 	}
 	for _, c := range []struct {
 		choice string
@@ -245,10 +245,10 @@ func TestClassifyChain_SelectsByVerdictAndNeverSendsAnUnreadableOne(t *testing.T
 
 func TestClassifyChain_ResultsTheTableCannotKeepAreMalformedNotACrash(t *testing.T) {
 	res := []sourceResult{
-		{"r1", "nul\x00@example.com", VerdictValid},
-		{"r2", strings.Repeat("a", MaxRawBytes+1), VerdictValid},
-		{"r3", "", VerdictValid},
-		{"r4", "ok@example.com", VerdictValid},
+		{"r1", "nul\x00@example.com", VerdictValid, ""},
+		{"r2", strings.Repeat("a", MaxRawBytes+1), VerdictValid, ""},
+		{"r3", "", VerdictValid, ""},
+		{"r4", "ok@example.com", VerdictValid, ""},
 	}
 	got := classifyChain(res, UnknownExclude, seqIDs())
 	want := []struct{ state, reason string }{{StateMalformed, ReasonInvalidText}, {StateMalformed, ReasonTooLong}, {StateMalformed, ReasonInvalidText}, {StatePending, ""}}

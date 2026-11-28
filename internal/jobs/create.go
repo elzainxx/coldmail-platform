@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 
 	"github.com/jackc/pgx/v5"
@@ -68,16 +69,19 @@ func (s *Store) CreateDraft(ctx context.Context, userID string, req CreateReq) (
 		if !active {
 			return badRequest("module %q is not active", req.Module)
 		}
+		// the names of the merge data, once, for ever (merge_fields.go): the union of the keys of the supplied rows, or, for a chained send, the source job's own list (its rows' keys when it has none)
+		mergeFields := mergeFieldsOfRows(req.Rows)
 		if chained {
-			res, err := s.chainSource(ctx, tx, userID, req.SourceJobID)
+			res, listed, err := s.chainSource(ctx, tx, userID, req.SourceJobID)
 			if err != nil {
 				return err
 			}
 			rows = classifyChain(res, settings.UnknownChoice, newUUID)
+			mergeFields = mergeFieldsOfSource(listed, res)
 		}
 
 		// Phase 5 S6: the one frozen choice that is not the caller's. A module 1 job reads the user's vendor opt-out NOW, once (never trusting the request), and freezes it; any other module never reads it
-		frozen, _, err := freezeVendorChoice(ctx, tx, userID, req.Module, settings, content)
+		frozen, _, err := freezeVendorChoice(ctx, tx, userID, req.Module, settings, content, mergeFields)
 		if err != nil {
 			return s.fail(err)
 		}
@@ -141,51 +145,64 @@ func (s *Store) validateCreate(req CreateReq, chained bool) error {
 	return nil
 }
 
-// chainSource reads the module results of the user's succeeded verify job, in the order of its rows, and checks that it may be chained: the user's own (a job of another user and a job that
-// does not exist are one answer), m1, succeeded, with at least one module result and not more than the store's limit.
-func (s *Store) chainSource(ctx context.Context, tx pgx.Tx, userID, sourceID string) ([]sourceResult, error) {
+// chainSource reads the module results of the user's succeeded verify job, in the order of its rows, each with the merge data of its source row, and checks that it may be chained: the user's own (a job of
+// another user and a job that does not exist are one answer), m1, succeeded, with at least one module result and not more than the store's limit. It also returns the names of merge data the source job
+// itself listed (merge_fields.go; nil for a job made before they were kept).
+//
+// THE MERGE DATA comes in the SAME query as the results, through a join on the source job's own rows (job_rows.id = job_results.item_ref, both scoped by the source job and the user): one statement, no
+// round trip per row, the same order as before. A result whose row is gone (it cannot be: the result's foreign key names it) or whose merge data the retention cleared reads {}.
+func (s *Store) chainSource(ctx context.Context, tx pgx.Tx, userID, sourceID string) ([]sourceResult, []string, error) {
 	var srcModule, srcStatus string
-	err := tx.QueryRow(ctx, `SELECT module_id, status FROM platform.jobs WHERE id = $1::uuid AND user_id = $2::uuid`, sourceID, userID).Scan(&srcModule, &srcStatus)
+	var listedDoc []byte // frozen_settings -> merge_fields: NULL for a job that has none
+	err := tx.QueryRow(ctx, `SELECT module_id, status, frozen_settings -> 'merge_fields' FROM platform.jobs WHERE id = $1::uuid AND user_id = $2::uuid`, sourceID, userID).Scan(&srcModule, &srcStatus, &listedDoc)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, badRequest("the source job does not exist")
+		return nil, nil, badRequest("the source job does not exist")
 	}
 	if err != nil {
-		return nil, s.fail(err)
+		return nil, nil, s.fail(err)
 	}
 	if srcModule != ModuleVerify {
-		return nil, badRequest("the source job is not a verify job")
+		return nil, nil, badRequest("the source job is not a verify job")
 	}
 	if srcStatus != StatusSucceeded {
-		return nil, badRequest("the source job has not succeeded (it is %s)", srcStatus)
+		return nil, nil, badRequest("the source job has not succeeded (it is %s)", srcStatus)
+	}
+	var listed []string
+	if len(listedDoc) > 0 {
+		if err := json.Unmarshal(listedDoc, &listed); err != nil {
+			listed = nil // a list this store did not write is not trusted: the keys of the rows are read instead
+		}
 	}
 	var n int
 	if err := tx.QueryRow(ctx, `SELECT count(*) FROM platform.job_results WHERE job_id = $1::uuid AND user_id = $2::uuid AND origin = 'module'`, sourceID, userID).Scan(&n); err != nil {
-		return nil, s.fail(err)
+		return nil, nil, s.fail(err)
 	}
 	if n == 0 {
-		return nil, badRequest("the source job has no results from the module to chain")
+		return nil, nil, badRequest("the source job has no results from the module to chain")
 	}
 	if n > s.maxRows {
-		return nil, &TooManyRowsError{Limit: s.maxRows}
+		return nil, nil, &TooManyRowsError{Limit: s.maxRows}
 	}
-	rows, err := tx.Query(ctx, `SELECT item_ref::text, email, module_state FROM platform.job_results
-		WHERE job_id = $1::uuid AND user_id = $2::uuid AND origin = 'module' ORDER BY ordinal, item_ref`, sourceID, userID)
+	rows, err := tx.Query(ctx, `SELECT r.item_ref::text, r.email, r.module_state, COALESCE(w.fields, '{}'::jsonb)::text
+		FROM platform.job_results r
+		LEFT JOIN platform.job_rows w ON w.job_id = r.job_id AND w.user_id = r.user_id AND w.id = r.item_ref
+		WHERE r.job_id = $1::uuid AND r.user_id = $2::uuid AND r.origin = 'module' ORDER BY r.ordinal, r.item_ref`, sourceID, userID)
 	if err != nil {
-		return nil, s.fail(err)
+		return nil, nil, s.fail(err)
 	}
 	defer rows.Close()
 	out := make([]sourceResult, 0, n)
 	for rows.Next() {
 		var r sourceResult
-		if err := rows.Scan(&r.ItemRef, &r.Email, &r.Verdict); err != nil {
-			return nil, s.fail(err)
+		if err := rows.Scan(&r.ItemRef, &r.Email, &r.Verdict, &r.Fields); err != nil {
+			return nil, nil, s.fail(err)
 		}
 		out = append(out, r)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, s.fail(err)
+		return nil, nil, s.fail(err)
 	}
-	return out, nil
+	return out, listed, nil
 }
 
 // insertRows writes one batch of classified rows with one INSERT ... SELECT over arrays (the table's BEFORE INSERT trigger runs per row, which is fine at the size limit). NULLs travel as the

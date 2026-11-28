@@ -1,5 +1,5 @@
 // Step 2 of a send: the list. A CSV file (the same file picker and column picker as a verification), or the results of a verification the user already finished.
-import type { UnknownChoice } from '../../api/types.ts'
+import type { Job, UnknownChoice } from '../../api/types.ts'
 import { t } from '../../copy/index.ts'
 import { Choice, ChoiceGroup } from './Choice.tsx'
 import { CsvStep } from './CsvStep.tsx'
@@ -12,13 +12,13 @@ export interface ListStepProps {
   kind: ListKind
   onKind: (kind: ListKind) => void
   csv: CsvSource
-  verificationId: string | null
-  onVerification: (id: string) => void
+  verification: Job | null
+  onVerification: (job: Job) => void
   unknownChoice: UnknownChoice | null
   onUnknownChoice: (choice: UnknownChoice) => void
 }
 
-export function ListStep({ kind, onKind, csv, verificationId, onVerification, unknownChoice, onUnknownChoice }: ListStepProps) {
+export function ListStep({ kind, onKind, csv, verification, onVerification, unknownChoice, onUnknownChoice }: ListStepProps) {
   return (
     <div className="flex flex-col gap-4">
       <ChoiceGroup legend={t('newjob.list.legend')}>
@@ -36,7 +36,7 @@ export function ListStep({ kind, onKind, csv, verificationId, onVerification, un
         <CsvStep source={csv} purpose="send" />
       ) : (
         <VerificationSource
-          selectedId={verificationId}
+          selected={verification}
           onSelect={onVerification}
           unknownChoice={unknownChoice}
           onUnknownChoice={onUnknownChoice}

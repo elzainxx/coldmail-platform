@@ -83,7 +83,7 @@ func (s *Store) requireOptOutPolicy(ctx context.Context, jobID string) error {
 // freezeVendorChoice makes the frozen settings of a NEW job: the settings and the campaign, with the one choice that is not the caller's. For a module 1 job it reads the user's setting NOW, in the creating
 // transaction (usersettings.VendorOptOutOf, scoped by the user), and freezes it; whatever the caller put in Settings.VendorOptOut is replaced by what was read (a request cannot set it). For any other
 // module the key is never set and the setting is not read. The settings it returns are what the job will hold.
-func freezeVendorChoice(ctx context.Context, q querier, userID, module string, settings Settings, content *Content) ([]byte, Settings, error) {
+func freezeVendorChoice(ctx context.Context, q querier, userID, module string, settings Settings, content *Content, mergeFields []string) ([]byte, Settings, error) {
 	settings.VendorOptOut = false
 	if module == ModuleVerify {
 		optOut, err := usersettings.VendorOptOutOf(ctx, q, userID)
@@ -92,7 +92,7 @@ func freezeVendorChoice(ctx context.Context, q querier, userID, module string, s
 		}
 		settings.VendorOptOut = optOut
 	}
-	b, err := json.Marshal(frozenSettings{Settings: settings, Content: content})
+	b, err := json.Marshal(frozenSettings{Settings: settings, Content: content, MergeFields: mergeFields})
 	return b, settings, err
 }
 

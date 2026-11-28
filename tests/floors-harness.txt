@@ -1,3 +1,3 @@
 # Minimum top-level test counts for the real-infrastructure integration tests (build tag `harness`; tests/harness/run.sh runs them INSIDE the private network
 # against a real Postgres and prints the verdict the floor gate reads). Same rules as floors-go.txt.
-go|github.com/coldmail-platform/platform/tests/harness|520
+go|github.com/coldmail-platform/platform/tests/harness|522

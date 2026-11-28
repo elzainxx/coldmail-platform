@@ -49,7 +49,7 @@ func TestViews_EveryFieldOfTheStoresTypesIsShownOrLeftOutOnPurpose(t *testing.T)
 	shown := map[string]string{ // Go field -> JSON member
 		"ID": "id", "Module": "module", "Status": "status", "SourceJobID": "source_job_id", "ScheduledStart": "scheduled_start", "StartDeadline": "start_deadline", "PausedFrom": "paused_from",
 		"Preview": "preview", "PreviewFingerprint": "preview_fingerprint", "PreviewedAt": "previewed_at", "ConfirmedAt": "confirmed_at", "StartedAt": "started_at", "FinishedAt": "finished_at",
-		"CancelRequestedAt": "cancel_requested_at", "ContentClearedAt": "content_cleared_at", "Settings": "settings", "Content": "content", "CreatedAt": "created_at", "UpdatedAt": "updated_at",
+		"CancelRequestedAt": "cancel_requested_at", "ContentClearedAt": "content_cleared_at", "MergeFields": "merge_fields", "Settings": "settings", "Content": "content", "CreatedAt": "created_at", "UpdatedAt": "updated_at",
 	}
 	omitted := map[string]string{"UserID": "the owner: a client knows who it is, and the id of a user is not the client's to learn", "ConfirmKey": "the client's own idempotency key"}
 	checkAccounted(t, reflect.TypeOf(jobs.Job{}), shown, omitted)

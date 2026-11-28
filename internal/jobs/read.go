@@ -15,10 +15,12 @@ const jobColumns = `j.id::text, j.user_id::text, j.module_id, j.status, COALESCE
 	j.preview, COALESCE(j.preview_fingerprint, ''), COALESCE(j.confirm_key, ''), COALESCE(j.paused_from, ''), j.frozen_settings,
 	j.previewed_at, j.confirmed_at, j.started_at, j.finished_at, j.cancel_requested_at, j.created_at, j.updated_at, j.content_cleared_at`
 
-// frozenSettings is the shape of platform.jobs.frozen_settings: the settings and, for a send job, the campaign.
+// frozenSettings is the shape of platform.jobs.frozen_settings: the settings, for a send job the campaign, and the names of the merge data of the job's rows (merge_fields.go; absent from a job made before
+// they were kept). The content retention (platform_0021) rewrites only `content` of this document: every other key, this one included, stays as it was.
 type frozenSettings struct {
-	Settings Settings `json:"settings"`
-	Content  *Content `json:"content,omitempty"`
+	Settings    Settings `json:"settings"`
+	Content     *Content `json:"content,omitempty"`
+	MergeFields []string `json:"merge_fields,omitempty"`
 }
 
 func utc(t *time.Time) *time.Time {
@@ -58,6 +60,7 @@ func scanJobWith(row pgx.Row, extra ...any) (Job, error) {
 		return Job{}, fmt.Errorf("the frozen settings of job %s are not settings: %w", j.ID, err)
 	}
 	j.Settings, j.Content = f.Settings, f.Content // an empty choice stays empty: the user has not chosen (no default is invented here)
+	j.MergeFields = f.MergeFields
 	return j, nil
 }
 

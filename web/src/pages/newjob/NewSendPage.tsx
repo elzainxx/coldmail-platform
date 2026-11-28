@@ -4,7 +4,7 @@
 // Nothing is made on the platform until the user goes from the message to the preview: the draft is created then (the platform freezes a job's message when it is
 // saved) and previewed. Going back from the preview lets the draft go (it holds nothing) so the message can be changed and a new draft made.
 import { useEffect, useState, type ReactNode } from 'react'
-import type { TemplateCheckError, UnknownChoice } from '../../api/types.ts'
+import type { Job, TemplateCheckError, UnknownChoice } from '../../api/types.ts'
 import { t, templateProblem } from '../../copy/index.ts'
 import { navigate, useRoute } from '../../router.tsx'
 import { Card, PageHeader } from '../../ui/index.ts'
@@ -12,6 +12,7 @@ import { EMPTY_MESSAGE, type Message } from './authoring/message.ts'
 import { MessageStep } from './authoring/MessageStep.tsx'
 import { chainedCreate, csvCreate, csvQuery, fitsInQuery } from './createRequest.ts'
 import { mergeColumns } from './csv/columns.ts'
+import { fieldColumns, mergeFieldsOf } from './mergeFields.ts'
 import { ListStep, type ListKind } from './ListStep.tsx'
 import { ReviewSection } from './ReviewSection.tsx'
 import { SenderStep, type Sender } from './SenderStep.tsx'
@@ -39,7 +40,7 @@ export function NewSendPage() {
   const [sender, setSender] = useState<Sender | null>(null)
   const [listKind, setListKind] = useState<ListKind>('csv')
   const csv = useCsvSource()
-  const [verificationId, setVerificationId] = useState<string | null>(null)
+  const [verification, setVerification] = useState<Job | null>(null)
   const [unknownChoice, setUnknownChoice] = useState<UnknownChoice | null>(null)
   const [message, setMessage] = useState<Message>(EMPTY_MESSAGE)
   const [serverProblem, setServerProblem] = useState<TemplateCheckError | null>(null)
@@ -77,7 +78,7 @@ export function NewSendPage() {
     setTooLong(false)
   }
 
-  const listReady = listKind === 'csv' ? csv.ready : verificationId !== null && unknownChoice !== null
+  const listReady = listKind === 'csv' ? csv.ready : verification !== null && unknownChoice !== null
   const listHint =
     listKind === 'csv'
       ? csv.file === null
@@ -87,11 +88,12 @@ export function NewSendPage() {
           : csv.chosen === null
             ? t('newjob.verify.needColumn')
             : t('newjob.verify.fixProblems')
-      : verificationId === null
+      : verification === null
         ? t('newjob.list.needVerification')
         : t('newjob.list.needChoice')
 
-  const columns = listKind === 'csv' && csv.head !== null ? mergeColumns(csv.head.header, csv.chosen) : []
+  // the fields a message may name: the other columns of the file, or the fields of the finished verification the user chose (its `merge_fields`)
+  const columns = listKind === 'csv' ? (csv.head !== null ? mergeColumns(csv.head.header, csv.chosen) : []) : fieldColumns(mergeFieldsOf(verification))
 
   const toPreview = () => {
     if (sender === null) return
@@ -107,9 +109,9 @@ export function NewSendPage() {
       void draft.start(csvCreate(file, query))
       return
     }
-    if (verificationId === null) return
+    if (verification === null) return
     go('preview')
-    void draft.start(chainedCreate(sender, verificationId, message, unknownChoice))
+    void draft.start(chainedCreate(sender, verification.id, message, unknownChoice))
   }
 
   /** Back from the preview to the message: the draft is let go (its message cannot be changed), and a new one is made on the way forward. */
@@ -177,8 +179,8 @@ export function NewSendPage() {
               kind={listKind}
               onKind={setListKind}
               csv={csv}
-              verificationId={verificationId}
-              onVerification={setVerificationId}
+              verification={verification}
+              onVerification={setVerification}
               unknownChoice={unknownChoice}
               onUnknownChoice={setUnknownChoice}
             />
@@ -192,7 +194,8 @@ export function NewSendPage() {
             message={message}
             onChange={edit}
             columns={columns}
-            hasColumns={listKind === 'csv'}
+            hasColumns={listKind === 'csv' || columns.length > 0}
+            paletteNote={listKind === 'verification' && columns.length > 0 ? t('newjob.palette.verifiedNote') : undefined}
             serverProblem={serverProblem}
             tooLong={tooLong}
             onBack={() => go('list')}

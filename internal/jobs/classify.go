@@ -141,10 +141,16 @@ type sourceResult struct {
 	ItemRef string // the source job's item_ref (its job_rows.id)
 	Email   string // the address of the result
 	Verdict string // module_state
+	Fields  string // the merge data of the SOURCE ROW (the job_rows row whose id is ItemRef), a JSON object as text; "" or "{}" when it has none or the retention cleared it
 }
 
 // classifyChain turns the module results of a verify job into the rows of a chained send, in the source's order: pending when the verdict is selected, excluded (reason = the verdict) when it is
 // not. email_norm is the result's address. A pending row repeats nothing the source did not (its duplicates never reached the module and are not results), but a repeat is still caught.
+//
+// MERGE DATA. A row that is, or can still become, a recipient carries the merge data of its source row (the columns of the verification list other than the address), so that the author can write
+// {{first_name}} in the send: a pending row, and an excluded row whose verdict is `unknown` (the user's choice for those is made at the preview and flips such a row to pending, which must not leave it
+// with no data). Every other row (an invalid verdict, a malformed address, a repeat) is never sent and carries {}: no merge value is copied that no message can use. A source row whose merge data the
+// retention cleared carries {}.
 func classifyChain(res []sourceResult, unknownChoice string, newID func() string) []classified {
 	out := make([]classified, len(res))
 	firstOf := make(map[string]string, len(res))
@@ -170,6 +176,9 @@ func classifyChain(res []sourceResult, unknownChoice string, newID func() string
 		}
 		if c.Raw == "" { // job_rows.email_raw is NOT NULL and a result with no text at all still has a row
 			c.Raw = "-"
+		}
+		if r.Fields != "" && (c.State == StatePending || (c.State == StateExcluded && r.Verdict == VerdictUnknown)) {
+			c.Fields = r.Fields
 		}
 		out[i] = c
 	}

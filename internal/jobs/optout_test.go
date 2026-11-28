@@ -70,7 +70,7 @@ func TestFreezeVendorChoice_AModuleOneJobReadsTheUsersSettingOnceAndNeverTakesTh
 		{"the request says opted in, the user is opted out: the user's own setting wins", settingRow{val: true}, false, true, true},
 	} {
 		q := &settingQ{row: c.row}
-		b, got, err := freezeVendorChoice(context.Background(), q, optOutUser, ModuleVerify, Settings{UnknownChoice: "", VendorOptOut: c.callers}, nil)
+		b, got, err := freezeVendorChoice(context.Background(), q, optOutUser, ModuleVerify, Settings{UnknownChoice: "", VendorOptOut: c.callers}, nil, nil)
 		if err != nil {
 			t.Fatalf("%s: %v", c.name, err)
 		}
@@ -93,7 +93,7 @@ func TestFreezeVendorChoice_ASendJobNeverReadsTheSettingAndNeverCarriesTheKey(t 
 	for _, module := range []string{ModuleSendManaged, ModuleSendBYO} {
 		q := &settingQ{row: settingRow{val: true}} // the user IS opted out: a send job must not even look
 		content := &Content{Subject: "s", HTML: "<p>h</p>"}
-		b, got, err := freezeVendorChoice(context.Background(), q, optOutUser, module, Settings{VendorOptOut: true}, content)
+		b, got, err := freezeVendorChoice(context.Background(), q, optOutUser, module, Settings{VendorOptOut: true}, content, nil)
 		if err != nil {
 			t.Fatalf("%s: %v", module, err)
 		}
@@ -112,12 +112,12 @@ func TestFreezeVendorChoice_ASendJobNeverReadsTheSettingAndNeverCarriesTheKey(t 
 
 func TestFreezeVendorChoice_TheReadFailsClosedAndSaysNothingOfTheUser(t *testing.T) {
 	q := &settingQ{row: settingRow{fails: errors.New("the connection broke")}}
-	if b, _, err := freezeVendorChoice(context.Background(), q, optOutUser, ModuleVerify, Settings{}, nil); err == nil || b != nil {
+	if b, _, err := freezeVendorChoice(context.Background(), q, optOutUser, ModuleVerify, Settings{}, nil, nil); err == nil || b != nil {
 		t.Fatalf("a failed read answered %s, %v: a job must never be created with a guessed opt-out", b, err)
 	}
 	// a user id that is not a customer's is refused before any statement
 	q = &settingQ{row: settingRow{val: true}}
-	if _, _, err := freezeVendorChoice(context.Background(), q, "not-a-uuid", ModuleVerify, Settings{}, nil); err == nil || len(q.calls) != 0 {
+	if _, _, err := freezeVendorChoice(context.Background(), q, "not-a-uuid", ModuleVerify, Settings{}, nil, nil); err == nil || len(q.calls) != 0 {
 		t.Errorf("a bad user id: %v after %d statement(s), want a refusal and none", err, len(q.calls))
 	}
 }

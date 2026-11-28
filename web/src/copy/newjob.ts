@@ -70,6 +70,9 @@ export const newjob = {
   'newjob.verification.finished': 'Finished {when}',
   'newjob.verification.counts': '{rows} addresses, {checked} checked',
   'newjob.verification.more': 'Show more',
+  'newjob.verification.fieldsTitle': 'Fields you can use in your message',
+  'newjob.verification.fieldsNone': 'This verification carries no fields besides the email address, so your message can use only that and the unsubscribe link.',
+  'newjob.palette.verifiedNote': 'Fields come from the list you verified; after 7 days the values of a finished job are removed, so use a fallback.',
   'newjob.verification.emptyTitle': 'You have no finished verification yet',
   'newjob.verification.emptyBody': 'Run a verification first, then you can send to its results.',
   'newjob.verification.emptyLink': 'Start a verification',
@@ -171,6 +174,7 @@ export const newjob = {
   'newjob.authoring.checkFailed': 'We could not check your message just now. You can continue; it is checked again when you preview.',
   'newjob.authoring.unmetColumn': 'Your list has no column with these names and the message gives them no fallback, so every row would be left out:',
   'newjob.authoring.unmetNoColumns': 'A list from a verification has no columns, so these fields would leave every row out. Give them a fallback, or remove them:',
+  'newjob.authoring.skipNote': 'Rows that have no value for these fields will be skipped, because the message gives them no fallback (the preview counts them):',
   'newjob.authoring.tooLong': 'This message is too long to send together with a file. Shorten the HTML or the text, for example by taking long styles out of it.',
   'newjob.authoring.errorAt': 'Line {line}, column {column}: {message}',
 

@@ -13,13 +13,14 @@ export interface MessageStepProps {
   onChange: (patch: Partial<Message>) => void
   columns: readonly MergeColumn[]
   hasColumns: boolean
+  paletteNote?: string
   serverProblem: TemplateCheckError | null
   tooLong: boolean
   onBack: () => void
   onNext: () => void
 }
 
-export function MessageStep({ message, onChange, columns, hasColumns, serverProblem, tooLong, onBack, onNext }: MessageStepProps) {
+export function MessageStep({ message, onChange, columns, hasColumns, paletteNote, serverProblem, tooLong, onBack, onNext }: MessageStepProps) {
   const check = useTemplateCheck({ subject: message.subject, html: message.html, text: message.text })
 
   const hint = !messageComplete(message)
@@ -37,7 +38,7 @@ export function MessageStep({ message, onChange, columns, hasColumns, serverProb
 
   return (
     <>
-      <Authoring message={message} onChange={onChange} columns={columns} hasColumns={hasColumns} check={check} serverProblem={serverProblem} tooLong={tooLong} />
+      <Authoring message={message} onChange={onChange} columns={columns} hasColumns={hasColumns} paletteNote={paletteNote} check={check} serverProblem={serverProblem} tooLong={tooLong} />
       <StepNav onBack={onBack} onNext={onNext} nextLabel={t('newjob.message.next')} nextDisabled={!ready} nextHint={hint} />
     </>
   )

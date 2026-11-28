@@ -273,3 +273,26 @@ func TestSyntaxErrorMessageNeverEchoesTheSource(t *testing.T) {
 		t.Errorf("the echo measure found %d bytes where there is none", n)
 	}
 }
+
+// ValidFieldName is the rule `{{name}}` is parsed by, for a caller that has to say which keys of a row's merge data a template could ever name. Every name it accepts must compile as a field, and every name
+// it refuses must not: the two halves are one grammar.
+func TestValidFieldName_IsExactlyTheNameTheGrammarParses(t *testing.T) {
+	good := []string{"a", "A", "_", "_x", "first_name", "City2", "x9", strings.Repeat("a", MaxNameLen)}
+	bad := []string{"", "1a", "9", "first name", "first-name", "first.name", "e-mail", "café", "ünder", "a|b", "a}", "{a", "a\n", " a", "a ", strings.Repeat("a", MaxNameLen+1)}
+	for _, n := range good {
+		if !ValidFieldName(n) {
+			t.Errorf("ValidFieldName(%q) = false", n)
+		}
+		if _, err := Compile("{{" + n + "}}"); err != nil {
+			t.Errorf("control: %q is accepted by ValidFieldName and does not compile as a field: %v", n, err)
+		}
+	}
+	for _, n := range bad {
+		if ValidFieldName(n) {
+			t.Errorf("ValidFieldName(%q) = true", n)
+		}
+		if tpl, err := Compile("{{" + n + "}}"); err == nil && n != "" && len(tpl.Fields()) == 1 && tpl.Fields()[0].Name == n {
+			t.Errorf("control: %q is refused by ValidFieldName and the grammar parses it as a field", n)
+		}
+	}
+}

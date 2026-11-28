@@ -73,3 +73,23 @@ The specs are listed first (`E2E_MIN_TESTS`, **raise it as specs land**: it is t
 ## Not covered by this scope
 
 Chromium only; a self-signed certificate and no real edge; no mail leaves GoTrue (the invite is minted by the admin route and the recovery mail is never sent: a "forgot password" screen shows its confirmation, the mail is not followed); a fixture DNS for module 1 and for the From-gate; the sink, never a real mailbox provider; one worker.
+
+## Flows (`support/flows-*.ts`: sign in, verify job, send wizard, messages at the sink)
+
+Reusable steps of `login.spec.ts`, `verify-job.spec.ts` and `chained-send.spec.ts`. Every control is found by role and accessible name from the copy catalogue (`import { t } from '../src/copy/index.ts'`); the only selectors that are not a role plus a name are the listed test ids and one attribute (`chooseVerification` picks a verification's radio by its value, the job id, because its name is a time two verifications can share).
+
+**The session is in memory: `page.goto` and a reload end it.** After `signIn`/`openAs`, move by the navigation (`goTo(page, 'jobs')`); a recipient's own page (an unsubscribe link) is opened in a second page of the same context (`context.newPage()`).
+
+| File | What it gives |
+|---|---|
+| `flows-data.ts` | `runId()` (6 hex characters, new on every call: `recipients('cs' + runId(), 4)`), `parseCsv` (RFC 4180, for a downloaded file), `fmt`, `numberIn`, `escapeRegExp`, `must` |
+| `flows-ui.ts` | `openAs(page, request, 'a')` (the user's password through the API, then the sign-in SCREEN), `signIn`, `signOut`, `goTo`, `settled(page, 'name')` (no spinner, `expectNoInternalWords`, axe with the sandboxed frames left out, a picture), `shotFrame` (a picture of one frame: a full-page picture shows a sandboxed frame empty), `readBalance`, `chooseCsv` (the file chooser), `stat`/`statNumber`/`statNote`/`unitCost` (the figures of a preview), `confirmNow`, `openConfirmedJob`, `createVerifyJobFromCsv`, `waitForJobStatus` (ends at once when the job ended in another state), `readResultRows`, `downloadResults`, `resultsFileNamePattern` |
+| `flows-send.ts` | the four steps of New send job (`chooseSender`, `chooseVerification`, `chooseUnknown`, `chooseListFile`, `continueTo`, `writeMessage`, `toPreview`, `stepHeading`, `sampleHeading`) and the wording of the recipient's own pages (`UNSUBSCRIBE_PAGE`: they are the Go service's static HTML, not the catalogue) |
+| `flows-mail.ts` | `readSinkFor(request, address, { count })`: the message(s) of ONE recipient, parsed (subject, decoded text and HTML parts through 8bit, quoted-printable and base64, the count of `List-Unsubscribe` and `List-Unsubscribe-Post` headers, `unsubscribeUrl()`); `sinkCount` |
+| `flows-api.ts` | the starting points that are not the subject of the spec: `finishedVerification(request, session, rows, key)` (draft, preview, confirm, wait), `draftVerification`, `balances`, `suppressionsMatching`, `waitForJobEnd` |
+
+Facts the specs rely on, and that are easy to forget:
+
+* **A send chained to a finished verification keeps the merge data of the list it was verified from** (valid, risky and unknown rows keep their `fields`; an invalid row never carries any; the job lists the NAMES in `merge_fields`, which the authoring palette offers). So `{{first_name}}` is the recipient's own, and a field with no fallback leaves out exactly the rows whose cell is empty. The chained specs build their verified list on the spot (`chainedList`: unique recipients, a `first_name` column empty for ONE risky row); `fixtures/verify-list.csv` belongs to `verify-job.spec.ts` and is not changed for them.
+* **One active job per user and module**: a spec waits for its job to end before it makes the next one of the same kind, and a spec that confirms nothing leaves its draft let go (back to the message, or never confirmed).
+* **The unsubscribe route is rate limited per client address (30 a minute, one bucket behind the edge)**: a spec opens at most a few links.

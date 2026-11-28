@@ -4,6 +4,7 @@ import { IDEMPOTENCY_KEY_PATTERN } from '../../api/idempotency.ts'
 import { nextAttempt, intentSignature, type Intent } from './confirmAttempt.ts'
 import { csvQuery, fitsInQuery, MAX_QUERY_CHARS, queryLength } from './createRequest.ts'
 import { outcomeUnknown, toApiError } from './errors.ts'
+import { fieldColumns, mergeFieldsOf } from './mergeFields.ts'
 import { malformedLines } from './PreviewPanel.tsx'
 import { describeChanges, previewChanges } from './previewDiff.ts'
 import { formatWhen, localInputValue, MAX_LEAD_DAYS, MIN_LEAD_MINUTES, scheduleFromLocal, zoneInfo } from './schedule.ts'
@@ -181,5 +182,28 @@ describe('which sender accounts can send', () => {
     for (const status of ['paused', 'quarantined', 'disabled'] as const) expect(accountUsable(account({ status })), status).toBe(false)
     expect(accountUsable(account({ verification: 'failed' }))).toBe(false)
     expect(accountUsable(account({ from_gate: 'blocked' }))).toBe(false)
+  })
+})
+
+describe('the merge fields of a job', () => {
+  it('reads merge_fields as they are, and an answer without them (an older service) as none', () => {
+    expect(mergeFieldsOf({ merge_fields: ['first_name', 'plan'] })).toEqual(['first_name', 'plan'])
+    expect(mergeFieldsOf({})).toEqual([])
+    expect(mergeFieldsOf({ merge_fields: undefined })).toEqual([])
+    expect(mergeFieldsOf(null)).toEqual([])
+    expect(mergeFieldsOf(undefined)).toEqual([])
+    expect(mergeFieldsOf({ merge_fields: null as unknown as string[] })).toEqual([])
+  })
+
+  it('leaves out the two names the platform fills in, and anything that is not a name', () => {
+    expect(mergeFieldsOf({ merge_fields: ['email', 'plan', 'unsubscribe_url', '', 7 as unknown as string] })).toEqual(['plan'])
+  })
+
+  it('makes the palette columns of them, marking a name a message cannot use', () => {
+    expect(fieldColumns(['first_name', 'bad name'])).toEqual([
+      { index: 0, name: 'first_name', usable: true },
+      { index: 1, name: 'bad name', usable: false },
+    ])
+    expect(fieldColumns([])).toEqual([])
   })
 })

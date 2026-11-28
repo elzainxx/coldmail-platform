@@ -22,14 +22,15 @@
 E2E_STAGE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 E2E_COMPOSE="$E2E_STAGE_DIR/../docker-compose.e2e.yml"
 E2E_APP_HOST="app.harness.test"; E2E_AUTH_HOST="auth.harness.test"
+E2E_VERIFY_PATH="/auth/v1/verify"   # the mailer's URL path: GoTrue resolves it against its external URL and an absolute path REPLACES that URL's own, so the /auth/v1 is written here (docker-compose.e2e.yml says why)
 E2E_APP_URL="https://$E2E_APP_HOST"; E2E_AUTH_ORIGIN="https://$E2E_AUTH_HOST"; E2E_AUTH_URL="$E2E_AUTH_ORIGIN/auth/v1"; E2E_ISSUER="$E2E_AUTH_URL"   # the public Supabase URL is the whole address the browser calls GoTrue at (web/src/auth/gotrue.ts uses it as given), and it is the issuer GoTrue stamps
 E2E_SINK_SMTP_PORT=1025
 E2E_M3_SINK_HOST="10.smtp-ctl.example.test"      # the sink's alias module 3's accounts name (docker-compose.yml): private-looking, below the From domain example.test of tests/harness/m3adapter/m3dns.json
 E2E_USER_TAGS=(a b c s)                          # a, b: signed-in users (b is the other user of the cross-user specs); c: the invitee of the browser's invite flow; s: a user with no credits, no entitlement, no sending account
 E2E_FUNDED_TAGS="a b c"                          # the users who hold credits at modules 1 and 2, an entitlement at module 3 and a sending account at module 2
 E2E_CREDITS=100000                               # per metered module and funded user, through the ledger
-E2E_MIN_TESTS="${E2E_MIN_TESTS:-10}"             # the floor of this scope: the lead raises it as the screens' specs land (web/e2e/README.md); the smoke spec holds ten tests
-E2E_MIN_SHOTS="${E2E_MIN_SHOTS:-1}"              # pictures the run must have left in E2E_SHOTS_DIR (the smoke spec takes one: the helper is proven; the screens' specs take one per main screen)
+E2E_MIN_TESTS="${E2E_MIN_TESTS:-38}"             # the floor of this scope: the lead raises it as the screens' specs land (web/e2e/README.md); the smoke spec holds ten tests
+E2E_MIN_SHOTS="${E2E_MIN_SHOTS:-100}"              # pictures the run must have left in E2E_SHOTS_DIR (the smoke spec takes one: the helper is proven; the screens' specs take one per main screen)
 E2E_UNSUB=""; E2E_ANON=""; E2E_SERVICE=""        # set by e2e_mint (only the shell's copies: the leak scans look for them)
 # the global dials of module 2 for the scope (tests/harness/jobscenario/send.go m2Dials, and why): two failed attempts end a job, a one-second retry ladder, no pause between sends, one lane per user, a 250 ms tick
 E2E_M2_DIALS=(
@@ -254,7 +255,7 @@ e2e_platform() {
   DC logs --no-color e2e-platform 2>&1 | grep -q 'unsubscribe link configured' || e2e_fail e2e-platform "the platform did not log that its unsubscribe link is configured: PLATFORM_UNSUBSCRIBE_SECRET and PLATFORM_PUBLIC_BASE_URL did not both reach it, and a send job could not be confirmed"
   DC up -d --no-deps --wait --wait-timeout 120 e2e-edge > "$WORK/e2e-up-edge.log" 2>&1 || e2e_fail e2e-edge "the TLS edge (nginx) did not become healthy (its configuration, its certificate or an upstream name that does not resolve; its log is above)"
   env_out="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$(jobs_cid gotrue)" 2>/dev/null)"
-  for want in "API_EXTERNAL_URL=$E2E_ISSUER" "GOTRUE_SITE_URL=$E2E_APP_URL" "GOTRUE_JWT_ISSUER=$E2E_ISSUER"; do
+  for want in "API_EXTERNAL_URL=$E2E_ISSUER" "GOTRUE_API_EXTERNAL_URL=$E2E_ISSUER" "GOTRUE_SITE_URL=$E2E_APP_URL" "GOTRUE_JWT_ISSUER=$E2E_ISSUER" "GOTRUE_MAILER_URLPATHS_INVITE=$E2E_VERIFY_PATH" "GOTRUE_MAILER_URLPATHS_RECOVERY=$E2E_VERIFY_PATH"; do
     printf '%s\n' "$env_out" | grep -qx "$want" || die "GoTrue's container does not have ${want%%=*}=${want#*=}: docker-compose.e2e.yml's override did not reach it, so the invite links and the tokens' issuer would be the harness's plain-http names"
   done
   mkdir -p "$WORK/e2e-artifacts"
@@ -278,10 +279,11 @@ e2e_user() {   # <tag> <funded: 1|0>
   case "$id" in ????????-????-????-????-????????????) ;; *) die "GoTrue's answer to the invite of the user $tag has no user id";; esac
   case "$link" in
     "$E2E_ISSUER/verify?"*) ;;
-    *) die "the invite link of the user $tag does not start with $E2E_ISSUER/verify? (it starts with '${link%%\?*}'): GoTrue did not take API_EXTERNAL_URL, and the browser could not open the link";;
+    *) die "the invite link of the user $tag does not start with $E2E_ISSUER/verify? (it starts with '${link%%\?*}'): GoTrue built the link from its external URL and the mailer's URL path (GOTRUE_MAILER_URLPATHS_INVITE=$E2E_VERIFY_PATH: an absolute path replaces the path of the external URL, so /auth/v1 must be IN it), and the browser could not open this one";;
   esac
   case "$link" in *"type=invite"*) ;; *) die "the link GoTrue made for the user $tag is not an invite link";; esac
-  case "$link" in *"redirect_to=https%3A%2F%2F$E2E_APP_HOST"*) ;; *) die "the invite link of the user $tag does not send the browser to $E2E_APP_URL after the verification (GOTRUE_SITE_URL did not reach GoTrue)";; esac
+  # GoTrue writes redirect_to as it holds it: unencoded when it has no & = or # (internal/mailer encodeRedirectURL), so both spellings are the app's own address
+  case "$link" in *"redirect_to=https%3A%2F%2F$E2E_APP_HOST"*|*"redirect_to=https://$E2E_APP_HOST"*) ;; *) die "the invite link of the user $tag does not send the browser to $E2E_APP_URL after the verification (GOTRUE_SITE_URL did not reach GoTrue)";; esac
   mask "$link"
   printf -v "E2E_ID_$tag" '%s' "$id"; printf -v "E2E_EMAIL_$tag" '%s' "$email"; printf -v "E2E_LINK_$tag" '%s' "$link"; printf -v "E2E_FUNDED_$tag" '%s' "$funded"; printf -v "E2E_M2ACCOUNT_$tag" '%s' ''
   psql_su "INSERT INTO public.users (id, auth_user_id, email) VALUES ('$id', '$id', '$email')" >/dev/null || die "could not create the platform user of $tag in public.users"

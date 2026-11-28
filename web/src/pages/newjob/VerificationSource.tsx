@@ -4,24 +4,28 @@
 // What is used is the platform's rule, not a choice: valid and risky addresses are included, invalid ones never are (Docs/jobs-api.md, "Create a draft"). They are
 // shown as the three checkboxes they would be, fixed, so the user sees what a send to a verification does without being offered a choice that does not exist.
 // Only the unknown addresses are the user's to decide, and there is no default.
-import type { UnknownChoice } from '../../api/types.ts'
+import type { Job, UnknownChoice } from '../../api/types.ts'
 import { errorText, t } from '../../copy/index.ts'
 import { Link } from '../../router.tsx'
 import { Button, Checkbox, EmptyState, Spinner } from '../../ui/index.ts'
 import { Choice, ChoiceGroup } from './Choice.tsx'
+import { FieldChips } from './FieldChips.tsx'
+import { fieldColumns, mergeFieldsOf } from './mergeFields.ts'
 import { fmt, formatWhen } from './schedule.ts'
 import { UnknownChoiceGroup } from './UnknownChoiceGroup.tsx'
 import { useFinishedVerifications } from './useFinishedVerifications.ts'
 
 export interface VerificationSourceProps {
-  selectedId: string | null
-  onSelect: (id: string) => void
+  /** the verification chosen: its fields are what the message may name */
+  selected: Job | null
+  onSelect: (job: Job) => void
   unknownChoice: UnknownChoice | null
   onUnknownChoice: (choice: UnknownChoice) => void
 }
 
-export function VerificationSource({ selectedId, onSelect, unknownChoice, onUnknownChoice }: VerificationSourceProps) {
+export function VerificationSource({ selected, onSelect, unknownChoice, onUnknownChoice }: VerificationSourceProps) {
   const list = useFinishedVerifications(true)
+  const fields = fieldColumns(mergeFieldsOf(selected))
 
   return (
     <div className="flex flex-col gap-4">
@@ -51,8 +55,8 @@ export function VerificationSource({ selectedId, onSelect, unknownChoice, onUnkn
               key={job.id}
               name="verification"
               value={job.id}
-              checked={selectedId === job.id}
-              onChange={() => onSelect(job.id)}
+              checked={selected?.id === job.id}
+              onChange={() => onSelect(job)}
               label={t('newjob.verification.finished', { when: formatWhen(job.finished_at ?? job.created_at) })}
               description={
                 job.preview === null
@@ -71,8 +75,21 @@ export function VerificationSource({ selectedId, onSelect, unknownChoice, onUnkn
         </div>
       )}
 
-      {selectedId !== null && (
+      {selected !== null && (
         <>
+          <section aria-labelledby="verification-fields-title">
+            <h3 id="verification-fields-title" className="text-base font-semibold text-fg">
+              {t('newjob.verification.fieldsTitle')}
+            </h3>
+            {fields.length === 0 ? (
+              <p className="mt-1 text-sm text-fg-muted">{t('newjob.verification.fieldsNone')}</p>
+            ) : (
+              <>
+                <FieldChips columns={fields} label={t('newjob.verification.fieldsTitle')} flagUnusable />
+                <p className="mt-1 text-sm text-fg-muted">{t('newjob.palette.verifiedNote')}</p>
+              </>
+            )}
+          </section>
           <ChoiceGroup legend={t('newjob.verdicts.legend')} hint={t('newjob.verdicts.hint')}>
             <Checkbox checked disabled label={t('newjob.verdicts.valid')} description={t('newjob.verdicts.always')} onChange={() => undefined} />
             <Checkbox checked disabled label={t('newjob.verdicts.risky')} description={t('newjob.verdicts.always')} onChange={() => undefined} />

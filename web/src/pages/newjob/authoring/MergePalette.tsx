@@ -13,9 +13,11 @@ export interface MergePaletteProps {
   target: string
   /** insert this text where the user is typing */
   onInsert: (snippet: string) => void
+  /** one line about where the fields come from (a send to a finished verification) */
+  note?: string
 }
 
-export function MergePalette({ columns, target, onInsert }: MergePaletteProps) {
+export function MergePalette({ columns, target, onInsert, note }: MergePaletteProps) {
   const [fallback, setFallback] = useState('')
   const usable = columns.filter((c) => c.usable)
   const unusable = columns.filter((c) => !c.usable && c.name !== '')
@@ -25,6 +27,7 @@ export function MergePalette({ columns, target, onInsert }: MergePaletteProps) {
       <div>
         <h3 className="text-base font-semibold text-fg">{t('newjob.authoring.paletteTitle')}</h3>
         <p className="text-sm text-fg-muted">{t('newjob.authoring.paletteHint', { target })}</p>
+        {note !== undefined && <p className="text-sm text-fg-muted">{note}</p>}
       </div>
 
       <FormField label={t('newjob.authoring.fallback')} hint={t('newjob.authoring.fallbackHint')} optional>

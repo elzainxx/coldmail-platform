@@ -37,6 +37,20 @@ const (
 // IsReserved reports whether name is one of the two reserved field names.
 func IsReserved(name string) bool { return name == FieldEmail || name == FieldUnsubscribeURL }
 
+// ValidFieldName reports whether name is a merge-field name the grammar accepts: a letter or an underscore, then letters, digits and underscores, at most MaxNameLen characters (all ASCII). It is the
+// rule `{{name}}` is parsed by, for a caller that has to say which keys of a row's merge data a template could ever name.
+func ValidFieldName(name string) bool {
+	if len(name) == 0 || len(name) > MaxNameLen || !isNameStart(name[0]) {
+		return false
+	}
+	for i := 1; i < len(name); i++ {
+		if !isNameChar(name[i]) {
+			return false
+		}
+	}
+	return true
+}
+
 // SyntaxError is what Compile returns for a template that does not follow the grammar. Offset is a byte offset into the source,
 // Line and Column are 1-based (Column counts runes; lines end at \n). Message never repeats more than one character of the source.
 type SyntaxError struct {

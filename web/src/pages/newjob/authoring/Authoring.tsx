@@ -33,8 +33,10 @@ export interface AuthoringProps {
   onChange: (patch: Partial<Message>) => void
   /** the columns of the list other than the address; empty for a send to a finished verification */
   columns: readonly MergeColumn[]
-  /** where the fields of a CSV list can be named: false for a list that has no columns (a finished verification) */
+  /** the list has fields a message can name (the columns of a file, the fields of a verification): false when it has none */
   hasColumns: boolean
+  /** one line under the palette about where the fields come from */
+  paletteNote?: string
   check: CheckState
   /** a mistake the platform found when it saved the message (the live check should have caught it first) */
   serverProblem: TemplateCheckError | null
@@ -42,7 +44,7 @@ export interface AuthoringProps {
   tooLong: boolean
 }
 
-export function Authoring({ message, onChange, columns, hasColumns, check, serverProblem, tooLong }: AuthoringProps) {
+export function Authoring({ message, onChange, columns, hasColumns, paletteNote, check, serverProblem, tooLong }: AuthoringProps) {
   const [active, setActive] = useState<Part>('html')
   const [replyTouched, setReplyTouched] = useState(false)
   const boxes = useRef<Record<Part, HTMLDivElement | null>>({ subject: null, html: null, text: null })
@@ -75,8 +77,9 @@ export function Authoring({ message, onChange, columns, hasColumns, check, serve
   const replyError = replyTouched && !replyToValid(message.replyTo) ? t('newjob.authoring.replyToInvalid') : null
 
   const known = new Set(columns.map((c) => c.name))
-  const unmet =
-    check.result?.kind === 'ok' ? check.result.fields.filter((f) => !f.has_fallback && !known.has(f.name)) : []
+  const unmet = check.result?.kind === 'ok' ? check.result.fields.filter((f) => !f.has_fallback && !known.has(f.name)) : []
+  // a field of the list used with no fallback: a row that has no value for it is skipped (the preview counts those rows)
+  const skipping = check.result?.kind === 'ok' ? check.result.fields.filter((f) => !f.has_fallback && known.has(f.name)) : []
 
   const field = (part: Part) => {
     const p = problem(part)
@@ -110,7 +113,7 @@ export function Authoring({ message, onChange, columns, hasColumns, check, serve
         />
       </FormField>
 
-      <MergePalette columns={columns} target={t(PART_WORDS[active])} onInsert={(snippet) => insert(active, { before: snippet, replace: true })} />
+      <MergePalette columns={columns} target={t(PART_WORDS[active])} note={paletteNote} onInsert={(snippet) => insert(active, { before: snippet, replace: true })} />
 
       <div className="flex flex-col gap-2">
         <HtmlToolbar
@@ -178,6 +181,11 @@ export function Authoring({ message, onChange, columns, hasColumns, check, serve
           <p className="text-fg">
             {hasColumns ? t('newjob.authoring.unmetColumn') : t('newjob.authoring.unmetNoColumns')}{' '}
             <span className="font-mono">{unmet.map((f) => f.name).join(', ')}</span>
+          </p>
+        )}
+        {skipping.length > 0 && (
+          <p className="text-fg-muted">
+            {t('newjob.authoring.skipNote')} <span className="font-mono">{skipping.map((f) => f.name).join(', ')}</span>
           </p>
         )}
         {tooLong && <p className="font-medium text-danger">{t('newjob.authoring.tooLong')}</p>}

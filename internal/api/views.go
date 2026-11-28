@@ -93,6 +93,7 @@ type jobView struct {
 	FinishedAt         *string      `json:"finished_at"`
 	CancelRequestedAt  *string      `json:"cancel_requested_at"`
 	ContentClearedAt   *string      `json:"content_cleared_at"` // null until the content retention cleared the template, the merge data and the rendered messages of the job
+	MergeFields        []string     `json:"merge_fields"`       // the names (never values) of the merge data the job's rows carry, sorted; [] for none; kept when the retention clears the values
 	CreatedAt          string       `json:"created_at"`
 	UpdatedAt          string       `json:"updated_at"`
 }
@@ -108,6 +109,7 @@ func viewJob(j jobs.Job, withContent bool) jobView {
 		CancelRequestedAt: stampPtr(j.CancelRequestedAt), ContentClearedAt: stampPtr(j.ContentClearedAt),
 		CreatedAt: stamp(j.CreatedAt), UpdatedAt: stamp(j.UpdatedAt),
 	}
+	v.MergeFields = append([]string{}, j.MergeFields...) // an array, never null
 	if withContent && j.Content != nil {
 		v.Content = &contentView{Subject: j.Content.Subject, HTML: j.Content.HTML, Text: j.Content.Text, ReplyTo: j.Content.ReplyTo}
 	}

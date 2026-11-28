@@ -119,6 +119,11 @@ export interface Job {
   cancel_requested_at: string | null
   /** set when the retention cleared the template, the merge data and the rendered messages (Phase 6 A12; absent from an older service) */
   content_cleared_at?: string | null
+  /**
+   * The merge fields the job's rows carry: sorted, unique, valid names, never `email` or `unsubscribe_url`. On every job (a chained send carries its source's).
+   * Optional so an older answer reads as none: use `mergeFieldsOf(job)` (pages/newjob/mergeFields.ts), never the member directly.
+   */
+  merge_fields?: string[]
   created_at: string
   updated_at: string
 }

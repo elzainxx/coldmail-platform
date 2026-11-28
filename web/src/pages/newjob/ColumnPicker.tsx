@@ -5,6 +5,7 @@ import { t } from '../../copy/index.ts'
 import { FormField, Select, Table, type Column } from '../../ui/index.ts'
 import { columnLabel, mergeColumns } from './csv/columns.ts'
 import type { CsvHead } from './csv/reader.ts'
+import { FieldChips } from './FieldChips.tsx'
 
 export interface ColumnPickerProps {
   head: CsvHead
@@ -49,14 +50,12 @@ export function ColumnPicker({ head, chosen, onChoose, purpose }: ColumnPickerPr
         {chosen === null ? null : merge.length === 0 ? (
           <p className="mt-1 text-sm text-fg-muted">{t('newjob.columns.none')}</p>
         ) : (
-          <ul className="mt-1 flex flex-wrap gap-2" aria-label={purpose === 'send' ? t('newjob.columns.mergeTitleSend') : t('newjob.columns.mergeTitleVerify')}>
-            {merge.map((c) => (
-              <li key={c.index} className="rounded-md border border-border bg-sunken px-2 py-0.5 text-sm text-fg">
-                <span className="font-mono">{c.name === '' ? unnamed(c.index + 1) : c.name}</span>
-                {purpose === 'send' && !c.usable && c.name !== '' && <span className="ml-2 text-xs text-fg-muted">{t('newjob.columns.unusable')}</span>}
-              </li>
-            ))}
-          </ul>
+          <FieldChips
+            columns={merge}
+            label={purpose === 'send' ? t('newjob.columns.mergeTitleSend') : t('newjob.columns.mergeTitleVerify')}
+            unnamed={unnamed}
+            flagUnusable={purpose === 'send'}
+          />
         )}
       </section>
 

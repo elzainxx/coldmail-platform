@@ -30,19 +30,40 @@
 
 x-e2e-app: &e2e-app "https://app.harness.test"
 x-e2e-issuer: &e2e-issuer "https://auth.harness.test/auth/v1"
+x-e2e-verify: &e2e-verify "/auth/v1/verify"   # the path of the link GoTrue builds: the issuer's own path and /verify (see the gotrue service below)
 
 services:
   # ── GoTrue, re-addressed (the service itself is docker-compose.gotrue.yml's) ─────────────────────────────────────────────────────────────────────────────────────────
-  # API_EXTERNAL_URL is what GoTrue writes into the link it generates (the invite's action_link): the browser opens it, so it is the https name with the hosted project's /auth/v1 path. GOTRUE_SITE_URL is where
-  # GoTrue sends the browser after it verified the link (the tokens come back in the fragment): the web app. GOTRUE_JWT_ISSUER is the `iss` of every token and the platform is given the same string
-  # (PLATFORM_JWT_ISSUER below). The web app calls GoTrue from another origin (app. to auth.): GoTrue answers the CORS preflight itself, and `apikey` (the header a Supabase client sends with the anon key) is added
-  # to the headers it allows, because GoTrue's default list has no such header (a hosted project's gateway adds it).
+  # THE LINK. The invite's action_link is built by GoTrue as the EXTERNAL URL resolved against the mailer's URL PATH (internal/mailer/templatemailer GetEmailActionLink: externalURL.ResolveReference(path), in
+  # v2.198.0; the path defaults to /verify). A path that begins with a slash REPLACES the path of the external URL (RFC 3986), so API_EXTERNAL_URL=https://auth.harness.test/auth/v1 alone gives
+  # https://auth.harness.test/verify (the first runner run of this scope, 46085469192: the host was ours, the /auth/v1 was gone). The prefix of a hosted project is therefore put where GoTrue reads it, in the four
+  # URL paths: GOTRUE_MAILER_URLPATHS_INVITE, _CONFIRMATION, _RECOVERY and _EMAIL_CHANGE (the self-hosted Supabase stack sets the same four). The name of the external URL is NOT the fault: GoTrue reads
+  # API_EXTERNAL_URL and GOTRUE_API_EXTERNAL_URL alike (envconfig tag API_EXTERNAL_URL, prefixed form first, the bare name as the alternative); both are set here, to the one value, so that no reader has to know that.
+  # GOTRUE_SITE_URL is where /verify sends the browser when the link has no valid redirect_to (the web app; the fragment carries the tokens: a 303 to <redirect_to>#access_token=...&type=invite);
+  # GOTRUE_URI_ALLOW_LIST adds the app origin (and what is under it) to the redirects GoTrue accepts besides its own site URL, for the flows that pass a redirect_to. The link keeps redirect_to as
+  # GoTrue wrote it (unencoded when it holds no & = or #). GOTRUE_JWT_ISSUER is the `iss` of every token and the platform is given the same string (PLATFORM_JWT_ISSUER below). The web app calls GoTrue from
+  # another origin (app. to auth.): GoTrue answers the CORS preflight itself (any origin; methods GET POST PUT PATCH DELETE; headers Accept, Authorization, Content-Type, X-Client-Info and more) and
+  # `apikey` (the header a Supabase client sends with the anon key) is added to the headers it allows, because its default list has no such header (a hosted project's gateway adds it). /verify is a navigation
+  # of the browser (a top-level GET, no CORS involved). Every name below was read from GoTrue v2.198.0's own source (internal/conf/configuration.go), not remembered.
   gotrue:
     environment:
       API_EXTERNAL_URL: *e2e-issuer
+      GOTRUE_API_EXTERNAL_URL: *e2e-issuer
       GOTRUE_SITE_URL: *e2e-app
+      GOTRUE_URI_ALLOW_LIST: "https://app.harness.test,https://app.harness.test/**"
+      GOTRUE_MAILER_URLPATHS_INVITE: *e2e-verify
+      GOTRUE_MAILER_URLPATHS_CONFIRMATION: *e2e-verify
+      GOTRUE_MAILER_URLPATHS_RECOVERY: *e2e-verify
+      GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE: *e2e-verify
       GOTRUE_JWT_ISSUER: *e2e-issuer
       GOTRUE_CORS_ALLOWED_HEADERS: apikey
+
+  # ── Mailpit (the harness's SMTP sink of module 3's stage 5b), told not to look for a newer version ─────────────────────────────────────────────────────────────────────
+  # It asks api.github.com for its latest release at start; the network is internal, so the request only fails and logs a harmless error. MP_DISABLE_VERSION_CHECK is read by v1.33.1 (cmd/root.go): no
+  # dependency on the internet is left in the scope's logs.
+  smtp-sink:
+    environment:
+      MP_DISABLE_VERSION_CHECK: "true"
 
   # ── module 1, as the browser's jobs meet it: the vendor fallback ON, wired to module 1's own stand-in ───────────────────────────────────────────────────────────────────
   # docker-compose.jobs.yml's m1j with the five dials the scope jobs' stage J7 sets by re-creating it, set here once for the whole run (the vendor opt-out screen needs a REACHABLE vendor to be anything; the

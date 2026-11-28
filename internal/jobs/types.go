@@ -66,6 +66,9 @@ type Job struct {
 
 	Settings Settings
 	Content  *Content // the campaign a send job carries (modules 2 and 3); nil for a verify job
+	// MergeFields are the NAMES (never values) of the merge data the job's rows carry, sorted and unique, at most MaxMergeFieldNames, each a name a template can use (merge_fields.go): frozen when the draft is
+	// created and kept when the content retention clears the values. nil for a job that has none and for one made before they were kept.
+	MergeFields []string
 
 	CreatedAt time.Time
 	UpdatedAt time.Time

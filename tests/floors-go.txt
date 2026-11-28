@@ -8,7 +8,7 @@ go|github.com/coldmail-platform/platform/internal/adapters/m1|112
 go|github.com/coldmail-platform/platform/internal/adapters/m2|23
 go|github.com/coldmail-platform/platform/internal/adapters/m3|52
 go|github.com/coldmail-platform/platform/internal/adapters/sendapi|78
-go|github.com/coldmail-platform/platform/internal/api|129
+go|github.com/coldmail-platform/platform/internal/api|130
 go|github.com/coldmail-platform/platform/internal/app|69
 go|github.com/coldmail-platform/platform/internal/auth|33
 go|github.com/coldmail-platform/platform/internal/auth/authtest|6
@@ -22,7 +22,7 @@ go|github.com/coldmail-platform/platform/internal/faultpoint|1
 go|github.com/coldmail-platform/platform/internal/httpapi|26
 go|github.com/coldmail-platform/platform/internal/jobengine|103
 go|github.com/coldmail-platform/platform/internal/jobengine/jobenginetest|22
-go|github.com/coldmail-platform/platform/internal/jobs|132
+go|github.com/coldmail-platform/platform/internal/jobs|136
 go|github.com/coldmail-platform/platform/internal/logging|6
 go|github.com/coldmail-platform/platform/internal/m3admin|38
 go|github.com/coldmail-platform/platform/internal/migrate|47
@@ -30,7 +30,7 @@ go|github.com/coldmail-platform/platform/internal/modclient|69
 go|github.com/coldmail-platform/platform/internal/money|31
 go|github.com/coldmail-platform/platform/internal/norm|17
 go|github.com/coldmail-platform/platform/internal/probe|55
-go|github.com/coldmail-platform/platform/internal/render|37
+go|github.com/coldmail-platform/platform/internal/render|38
 go|github.com/coldmail-platform/platform/internal/server|10
 go|github.com/coldmail-platform/platform/internal/suppress|34
 go|github.com/coldmail-platform/platform/internal/tenant|29
