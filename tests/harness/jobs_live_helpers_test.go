@@ -722,7 +722,7 @@ func (s *jlStack) m1Report(user, moduleJob string, sent int) []m1ad.Row {
 	var out []m1ad.Row
 	cursor := ""
 	for pages := 0; ; pages++ {
-		if pages > 1000 {
+		if pages > 5000 { // 7 rows a page: 35,000 rows, more than the longest list the adaptive cancel test may reach (10,240); the cap only guards a cursor that never ends
 			s.t.Fatalf("module 1's results listing did not end after %d pages", pages)
 		}
 		rows, next, err := ad.Results(s.ctx, moduleJob, cursor, 7)

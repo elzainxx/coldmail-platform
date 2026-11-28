@@ -257,7 +257,7 @@ func TestM3Adapter_AccountsAPI_EveryRouteIsTheCallersOwnAgainstTheRealModule(t *
 	if got := e.userAccounts(t, C.UserID); got != nC {
 		t.Fatalf("a refused add left %d account(s) of C", got-nC)
 	}
-	e.disable(t, B, "accounts api")
+	e.disable(t, B, "accounts api, B loses the entitlement")
 	e.call(t, B, "POST", "/v1/m3/accounts", e.body("x10", B, e.sinkIP)).refused(t, 403, "no_entitlement")
 	e.call(t, B, "POST", "/v1/m3/accounts/"+idB+"/test", nil).refused(t, 403, "no_entitlement")
 	if ids := m3xIDs(t, e.call(t, B, "GET", "/v1/m3/accounts", nil)); len(ids) != 1 {
