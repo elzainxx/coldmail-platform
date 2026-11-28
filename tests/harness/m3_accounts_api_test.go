@@ -290,7 +290,7 @@ func TestM3Adapter_AccountsAPI_EveryRouteIsTheCallersOwnAgainstTheRealModule(t *
 		if bytes.Contains(b, []byte(e.sinkPass)) {
 			t.Fatalf("the SMTP password is in answer %d: %s", i, b)
 		}
-		for _, leak := range []string{"smtp_response", "last_attempt_error", "dmarc_policy", "message\":\"The From"} {
+		for _, leak := range []string{"smtp_response", "last_attempt_error", "dmarc_policy", "from_alignment"} {
 			if bytes.Contains(b, []byte(leak)) {
 				t.Fatalf("answer %d carries module text (%s): %s", i, leak, b)
 			}
